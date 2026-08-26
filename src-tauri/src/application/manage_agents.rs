@@ -7,30 +7,37 @@ use specta::Type;
 
 use crate::application::agent_intent::{validate_agent_intents, AgentWriteIntent};
 use crate::application::agent_selection::{
-    build_agent_selection_catalog, resolve_agent_selection_submission, AgentInstallOptionId,
+    resolve_agent_selection_submission_for_snapshot, AgentInstallOptionId,
     AgentSelectionDisabledReason, AgentSelectionModeConstraint, AgentSelectionResolution,
     AgentSelectionRevision, AgentSelectionSnapshot, AgentSelectionSubmission,
+    ResolvedAgentInstallOption,
 };
-use crate::application::install_planner::InstallPlanningFactSource;
+use crate::application::installed_skill_payload::InstalledSkillPayloadAcquirer;
+use crate::application::installed_skill_resolver::SkillDirectoryName;
+use crate::application::library_agent_placements::LibraryAgentPlacementMap;
+use crate::application::library_candidates::{LibraryCandidateSnapshot, LibraryCandidateSource};
 use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{
-    group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
-    PreparedEntryAction, PreparedEntryMutation, PreviewToken,
+    stable_digest, MutationPlan, PreparedEntryAction, PreviewToken,
 };
 use crate::application::mutation::planning::{
     assemble_plan, issue_preview_token, validate_exact_preview, MutationPlanDraft,
-    MutationUnitDraft, PreparedMutationEntries, PreviewTokenDraft,
+    MutationUnitDraft, PreviewTokenDraft,
 };
 use crate::application::mutation::result::MutationUnitResult;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, PayloadSessionManager, PinnedPayloadLease,
 };
-use crate::application::remove::ObservedPhysicalEntry;
-use crate::application::skill_entries::{
-    join_entry, link_points_to, InstalledSkillPayloadAcquirer, ObservedSkillSnapshot,
-    SkillEntryObserver,
+use crate::application::planning_facts::{ScopePlanningSnapshot, ScopePlanningSnapshotSource};
+use crate::application::scope_skill_placements::{
+    ResolvedScopeSkillPlacements, ScopeSkillPlacementResolver,
 };
-use crate::application::workflow_planner::AgentEntryPlan;
+use crate::application::scope_skill_planning::{
+    DirectContentIdentity, DirectPlacementChange, DirectSkillChangeRequest, LibraryElectionState,
+    PreparedDirectVersion, ScopeSkillPlanner,
+};
+use crate::application::scope_skill_planning::{DirectoryPlacementRef, ObservedVersion};
+use crate::application::skill_entry_projection::ObservedPhysicalEntry;
 use crate::core::mutation::{CancellationSignal, MutationKind};
 use crate::core::skill_payload::PayloadId;
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind, TargetFactResolver};
@@ -58,7 +65,7 @@ pub struct ManageAgentsRequest {
     pub skill_name: String,
     pub agent_selection: AgentSelectionSubmission,
     pub confirm_entity_directories: bool,
-    pub canonical_payload: Option<AcquiredPayloadHandle>,
+    pub original_payload: Option<AcquiredPayloadHandle>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -68,7 +75,7 @@ pub struct ManageAgentsPreview {
     pub token: PreviewToken,
     pub context: SkillLocationRef,
     pub skill_name: String,
-    pub canonical_payload: Option<AcquiredPayloadHandle>,
+    pub original_payload: Option<AcquiredPayloadHandle>,
     pub confirmation: Option<ManageAgentsConfirmation>,
 }
 
@@ -109,6 +116,16 @@ pub enum ManageCurrentEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
+pub enum ManageCurrentVersion {
+    None,
+    Direct,
+    Library,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub enum ManageAllowedResults {
     Selected,
     Both,
@@ -130,6 +147,7 @@ pub enum ManageSelectedEffect {
 pub enum ManageUnselectedEffect {
     KeepAbsent,
     Remove,
+    RestoreLibrary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -145,6 +163,7 @@ pub enum ManageSelectionDisabledReason {
 pub struct ManageInstallOptionState {
     pub option_id: AgentInstallOptionId,
     pub current_entry: ManageCurrentEntry,
+    pub current_version: ManageCurrentVersion,
     pub initial_selected: bool,
     pub allowed_results: ManageAllowedResults,
     pub selected_effect: Option<ManageSelectedEffect>,
@@ -166,63 +185,106 @@ struct ResolvedManageSelection {
     skill_name: String,
     add: Vec<AgentWriteIntent>,
     #[serde(skip)]
-    add_plan: AgentEntryPlan,
+    add_options: Vec<ResolvedAgentInstallOption>,
     remove_entry_ids: Vec<ObservedEntryId>,
     requested_mode: InstallMode,
 }
 
 struct ResolvedManageExecution {
     selection: ResolvedManageSelection,
+    catalog: crate::application::agent_selection::AgentSelectionCatalog,
 }
 
 pub(crate) struct LoadedManageSelection {
     pub(crate) skill_name: String,
     pub(crate) public: ManageAgentSelectionSnapshot,
     pub(crate) catalog: crate::application::agent_selection::AgentSelectionCatalog,
-    pub(crate) observed: ObservedSkillSnapshot,
+    observed: ManageObservedState,
     pub(crate) observed_entry_ids: BTreeMap<AgentInstallOptionId, ObservedEntryId>,
+    pub(crate) library_candidates: LibraryCandidateSnapshot,
+}
+
+struct ManageObservedState {
+    facts: ScopePlanningSnapshot,
+    plan: crate::application::scope_skill_planning::ScopeSkillPlan,
+    entries: Vec<crate::application::skill_entry_projection::ObservedPlannedEntry>,
+    placements: ResolvedScopeSkillPlacements,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManageObservedVersion {
+    Missing,
+    Direct,
+    Library,
+    BrokenDirect,
+    BrokenLibrary,
+    BrokenUnknown,
+    External,
 }
 
 fn manage_option_state(
     option_id: &AgentInstallOptionId,
     fact: &ResolvedTargetFact,
-    canonical: &ResolvedTargetFact,
+    observed: ManageObservedVersion,
+    library_available: bool,
     placement_conflict: bool,
 ) -> ManageInstallOptionState {
-    let recognized_link = fact
-        .link_target
-        .as_deref()
-        .is_some_and(|target| link_points_to(fact, target, canonical));
-    let mut state = match fact.entry_kind {
-        TargetEntryKind::Missing => ManageInstallOptionState {
+    let mut state = match observed {
+        ManageObservedVersion::Missing => ManageInstallOptionState {
             option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::None,
+            current_version: ManageCurrentVersion::None,
             initial_selected: false,
             allowed_results: ManageAllowedResults::Both,
             selected_effect: Some(ManageSelectedEffect::Add),
             unselected_effect: Some(ManageUnselectedEffect::KeepAbsent),
             disabled_reason: None,
         },
-        TargetEntryKind::Directory => existing_option_state(option_id, ManageCurrentEntry::Copy),
-        TargetEntryKind::Symlink | TargetEntryKind::Junction if recognized_link => {
-            existing_option_state(option_id, ManageCurrentEntry::Link)
-        }
-        TargetEntryKind::BrokenLink if recognized_link => ManageInstallOptionState {
+        ManageObservedVersion::Direct => existing_option_state(
+            option_id,
+            if fact.entry_kind == TargetEntryKind::Directory {
+                ManageCurrentEntry::Copy
+            } else {
+                ManageCurrentEntry::Link
+            },
+            library_available,
+        ),
+        ManageObservedVersion::BrokenDirect => ManageInstallOptionState {
             option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::BrokenLink,
+            current_version: ManageCurrentVersion::Direct,
             initial_selected: true,
             allowed_results: ManageAllowedResults::Both,
             selected_effect: Some(ManageSelectedEffect::Repair),
-            unselected_effect: Some(ManageUnselectedEffect::Remove),
+            unselected_effect: Some(if library_available {
+                ManageUnselectedEffect::RestoreLibrary
+            } else {
+                ManageUnselectedEffect::Remove
+            }),
             disabled_reason: None,
         },
-        TargetEntryKind::File
-        | TargetEntryKind::Other
-        | TargetEntryKind::Symlink
-        | TargetEntryKind::Junction
-        | TargetEntryKind::BrokenLink => ManageInstallOptionState {
+        ManageObservedVersion::Library => library_option_state(option_id, ManageCurrentEntry::Link),
+        ManageObservedVersion::BrokenLibrary => {
+            library_option_state(option_id, ManageCurrentEntry::BrokenLink)
+        }
+        ManageObservedVersion::BrokenUnknown => ManageInstallOptionState {
+            option_id: option_id.clone(),
+            current_entry: ManageCurrentEntry::BrokenLink,
+            current_version: ManageCurrentVersion::External,
+            initial_selected: false,
+            allowed_results: ManageAllowedResults::Both,
+            selected_effect: Some(ManageSelectedEffect::Repair),
+            unselected_effect: Some(if library_available {
+                ManageUnselectedEffect::RestoreLibrary
+            } else {
+                ManageUnselectedEffect::KeepAbsent
+            }),
+            disabled_reason: None,
+        },
+        ManageObservedVersion::External => ManageInstallOptionState {
             option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::Unrecognized,
+            current_version: ManageCurrentVersion::External,
             initial_selected: false,
             allowed_results: ManageAllowedResults::None,
             selected_effect: None,
@@ -242,14 +304,36 @@ fn manage_option_state(
 fn existing_option_state(
     option_id: &AgentInstallOptionId,
     current_entry: ManageCurrentEntry,
+    library_available: bool,
 ) -> ManageInstallOptionState {
     ManageInstallOptionState {
         option_id: option_id.clone(),
         current_entry,
+        current_version: ManageCurrentVersion::Direct,
         initial_selected: true,
         allowed_results: ManageAllowedResults::Both,
         selected_effect: Some(ManageSelectedEffect::Retain),
-        unselected_effect: Some(ManageUnselectedEffect::Remove),
+        unselected_effect: Some(if library_available {
+            ManageUnselectedEffect::RestoreLibrary
+        } else {
+            ManageUnselectedEffect::Remove
+        }),
+        disabled_reason: None,
+    }
+}
+
+fn library_option_state(
+    option_id: &AgentInstallOptionId,
+    current_entry: ManageCurrentEntry,
+) -> ManageInstallOptionState {
+    ManageInstallOptionState {
+        option_id: option_id.clone(),
+        current_entry,
+        current_version: ManageCurrentVersion::Library,
+        initial_selected: false,
+        allowed_results: ManageAllowedResults::Both,
+        selected_effect: Some(ManageSelectedEffect::Add),
+        unselected_effect: Some(ManageUnselectedEffect::KeepAbsent),
         disabled_reason: None,
     }
 }
@@ -316,32 +400,38 @@ pub struct ManageAgentsResponse {
 }
 
 pub struct ManageAgentsService<F, T, E> {
-    observer: SkillEntryObserver<F, T>,
+    facts: F,
+    observer: ScopeSkillPlacementResolver<T>,
     targets: T,
     payloads: Arc<PayloadSessionManager>,
     acquirer: InstalledSkillPayloadAcquirer,
     executor: E,
+    library_candidates: Arc<dyn LibraryCandidateSource>,
 }
 
 impl<F, T, E> ManageAgentsService<F, T, E>
 where
-    F: InstallPlanningFactSource,
+    F: ScopePlanningSnapshotSource,
     T: TargetFactResolver + Clone,
     E: MutationPlanExecutor,
 {
     pub fn new(
-        observer: SkillEntryObserver<F, T>,
+        facts: F,
+        observer: ScopeSkillPlacementResolver<T>,
         targets: T,
         payloads: Arc<PayloadSessionManager>,
         acquirer: InstalledSkillPayloadAcquirer,
         executor: E,
+        library_candidates: Arc<dyn LibraryCandidateSource>,
     ) -> Self {
         Self {
+            facts,
             observer,
             targets,
             payloads,
             acquirer,
             executor,
+            library_candidates,
         }
     }
 
@@ -366,7 +456,7 @@ where
             }
         };
         let additions = self.resolve_additions(&selection).await?;
-        let canonical_payload = if selection.add_plan.required_agent_roots.is_empty() {
+        let original_payload = if selection.add_options.is_empty() {
             None
         } else {
             Some(
@@ -374,13 +464,23 @@ where
                     .acquire(
                         &request.context,
                         &request.skill_name,
-                        &loaded.observed.canonical,
+                        loaded
+                            .observed
+                            .plan
+                            .standard_fact()
+                            .map_err(|error| error.into_app_error())?,
                     )
                     .await?,
             )
         };
         Ok(ManageAgentsPreviewOutcome::Ready {
-            preview: manage_preview(&selection, &loaded.observed, &additions, canonical_payload)?,
+            preview: manage_preview(
+                &selection,
+                &loaded.observed,
+                &additions,
+                original_payload,
+                &loaded.library_candidates,
+            )?,
         })
     }
 
@@ -397,7 +497,21 @@ where
         context: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<LoadedManageSelection, AppError> {
-        load_observed_agent_selection(&self.observer, &self.targets, context, skill_name).await
+        let facts = self.facts.snapshot(context).await?;
+        let catalog = crate::application::agent_selection::build_agent_selection_catalog(
+            context,
+            &facts.agent_runtime,
+            &facts.eve_targets,
+            &facts.resolved_context.skill_root,
+            &self.targets,
+        )
+        .await?;
+        let observed = self
+            .observer
+            .observe(context, skill_name, &facts, &catalog)
+            .await?;
+        let library_candidates = self.library_candidates(context, skill_name).await?;
+        build_observed_agent_selection(skill_name, catalog, facts, observed, &library_candidates)
     }
 
     fn resolve_requested_selection(
@@ -412,12 +526,15 @@ where
             selected_option_ids: actionable_option_ids,
             requested_mode: submission.requested_mode.clone(),
         };
-        let resolved =
-            match resolve_agent_selection_submission(&loaded.catalog, &actionable_submission)? {
-                AgentSelectionResolution::Ready(selection) => selection,
-                AgentSelectionResolution::Stale => return Ok(None),
-            };
-        let add_plan = resolved.entry_plan(false);
+        let resolved = match resolve_agent_selection_submission_for_snapshot(
+            &loaded.catalog,
+            &loaded.public.selection,
+            &actionable_submission,
+        )? {
+            AgentSelectionResolution::Ready(selection) => selection,
+            AgentSelectionResolution::Stale => return Ok(None),
+        };
+        let add_options = resolved.selected_options().to_vec();
         let add = resolved
             .intents
             .into_iter()
@@ -439,7 +556,7 @@ where
             context: loaded.observed.facts.resolved_context.context.clone(),
             skill_name: loaded.skill_name.clone(),
             add,
-            add_plan,
+            add_options,
             remove_entry_ids,
             requested_mode: submission.requested_mode.clone(),
         }))
@@ -459,22 +576,21 @@ where
         let selection = self
             .resolve_requested_selection(&loaded, &request.agent_selection)?
             .ok_or(AppError::StaleTarget)?;
-        let snapshot = loaded.observed;
+        let catalog = loaded.catalog;
+        let observed = loaded.observed;
+        let library_candidates = loaded.library_candidates;
         validate_manage_execution(
             &selection.add,
             &selection.remove_entry_ids,
             request.confirm_entity_directories,
-            &snapshot
+            &observed
                 .entries
                 .iter()
                 .map(|entry| entry.public.clone())
                 .collect::<Vec<_>>(),
         )?;
         let additions = self.resolve_additions(&selection).await?;
-        let canonical_lease = match (
-            &request.canonical_payload,
-            selection.add_plan.required_agent_roots.is_empty(),
-        ) {
+        let canonical_lease = match (&request.original_payload, selection.add_options.is_empty()) {
             (None, true) => None,
             (Some(handle), false)
                 if same_environment_identity(&handle.environment, &request.context.environment) =>
@@ -485,18 +601,20 @@ where
         };
         let actual_preview = manage_preview(
             &selection,
-            &snapshot,
+            &observed,
             &additions,
-            request.canonical_payload.clone(),
+            request.original_payload.clone(),
+            &library_candidates,
         )?;
         validate_exact_preview(&request.token, &actual_preview.token)?;
-        let execution = ResolvedManageExecution { selection };
+        let execution = ResolvedManageExecution { selection, catalog };
         let plan = build_manage_plan(
             &execution,
-            snapshot,
+            observed,
             additions,
             canonical_lease,
             &self.payloads,
+            &library_candidates,
         )
         .await?;
         Ok(ManageAgentsResponse {
@@ -508,15 +626,14 @@ where
         &self,
         request: &ResolvedManageSelection,
     ) -> Result<ResolvedAdditions, AppError> {
-        let plan = request.add_plan.clone();
+        let options = request.add_options.clone();
         let install_dir_name =
             crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
                 &request.skill_name,
             )?;
-        let destinations = plan
-            .required_agent_roots
+        let destinations = options
             .iter()
-            .map(|target| join_entry(&target.root, &install_dir_name))
+            .map(|option| option.placement.root.join_child(&install_dir_name))
             .collect::<Vec<_>>();
         let facts = if destinations.is_empty() {
             Vec::new()
@@ -528,97 +645,133 @@ where
         if facts.len() != destinations.len() {
             return Err(AppError::StaleTarget);
         }
-        Ok(ResolvedAdditions { plan, facts })
+        Ok(ResolvedAdditions { options, facts })
+    }
+
+    async fn library_candidates(
+        &self,
+        context: &SkillLocationRef,
+        skill_name: &str,
+    ) -> Result<LibraryCandidateSnapshot, AppError> {
+        let skill = SkillDirectoryName::try_from(skill_name)?;
+        self.library_candidates
+            .load_candidates(context, &skill)
+            .await
     }
 }
 
-pub(crate) async fn load_observed_agent_selection<F, T>(
-    observer: &SkillEntryObserver<F, T>,
-    targets: &T,
-    context: &SkillLocationRef,
-    skill_name: &str,
-) -> Result<LoadedManageSelection, AppError>
-where
-    F: InstallPlanningFactSource,
-    T: TargetFactResolver + Clone,
-{
-    let observed = observer.observe(context, skill_name).await?;
-    build_observed_agent_selection(targets, context, skill_name, observed).await
+fn manage_observed_version(
+    fact: &ResolvedTargetFact,
+    observed: &ObservedVersion,
+) -> ManageObservedVersion {
+    match (fact.entry_kind, observed) {
+        (TargetEntryKind::Missing, _) => ManageObservedVersion::Missing,
+        (TargetEntryKind::Directory, _) => ManageObservedVersion::Direct,
+        (TargetEntryKind::Symlink | TargetEntryKind::Junction, ObservedVersion::Library(_)) => {
+            ManageObservedVersion::Library
+        }
+        (TargetEntryKind::Symlink | TargetEntryKind::Junction, _) => ManageObservedVersion::Direct,
+        (TargetEntryKind::BrokenLink, ObservedVersion::Library(_)) => {
+            ManageObservedVersion::BrokenLibrary
+        }
+        (TargetEntryKind::BrokenLink, ObservedVersion::Direct) => {
+            ManageObservedVersion::BrokenDirect
+        }
+        (TargetEntryKind::BrokenLink, ObservedVersion::Unknown) => {
+            ManageObservedVersion::BrokenUnknown
+        }
+        (TargetEntryKind::File | TargetEntryKind::Other, _) => ManageObservedVersion::External,
+    }
 }
 
-pub(crate) async fn load_observed_agent_selection_for_copy<F, T>(
-    observer: &SkillEntryObserver<F, T>,
-    targets: &T,
-    context: &SkillLocationRef,
+fn build_observed_agent_selection(
     skill_name: &str,
-) -> Result<LoadedManageSelection, AppError>
-where
-    F: InstallPlanningFactSource,
-    T: TargetFactResolver + Clone,
-{
-    let observed = observer
-        .observe_for_copy_source(context, skill_name)
-        .await?;
-    build_observed_agent_selection(targets, context, skill_name, observed).await
-}
-
-async fn build_observed_agent_selection<T>(
-    targets: &T,
-    context: &SkillLocationRef,
-    skill_name: &str,
-    observed: ObservedSkillSnapshot,
-) -> Result<LoadedManageSelection, AppError>
-where
-    T: TargetFactResolver + Clone,
-{
-    let mut catalog = build_agent_selection_catalog(
-        context,
-        &observed.facts.agent_runtime,
-        &observed.facts.eve_targets,
-        targets,
-    )
-    .await?;
+    catalog: crate::application::agent_selection::AgentSelectionCatalog,
+    facts: ScopePlanningSnapshot,
+    observed: ResolvedScopeSkillPlacements,
+    library_candidates: &LibraryCandidateSnapshot,
+) -> Result<LoadedManageSelection, AppError> {
+    let scope_plan = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+        skill: SkillDirectoryName::try_from(skill_name)?,
+        catalog: &catalog,
+        placements: observed.placements.clone(),
+        libraries: LibraryElectionState {
+            candidates: library_candidates.candidates(),
+            selected_agent_ids: library_candidates.selected_agent_ids(),
+        },
+        direct_changes: BTreeMap::new(),
+    })
+    .map_err(|error| error.into_app_error())?;
+    let library_target_ids = LibraryAgentPlacementMap::from_catalog(&catalog)
+        .placements_for(library_candidates.selected_agent_ids())
+        .map_err(|error| match error {
+            crate::application::library_agent_placements::LibraryAgentPlacementError::UnknownAgent(
+                agent,
+            ) => AppError::InvalidAgent {
+                agent: agent.as_str().to_string(),
+            },
+            crate::application::library_agent_placements::LibraryAgentPlacementError::PartialSelection(
+                _,
+            ) => AppError::AgentSelectionInvalid {
+                reason: AgentSelectionInvalidReason::OptionUnavailable,
+            },
+        })?;
     let option_ids = catalog
-        .snapshot
+        .snapshot()
         .install_options
         .iter()
         .map(|option| option.id.clone())
         .collect::<Vec<_>>();
-    let destinations = option_ids
+    let option_facts = option_ids
         .iter()
         .map(|option_id| {
-            let option = catalog
-                .resolved_options
-                .get(option_id)
-                .expect("catalog option has an internal target");
-            join_entry(&option.root, &observed.resolved.install_dir_name)
+            observed
+                .placements
+                .facts()
+                .get(
+                    &crate::application::agent_selection::DirectoryPlacementId::Option(
+                        option_id.clone(),
+                    ),
+                )
+                .cloned()
+                .ok_or(AppError::StaleTarget)
         })
-        .collect::<Vec<_>>();
-    let option_facts = if destinations.is_empty() {
-        Vec::new()
-    } else {
-        targets.resolve(context, &destinations, None).await?
-    };
-    if option_facts.len() != option_ids.len() {
-        return Err(AppError::StaleTarget);
-    }
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let observed_by_key = observed
-        .entries
+    let entries = scope_plan
+        .project_observed_entries()
+        .map_err(|error| error.into_app_error())?;
+    let observed_by_key = entries
         .iter()
         .map(|entry| (&entry.fact.key, &entry.public.entry_id))
         .collect::<BTreeMap<_, _>>();
     let mut states = Vec::with_capacity(option_ids.len());
     let mut observed_entry_ids = BTreeMap::new();
     for (option_id, fact) in option_ids.into_iter().zip(option_facts) {
-        let placement_conflict = catalog
-            .resolved_options
-            .get(&option_id)
-            .is_some_and(|option| {
-                option.public.disabled_reason
-                    == Some(AgentSelectionDisabledReason::PlacementConflict)
-            });
-        let state = manage_option_state(&option_id, &fact, &observed.canonical, placement_conflict);
+        let placement_conflict = catalog.option(&option_id).is_some_and(|option| {
+            option.public.disabled_reason == Some(AgentSelectionDisabledReason::PlacementConflict)
+        });
+        let placement_id =
+            crate::application::agent_selection::DirectoryPlacementId::Option(option_id.clone());
+        let library_target = !library_candidates.candidates().ordered().is_empty()
+            && library_target_ids.contains(&placement_id);
+        let directory = scope_plan
+            .directories()
+            .iter()
+            .find(|directory| {
+                directory
+                    .placements()
+                    .contains(&DirectoryPlacementRef::Catalog(placement_id.clone()))
+            })
+            .ok_or(AppError::StaleTarget)?;
+        let observed_source = manage_observed_version(&fact, directory.observed());
+        let state = manage_option_state(
+            &option_id,
+            &fact,
+            observed_source,
+            library_target,
+            placement_conflict,
+        );
         if state.initial_selected {
             if let Some(entry_id) = observed_by_key.get(&fact.key) {
                 observed_entry_ids.insert(option_id.clone(), (*entry_id).clone());
@@ -626,14 +779,14 @@ where
         }
         states.push(state);
     }
-    catalog.snapshot.initial_selected_option_ids = states
+    let initial_selected_option_ids = states
         .iter()
         .filter(|state| state.initial_selected)
         .map(|state| state.option_id.clone())
         .collect();
-    catalog.snapshot.revision = AgentSelectionRevision(stable_digest(&(
+    let revision = AgentSelectionRevision(stable_digest(&(
         "manage-agent-selection-revision-v1",
-        &catalog.snapshot.revision,
+        &catalog.snapshot().revision,
         states
             .iter()
             .map(|state| {
@@ -649,7 +802,7 @@ where
             })
             .collect::<Vec<_>>(),
     ))?);
-    catalog.snapshot.user_mode_option_ids = states
+    let user_mode_option_ids = states
         .iter()
         .filter(|state| {
             matches!(
@@ -659,8 +812,7 @@ where
         })
         .filter_map(|state| {
             catalog
-                .resolved_options
-                .get(&state.option_id)
+                .option(&state.option_id)
                 .filter(|option| {
                     option.public.selectable
                         && option.public.mode_constraint
@@ -669,35 +821,55 @@ where
                 .map(|_| state.option_id.clone())
         })
         .collect();
+    let mut selection = catalog.snapshot().clone();
+    selection.initial_selected_option_ids = initial_selected_option_ids;
+    selection.revision = revision;
+    selection.user_mode_option_ids = user_mode_option_ids;
 
     Ok(LoadedManageSelection {
         skill_name: skill_name.to_string(),
         public: ManageAgentSelectionSnapshot {
-            selection: catalog.snapshot.clone(),
+            selection,
             option_states: states,
         },
         catalog,
-        observed,
+        observed: ManageObservedState {
+            facts,
+            plan: scope_plan,
+            entries,
+            placements: observed,
+        },
         observed_entry_ids,
+        library_candidates: library_candidates.clone(),
     })
 }
 
 struct ResolvedAdditions {
-    plan: AgentEntryPlan,
+    options: Vec<ResolvedAgentInstallOption>,
     facts: Vec<ResolvedTargetFact>,
 }
 
 fn manage_preview(
     request: &ResolvedManageSelection,
-    snapshot: &ObservedSkillSnapshot,
+    observed: &ManageObservedState,
     additions: &ResolvedAdditions,
-    canonical_payload: Option<AcquiredPayloadHandle>,
+    original_payload: Option<AcquiredPayloadHandle>,
+    library_candidates: &LibraryCandidateSnapshot,
 ) -> Result<ManageAgentsPreview, AppError> {
+    let facts = &observed.facts;
+    let plan = &observed.plan;
+    let observed_entries = &observed.entries;
+    let snapshot = &observed.placements;
     let observed_state_digest = stable_digest(&(
-        &snapshot.canonical.key,
-        &snapshot.canonical.fingerprint,
-        snapshot
-            .entries
+        &plan
+            .standard_fact()
+            .map_err(|error| error.into_app_error())?
+            .key,
+        &plan
+            .standard_fact()
+            .map_err(|error| error.into_app_error())?
+            .fingerprint,
+        observed_entries
             .iter()
             .map(|entry| (&entry.public.entry_id, &entry.fact.fingerprint))
             .collect::<Vec<_>>(),
@@ -706,34 +878,47 @@ fn manage_preview(
             .iter()
             .map(|fact| (&fact.key, &fact.fingerprint))
             .collect::<Vec<_>>(),
-        canonical_payload
+        original_payload
             .as_ref()
             .map(|handle| (&handle.payload_id, &handle.manifest_hash)),
-        snapshot
-            .facts
+        facts
             .lock_document
             .entry_snapshot(&snapshot.resolved.lock_key)
             .value()
             .cloned(),
+        library_candidates.evidence_digest(),
+        library_candidates.selected_agent_ids(),
+        library_candidates
+            .candidates()
+            .recognized()
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.library_id(),
+                    candidate.member_name(),
+                    candidate.locator(),
+                )
+            })
+            .collect::<Vec<_>>(),
     ))?;
     let token = issue_preview_token(PreviewTokenDraft {
         kind: MutationKind::ManageAgents,
         request,
-        revisions: snapshot.facts.revisions.clone(),
+        revisions: facts.revisions.clone(),
         observed_state_digest,
-        planner_contract_version: 1,
+        planner_contract_version: 3,
     })?;
     Ok(ManageAgentsPreview {
         token,
         context: request.context.clone(),
         skill_name: request.skill_name.clone(),
-        canonical_payload,
-        confirmation: snapshot
-            .entries
+        original_payload,
+        confirmation: observed_entries
             .iter()
             .filter(|entry| request.remove_entry_ids.contains(&entry.public.entry_id))
             .any(|entry| {
-                entry.public.kind == crate::application::remove::ObservedEntryKind::Directory
+                entry.public.kind
+                    == crate::application::skill_entry_projection::ObservedEntryKind::Directory
             })
             .then_some(ManageAgentsConfirmation {
                 removes_entity_directories: true,
@@ -743,42 +928,32 @@ fn manage_preview(
 
 async fn build_manage_plan(
     request: &ResolvedManageExecution,
-    snapshot: ObservedSkillSnapshot,
+    observed: ManageObservedState,
     additions: ResolvedAdditions,
     canonical_lease: Option<PinnedPayloadLease>,
     payload_manager: &PayloadSessionManager,
+    library_candidates: &LibraryCandidateSnapshot,
 ) -> Result<MutationPlan, AppError> {
-    let selected = request
+    let ManageObservedState {
+        facts,
+        entries: observed_entries,
+        placements: snapshot,
+        ..
+    } = observed;
+    let selected_removals = request
         .selection
         .remove_entry_ids
         .iter()
         .collect::<BTreeSet<_>>();
-    let mut mutations = snapshot
-        .entries
-        .iter()
-        .filter(|entry| selected.contains(&entry.public.entry_id))
-        .map(|entry| PreparedEntryMutation {
-            key: entry.fact.key.clone(),
-            destination: entry.fact.destination.clone(),
-            action: PreparedEntryAction::Remove,
-            owner_agent_ids: entry
-                .public
-                .owners
-                .iter()
-                .map(|owner| owner.agent_id.clone())
-                .collect(),
-        })
-        .collect::<Vec<_>>();
     let mut payloads = Vec::new();
-    let mut canonical_payload_id = None;
+    let mut original_payload_id = None;
     let mut eve_payload_id = None;
     if let Some(canonical) = canonical_lease {
-        canonical_payload_id = Some(canonical.manifest().payload_id().clone());
+        original_payload_id = Some(canonical.manifest().payload_id().clone());
         if additions
-            .plan
-            .required_agent_roots
+            .options
             .iter()
-            .any(|target| target.content.uses_eve_payload())
+            .any(|option| option.placement.content.uses_eve_payload())
         {
             let derived =
                 crate::core::eve::derive_eve_skill_payload(&canonical.load_payload().await?)?;
@@ -790,55 +965,70 @@ async fn build_manage_plan(
         }
         payloads.push(canonical);
     }
-    for (target, fact) in additions
-        .plan
-        .required_agent_roots
+    let mut prepared_by_key = BTreeMap::new();
+    for (option, fact) in additions.options.iter().zip(&additions.facts) {
+        let eve = option.placement.content.uses_eve_payload();
+        let payload_id = if eve {
+            eve_payload_id.clone().ok_or(AppError::StalePayload)?
+        } else {
+            original_payload_id.clone().ok_or(AppError::StalePayload)?
+        };
+        prepared_by_key.insert(
+            fact.key.clone(),
+            PreparedDirectVersion::new(
+                DirectContentIdentity::Payload(payload_id.clone()),
+                PreparedEntryAction::Replace {
+                    payload_id,
+                    requested_mode: if eve {
+                        InstallMode::Copy
+                    } else {
+                        request.selection.requested_mode.clone()
+                    },
+                },
+            ),
+        );
+    }
+    let snapshot_entries = observed_entries
         .iter()
-        .zip(&additions.facts)
-    {
-        let eve = target.content.uses_eve_payload();
-        mutations.push(PreparedEntryMutation {
-            key: fact.key.clone(),
-            destination: fact.destination.clone(),
-            action: PreparedEntryAction::Replace {
-                payload_id: if eve {
-                    eve_payload_id.clone().ok_or(AppError::StalePayload)?
+        .map(|entry| (entry.fact.key.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let mut direct_changes = BTreeMap::new();
+    for (placement_id, fact) in snapshot.placements.facts() {
+        let selected_for_removal = snapshot_entries
+            .get(&fact.key)
+            .is_some_and(|entry| selected_removals.contains(&entry.public.entry_id));
+        let change = prepared_by_key
+            .get(&fact.key)
+            .cloned()
+            .map(DirectPlacementChange::Set)
+            .unwrap_or_else(|| {
+                if selected_for_removal {
+                    DirectPlacementChange::Clear
                 } else {
-                    canonical_payload_id.clone().ok_or(AppError::StalePayload)?
-                },
-                requested_mode: if eve {
-                    InstallMode::Copy
-                } else {
-                    request.selection.requested_mode.clone()
-                },
-            },
-            owner_agent_ids: target.owner_agent_ids.clone(),
-        });
+                    DirectPlacementChange::Preserve
+                }
+            });
+        direct_changes.insert(placement_id.clone(), change);
     }
-    let required_agent_entries = group_physical_mutations(mutations)?;
-    if required_agent_entries.is_empty() {
-        return Err(AppError::Validation {
-            field: Some("selection".to_string()),
-            message: "selection does not change a physical Agent entry".to_string(),
-        });
-    }
-    let canonical_entry =
-        (!additions.plan.required_agent_roots.is_empty()).then(|| PreparedEntryMutation {
-            key: snapshot.canonical.key.clone(),
-            destination: snapshot.canonical.destination.clone(),
-            action: PreparedEntryAction::Keep,
-            owner_agent_ids: additions.plan.canonical_owner_agent_ids.clone(),
-        });
-    let lock_mutation = manage_lock_mutation(&request.selection, &snapshot, &additions)?;
-    let expected_targets = std::iter::once(&snapshot.canonical)
-        .chain(snapshot.entries.iter().map(|entry| &entry.fact))
-        .chain(additions.facts.iter())
-        .map(|fact| ExpectedTargetEntry {
-            key: fact.key.clone(),
-            fingerprint: fact.fingerprint.clone(),
-            expected_content_manifest_hash: None,
-        })
-        .collect();
+    let scope_plan = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+        skill: SkillDirectoryName::try_from(request.selection.skill_name.as_str())?,
+        catalog: &request.catalog,
+        placements: snapshot.placements.clone(),
+        libraries: LibraryElectionState {
+            candidates: library_candidates.candidates(),
+            selected_agent_ids: library_candidates.selected_agent_ids(),
+        },
+        direct_changes,
+    })
+    .map_err(|error| error.into_app_error())?;
+    let entries = scope_plan.compile_entries();
+    let lock_mutation = manage_lock_mutation(
+        &request.selection,
+        &facts,
+        &observed_entries,
+        &snapshot.resolved,
+        &additions,
+    )?;
     Ok(assemble_plan(MutationPlanDraft {
         kind: MutationKind::ManageAgents,
         payloads: payloads
@@ -850,12 +1040,8 @@ async fn build_manage_plan(
             skill_name: request.selection.skill_name.clone(),
             source: None,
             target: request.selection.context.clone(),
-            expected_revisions: snapshot.facts.revisions,
-            entries: PreparedMutationEntries {
-                canonical: canonical_entry,
-                required_agents: required_agent_entries,
-                expected_targets,
-            },
+            expected_revisions: facts.revisions,
+            entries,
             lock_mutation,
         }],
     }))
@@ -863,21 +1049,22 @@ async fn build_manage_plan(
 
 fn manage_lock_mutation(
     request: &ResolvedManageSelection,
-    snapshot: &ObservedSkillSnapshot,
+    facts: &ScopePlanningSnapshot,
+    observed_entries: &[crate::application::skill_entry_projection::ObservedPlannedEntry],
+    resolved: &crate::application::installed_skill_resolver::ResolvedInstalledSkill,
     additions: &ResolvedAdditions,
 ) -> Result<Option<PreparedLockMutation>, AppError> {
     let selected = request.remove_entry_ids.iter().collect::<BTreeSet<_>>();
-    let removes_eve = snapshot.entries.iter().any(|entry| {
+    let removes_eve = observed_entries.iter().any(|entry| {
         selected.contains(&entry.public.entry_id)
-            && entry.public.owners.iter().any(|owner| {
-                crate::core::eve::parse_eve_target_id(&owner.logical_target_id).is_some()
+            && entry.public.readers.iter().any(|reader| {
+                crate::core::eve::parse_eve_target_id(&reader.logical_target_id).is_some()
             })
     });
     let adds_eve = additions
-        .plan
-        .required_agent_roots
+        .options
         .iter()
-        .any(|target| target.content.uses_eve_payload());
+        .any(|option| option.placement.content.uses_eve_payload());
     if !removes_eve && !adds_eve {
         return Ok(None);
     }
@@ -890,34 +1077,27 @@ fn manage_lock_mutation(
             message: "Eve targets require Project Context".to_string(),
         });
     }
-    let mut subagents = snapshot
-        .entries
+    let mut subagents = observed_entries
         .iter()
         .filter(|entry| !selected.contains(&entry.public.entry_id))
-        .flat_map(|entry| entry.public.owners.iter())
-        .filter_map(|owner| crate::core::eve::parse_eve_target_id(&owner.logical_target_id))
+        .flat_map(|entry| entry.public.readers.iter())
+        .filter_map(|reader| crate::core::eve::parse_eve_target_id(&reader.logical_target_id))
         .map(|target| match target {
             crate::core::eve::EveTargetRef::Root => String::new(),
             crate::core::eve::EveTargetRef::Subagent(subagent) => subagent.to_string(),
         })
         .collect::<BTreeSet<_>>();
-    subagents.extend(
-        additions
-            .plan
-            .required_agent_roots
-            .iter()
-            .filter_map(|target| {
-                target
-                    .content
-                    .eve_subagent()
-                    .map(crate::core::eve::lock_subagent_value)
-            }),
-    );
+    subagents.extend(additions.options.iter().filter_map(|option| {
+        option
+            .placement
+            .content
+            .eve_subagent()
+            .map(crate::core::eve::lock_subagent_value)
+    }));
     let Some(replacement) = eve_lock_replacement(
-        snapshot
-            .facts
+        facts
             .lock_document
-            .entry_snapshot(&snapshot.resolved.lock_key)
+            .entry_snapshot(&resolved.lock_key)
             .value()
             .cloned(),
         &subagents,
@@ -926,28 +1106,25 @@ fn manage_lock_mutation(
         return Ok(None);
     };
     Ok(Some(PreparedLockMutation {
-        target: snapshot.facts.resolved_context.lock.clone(),
+        target: facts.resolved_context.lock.clone(),
         legacy_target: None,
-        schema: snapshot.facts.lock_schema,
-        entry: if snapshot.resolved.requires_lock_key_migration() {
+        schema: facts.lock_schema,
+        entry: if resolved.requires_lock_key_migration() {
             LockEntryMutation::MoveAndReplace {
-                from: snapshot.resolved.lock_key.clone(),
-                to: snapshot.resolved.skill_name.clone(),
+                from: resolved.lock_key.clone(),
+                to: resolved.skill_name.clone(),
                 replacement,
             }
         } else {
             LockEntryMutation::Replace {
-                key: snapshot.resolved.lock_key.clone(),
+                key: resolved.lock_key.clone(),
                 replacement,
             }
         },
         root_replacements: BTreeMap::new(),
         expected: LockExpectedState::capture(
-            &snapshot.facts.lock_document,
-            [
-                snapshot.resolved.lock_key.as_str(),
-                snapshot.resolved.skill_name.as_str(),
-            ],
+            &facts.lock_document,
+            [resolved.lock_key.as_str(), resolved.skill_name.as_str()],
             std::iter::empty::<&str>(),
         ),
     }))
@@ -1011,7 +1188,8 @@ pub fn validate_manage_execution(
     let mut removes_directory = false;
     for id in remove_entry_ids {
         let entry = available.get(id).ok_or(AppError::StaleTarget)?;
-        removes_directory |= entry.kind == crate::application::remove::ObservedEntryKind::Directory;
+        removes_directory |=
+            entry.kind == crate::application::skill_entry_projection::ObservedEntryKind::Directory;
     }
     if removes_directory && !confirm_entity_directories {
         return Err(AppError::Validation {
@@ -1027,7 +1205,95 @@ mod tests {
     use super::*;
     use crate::application::agent_intent::AgentWriteIntent;
     use crate::core::agent_definition::AgentId;
-    use crate::environment::runtime::ObservedEntryId;
+    use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
+    use crate::environment::runtime::{
+        EntryFingerprint, ExecutionBackend, ObservedEntryId, PhysicalParentIdentity,
+        PhysicalTargetKey,
+    };
+    use crate::environment::types::{EnvironmentRef, ResourceLocator, StorageAccess};
+
+    #[test]
+    fn library_link_is_available_without_being_a_direct_agent_association() {
+        let option_id = AgentInstallOptionId("private-agent".to_string());
+        let library_link = manage_target_fact(
+            "private-agent",
+            "/agents/private/skills/demo",
+            TargetEntryKind::Symlink,
+            Some("/libraries/lib-one/skills/demo"),
+        );
+
+        let candidates = library_candidates(
+            &["/libraries/lib-one/skills/demo"],
+            &["/libraries/lib-one/skills/demo"],
+        );
+        let observed = manage_observed_version(
+            &library_link,
+            &ObservedVersion::Library(candidates.candidates().recognized()[0].clone()),
+        );
+        let state = manage_option_state(&option_id, &library_link, observed, true, false);
+        let serialized = serde_json::to_value(state).unwrap();
+
+        assert_eq!(serialized["currentEntry"], "link");
+        assert_eq!(serialized["currentVersion"], "library");
+        assert_eq!(serialized["initialSelected"], false);
+        assert_eq!(serialized["allowedResults"], "both");
+        assert_eq!(serialized["selectedEffect"], "add");
+        assert_eq!(serialized["unselectedEffect"], "keepAbsent");
+        assert_eq!(serialized["disabledReason"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn valid_non_library_link_is_preserved_as_a_historical_direct_association() {
+        let option_id = AgentInstallOptionId("private-agent".to_string());
+        let historical_link = manage_target_fact(
+            "private-agent",
+            "/agents/private/skills/demo",
+            TargetEntryKind::Symlink,
+            Some("/legacy/direct/demo"),
+        );
+
+        let observed = manage_observed_version(&historical_link, &ObservedVersion::Direct);
+        let state = manage_option_state(&option_id, &historical_link, observed, true, false);
+
+        assert_eq!(state.current_entry, ManageCurrentEntry::Link);
+        assert_eq!(state.current_version, ManageCurrentVersion::Direct);
+        assert!(state.initial_selected);
+        assert_eq!(state.allowed_results, ManageAllowedResults::Both);
+        assert_eq!(state.selected_effect, Some(ManageSelectedEffect::Retain));
+        assert_eq!(
+            state.unselected_effect,
+            Some(ManageUnselectedEffect::RestoreLibrary)
+        );
+        assert_eq!(state.disabled_reason, None);
+    }
+
+    #[test]
+    fn broken_unknown_link_can_be_repaired_with_an_explicit_direct_target() {
+        let option_id = AgentInstallOptionId("private-agent".to_string());
+        let fact = manage_target_fact(
+            "private-agent",
+            "/agents/private/skills/demo",
+            TargetEntryKind::BrokenLink,
+            Some("/missing/unknown"),
+        );
+
+        let state = manage_option_state(
+            &option_id,
+            &fact,
+            ManageObservedVersion::BrokenUnknown,
+            true,
+            false,
+        );
+
+        assert!(!state.initial_selected);
+        assert_eq!(state.allowed_results, ManageAllowedResults::Both);
+        assert_eq!(state.selected_effect, Some(ManageSelectedEffect::Repair));
+        assert_eq!(
+            state.unselected_effect,
+            Some(ManageUnselectedEffect::RestoreLibrary)
+        );
+        assert_eq!(state.disabled_reason, None);
+    }
 
     #[test]
     fn eve_management_without_a_lock_entry_skips_lock_mutation() {
@@ -1065,17 +1331,19 @@ mod tests {
     #[test]
     fn removing_an_entity_directory_requires_confirmation() {
         let id = ObservedEntryId::parse("entry-v1-copy").unwrap();
-        let observed = vec![crate::application::remove::ObservedPhysicalEntry {
-            entry_id: id.clone(),
-            display_path: crate::environment::types::ResourceLocator {
-                environment: crate::environment::types::EnvironmentRef::Native,
-                native_path: "/agent/skills/demo".to_string(),
+        let observed = vec![
+            crate::application::skill_entry_projection::ObservedPhysicalEntry {
+                entry_id: id.clone(),
+                display_path: crate::environment::types::ResourceLocator {
+                    environment: crate::environment::types::EnvironmentRef::Native,
+                    native_path: "/agent/skills/demo".to_string(),
+                },
+                kind: crate::application::skill_entry_projection::ObservedEntryKind::Directory,
+                physical_target_key: "target-v1-copy".to_string(),
+                readers: Vec::new(),
+                will_break_if_standard_removed: false,
             },
-            kind: crate::application::remove::ObservedEntryKind::Directory,
-            physical_target_key: "target-v1-copy".to_string(),
-            owners: Vec::new(),
-            will_break_if_canonical_removed: false,
-        }];
+        ];
 
         assert!(validate_manage_execution(&[], &[id], false, &observed).is_err());
     }
@@ -1086,6 +1354,7 @@ mod tests {
         let state = ManageInstallOptionState {
             option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::Unrecognized,
+            current_version: ManageCurrentVersion::External,
             initial_selected: false,
             allowed_results: ManageAllowedResults::None,
             selected_effect: None,
@@ -1125,6 +1394,7 @@ mod tests {
             ManageInstallOptionState {
                 option_id: retained.clone(),
                 current_entry: ManageCurrentEntry::Link,
+                current_version: ManageCurrentVersion::Direct,
                 initial_selected: true,
                 allowed_results: ManageAllowedResults::Both,
                 selected_effect: Some(ManageSelectedEffect::Retain),
@@ -1134,6 +1404,7 @@ mod tests {
             ManageInstallOptionState {
                 option_id: added.clone(),
                 current_entry: ManageCurrentEntry::None,
+                current_version: ManageCurrentVersion::None,
                 initial_selected: false,
                 allowed_results: ManageAllowedResults::Both,
                 selected_effect: Some(ManageSelectedEffect::Add),
@@ -1151,5 +1422,69 @@ mod tests {
 
         assert_eq!(selected, BTreeSet::from([retained, added.clone()]));
         assert_eq!(actionable, vec![added]);
+    }
+
+    fn library_candidates(known: &[&str], ordered: &[&str]) -> LibraryCandidateSnapshot {
+        let recognized = known
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                crate::application::library_candidates::LibraryVersionCandidate::new(
+                    crate::application::skill_libraries::LibraryId::parse(format!("lib-{index}")),
+                    "demo",
+                    ResourceLocator {
+                        environment: EnvironmentRef::Native,
+                        native_path: (*path).to_string(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let ordered = ordered
+            .iter()
+            .map(|path| {
+                recognized
+                    .iter()
+                    .find(|candidate| candidate.locator().native_path == *path)
+                    .cloned()
+                    .unwrap()
+            })
+            .collect();
+        LibraryCandidateSnapshot::new(
+            "library-evidence-1",
+            Vec::new(),
+            crate::application::library_candidates::LibraryCandidateSet::new(recognized, ordered)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn manage_target_fact(
+        name: &str,
+        destination: &str,
+        entry_kind: TargetEntryKind,
+        link_target: Option<&str>,
+    ) -> ResolvedTargetFact {
+        let destination = ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: destination.to_string(),
+        };
+        ResolvedTargetFact {
+            key: PhysicalTargetKey {
+                backend: ExecutionBackend::NativeUnix,
+                physical_parent: PhysicalParentIdentity::Unix {
+                    device: 7,
+                    inode: if name == "canonical" { 11 } else { 12 },
+                },
+                normalized_final_child_name: name.to_string(),
+            },
+            link_target_identity: link_target.and_then(|raw| {
+                crate::environment::planning::resolve_link_target_identity(&destination, raw)
+            }),
+            destination,
+            storage_access: StorageAccess::Native,
+            fingerprint: EntryFingerprint(format!("entry-v1-{name}")),
+            entry_kind,
+            link_target: link_target.map(str::to_string),
+        }
     }
 }

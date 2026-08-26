@@ -10,22 +10,25 @@ use specta::Type;
 use crate::application::agent_intent::{AgentTargetFallbackPreview, AgentWriteIntent};
 use crate::application::agent_selection::{
     build_agent_selection_catalog, map_agent_intents_to_submission,
-    resolve_agent_selection_submission, AgentInstallOptionId, AgentSelectionModeConstraint,
-    AgentSelectionResolution, AgentSelectionSnapshot, AgentSelectionSubmission,
+    resolve_agent_selection_submission, resolve_agent_selection_submission_for_snapshot,
+    AgentInstallOptionId, AgentSelectionModeConstraint, AgentSelectionResolution,
+    AgentSelectionSnapshot, AgentSelectionSubmission, DirectoryPlacementId, SkillDirectoryAccess,
 };
-use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
-use crate::application::manage_agents::{
-    load_observed_agent_selection, load_observed_agent_selection_for_copy, ManageCurrentEntry,
-    ManageInstallOptionState,
-};
+use crate::application::installed_skill_payload::InstalledSkillPayloadAcquirer;
+use crate::application::installed_skill_resolver::SkillDirectoryName;
+#[cfg(test)]
+use crate::application::library_candidates::EmptyLibraryCandidateSource;
+#[cfg(test)]
+#[cfg(all(test, unix))]
+use crate::application::library_candidates::{LibraryCandidateSet, LibraryVersionCandidate};
+use crate::application::library_candidates::{LibraryCandidateSnapshot, LibraryCandidateSource};
 use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{
-    group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
-    PreparedEntryAction, PreparedEntryMutation, PreviewToken, RuntimeRevisions,
+    stable_digest, MutationPlan, PreparedEntryAction, PreviewToken, RuntimeRevisions,
 };
 use crate::application::mutation::planning::{
     assemble_plan, issue_preview_token, validate_exact_preview, MutationPlanDraft,
-    MutationUnitDraft, PreparedMutationEntries, PreviewTokenDraft,
+    MutationUnitDraft, PreviewTokenDraft,
 };
 use crate::application::mutation::result::{
     ErrorReport, MutationUnitResult, MutationUnitStatus, OperationErrorCode,
@@ -33,10 +36,15 @@ use crate::application::mutation::result::{
 use crate::application::payload_session::{
     AcquiredPayloadHandle, CopySourceSnapshot, PayloadSessionManager, PinnedPayloadLease,
 };
-use crate::application::skill_entries::{
-    join_entry, InstalledSkillPayloadAcquirer, SkillEntryObserver,
+use crate::application::planning_facts::{ScopePlanningSnapshot, ScopePlanningSnapshotSource};
+use crate::application::scope_skill_placements::{
+    ResolvedScopeSkillPlacements, ScopeSkillPlacementResolver,
 };
-use crate::application::workflow_planner::AgentEntryPlan;
+use crate::application::scope_skill_planning::{
+    DirectContentIdentity, DirectPlacementChange, DirectSkillChangeRequest, LibraryElectionState,
+    PreparedDirectVersion, ScopeSkillPlanner,
+};
+use crate::application::scope_skill_planning::{DirectoryPlacementRef, ObservedVersion};
 use crate::core::agent_definition::AgentId;
 use crate::core::mutation::{CancellationSignal, MutationKind};
 use crate::core::skill_payload::{validate_manifest_for_target, PayloadId, TargetPathProfile};
@@ -149,29 +157,30 @@ pub type CopyFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait CopyProjectComparator: Send + Sync {
     fn capture_source<'a>(
         &'a self,
-        source: &'a InstallPlanningFacts,
+        source: &'a ScopePlanningSnapshot,
     ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>>;
 
     fn compare<'a>(
         &'a self,
         source: &'a ResolvedTargetFact,
-        target: &'a InstallPlanningFacts,
+        target: &'a ScopePlanningSnapshot,
     ) -> CopyFuture<'a, Result<ProjectComparison, AppError>>;
 }
 
 pub struct CopyService<F, T, E, C> {
     facts: F,
     targets: T,
-    observer: SkillEntryObserver<F, T>,
+    observer: ScopeSkillPlacementResolver<T>,
     payloads: Arc<PayloadSessionManager>,
     acquirer: InstalledSkillPayloadAcquirer,
     executor: E,
     comparator: C,
+    library_candidates: Arc<dyn LibraryCandidateSource>,
 }
 
 impl<F, T, E, C> CopyService<F, T, E, C>
 where
-    F: InstallPlanningFactSource + Clone,
+    F: ScopePlanningSnapshotSource + Clone,
     T: TargetFactResolver + Clone,
     E: MutationPlanExecutor,
     C: CopyProjectComparator,
@@ -183,15 +192,17 @@ where
         acquirer: InstalledSkillPayloadAcquirer,
         executor: E,
         comparator: C,
+        library_candidates: Arc<dyn LibraryCandidateSource>,
     ) -> Self {
         Self {
-            observer: SkillEntryObserver::new(facts.clone(), targets.clone()),
+            observer: ScopeSkillPlacementResolver::new(targets.clone()),
             facts,
             targets,
             payloads,
             acquirer,
             executor,
             comparator,
+            library_candidates,
         }
     }
 
@@ -200,40 +211,33 @@ where
         source: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<CopyAgentSelectionSnapshot, AppError> {
-        let loaded = load_observed_agent_selection_for_copy(
-            &self.observer,
-            &self.targets,
-            source,
-            skill_name,
-        )
-        .await?;
+        let loaded = self.load_copy_source(source, skill_name).await?;
         Ok(CopyAgentSelectionSnapshot {
-            selection: copy_selection_snapshot(loaded.public.selection),
+            selection: copy_selection_snapshot(loaded.selection.clone()),
         })
     }
 
     pub async fn preview(&self, request: &CopyRequest) -> Result<CopyPreviewOutcome, AppError> {
         validate_copy_request(request)?;
-        let loaded = load_observed_agent_selection_for_copy(
-            &self.observer,
-            &self.targets,
-            &request.source,
-            &request.skill_name,
-        )
-        .await?;
+        let loaded = self
+            .load_copy_source(&request.source, &request.skill_name)
+            .await?;
         let source = &loaded.observed;
-        let source_selection =
-            match resolve_agent_selection_submission(&loaded.catalog, &request.agent_selection)? {
-                AgentSelectionResolution::Ready(selection) => selection,
-                AgentSelectionResolution::Stale => {
-                    return Ok(CopyPreviewOutcome::SelectionStale {
-                        snapshot: CopyAgentSelectionSnapshot {
-                            selection: copy_selection_snapshot(loaded.public.selection),
-                        },
-                    });
-                }
-            };
-        let source_lock_entry = source
+        let source_selection = match resolve_agent_selection_submission_for_snapshot(
+            &loaded.catalog,
+            &loaded.selection,
+            &request.agent_selection,
+        )? {
+            AgentSelectionResolution::Ready(selection) => selection,
+            AgentSelectionResolution::Stale => {
+                return Ok(CopyPreviewOutcome::SelectionStale {
+                    snapshot: CopyAgentSelectionSnapshot {
+                        selection: copy_selection_snapshot(loaded.selection.clone()),
+                    },
+                });
+            }
+        };
+        let source_lock_entry = loaded
             .facts
             .lock_document
             .entry_snapshot(&source.resolved.lock_key)
@@ -241,16 +245,27 @@ where
             .cloned();
         let handle = self
             .acquirer
-            .acquire(&request.source, &request.skill_name, &source.canonical)
+            .acquire(
+                &request.source,
+                &request.skill_name,
+                loaded
+                    .plan
+                    .standard_fact()
+                    .map_err(|error| error.into_app_error())?,
+            )
             .await?;
         let payload = self.payloads.pin_verified(&handle).await?;
         let source_snapshot = CopySourceSnapshot {
             source_context: request.source.clone(),
             skill_name: request.skill_name.clone(),
-            revisions: source.facts.revisions.clone(),
+            revisions: loaded.facts.revisions.clone(),
             lock_entry: source_lock_entry,
-            project_identity: self.comparator.capture_source(&source.facts).await?,
-            canonical_identity: source.canonical.clone(),
+            project_identity: self.comparator.capture_source(&loaded.facts).await?,
+            standard_identity: loaded
+                .plan
+                .standard_fact()
+                .map_err(|error| error.into_app_error())?
+                .clone(),
             agent_intents: source_selection.intents().to_vec(),
         };
         self.payloads
@@ -330,34 +345,33 @@ where
         request: &CopyRequest,
         expected_manifest_hash: &str,
     ) -> Result<(), AppError> {
-        let loaded = load_observed_agent_selection_for_copy(
-            &self.observer,
-            &self.targets,
-            &request.source,
-            &request.skill_name,
-        )
-        .await?;
-        let selection =
-            match resolve_agent_selection_submission(&loaded.catalog, &request.agent_selection)? {
-                AgentSelectionResolution::Ready(selection) => selection,
-                AgentSelectionResolution::Stale => return Err(AppError::StaleContext),
-            };
+        let loaded = self
+            .load_copy_source(&request.source, &request.skill_name)
+            .await?;
+        let selection = match resolve_agent_selection_submission_for_snapshot(
+            &loaded.catalog,
+            &loaded.selection,
+            &request.agent_selection,
+        )? {
+            AgentSelectionResolution::Ready(selection) => selection,
+            AgentSelectionResolution::Stale => return Err(AppError::StaleContext),
+        };
         let current = CopySourceSnapshot {
             source_context: request.source.clone(),
             skill_name: request.skill_name.clone(),
-            revisions: loaded.observed.facts.revisions.clone(),
+            revisions: loaded.facts.revisions.clone(),
             lock_entry: loaded
-                .observed
                 .facts
                 .lock_document
                 .entry_snapshot(&loaded.observed.resolved.lock_key)
                 .value()
                 .cloned(),
-            project_identity: self
-                .comparator
-                .capture_source(&loaded.observed.facts)
-                .await?,
-            canonical_identity: loaded.observed.canonical,
+            project_identity: self.comparator.capture_source(&loaded.facts).await?,
+            standard_identity: loaded
+                .plan
+                .standard_fact()
+                .map_err(|error| error.into_app_error())?
+                .clone(),
             agent_intents: selection.intents().to_vec(),
         };
 
@@ -370,7 +384,7 @@ where
         if snapshot.revisions.context != current.revisions.context
             || snapshot.lock_entry != current.lock_entry
             || snapshot.project_identity != current.project_identity
-            || snapshot.canonical_identity != current.canonical_identity
+            || snapshot.standard_identity != current.standard_identity
             || snapshot.agent_intents != current.agent_intents
         {
             return Err(AppError::StaleContext);
@@ -380,7 +394,7 @@ where
             .current_manifest_hash(
                 &request.source,
                 &request.skill_name,
-                &current.canonical_identity,
+                &current.standard_identity,
             )
             .await?;
         if current_manifest_hash != expected_manifest_hash {
@@ -389,59 +403,83 @@ where
         Ok(())
     }
 
+    async fn current_library_candidates(
+        &self,
+        context: &SkillLocationRef,
+        skill_name: &str,
+    ) -> Result<LibraryCandidateSnapshot, AppError> {
+        let skill = SkillDirectoryName::try_from(skill_name)?;
+        self.library_candidates
+            .load_candidates(context, &skill)
+            .await
+    }
+
+    async fn load_copy_source(
+        &self,
+        context: &SkillLocationRef,
+        skill_name: &str,
+    ) -> Result<LoadedCopySource, AppError> {
+        let facts = self.facts.copy_source_snapshot(context).await?;
+        let catalog = build_agent_selection_catalog(
+            context,
+            &facts.agent_runtime,
+            &facts.eve_targets,
+            &facts.resolved_context.skill_root,
+            &self.targets,
+        )
+        .await?;
+        let observed = self
+            .observer
+            .observe(context, skill_name, &facts, &catalog)
+            .await?;
+        let library_candidates = self.current_library_candidates(context, skill_name).await?;
+        let (option_states, plan) =
+            copy_observed_option_states(&catalog, &observed, &library_candidates)?;
+        let selection = copy_observed_selection(&catalog, &option_states, &library_candidates)?;
+        Ok(LoadedCopySource {
+            facts,
+            catalog,
+            selection,
+            plan,
+            observed,
+        })
+    }
+
     async fn build(
         &self,
         request: &CopyRequest,
         source_agent_intents: &[AgentWriteIntent],
         source: &CopySourceSnapshot,
-        canonical_payload: PinnedPayloadLease,
+        original_payload: PinnedPayloadLease,
         include_plan: bool,
     ) -> Result<BuiltCopy, AppError> {
         let source_lock_entry = source.lock_entry.as_ref();
         let mut targets = Vec::with_capacity(request.target_project_ids.len());
         let mut planning_failures = Vec::new();
-        let canonical = canonical_payload.load_payload().await?;
+        let canonical = original_payload.load_payload().await?;
         let mut needs_eve = false;
         for project_id in &request.target_project_ids {
             let context = project_context(&request.target_environment, project_id);
             let target = async {
-                let initial_facts = self.facts.current(&context).await?;
-                let canonical_destination =
-                    copy_target_canonical_destination(&initial_facts, &request.skill_name)?;
-                let canonical_facts = self
-                    .targets
-                    .resolve(&context, std::slice::from_ref(&canonical_destination), None)
+                let library_candidates = self
+                    .current_library_candidates(&context, &request.skill_name)
                     .await?;
-                let canonical_fact = canonical_facts.first().ok_or(AppError::StaleTarget)?;
-                let existing = if canonical_fact.entry_kind == TargetEntryKind::Missing {
-                    None
-                } else {
-                    Some(
-                        load_observed_agent_selection(
-                            &self.observer,
-                            &self.targets,
-                            &context,
-                            &request.skill_name,
-                        )
-                        .await?,
-                    )
-                };
-                let (facts, target_catalog, option_states) = if let Some(existing) = existing {
-                    (
-                        existing.observed.facts.clone(),
-                        existing.catalog,
-                        existing.public.option_states,
-                    )
-                } else {
-                    let catalog = build_agent_selection_catalog(
-                        &context,
-                        &initial_facts.agent_runtime,
-                        &initial_facts.eve_targets,
-                        &self.targets,
-                    )
+                let facts = self.facts.snapshot(&context).await?;
+                let catalog = build_agent_selection_catalog(
+                    &context,
+                    &facts.agent_runtime,
+                    &facts.eve_targets,
+                    &facts.resolved_context.skill_root,
+                    &self.targets,
+                )
+                .await?;
+                let observed = self
+                    .observer
+                    .observe(&context, &request.skill_name, &facts, &catalog)
                     .await?;
-                    (initial_facts, catalog, Vec::new())
-                };
+                let (option_states, _) =
+                    copy_observed_option_states(&catalog, &observed, &library_candidates)?;
+                let target_catalog = catalog;
                 let mut target_submission = map_agent_intents_to_submission(
                     &target_catalog,
                     source_agent_intents,
@@ -455,37 +493,32 @@ where
                 );
                 target_submission.selected_option_ids.sort();
                 target_submission.selected_option_ids.dedup();
+                let selected_option_ids = target_submission.selected_option_ids.clone();
                 let entry_modes = copy_entry_modes(
                     &target_catalog,
                     &option_states,
                     &target_submission.selected_option_ids,
                     &request.agent_selection.requested_mode,
                 );
-                let target_selection = match resolve_agent_selection_submission(
-                    &target_catalog,
-                    &target_submission,
-                )? {
-                    AgentSelectionResolution::Ready(selection) => selection,
+                match resolve_agent_selection_submission(&target_catalog, &target_submission)? {
+                    AgentSelectionResolution::Ready(_) => {}
                     AgentSelectionResolution::Stale => return Err(AppError::StaleTarget),
-                };
-                let agent_plan = target_selection.entry_plan(true);
-                let install_dir_name = crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
-                    &request.skill_name,
-                )?;
-                let destinations = std::iter::once(join_entry(
-                    &facts.resolved_context.skill_root,
-                    &install_dir_name,
-                ))
-                .chain(
-                    agent_plan
-                        .required_agent_roots
-                        .iter()
-                        .map(|target| join_entry(&target.root, &install_dir_name)),
-                )
-                .collect::<Vec<_>>();
-                let target_facts = self.targets.resolve(&context, &destinations, None).await?;
-                if target_facts.len() != destinations.len() {
-                    return Err(AppError::StaleTarget);
+                }
+                let mut target_facts = vec![observed
+                    .placements
+                    .facts()
+                    .get(&DirectoryPlacementId::Standard)
+                    .cloned()
+                    .ok_or(AppError::StaleTarget)?];
+                for option_id in &selected_option_ids {
+                    target_facts.push(
+                        observed
+                            .placements
+                            .facts()
+                            .get(&DirectoryPlacementId::Option(option_id.clone()))
+                            .cloned()
+                            .ok_or(AppError::StaleTarget)?,
+                    );
                 }
                 let comparison = self
                     .comparator
@@ -494,10 +527,13 @@ where
                 Ok::<BuiltCopyTarget, AppError>(BuiltCopyTarget {
                     context: context.clone(),
                     facts,
-                    agent_plan,
                     entry_modes,
                     target_facts,
                     comparison,
+                    library_candidates,
+                    catalog: target_catalog,
+                    observed,
+                    selected_option_ids,
                 })
             }
             .await;
@@ -512,10 +548,10 @@ where
                 }
                 Ok(target) => {
                     needs_eve |= target
-                        .agent_plan
-                        .required_agent_roots
+                        .selected_option_ids
                         .iter()
-                        .any(|entry| entry.target_id.starts_with("eve:"));
+                        .filter_map(|id| target.catalog.option(id))
+                        .any(|option| option.placement.content.uses_eve_payload());
                     targets.push(target);
                 }
                 Err(error) => planning_failures.push(CopyPlanningFailure { context, error }),
@@ -525,7 +561,7 @@ where
             let derived = crate::core::eve::derive_eve_skill_payload(&canonical)?;
             Some(
                 self.payloads
-                    .pin_derived_payload(&canonical_payload, "eve-copy", derived)
+                    .pin_derived_payload(&original_payload, "eve-copy", derived)
                     .await?,
             )
         } else {
@@ -533,13 +569,8 @@ where
         };
         let mut validated_targets = Vec::with_capacity(targets.len());
         for target in targets {
-            if let Err(error) = validate_copy_payload_targets(
-                &canonical,
-                eve_payload.as_ref(),
-                &target.agent_plan,
-                &target.target_facts,
-            )
-            .await
+            if let Err(error) =
+                validate_copy_payload_targets(&canonical, eve_payload.as_ref(), &target).await
             {
                 planning_failures.push(CopyPlanningFailure {
                     context: target.context,
@@ -549,14 +580,14 @@ where
                 validated_targets.push(target);
             }
         }
-        let computed_hash = canonical_payload.planning_metadata().computed_hash.clone();
+        let computed_hash = original_payload.planning_metadata().computed_hash.clone();
         let mut targets = Vec::with_capacity(validated_targets.len());
         let mut units = Vec::with_capacity(validated_targets.len());
         for target in validated_targets {
             match build_copy_unit(
                 request,
                 &target,
-                &canonical_payload,
+                &original_payload,
                 eve_payload.as_ref(),
                 source_lock_entry,
                 &computed_hash,
@@ -574,8 +605,8 @@ where
         let revisions = aggregate_copy_revisions(&source.revisions, &targets)?;
         let observed_state_digest = stable_digest(&(
             &request.skill_name,
-            &canonical_payload.manifest().payload_id(),
-            &canonical_payload.manifest().payload_root_hash,
+            &original_payload.manifest().payload_id(),
+            &original_payload.manifest().payload_root_hash,
             source_lock_entry,
             (
                 &source.project_identity.key,
@@ -592,6 +623,8 @@ where
                             .map(|fact| (&fact.key, &fact.fingerprint))
                             .collect::<Vec<_>>(),
                         target.comparison.physical_identity,
+                        target.library_candidates.evidence_digest(),
+                        target.library_candidates.selected_agent_ids(),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -605,7 +638,7 @@ where
             request,
             revisions,
             observed_state_digest,
-            planner_contract_version: 1,
+            planner_contract_version: 3,
         })?;
         let mut previews = targets
             .iter()
@@ -620,7 +653,7 @@ where
                 .unwrap_or(usize::MAX)
         });
         let plan = if include_plan {
-            let mut payloads = vec![canonical_payload];
+            let mut payloads = vec![original_payload];
             if let Some(eve) = eve_payload {
                 payloads.push(eve);
             }
@@ -644,18 +677,12 @@ where
     }
 }
 
-fn copy_target_canonical_destination(
-    facts: &InstallPlanningFacts,
-    skill_name: &str,
-) -> Result<ResourceLocator, AppError> {
-    let resolved = crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
-        skill_name,
-        &facts.lock_document,
-    )?;
-    Ok(join_entry(
-        &facts.resolved_context.skill_root,
-        &resolved.install_dir_name,
-    ))
+struct LoadedCopySource {
+    facts: ScopePlanningSnapshot,
+    catalog: crate::application::agent_selection::AgentSelectionCatalog,
+    selection: AgentSelectionSnapshot,
+    plan: crate::application::scope_skill_planning::ScopeSkillPlan,
+    observed: ResolvedScopeSkillPlacements,
 }
 
 struct BuiltCopy {
@@ -717,16 +744,19 @@ impl CopyPlanningFailure {
 
 struct BuiltCopyTarget {
     context: SkillLocationRef,
-    facts: InstallPlanningFacts,
-    agent_plan: AgentEntryPlan,
+    facts: ScopePlanningSnapshot,
     entry_modes: BTreeMap<String, InstallMode>,
     target_facts: Vec<ResolvedTargetFact>,
     comparison: ProjectComparison,
+    library_candidates: LibraryCandidateSnapshot,
+    catalog: crate::application::agent_selection::AgentSelectionCatalog,
+    observed: ResolvedScopeSkillPlacements,
+    selected_option_ids: Vec<AgentInstallOptionId>,
 }
 
 fn copy_entry_modes(
     catalog: &crate::application::agent_selection::AgentSelectionCatalog,
-    states: &[ManageInstallOptionState],
+    states: &[CopyObservedOptionState],
     selected_option_ids: &[AgentInstallOptionId],
     requested_mode: &InstallMode,
 ) -> BTreeMap<String, InstallMode> {
@@ -737,22 +767,133 @@ fn copy_entry_modes(
     selected_option_ids
         .iter()
         .filter_map(|option_id| {
-            let option = catalog.resolved_options.get(option_id)?;
+            let option = catalog.option(option_id)?;
             let mode = if option.public.mode_constraint
                 == crate::application::agent_selection::AgentSelectionModeConstraint::CopyOnly
             {
                 InstallMode::Copy
             } else {
                 match states_by_id.get(option_id).map(|state| state.current_entry) {
-                    Some(ManageCurrentEntry::Link | ManageCurrentEntry::BrokenLink) => {
-                        InstallMode::Symlink
-                    }
-                    Some(ManageCurrentEntry::Copy) => InstallMode::Copy,
+                    Some(CopyCurrentEntry::Link) => InstallMode::Symlink,
+                    Some(CopyCurrentEntry::Copy) => InstallMode::Copy,
                     _ => requested_mode.clone(),
                 }
             };
             Some((option.target_id(), mode))
         })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+enum CopyCurrentEntry {
+    Link,
+    Copy,
+}
+
+struct CopyObservedOptionState {
+    option_id: AgentInstallOptionId,
+    current_entry: CopyCurrentEntry,
+    initial_selected: bool,
+}
+
+fn copy_observed_option_states(
+    catalog: &crate::application::agent_selection::AgentSelectionCatalog,
+    observed: &ResolvedScopeSkillPlacements,
+    library_candidates: &LibraryCandidateSnapshot,
+) -> Result<
+    (
+        Vec<CopyObservedOptionState>,
+        crate::application::scope_skill_planning::ScopeSkillPlan,
+    ),
+    AppError,
+> {
+    let plan = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+        skill: SkillDirectoryName::try_from(observed.resolved.skill_name.as_str())?,
+        catalog,
+        placements: observed.placements.clone(),
+        libraries: LibraryElectionState {
+            candidates: library_candidates.candidates(),
+            selected_agent_ids: library_candidates.selected_agent_ids(),
+        },
+        direct_changes: BTreeMap::new(),
+    })
+    .map_err(|error| error.into_app_error())?;
+    let states = catalog
+        .options()
+        .filter_map(|option| {
+            let placement_id = DirectoryPlacementId::Option(option.public.id.clone());
+            let directory = plan.directories().iter().find(|directory| {
+                directory
+                    .placements()
+                    .contains(&DirectoryPlacementRef::Catalog(placement_id.clone()))
+            })?;
+            let fact = directory.fact();
+            let initial_selected = matches!(directory.observed(), ObservedVersion::Direct);
+            let current_entry = match fact.entry_kind {
+                TargetEntryKind::Directory => CopyCurrentEntry::Copy,
+                TargetEntryKind::Symlink
+                | TargetEntryKind::Junction
+                | TargetEntryKind::BrokenLink => CopyCurrentEntry::Link,
+                TargetEntryKind::Missing | TargetEntryKind::File | TargetEntryKind::Other => {
+                    return None;
+                }
+            };
+            Some(CopyObservedOptionState {
+                option_id: option.public.id.clone(),
+                current_entry,
+                initial_selected,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok((states, plan))
+}
+
+fn copy_observed_selection(
+    catalog: &crate::application::agent_selection::AgentSelectionCatalog,
+    states: &[CopyObservedOptionState],
+    library_candidates: &LibraryCandidateSnapshot,
+) -> Result<AgentSelectionSnapshot, AppError> {
+    let initial_selected_option_ids = states
+        .iter()
+        .filter(|state| state.initial_selected)
+        .map(|state| state.option_id.clone())
+        .collect();
+    let revision = crate::application::agent_selection::AgentSelectionRevision(stable_digest(&(
+        "copy-agent-selection-revision-v1",
+        &catalog.snapshot().revision,
+        library_candidates.evidence_digest(),
+        library_candidates.selected_agent_ids(),
+        states
+            .iter()
+            .map(|state| {
+                (
+                    &state.option_id,
+                    state.current_entry,
+                    state.initial_selected,
+                )
+            })
+            .collect::<Vec<_>>(),
+    ))?);
+    let mut snapshot = catalog.snapshot().clone();
+    snapshot.initial_selected_option_ids = initial_selected_option_ids;
+    snapshot.revision = revision;
+    Ok(snapshot)
+}
+
+fn standard_reader_agent_ids(
+    catalog: &crate::application::agent_selection::AgentSelectionCatalog,
+) -> Vec<AgentId> {
+    catalog
+        .snapshot()
+        .agents
+        .iter()
+        .filter(|agent| {
+            matches!(
+                agent.directory_access,
+                Some(SkillDirectoryAccess::StandardOnly | SkillDirectoryAccess::Both)
+            )
+        })
+        .map(|agent| agent.id.clone())
         .collect()
 }
 
@@ -863,22 +1004,22 @@ fn validate_copy_source_snapshot(
 async fn validate_copy_payload_targets(
     canonical: &crate::core::skill_payload::SkillPayload,
     eve_payload: Option<&PinnedPayloadLease>,
-    agent_plan: &AgentEntryPlan,
-    facts: &[ResolvedTargetFact],
+    target: &BuiltCopyTarget,
 ) -> Result<(), AppError> {
-    if facts.len() != 1 + agent_plan.required_agent_roots.len() {
+    if target.target_facts.len() != 1 + target.selected_option_ids.len() {
         return Err(AppError::StaleTarget);
     }
     let eve = match eve_payload {
         Some(payload) => Some(payload.load_payload().await?),
         None => None,
     };
-    for (index, fact) in facts.iter().enumerate() {
-        let payload = if index > 0
-            && agent_plan.required_agent_roots[index - 1]
-                .target_id
-                .starts_with("eve:")
-        {
+    for (index, fact) in target.target_facts.iter().enumerate() {
+        let eve_target = index > 0
+            && target
+                .catalog
+                .option(&target.selected_option_ids[index - 1])
+                .is_some_and(|option| option.placement.content.uses_eve_payload());
+        let payload = if eve_target {
             eve.as_ref().ok_or(AppError::StalePayload)?
         } else {
             canonical
@@ -902,15 +1043,15 @@ fn copy_target_preview(target: &BuiltCopyTarget) -> Result<CopyTargetPreview, Ap
         .as_ref()
         .ok_or(AppError::StaleContext)?;
     let mut agent_targets = Vec::new();
-    for agent_id in &target.agent_plan.canonical_owner_agent_ids {
+    for agent_id in standard_reader_agent_ids(&target.catalog) {
         let agent = target
             .facts
             .agent_runtime
             .agents
-            .get(agent_id)
+            .get(&agent_id)
             .ok_or(AppError::StaleRegistry)?;
         agent_targets.push(AgentTargetPreview {
-            agent_id: agent_id.clone(),
+            agent_id,
             target_id: "canonical".to_string(),
             display_path: target.target_facts[0].destination.clone(),
             own_directory_selected: false,
@@ -918,13 +1059,16 @@ fn copy_target_preview(target: &BuiltCopyTarget) -> Result<CopyTargetPreview, Ap
             blocking_reason: None,
         });
     }
-    for (logical, fact) in target
-        .agent_plan
-        .required_agent_roots
+    for (option_id, fact) in target
+        .selected_option_ids
         .iter()
         .zip(&target.target_facts[1..])
     {
-        for agent_id in &logical.owner_agent_ids {
+        let option = target
+            .catalog
+            .option(option_id)
+            .ok_or(AppError::StaleTarget)?;
+        for agent_id in &option.public.agent_ids {
             let agent = target
                 .facts
                 .agent_runtime
@@ -933,7 +1077,7 @@ fn copy_target_preview(target: &BuiltCopyTarget) -> Result<CopyTargetPreview, Ap
                 .ok_or(AppError::StaleRegistry)?;
             agent_targets.push(AgentTargetPreview {
                 agent_id: agent_id.clone(),
-                target_id: logical.target_id.clone(),
+                target_id: option.target_id(),
                 display_path: fact.destination.clone(),
                 own_directory_selected: true,
                 availability: agent.detection,
@@ -963,33 +1107,29 @@ fn copy_target_preview(target: &BuiltCopyTarget) -> Result<CopyTargetPreview, Ap
 fn build_copy_unit(
     request: &CopyRequest,
     target: &BuiltCopyTarget,
-    canonical_payload: &PinnedPayloadLease,
+    original_payload: &PinnedPayloadLease,
     eve_payload: Option<&PinnedPayloadLease>,
     source_lock_entry: Option<&Value>,
     computed_hash: &str,
 ) -> Result<MutationUnitDraft, AppError> {
-    let canonical_id = canonical_payload.manifest().payload_id().clone();
-    let canonical = PreparedEntryMutation {
-        key: target.target_facts[0].key.clone(),
-        destination: target.target_facts[0].destination.clone(),
-        action: PreparedEntryAction::Replace {
-            payload_id: canonical_id.clone(),
-            requested_mode: InstallMode::Copy,
-        },
-        owner_agent_ids: target.agent_plan.canonical_owner_agent_ids.clone(),
-    };
-    let required = target
-        .agent_plan
-        .required_agent_roots
+    let canonical_id = original_payload.manifest().payload_id().clone();
+    let selected = target
+        .selected_option_ids
         .iter()
-        .zip(&target.target_facts[1..])
-        .map(|(logical, fact)| {
-            let is_eve = logical.target_id.starts_with("eve:");
-            Ok(PreparedEntryMutation {
-                key: fact.key.clone(),
-                destination: fact.destination.clone(),
-                action: PreparedEntryAction::Replace {
-                    payload_id: if is_eve {
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut direct_changes = BTreeMap::new();
+    for placement_id in target.observed.placements.facts().keys() {
+        let prepared = match placement_id {
+            DirectoryPlacementId::Standard => Some((canonical_id.clone(), InstallMode::Copy)),
+            DirectoryPlacementId::Option(option_id) if selected.contains(option_id) => {
+                let option = target
+                    .catalog
+                    .option(option_id)
+                    .ok_or(AppError::StaleTarget)?;
+                let eve = option.placement.content.uses_eve_payload();
+                Some((
+                    if eve {
                         eve_payload
                             .ok_or(AppError::StalePayload)?
                             .manifest()
@@ -998,36 +1138,53 @@ fn build_copy_unit(
                     } else {
                         canonical_id.clone()
                     },
-                    requested_mode: if is_eve {
+                    if eve {
                         InstallMode::Copy
                     } else {
                         target
                             .entry_modes
-                            .get(&logical.target_id)
+                            .get(&option.target_id())
                             .cloned()
                             .unwrap_or_else(|| request.agent_selection.requested_mode.clone())
                     },
+                ))
+            }
+            DirectoryPlacementId::Option(_) => None,
+        };
+        direct_changes.insert(
+            placement_id.clone(),
+            prepared.map_or(
+                DirectPlacementChange::Preserve,
+                |(payload_id, requested_mode)| {
+                    DirectPlacementChange::Set(PreparedDirectVersion::new(
+                        DirectContentIdentity::Payload(payload_id.clone()),
+                        PreparedEntryAction::Replace {
+                            payload_id,
+                            requested_mode,
+                        },
+                    ))
                 },
-                owner_agent_ids: logical.owner_agent_ids.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    let grouped =
-        group_physical_mutations(std::iter::once(canonical.clone()).chain(required).collect())?;
-    let canonical_entry = grouped
-        .iter()
-        .find(|entry| entry.key == canonical.key)
-        .cloned();
-    let required_agent_entries = grouped
-        .into_iter()
-        .filter(|entry| entry.key != canonical.key)
-        .collect();
+            ),
+        );
+    }
+    let entries = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+        skill: SkillDirectoryName::try_from(request.skill_name.as_str())?,
+        catalog: &target.catalog,
+        placements: target.observed.placements.clone(),
+        libraries: LibraryElectionState {
+            candidates: target.library_candidates.candidates(),
+            selected_agent_ids: target.library_candidates.selected_agent_ids(),
+        },
+        direct_changes,
+    })
+    .map(|plan| plan.compile_entries())
+    .map_err(|error| error.into_app_error())?;
     let eve_target_ids = target
-        .agent_plan
-        .required_agent_roots
+        .selected_option_ids
         .iter()
-        .filter(|entry| entry.target_id.starts_with("eve:"))
-        .map(|entry| entry.target_id.clone())
+        .filter_map(|id| target.catalog.option(id))
+        .filter(|option| option.placement.content.uses_eve_payload())
+        .flat_map(|option| option.adapter_target_ids.iter().cloned())
         .collect::<Vec<_>>();
     let resolved = crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
         &request.skill_name,
@@ -1081,19 +1238,7 @@ fn build_copy_unit(
         source: Some(request.source.clone()),
         target: target.context.clone(),
         expected_revisions: target.facts.revisions.clone(),
-        entries: PreparedMutationEntries {
-            canonical: canonical_entry,
-            required_agents: required_agent_entries,
-            expected_targets: target
-                .target_facts
-                .iter()
-                .map(|fact| ExpectedTargetEntry {
-                    key: fact.key.clone(),
-                    fingerprint: fact.fingerprint.clone(),
-                    expected_content_manifest_hash: None,
-                })
-                .collect(),
-        },
+        entries,
         lock_mutation: Some(lock_mutation),
     })
 }
@@ -1303,9 +1448,11 @@ mod tests {
                             normalized_final_child_name: format!("skills-{index}"),
                         },
                         destination: destination.clone(),
+                        storage_access: crate::environment::types::StorageAccess::Native,
                         fingerprint: EntryFingerprint("missing".to_string()),
                         entry_kind: TargetEntryKind::Missing,
                         link_target: None,
+                        link_target_identity: None,
                     })
                     .collect())
             })
@@ -1458,9 +1605,11 @@ mod tests {
                 environment: EnvironmentRef::Native,
                 native_path: path.to_string(),
             },
+            storage_access: crate::environment::types::StorageAccess::Native,
             fingerprint: EntryFingerprint("entry-v1-project".to_string()),
             entry_kind: TargetEntryKind::Directory,
             link_target: None,
+            link_target_identity: None,
         }
     }
 
@@ -1588,12 +1737,21 @@ mod tests {
             .into_iter()
             .collect(),
         };
-        let catalog = build_agent_selection_catalog(&context, &runtime, &[], &DistinctAgentTargets)
-            .await
-            .unwrap();
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &runtime,
+            &[],
+            &ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: "/skills".to_string(),
+            },
+            &DistinctAgentTargets,
+        )
+        .await
+        .unwrap();
         let option_id_for = |agent_id: &str| {
             catalog
-                .snapshot
+                .snapshot()
                 .install_options
                 .iter()
                 .find(|option| option.agent_ids.iter().any(|id| id.as_str() == agent_id))
@@ -1605,31 +1763,15 @@ mod tests {
         let copied = option_id_for("copied");
         let new = option_id_for("new");
         let states = vec![
-            ManageInstallOptionState {
+            CopyObservedOptionState {
                 option_id: linked.clone(),
-                current_entry: ManageCurrentEntry::BrokenLink,
+                current_entry: CopyCurrentEntry::Link,
                 initial_selected: true,
-                allowed_results: crate::application::manage_agents::ManageAllowedResults::Both,
-                selected_effect: Some(
-                    crate::application::manage_agents::ManageSelectedEffect::Repair,
-                ),
-                unselected_effect: Some(
-                    crate::application::manage_agents::ManageUnselectedEffect::Remove,
-                ),
-                disabled_reason: None,
             },
-            ManageInstallOptionState {
+            CopyObservedOptionState {
                 option_id: copied.clone(),
-                current_entry: ManageCurrentEntry::Copy,
+                current_entry: CopyCurrentEntry::Copy,
                 initial_selected: true,
-                allowed_results: crate::application::manage_agents::ManageAllowedResults::Both,
-                selected_effect: Some(
-                    crate::application::manage_agents::ManageSelectedEffect::Retain,
-                ),
-                unselected_effect: Some(
-                    crate::application::manage_agents::ManageUnselectedEffect::Remove,
-                ),
-                disabled_reason: None,
             },
         ];
 
@@ -1641,15 +1783,15 @@ mod tests {
         );
 
         assert_eq!(
-            modes[&catalog.resolved_options[&linked].target_id()],
+            modes[&catalog.option(&linked).unwrap().target_id()],
             InstallMode::Symlink
         );
         assert_eq!(
-            modes[&catalog.resolved_options[&copied].target_id()],
+            modes[&catalog.option(&copied).unwrap().target_id()],
             InstallMode::Copy
         );
         assert_eq!(
-            modes[&catalog.resolved_options[&new].target_id()],
+            modes[&catalog.option(&new).unwrap().target_id()],
             InstallMode::Copy
         );
     }
@@ -1682,13 +1824,13 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct Facts(Arc<Mutex<HashMap<SkillLocationRef, InstallPlanningFacts>>>);
+    struct Facts(Arc<Mutex<HashMap<SkillLocationRef, ScopePlanningSnapshot>>>);
 
-    impl InstallPlanningFactSource for Facts {
-        fn current<'a>(
+    impl ScopePlanningSnapshotSource for Facts {
+        fn snapshot<'a>(
             &'a self,
             context: &'a SkillLocationRef,
-        ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+        ) -> InstallFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
             Box::pin(async move {
                 self.0
                     .lock()
@@ -1700,17 +1842,52 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[derive(Clone)]
+    struct CountingFacts {
+        inner: Facts,
+        calls: Arc<Mutex<Vec<SkillLocationRef>>>,
+    }
+
+    #[cfg(unix)]
+    impl ScopePlanningSnapshotSource for CountingFacts {
+        fn snapshot<'a>(
+            &'a self,
+            context: &'a SkillLocationRef,
+        ) -> InstallFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
+            self.calls.lock().unwrap().push(context.clone());
+            self.inner.snapshot(context)
+        }
+    }
+
+    #[cfg(unix)]
+    struct FixedLibraryCandidates(HashMap<SkillLocationRef, LibraryCandidateSnapshot>);
+
+    #[cfg(unix)]
+    impl LibraryCandidateSource for FixedLibraryCandidates {
+        fn load_candidates<'a>(
+            &'a self,
+            context: &'a SkillLocationRef,
+            _skill_name: &'a SkillDirectoryName,
+        ) -> crate::application::library_candidates::LibraryCandidateFuture<
+            'a,
+            Result<LibraryCandidateSnapshot, AppError>,
+        > {
+            Box::pin(async move { self.0.get(context).cloned().ok_or(AppError::StaleContext) })
+        }
+    }
+
     #[derive(Clone)]
     struct FailingTargetFacts {
         facts: Facts,
         failed_context: SkillLocationRef,
     }
 
-    impl InstallPlanningFactSource for FailingTargetFacts {
-        fn current<'a>(
+    impl ScopePlanningSnapshotSource for FailingTargetFacts {
+        fn snapshot<'a>(
             &'a self,
             context: &'a SkillLocationRef,
-        ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+        ) -> InstallFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
             if context == &self.failed_context {
                 return Box::pin(async {
                     Err(AppError::ConfigurationCorrupted {
@@ -1718,7 +1895,7 @@ mod tests {
                     })
                 });
             }
-            self.facts.current(context)
+            self.facts.snapshot(context)
         }
     }
 
@@ -1727,7 +1904,7 @@ mod tests {
     impl CopyProjectComparator for DifferentProjects {
         fn capture_source<'a>(
             &'a self,
-            source: &'a InstallPlanningFacts,
+            source: &'a ScopePlanningSnapshot,
         ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>> {
             Box::pin(async move {
                 let project = source
@@ -1742,7 +1919,7 @@ mod tests {
         fn compare<'a>(
             &'a self,
             _source: &'a ResolvedTargetFact,
-            _target: &'a InstallPlanningFacts,
+            _target: &'a ScopePlanningSnapshot,
         ) -> CopyFuture<'a, Result<ProjectComparison, AppError>> {
             Box::pin(async {
                 Ok(ProjectComparison {
@@ -1761,6 +1938,8 @@ mod tests {
         lock_replacements: Vec<Option<Value>>,
         expected_lock_entries: Vec<Option<Value>>,
         remote_hashes: Vec<Option<String>>,
+        #[cfg(unix)]
+        agent_actions: Vec<Vec<PreparedEntryAction>>,
     }
 
     struct CapturingExecutor(Arc<Mutex<Option<CapturedCopyPlan>>>);
@@ -1822,6 +2001,17 @@ mod tests {
                             .map(str::to_string)
                     })
                     .collect();
+                #[cfg(unix)]
+                let agent_actions = plan
+                    .units
+                    .iter()
+                    .map(|unit| {
+                        unit.additional_entries
+                            .iter()
+                            .map(|entry| entry.action.clone())
+                            .collect()
+                    })
+                    .collect();
                 *self.0.lock().unwrap() = Some(CapturedCopyPlan {
                     unit_count: plan.units.len(),
                     payload_paths,
@@ -1829,6 +2019,8 @@ mod tests {
                     lock_replacements,
                     expected_lock_entries,
                     remote_hashes,
+                    #[cfg(unix)]
+                    agent_actions,
                 });
                 Vec::new()
             })
@@ -1848,7 +2040,7 @@ mod tests {
         context: SkillLocationRef,
         root: &std::path::Path,
         source_lock: bool,
-    ) -> InstallPlanningFacts {
+    ) -> ScopePlanningSnapshot {
         let project_id = project_id(&context).unwrap().to_string();
         let lock_document = if source_lock {
             LosslessLockDocument::parse(
@@ -1865,7 +2057,7 @@ mod tests {
             order: None,
             suppress_cross_storage_warning: false,
         };
-        InstallPlanningFacts {
+        ScopePlanningSnapshot {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: Some(project),
@@ -1899,25 +2091,6 @@ mod tests {
             lock_document,
             eve_targets: Vec::new(),
         }
-    }
-
-    #[test]
-    fn copy_target_destination_uses_the_resolved_install_directory() {
-        let temp = tempdir().unwrap();
-        let target = context(EnvironmentRef::Native, "target");
-        let mut facts = planning_facts(target, temp.path(), false);
-        facts.lock_document = LosslessLockDocument::parse(
-            br#"{"version":1,"skills":{"ce-review":{"source":"owner/repo"}}}"#,
-        )
-        .unwrap();
-
-        let destination = copy_target_canonical_destination(&facts, "ce:review").unwrap();
-
-        assert!(std::path::Path::new(&destination.native_path).ends_with(
-            std::path::Path::new(".agents")
-                .join("skills")
-                .join("ce-review")
-        ));
     }
 
     async fn preview_with_source_lock(
@@ -1960,6 +2133,7 @@ mod tests {
             InstalledSkillPayloadAcquirer::new(payloads, environments),
             CapturingExecutor(Arc::new(Mutex::new(None))),
             DifferentProjects,
+            Arc::new(EmptyLibraryCandidateSource),
         );
         let mut agent_selection = service.selection(&source, "demo").await?.selection;
         if stale_selection {
@@ -1980,6 +2154,270 @@ mod tests {
         };
 
         service.preview(&request).await
+    }
+
+    #[tokio::test]
+    async fn copy_without_an_applied_library_rejects_an_external_file_target() {
+        let temp = tempdir().unwrap();
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        let source_skill = source_root.join(".agents/skills/demo");
+        fs::create_dir_all(&source_skill).unwrap();
+        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        let target_skill_root = target_root.join(".agents/skills");
+        fs::create_dir_all(&target_skill_root).unwrap();
+        let external_target = target_skill_root.join("demo");
+        fs::write(&external_target, b"external content").unwrap();
+
+        let source = context(EnvironmentRef::Native, "source");
+        let target = context(EnvironmentRef::Native, "target");
+        let facts = Arc::new(Mutex::new(HashMap::from([
+            (
+                source.clone(),
+                planning_facts(source.clone(), &source_root, true),
+            ),
+            (target.clone(), planning_facts(target, &target_root, false)),
+        ])));
+        let environments = Arc::new(WslRuntime::default());
+        let storage =
+            Arc::new(NativePayloadSessionStorage::new(temp.path().join("payloads")).unwrap());
+        let payloads = Arc::new(PayloadSessionManager::new(
+            storage,
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 8,
+                max_bytes: 1024 * 1024,
+            },
+            || 1_000,
+        ));
+        let service = CopyService::new(
+            Facts(facts),
+            crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
+            payloads.clone(),
+            InstalledSkillPayloadAcquirer::new(payloads, environments),
+            CapturingExecutor(Arc::new(Mutex::new(None))),
+            DifferentProjects,
+            Arc::new(EmptyLibraryCandidateSource),
+        );
+        let agent_selection = service.selection(&source, "demo").await.unwrap().selection;
+        let request = CopyRequest {
+            skill_name: "demo".to_string(),
+            source,
+            target_environment: EnvironmentRef::Native,
+            target_project_ids: vec!["target".to_string()],
+            agent_selection: AgentSelectionSubmission {
+                revision: agent_selection.revision,
+                selected_option_ids: agent_selection.initial_selected_option_ids,
+                requested_mode: InstallMode::Copy,
+            },
+        };
+        let CopyPreviewOutcome::Ready { preview } = service.preview(&request).await.unwrap() else {
+            panic!("fresh Agent selection should produce a copy preview");
+        };
+
+        let response = service
+            .execute(
+                &CopyExecutionRequest {
+                    request,
+                    token: preview.token,
+                    payload: preview.payload,
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+
+        let [unit] = response.units.as_slice() else {
+            panic!("expected the external target to produce one failed copy unit");
+        };
+        let error = unit.error.as_ref().expect("copy failure should be located");
+        assert_eq!(error.code, OperationErrorCode::SkillPlacementTargetConflict);
+        assert_eq!(
+            error.parameters.get("skillName").map(String::as_str),
+            Some("demo")
+        );
+        assert_eq!(
+            error.parameters.get("agentIds").map(String::as_str),
+            Some("")
+        );
+        let reported_target = error
+            .parameters
+            .get("targetPath")
+            .expect("typed conflict includes the normalized target path");
+        assert_eq!(
+            std::path::PathBuf::from(reported_target),
+            fs::canonicalize(&external_target).expect("canonical external target")
+        );
+        assert_eq!(
+            error.parameters.get("targetKind").map(String::as_str),
+            Some("file")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_selection_does_not_inherit_a_non_winning_library_link_as_direct() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().unwrap();
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        let canonical_path = source_root.join(".agents/skills/demo");
+        let agent_root = source_root.join(".custom/skills");
+        let agent_path = agent_root.join("demo");
+        let target_canonical_path = target_root.join(".agents/skills/demo");
+        let target_agent_root = target_root.join(".custom/skills");
+        let target_agent_path = target_agent_root.join("demo");
+        let first_library = temp.path().join("libraries/first/skills/demo");
+        let second_library = temp.path().join("libraries/second/skills/demo");
+        fs::create_dir_all(&canonical_path).unwrap();
+        fs::write(
+            canonical_path.join("SKILL.md"),
+            b"---\nname: demo\n---\nbody",
+        )
+        .unwrap();
+        fs::create_dir_all(&agent_root).unwrap();
+        fs::create_dir_all(&target_canonical_path).unwrap();
+        fs::create_dir_all(&target_agent_root).unwrap();
+        fs::create_dir_all(&first_library).unwrap();
+        fs::create_dir_all(&second_library).unwrap();
+        symlink(&second_library, &agent_path).unwrap();
+        symlink(&second_library, &target_agent_path).unwrap();
+
+        let source = context(EnvironmentRef::Native, "source");
+        let target = context(EnvironmentRef::Native, "target");
+        let mut source_facts = planning_facts(source.clone(), &source_root, true);
+        let mut target_facts = planning_facts(target.clone(), &target_root, false);
+        let (agent_id, agent) = project_private_agent("custom", &agent_root.to_string_lossy());
+        let (_, target_agent) =
+            project_private_agent("custom", &target_agent_root.to_string_lossy());
+        source_facts
+            .agent_runtime
+            .agents
+            .insert(agent_id.clone(), agent);
+        target_facts
+            .agent_runtime
+            .agents
+            .insert(agent_id.clone(), target_agent);
+        let facts = Arc::new(Mutex::new(HashMap::from([
+            (source.clone(), source_facts),
+            (target.clone(), target_facts),
+        ])));
+        let environments = Arc::new(WslRuntime::default());
+        let targets =
+            crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone());
+        let first_locator = ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: first_library.to_string_lossy().into_owned(),
+        };
+        let second_locator = ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: second_library.to_string_lossy().into_owned(),
+        };
+        let candidates = vec![
+            LibraryVersionCandidate::new(
+                crate::application::skill_libraries::LibraryId::parse("first"),
+                "demo",
+                first_locator.clone(),
+            ),
+            LibraryVersionCandidate::new(
+                crate::application::skill_libraries::LibraryId::parse("second"),
+                "demo",
+                second_locator,
+            ),
+        ];
+        let candidate_set = LibraryCandidateSet::new(candidates.clone(), candidates).unwrap();
+        let source_candidates = LibraryCandidateSnapshot::new(
+            "library-evidence-1",
+            vec![agent_id.clone()],
+            candidate_set.clone(),
+        )
+        .unwrap();
+        let target_candidates = LibraryCandidateSnapshot::new(
+            "library-evidence-1",
+            vec![agent_id.clone()],
+            candidate_set,
+        )
+        .unwrap();
+        let payloads = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 8,
+                max_bytes: 1024 * 1024,
+            },
+            || 1_000,
+        ));
+        let captured = Arc::new(Mutex::new(None));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let service = CopyService::new(
+            CountingFacts {
+                inner: Facts(facts),
+                calls: calls.clone(),
+            },
+            targets,
+            payloads.clone(),
+            InstalledSkillPayloadAcquirer::new(payloads, environments),
+            CapturingExecutor(captured.clone()),
+            DifferentProjects,
+            Arc::new(FixedLibraryCandidates(HashMap::from([
+                (source.clone(), source_candidates),
+                (target.clone(), target_candidates),
+            ]))),
+        );
+
+        let selection = service.selection(&source, "demo").await.unwrap().selection;
+        let option = selection
+            .install_options
+            .iter()
+            .find(|option| option.agent_ids.contains(&agent_id))
+            .unwrap();
+
+        assert!(!selection.initial_selected_option_ids.contains(&option.id));
+        calls.lock().unwrap().clear();
+
+        let request = CopyRequest {
+            skill_name: "demo".to_string(),
+            source,
+            target_environment: EnvironmentRef::Native,
+            target_project_ids: vec!["target".to_string()],
+            agent_selection: AgentSelectionSubmission {
+                revision: selection.revision,
+                selected_option_ids: selection.initial_selected_option_ids,
+                requested_mode: InstallMode::Copy,
+            },
+        };
+        let CopyPreviewOutcome::Ready { preview } = service.preview(&request).await.unwrap() else {
+            panic!("fresh source selection should produce a copy preview");
+        };
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|context| *context == &target)
+                .count(),
+            1
+        );
+        service
+            .execute(
+                &CopyExecutionRequest {
+                    request,
+                    token: preview.token,
+                    payload: preview.payload,
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let captured = captured.lock().unwrap();
+        let plan = captured.as_ref().unwrap();
+
+        assert!(matches!(
+            plan.agent_actions.as_slice(),
+            [actions]
+                if matches!(actions.as_slice(), [PreparedEntryAction::Link { target }]
+                    if target == &first_locator)
+        ));
     }
 
     #[tokio::test]
@@ -2117,6 +2555,7 @@ mod tests {
             InstalledSkillPayloadAcquirer::new(payloads, environments),
             CapturingExecutor(captured.clone()),
             DifferentProjects,
+            Arc::new(EmptyLibraryCandidateSource),
         );
         let selection = service.selection(&source, "demo").await.unwrap().selection;
         let request = CopyRequest {
@@ -2217,6 +2656,7 @@ mod tests {
             InstalledSkillPayloadAcquirer::new(payloads, environments),
             CapturingExecutor(captured.clone()),
             DifferentProjects,
+            Arc::new(EmptyLibraryCandidateSource),
         );
         let source_selection = service.selection(&source, "demo").await.unwrap().selection;
         let request = CopyRequest {
@@ -2401,7 +2841,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn copy_unit_conflict_is_scoped_to_its_target_project() {
+    async fn copy_merges_an_option_that_overlaps_the_standard_directory() {
         let temp = tempdir().unwrap();
         let source_root = temp.path().join("source");
         let healthy_root = temp.path().join("healthy");
@@ -2467,6 +2907,7 @@ mod tests {
             InstalledSkillPayloadAcquirer::new(payloads, environments),
             CapturingExecutor(captured.clone()),
             DifferentProjects,
+            Arc::new(EmptyLibraryCandidateSource),
         );
         let selection = service.selection(&source, "demo").await.unwrap().selection;
         let option_id = selection
@@ -2492,10 +2933,7 @@ mod tests {
         };
 
         assert!(preview.targets[0].blocking_reasons.is_empty());
-        assert_eq!(
-            preview.targets[1].blocking_reasons,
-            vec![OperationErrorCode::StaleTarget]
-        );
+        assert!(preview.targets[1].blocking_reasons.is_empty());
         let response = service
             .execute(
                 &CopyExecutionRequest {
@@ -2508,13 +2946,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(captured.lock().unwrap().as_ref().unwrap().unit_count, 1);
-        assert_eq!(response.units.len(), 1);
-        assert_eq!(project_id(&response.units[0].target).unwrap(), "conflicted");
-        assert_eq!(
-            response.units[0].error.as_ref().unwrap().code,
-            OperationErrorCode::StaleTarget
-        );
+        assert_eq!(captured.lock().unwrap().as_ref().unwrap().unit_count, 2);
+        assert!(response.units.is_empty());
     }
 
     #[tokio::test]
@@ -2556,6 +2989,7 @@ mod tests {
             InstalledSkillPayloadAcquirer::new(payloads, environments),
             CapturingExecutor(captured.clone()),
             DifferentProjects,
+            Arc::new(EmptyLibraryCandidateSource),
         );
         let selection = service.selection(&source, "demo").await.unwrap().selection;
         let request = CopyRequest {

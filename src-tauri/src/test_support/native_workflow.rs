@@ -1,19 +1,31 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use crate::application::agent_selection::test_submission_for_agents_and_own_directories;
+use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
+use crate::application::agent_selection::{
+    build_agent_selection_catalog, test_submission_for_agents_and_own_directories,
+};
 use crate::application::copy::{
     CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
 };
-use crate::application::copy_runtime::RuntimeCopyProjectComparator;
 use crate::application::install::{
     InstallFuture, InstallOperation, InstallPreviewOutcome, InstallRequest, InstallService,
 };
-use crate::application::install_planner::{ConcreteInstallPlanner, InstallPlanningFactSource};
+use crate::application::install_planner::ConcreteInstallPlanner;
+use crate::application::installed_skill_payload::InstalledSkillPayloadAcquirer;
+use crate::application::installed_skill_resolver::SkillDirectoryName;
+use crate::application::library_application::{
+    ApplyLibraryApplicationRequest, LibraryApplicationDraft, LibraryApplicationFuture,
+    LibraryApplicationModule, LibraryApplicationRecord, LibraryApplicationRepository,
+};
+use crate::application::library_candidates::LibraryCandidateSet;
+use crate::application::library_candidates::{
+    EmptyLibraryCandidateSource, LibraryCandidateSource, RepositoryLibraryCandidateSource,
+};
 use crate::application::manage_agents::{
     ManageAgentSelectionSnapshot, ManageAgentsPreview, ManageAgentsPreviewOutcome,
     ManageAgentsPreviewRequest, ManageAgentsRequest, ManageAgentsService,
@@ -31,16 +43,20 @@ use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, PayloadPlanningMetadata, PayloadSessionLimits,
     PayloadSessionManager, PinnedPayloadLease,
 };
-use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
+use crate::application::planning_facts::ScopePlanningSnapshotSource;
 use crate::application::remove::{RemoveIntent, RemoveRequest, RemoveService};
-use crate::application::runtime_facts::{
-    AgentRegistrySnapshotSource, NativeRuntimeSnapshot, RuntimePlanningFactSource,
+use crate::application::scope_skill_placements::ScopeSkillPlacementResolver;
+use crate::application::scope_skill_planning::{
+    DirectSkillChangeRequest, LibraryElectionState, ScopeSkillPlanner,
 };
-use crate::application::skill_entries::{InstalledSkillPayloadAcquirer, SkillEntryObserver};
+use crate::application::skill_libraries::{
+    LibraryCatalog, LibraryId, LibrarySkillRecord, SkillLibraryRecord, LIBRARY_SCHEMA_VERSION,
+};
+use crate::application::skill_source::SkillSourceModule;
 use crate::application::source_evidence::{RemoteSnapshotId, SourceSnapshotFacts};
 use crate::application::update::{
     AcquiredUpdateSource, UpdateAcquisitionGroup, UpdateExecutionRequest, UpdateFuture,
-    UpdatePayloadAcquirer, UpdateRequest, UpdateService, UpdateSourceAcquisition,
+    UpdateRequest, UpdateService, UpdateSourceAcquisition,
 };
 use crate::application::update_planner::ConcreteUpdatePlanner;
 use crate::core::agent_definition::{
@@ -66,6 +82,9 @@ use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::git_fixture::{BareSkillRepo as FileBareSkillRepo, CountingGitTransport};
 use crate::models::InstallMode;
+use crate::runtime::copy_service::RuntimeCopyProjectComparator;
+use crate::runtime::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
+use crate::runtime::planning_facts::{NativeRuntimeSnapshot, RuntimePlanningFactSource};
 use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
 pub(crate) struct StaticRegistry(pub(crate) Arc<AgentRegistrySnapshot>);
@@ -73,6 +92,109 @@ pub(crate) struct StaticRegistry(pub(crate) Arc<AgentRegistrySnapshot>);
 impl AgentRegistrySnapshotSource for StaticRegistry {
     fn snapshot(&self) -> Arc<AgentRegistrySnapshot> {
         Arc::clone(&self.0)
+    }
+}
+
+async fn observe_skill(
+    observer: &ScopeSkillPlacementResolver<RuntimeTargetFactResolver>,
+    facts: &RuntimePlanningFactSource,
+    targets: &RuntimeTargetFactResolver,
+    context: &SkillLocationRef,
+    skill_name: &str,
+) -> Result<Vec<crate::application::skill_entry_projection::ObservedPlannedEntry>, AppError> {
+    let planning = ScopePlanningSnapshotSource::snapshot(facts, context).await?;
+    let catalog = build_agent_selection_catalog(
+        context,
+        &planning.agent_runtime,
+        &planning.eve_targets,
+        &planning.resolved_context.skill_root,
+        targets,
+    )
+    .await?;
+    let observed = observer
+        .observe(context, skill_name, &planning, &catalog)
+        .await?;
+    let candidates = LibraryCandidateSet::empty();
+    ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+        skill: SkillDirectoryName::try_from(skill_name)?,
+        catalog: &catalog,
+        placements: observed.placements,
+        libraries: LibraryElectionState {
+            candidates: &candidates,
+            selected_agent_ids: &[],
+        },
+        direct_changes: BTreeMap::new(),
+    })
+    .map_err(|error| error.into_app_error())?
+    .project_observed_entries()
+    .map_err(|error| error.into_app_error())
+}
+
+struct MemoryLibraryApplicationRepository {
+    record: Mutex<LibraryApplicationRecord>,
+    catalog: LibraryCatalog,
+    members_root: PathBuf,
+}
+
+impl LibraryApplicationRepository for MemoryLibraryApplicationRepository {
+    fn load_application<'a>(
+        &'a self,
+        _context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<LibraryApplicationRecord, AppError>> {
+        Box::pin(async move { Ok(self.record.lock().expect("library record lock").clone()) })
+    }
+
+    fn save_application<'a>(
+        &'a self,
+        record: &'a LibraryApplicationRecord,
+    ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            *self.record.lock().expect("library record lock") = record.clone();
+            Ok(())
+        })
+    }
+
+    fn library_skill_locator<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+        library_id: &'a LibraryId,
+        skill_name: &'a str,
+    ) -> LibraryApplicationFuture<'a, Result<crate::environment::types::ResourceLocator, AppError>>
+    {
+        Box::pin(async move {
+            let install_dir_name =
+                crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                    skill_name,
+                )?;
+            Ok(crate::environment::types::ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: self
+                    .members_root
+                    .join(library_id.as_str())
+                    .join("skills")
+                    .join(install_dir_name)
+                    .to_string_lossy()
+                    .into_owned(),
+            })
+        })
+    }
+
+    fn load_catalog<'a>(
+        &'a self,
+        _context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<LibraryCatalog, AppError>> {
+        Box::pin(async move { Ok(self.catalog.clone()) })
+    }
+
+    fn remove_application<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            *self.record.lock().expect("library record lock") =
+                LibraryApplicationRecord::empty(context.clone());
+            Ok(())
+        })
     }
 }
 
@@ -286,9 +408,7 @@ impl MutationPlanExecutor for VerifyFailurePlanExecutor {
             };
             MutationCoordinator::new(
                 entries,
-                crate::application::plan_runner::RuntimeLockCommitter::new(
-                    self.environments.clone(),
-                ),
+                crate::runtime::plan_runner::RuntimeLockCommitter::new(self.environments.clone()),
                 self.facts.clone(),
             )
             .execute(plan, cancellation)
@@ -322,9 +442,7 @@ impl MutationPlanExecutor for SelectiveVerifyFailurePlanExecutor {
             };
             MutationCoordinator::new(
                 entries,
-                crate::application::plan_runner::RuntimeLockCommitter::new(
-                    self.environments.clone(),
-                ),
+                crate::runtime::plan_runner::RuntimeLockCommitter::new(self.environments.clone()),
                 self.facts.clone(),
             )
             .execute(plan, cancellation)
@@ -333,8 +451,8 @@ impl MutationPlanExecutor for SelectiveVerifyFailurePlanExecutor {
     }
 }
 
-impl UpdatePayloadAcquirer for FixedUpdateAcquirer {
-    fn acquire<'a>(
+impl SkillSourceModule for FixedUpdateAcquirer {
+    fn acquire_saved_groups<'a>(
         &'a self,
         groups: &'a [UpdateAcquisitionGroup],
         _cancellation: CancellationSignal,
@@ -367,6 +485,8 @@ impl UpdatePayloadAcquirer for FixedUpdateAcquirer {
                         complete_skill_path_catalog: BTreeSet::from(["skills/demo".to_string()]),
                     },
                     payloads: vec![("demo".to_string(), handle)],
+                    skill_errors: Vec::new(),
+                    redirected_download_host: None,
                 }),
             }])
         })
@@ -385,9 +505,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     let config_home = root.join("config");
 
     for project in [&source_project, &target_project] {
-        fs::create_dir_all(project.join(".codebuddy"))?;
-        fs::create_dir_all(project.join(".minimax"))?;
-        fs::create_dir_all(project.join(".custom"))?;
+        fs::create_dir_all(project.join(".agents/skills"))?;
+        fs::create_dir_all(project.join(".codebuddy/skills"))?;
+        fs::create_dir_all(project.join(".minimax/skills"))?;
+        fs::create_dir_all(project.join(".custom/skills"))?;
     }
     fs::create_dir_all(source_project.join("agent/subagents/research/skills"))?;
     fs::write(
@@ -495,14 +616,21 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     let source_context = project_context("source");
     let install = InstallService::new(
         payloads.clone(),
-        ConcreteInstallPlanner::new(facts.clone(), targets.clone(), payloads.clone(), fixed_time),
+        ConcreteInstallPlanner::new(
+            facts.clone(),
+            targets.clone(),
+            payloads.clone(),
+            fixed_time,
+            Arc::new(EmptyLibraryCandidateSource),
+        ),
         executor(&execution, &environments, &facts),
     );
-    let selection_facts = InstallPlanningFactSource::current(&facts, &source_context).await?;
+    let selection_facts = ScopePlanningSnapshotSource::snapshot(&facts, &source_context).await?;
     let agent_selection = test_submission_for_agents_and_own_directories(
         &source_context,
         &selection_facts.agent_runtime,
         &selection_facts.eve_targets,
+        &selection_facts.resolved_context.skill_root,
         &targets,
         &["codebuddy", "minimax-code", "custom-test", "eve"],
         InstallMode::Copy,
@@ -510,7 +638,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     .await;
     let install_request = InstallRequest {
         context: source_context.clone(),
-        source: "owner/repo".to_string(),
+        source: "reader/repo".to_string(),
         discovery_session: discovery_v1,
         payloads: vec![handle_v1],
         skills: vec!["demo".to_string()],
@@ -552,16 +680,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         json!(["", "research"])
     );
 
-    let observer = SkillEntryObserver::new(facts.clone(), targets.clone());
-    let observed = observer.observe(&source_context, "demo").await?;
-    let owners = observed
-        .entries
+    let observer = ScopeSkillPlacementResolver::new(targets.clone());
+    let observed = observe_skill(&observer, &facts, &targets, &source_context, "demo").await?;
+    let readers = observed
         .iter()
-        .flat_map(|entry| entry.public.owners.iter())
-        .map(|owner| owner.agent_id.as_str())
+        .flat_map(|entry| entry.public.readers.iter())
+        .map(|reader| reader.agent_id.as_str())
         .collect::<BTreeSet<_>>();
     assert_eq!(
-        owners,
+        readers,
         BTreeSet::from(["codebuddy", "custom-test", "eve", "minimax-code"])
     );
 
@@ -614,22 +741,24 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     )?;
 
     let manage = ManageAgentsService::new(
-        SkillEntryObserver::new(facts.clone(), targets.clone()),
+        facts.clone(),
+        ScopeSkillPlacementResolver::new(targets.clone()),
         targets.clone(),
         payloads.clone(),
         InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
         executor(&execution, &environments, &facts),
+        Arc::new(EmptyLibraryCandidateSource),
     );
-    let manage_observed = observer.observe(&source_context, "demo").await?;
+    let manage_observed =
+        observe_skill(&observer, &facts, &targets, &source_context, "demo").await?;
     let removed_entries = manage_observed
-        .entries
         .iter()
         .filter(|entry| {
-            entry.public.owners.iter().any(|owner| {
+            entry.public.readers.iter().any(|reader| {
                 matches!(
-                    owner.agent_id.as_str(),
+                    reader.agent_id.as_str(),
                     "codebuddy" | "minimax-code" | "custom-test"
-                ) || owner.logical_target_id.starts_with("eve:")
+                ) || reader.logical_target_id.starts_with("eve:")
             })
         })
         .map(|entry| entry.public.entry_id.clone())
@@ -655,7 +784,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 skill_name: "demo".to_string(),
                 agent_selection: remove_all_selection,
                 confirm_entity_directories: true,
-                canonical_payload: None,
+                original_payload: None,
             },
             CancellationSignal::default(),
         )
@@ -669,17 +798,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert!(source_project.join(".minimax/skills/demo").exists());
     assert!(source_project.join(".custom/skills/demo").exists());
 
-    let refreshed_entries = observer
-        .observe(&source_context, "demo")
+    let refreshed_entries = observe_skill(&observer, &facts, &targets, &source_context, "demo")
         .await?
-        .entries
         .into_iter()
         .filter(|entry| {
-            entry.public.owners.iter().any(|owner| {
+            entry.public.readers.iter().any(|reader| {
                 matches!(
-                    owner.agent_id.as_str(),
+                    reader.agent_id.as_str(),
                     "codebuddy" | "minimax-code" | "custom-test"
-                ) || owner.logical_target_id.starts_with("eve:")
+                ) || reader.logical_target_id.starts_with("eve:")
             })
         })
         .map(|entry| entry.public.entry_id)
@@ -694,7 +821,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         agent_selection: refreshed_submission.clone(),
     };
     let failing_manage = ManageAgentsService::new(
-        SkillEntryObserver::new(facts.clone(), targets.clone()),
+        facts.clone(),
+        ScopeSkillPlacementResolver::new(targets.clone()),
         targets.clone(),
         payloads.clone(),
         InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
@@ -703,6 +831,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             facts: facts.clone(),
             recovery_root: recovery_root.clone(),
         },
+        Arc::new(EmptyLibraryCandidateSource),
     );
     let failing_preview =
         ready_manage_preview(failing_manage.preview(&refreshed_preview_request).await?);
@@ -714,7 +843,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 skill_name: "demo".to_string(),
                 agent_selection: refreshed_submission.clone(),
                 confirm_entity_directories: true,
-                canonical_payload: None,
+                original_payload: None,
             },
             CancellationSignal::default(),
         )
@@ -737,7 +866,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     let lock_before_failure = fs::read(source_project.join("skills-lock.json"))?;
     let lock_attempted = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let lock_failing_manage = ManageAgentsService::new(
-        SkillEntryObserver::new(facts.clone(), targets.clone()),
+        facts.clone(),
+        ScopeSkillPlacementResolver::new(targets.clone()),
         targets.clone(),
         payloads.clone(),
         InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
@@ -746,6 +876,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             recovery_root: recovery_root.clone(),
             attempted: Arc::clone(&lock_attempted),
         },
+        Arc::new(EmptyLibraryCandidateSource),
     );
     let lock_failing_preview = ready_manage_preview(
         lock_failing_manage
@@ -760,7 +891,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 skill_name: "demo".to_string(),
                 agent_selection: refreshed_submission,
                 confirm_entity_directories: true,
-                canonical_payload: None,
+                original_payload: None,
             },
             CancellationSignal::default(),
         )
@@ -781,17 +912,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert_no_staging_leaks(root)?;
     assert_recovery_graph_is_empty(&recovery_root)?;
 
-    let _research_entry_id = observer
-        .observe(&source_context, "demo")
+    let _research_entry_id = observe_skill(&observer, &facts, &targets, &source_context, "demo")
         .await?
-        .entries
         .into_iter()
         .find(|entry| {
             entry
                 .public
-                .owners
+                .readers
                 .iter()
-                .any(|owner| owner.logical_target_id == "eve:research")
+                .any(|reader| reader.logical_target_id == "eve:research")
         })
         .map(|entry| entry.public.entry_id)
         .expect("Eve research entry");
@@ -801,9 +930,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .join("subagents")
         .join("research")
         .join("skills");
+    let resolved_research_skill_path = fs::canonicalize(&research_skill_path)?;
     let remove_research_selection = manage_submission(
         &research_selection,
-        |item| Path::new(&item.path) != research_skill_path,
+        |item| Path::new(&item.path) != resolved_research_skill_path,
         InstallMode::Copy,
     );
     let remove_research_request = ManageAgentsPreviewRequest {
@@ -821,7 +951,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 skill_name: "demo".to_string(),
                 agent_selection: remove_research_selection,
                 confirm_entity_directories: true,
-                canonical_payload: None,
+                original_payload: None,
             },
             CancellationSignal::default(),
         )
@@ -837,17 +967,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             .is_none()
     );
 
-    let remaining_entries = observer
-        .observe(&source_context, "demo")
+    let remaining_entries = observe_skill(&observer, &facts, &targets, &source_context, "demo")
         .await?
-        .entries
         .into_iter()
         .filter(|entry| {
-            entry.public.owners.iter().any(|owner| {
+            entry.public.readers.iter().any(|reader| {
                 matches!(
-                    owner.agent_id.as_str(),
+                    reader.agent_id.as_str(),
                     "codebuddy" | "minimax-code" | "custom-test"
-                ) || owner.logical_target_id == "eve:root"
+                ) || reader.logical_target_id == "eve:root"
             })
         })
         .map(|entry| entry.public.entry_id)
@@ -869,7 +997,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 skill_name: "demo".to_string(),
                 agent_selection: final_submission,
                 confirm_entity_directories: true,
-                canonical_payload: None,
+                original_payload: None,
             },
             CancellationSignal::default(),
         )
@@ -897,7 +1025,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert!(update_after_removal_preview.skills[0]
         .adapter_targets
         .iter()
-        .all(|owner| owner.agent_id.as_str() != "eve"));
+        .all(|reader| reader.agent_id.as_str() != "eve"));
     let update_after_removal = update
         .execute(
             &UpdateExecutionRequest {
@@ -938,6 +1066,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
         executor(&execution, &environments, &facts),
         RuntimeCopyProjectComparator::new(environments.clone()),
+        Arc::new(EmptyLibraryCandidateSource),
     );
     let copy_selection = copy.selection(&source_context, "demo").await?.selection;
     let copy_request = CopyRequest {
@@ -994,8 +1123,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert!(target_lock["skills"]["demo"].get("adapterState").is_none());
 
     let remove = RemoveService::new(
-        SkillEntryObserver::new(facts.clone(), targets),
+        facts.clone(),
+        targets,
         executor(&execution, &environments, &facts),
+        Arc::new(EmptyLibraryCandidateSource),
     );
     let remove_preview = remove.preview(&source_context, "demo").await?;
     let removed = remove
@@ -1114,9 +1245,9 @@ fn metadata(computed_hash: &str, remote_hash: &str) -> PayloadPlanningMetadata {
     PayloadPlanningMetadata {
         skill_name: "demo".to_string(),
         install_dir_name: "demo".to_string(),
-        source: "owner/repo".to_string(),
+        source: "reader/repo".to_string(),
         source_type: "github".to_string(),
-        source_url: Some("https://github.com/owner/repo.git".to_string()),
+        source_url: Some("https://github.com/reader/repo.git".to_string()),
         ref_name: Some("main".to_string()),
         skill_path: "skills/demo".to_string(),
         plugin_name: Some("integration".to_string()),
@@ -1237,9 +1368,375 @@ async fn native_workflows_share_one_runtime_and_preserve_skill_deck_metadata() {
 }
 
 #[cfg(test)]
+#[tokio::test]
+async fn native_scope_version_election_survives_a_continuous_product_workflow() {
+    run_native_scope_version_election_workflow()
+        .await
+        .expect("native Scope version-election workflow");
+}
+
+#[cfg(test)]
+async fn run_native_scope_version_election_workflow() -> Result<(), AppError> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path();
+    let project_path = root.join("project");
+    let projects_path = root.join("state/projects.json");
+    let global_lock_path = root.join("state/global-lock.json");
+    let recovery_root = root.join("recovery");
+    let home = root.join("home");
+    let config_home = root.join("config");
+    let members_root = root.join("libraries");
+    let first_member = members_root.join("library-one/skills/demo");
+    let second_member = members_root.join("library-two/skills/demo");
+
+    fs::create_dir_all(project_path.join(".agents/skills"))?;
+    fs::create_dir_all(project_path.join(".codebuddy/skills"))?;
+    fs::create_dir_all(project_path.join(".minimax/skills"))?;
+    fs::create_dir_all(&home)?;
+    fs::create_dir_all(&config_home)?;
+    write_json(
+        &projects_path,
+        &json!({
+            "schemaVersion": 1,
+            "projects": [project("version-election", &project_path, "Version Election")]
+        }),
+    )?;
+    let _first_payload = create_payload(&first_member, "library-one")?;
+    let _second_payload = create_payload(&second_member, "library-two")?;
+
+    let context = project_context("version-election");
+    let first_id = LibraryId::parse("library-one");
+    let second_id = LibraryId::parse("library-two");
+    let repository: Arc<dyn LibraryApplicationRepository> =
+        Arc::new(MemoryLibraryApplicationRepository {
+            record: Mutex::new(LibraryApplicationRecord::empty(context.clone())),
+            catalog: LibraryCatalog {
+                schema_version: LIBRARY_SCHEMA_VERSION,
+                libraries: vec![
+                    test_library_record(first_id.clone(), "Library One", "library-one"),
+                    test_library_record(second_id.clone(), "Library Two", "library-two"),
+                ],
+                extra: serde_json::Map::new(),
+            },
+            members_root,
+        });
+    let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
+    let environments = Arc::new(WslRuntime::default());
+    let facts = RuntimePlanningFactSource::with_native_snapshot(
+        registry,
+        environments.clone(),
+        NativeRuntimeSnapshot {
+            home,
+            config_home,
+            projects_path,
+            global_lock_path,
+            environment_variables: BTreeMap::new(),
+        },
+    );
+    let targets = RuntimeTargetFactResolver::new(environments.clone());
+    let payloads = Arc::new(PayloadSessionManager::in_memory(
+        PayloadSessionLimits {
+            ttl_ms: 60_000,
+            max_sessions: 8,
+            max_bytes: 8 * 1024 * 1024,
+        },
+        || 1_000,
+    ));
+    let execution = RuntimeExecutionDependencies::new(environments.clone(), recovery_root.clone())?;
+    let library_application = Arc::new(LibraryApplicationModule::new(
+        repository.clone(),
+        facts.clone(),
+        targets.clone(),
+        executor(&execution, &environments, &facts),
+    ));
+    let library_candidates: Arc<dyn LibraryCandidateSource> =
+        Arc::new(RepositoryLibraryCandidateSource::new(repository));
+    let agent_a = AgentId::parse("codebuddy").expect("Agent A id");
+    let agent_b = AgentId::parse("minimax-code").expect("Agent B id");
+    let canonical = project_path.join(".agents/skills/demo");
+    let agent_a_entry = project_path.join(".codebuddy/skills/demo");
+    let agent_b_entry = project_path.join(".minimax/skills/demo");
+
+    let initial_application = LibraryApplicationDraft {
+        context: context.clone(),
+        ordered_library_ids: vec![first_id.clone(), second_id.clone()],
+        selected_agent_ids: vec![agent_a.clone(), agent_b.clone()],
+    };
+    let initial_preview = library_application
+        .preview(initial_application.clone())
+        .await?;
+    let initial_result = library_application
+        .apply(
+            ApplyLibraryApplicationRequest {
+                draft: initial_application,
+                expected_token: initial_preview.token,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&initial_result.units);
+    assert_resolves_to(&canonical, &first_member)?;
+    assert_resolves_to(&agent_a_entry, &first_member)?;
+    assert_resolves_to(&agent_b_entry, &first_member)?;
+    let idempotent_draft = LibraryApplicationDraft {
+        context: context.clone(),
+        ordered_library_ids: vec![first_id.clone(), second_id.clone()],
+        selected_agent_ids: vec![agent_a.clone(), agent_b.clone()],
+    };
+    let idempotent_preview = library_application
+        .preview(idempotent_draft.clone())
+        .await?;
+    let idempotent = library_application
+        .apply(
+            ApplyLibraryApplicationRequest {
+                draft: idempotent_draft,
+                expected_token: idempotent_preview.token,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert!(idempotent.units.is_empty());
+
+    let direct_source = root.join("payload-direct/demo");
+    let direct_payload = create_payload(&direct_source, "direct")?;
+    let discovery = payloads
+        .discover(EnvironmentRef::Native, "version-election-direct")
+        .await?;
+    let direct_handle = payloads
+        .acquire_payload_with_metadata(
+            &discovery,
+            "skills/demo",
+            direct_payload,
+            metadata("computed-direct", "remote-direct"),
+        )
+        .await?;
+    let selection_facts = ScopePlanningSnapshotSource::snapshot(&facts, &context).await?;
+    let direct_selection = test_submission_for_agents_and_own_directories(
+        &context,
+        &selection_facts.agent_runtime,
+        &selection_facts.eve_targets,
+        &selection_facts.resolved_context.skill_root,
+        &targets,
+        &[],
+        InstallMode::Copy,
+    )
+    .await;
+    let install_request = InstallRequest {
+        context: context.clone(),
+        source: "reader/direct".to_string(),
+        discovery_session: discovery,
+        payloads: vec![direct_handle],
+        skills: vec!["demo".to_string()],
+        agent_selection: direct_selection,
+        acknowledge_redirect: true,
+    };
+    let install = InstallService::new(
+        payloads.clone(),
+        ConcreteInstallPlanner::new(
+            facts.clone(),
+            targets.clone(),
+            payloads.clone(),
+            fixed_time,
+            library_candidates.clone(),
+        ),
+        executor(&execution, &environments, &facts),
+    );
+    let InstallPreviewOutcome::Ready {
+        preview: install_preview,
+    } = install
+        .preview(InstallOperation::Install, &install_request)
+        .await?
+    else {
+        panic!("expected ready direct install preview");
+    };
+    let installed = install
+        .execute(
+            InstallOperation::Install,
+            &install_request,
+            install_preview.token,
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&installed.units);
+    assert_payload_tree(&canonical, "direct")?;
+    assert_resolves_to(&agent_a_entry, &first_member)?;
+    assert_resolves_to(&agent_b_entry, &first_member)?;
+
+    let manage = ManageAgentsService::new(
+        facts.clone(),
+        ScopeSkillPlacementResolver::new(targets.clone()),
+        targets.clone(),
+        payloads.clone(),
+        InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
+        executor(&execution, &environments, &facts),
+        library_candidates.clone(),
+    );
+    let add_selection = manage.selection(&context, "demo").await?;
+    let add_agent_a = manage_submission(
+        &add_selection,
+        |option| option.agent_ids.contains(&agent_a),
+        InstallMode::Copy,
+    );
+    let add_preview_request = ManageAgentsPreviewRequest {
+        context: context.clone(),
+        skill_name: "demo".to_string(),
+        agent_selection: add_agent_a.clone(),
+    };
+    let add_preview = ready_manage_preview(manage.preview(&add_preview_request).await?);
+    let added = manage
+        .execute(
+            &ManageAgentsRequest {
+                token: add_preview.token,
+                context: context.clone(),
+                skill_name: "demo".to_string(),
+                agent_selection: add_agent_a,
+                confirm_entity_directories: false,
+                original_payload: add_preview.original_payload,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&added.units);
+    assert_payload_tree(&canonical, "direct")?;
+    assert_payload_tree(&agent_a_entry, "direct")?;
+    assert_resolves_to(&agent_b_entry, &first_member)?;
+
+    let manage_selection = manage.selection(&context, "demo").await?;
+    let remove_agent_a = manage_submission(&manage_selection, |_| false, InstallMode::Copy);
+    let manage_preview_request = ManageAgentsPreviewRequest {
+        context: context.clone(),
+        skill_name: "demo".to_string(),
+        agent_selection: remove_agent_a.clone(),
+    };
+    let manage_preview = ready_manage_preview(manage.preview(&manage_preview_request).await?);
+    let managed = manage
+        .execute(
+            &ManageAgentsRequest {
+                token: manage_preview.token,
+                context: context.clone(),
+                skill_name: "demo".to_string(),
+                agent_selection: remove_agent_a,
+                confirm_entity_directories: true,
+                original_payload: None,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&managed.units);
+    assert_payload_tree(&canonical, "direct")?;
+    assert_resolves_to(&agent_a_entry, &first_member)?;
+    assert_resolves_to(&agent_b_entry, &first_member)?;
+
+    let reordered_application = LibraryApplicationDraft {
+        context: context.clone(),
+        ordered_library_ids: vec![second_id.clone(), first_id],
+        selected_agent_ids: vec![agent_a, agent_b],
+    };
+    let reordered_preview = library_application
+        .preview(reordered_application.clone())
+        .await?;
+    let reordered = library_application
+        .apply(
+            ApplyLibraryApplicationRequest {
+                draft: reordered_application,
+                expected_token: reordered_preview.token,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&reordered.units);
+    assert_payload_tree(&canonical, "direct")?;
+    assert_resolves_to(&agent_a_entry, &second_member)?;
+    assert_resolves_to(&agent_b_entry, &second_member)?;
+
+    let remove = RemoveService::new(
+        facts.clone(),
+        targets,
+        executor(&execution, &environments, &facts),
+        library_candidates,
+    );
+    let remove_preview = remove.preview(&context, "demo").await?;
+    let removed = remove
+        .execute(
+            &RemoveRequest {
+                token: remove_preview.token,
+                context: context.clone(),
+                skill_name: "demo".to_string(),
+                intent: RemoveIntent::FullSkill,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&removed.units);
+    assert_resolves_to(&canonical, &second_member)?;
+    assert_resolves_to(&agent_a_entry, &second_member)?;
+    assert_resolves_to(&agent_b_entry, &second_member)?;
+
+    let empty_application = LibraryApplicationDraft {
+        context,
+        ordered_library_ids: Vec::new(),
+        selected_agent_ids: Vec::new(),
+    };
+    let empty_preview = library_application
+        .preview(empty_application.clone())
+        .await?;
+    let unapplied = library_application
+        .apply(
+            ApplyLibraryApplicationRequest {
+                draft: empty_application,
+                expected_token: empty_preview.token,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&unapplied.units);
+    assert!(!canonical.exists());
+    assert!(!agent_a_entry.exists());
+    assert!(!agent_b_entry.exists());
+    assert_payload_tree(&first_member, "library-one")?;
+    assert_payload_tree(&second_member, "library-two")?;
+    assert_no_staging_leaks(root)?;
+    assert_recovery_graph_is_empty(&recovery_root)?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn test_library_record(id: LibraryId, name: &str, version: &str) -> SkillLibraryRecord {
+    SkillLibraryRecord {
+        id,
+        name: name.to_string(),
+        skills: vec![LibrarySkillRecord {
+            name: "demo".to_string(),
+            description: version.to_string(),
+            source_record: json!({
+                "sourceType": "local",
+                "source": version,
+                "skillPath": "demo"
+            }),
+            content_manifest_hash: format!("manifest-{version}"),
+            updated_at: Some(fixed_time()),
+            extra: serde_json::Map::new(),
+        }],
+        extra: serde_json::Map::new(),
+    }
+}
+
+#[cfg(test)]
+fn assert_resolves_to(entry: &Path, expected: &Path) -> Result<(), AppError> {
+    assert_eq!(
+        fs::canonicalize(entry)?,
+        fs::canonicalize(expected)?,
+        "{} must resolve to {}",
+        entry.display(),
+        expected.display()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
 async fn discover_http_source_returning(
     status: u16,
-) -> Result<crate::models::FetchResult, AppError> {
+) -> Result<crate::application::source_acquisition::FetchResult, AppError> {
     use std::thread;
     use std::time::Duration;
 
@@ -1287,7 +1784,7 @@ async fn discover_http_source_returning(
         RuntimeDownloadAccess::new(http),
         Arc::new(UnavailableWslSourceAccess),
     )
-    .discover(project_context("source"), source, |_| {})
+    .discover(EnvironmentRef::Native, source, |_| {})
     .await;
     worker.join().expect("HTTP worker");
 
@@ -1295,7 +1792,8 @@ async fn discover_http_source_returning(
 }
 
 #[cfg(test)]
-async fn discover_unreachable_http_source() -> Result<crate::models::FetchResult, AppError> {
+async fn discover_unreachable_http_source(
+) -> Result<crate::application::source_acquisition::FetchResult, AppError> {
     use crate::application::wellknown_access::WellKnownAccess;
     use crate::application::wsl_source_access::UnavailableWslSourceAccess;
     use crate::models::NetworkProxySettings;
@@ -1328,7 +1826,7 @@ async fn discover_unreachable_http_source() -> Result<crate::models::FetchResult
         Arc::new(UnavailableWslSourceAccess),
     )
     .discover(
-        project_context("source"),
+        EnvironmentRef::Native,
         format!("http://{address}/unreachable"),
         |_| {},
     )
@@ -1479,7 +1977,7 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
         RuntimeDownloadAccess::new(http),
         Arc::new(UnavailableWslSourceAccess),
     )
-    .discover(project_context("source"), source.clone(), |_| {})
+    .discover(EnvironmentRef::Native, source.clone(), |_| {})
     .await
     .expect("discover direct download");
     worker.join().expect("HTTP worker");
@@ -1507,13 +2005,14 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
         .await
         .expect("pin downloaded payload");
     let context = project_context("source");
-    let selection_facts = InstallPlanningFactSource::current(&facts, &context)
+    let selection_facts = ScopePlanningSnapshotSource::snapshot(&facts, &context)
         .await
         .expect("Agent selection facts");
     let agent_selection = test_submission_for_agents_and_own_directories(
         &context,
         &selection_facts.agent_runtime,
         &selection_facts.eve_targets,
+        &selection_facts.resolved_context.skill_root,
         &targets,
         &[],
         InstallMode::Copy,
@@ -1521,7 +2020,13 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
     .await;
     let install = InstallService::new(
         payloads.clone(),
-        ConcreteInstallPlanner::new(facts.clone(), targets, payloads, fixed_time),
+        ConcreteInstallPlanner::new(
+            facts.clone(),
+            targets,
+            payloads,
+            fixed_time,
+            Arc::new(EmptyLibraryCandidateSource),
+        ),
         SelectiveVerifyFailurePlanExecutor {
             environments: environments.clone(),
             facts: facts.clone(),
@@ -1615,7 +2120,6 @@ mod update_lifecycle {
     use crate::application::mutation::plan::{ExecutionUnit, MutationPlan};
     use crate::application::mutation::result::{MutationUnitStatus, MutationWarning};
     use crate::application::payload_session::{PayloadSessionManager, PinnedPayloadLease};
-    use crate::application::plan_runner::{RuntimeLockCommitter, RuntimePlanExecutor};
     use crate::application::resources::SkillIdentity;
     use crate::application::source_acquisition::{
         AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService,
@@ -1631,7 +2135,7 @@ mod update_lifecycle {
         UpdateWarningCode,
     };
     use crate::application::update_check::UpdateCheckService;
-    use crate::application::update_runtime::{RuntimeUpdatePayloadAcquirer, RuntimeUpdateService};
+    use crate::application::update_subjects::InstalledUpdateSubjectProvider;
     use crate::core::mutation::CancellationSignal;
     use crate::core::skill_payload::PayloadId;
     use crate::environment::native::materialize::{
@@ -1642,7 +2146,9 @@ mod update_lifecycle {
     use crate::environment::runtime::ExecutionBackend;
     use crate::error::AppError;
     use crate::models::{ParsedSource, SourceType};
+    use crate::runtime::plan_runner::{RuntimeLockCommitter, RuntimePlanExecutor};
     use crate::runtime::source_acquisition::SourceDiscoveryService;
+    use crate::runtime::update_service::{RuntimeSkillSourceModule, RuntimeUpdateService};
 
     struct CountingDetector {
         inner: RuntimeSourceEvidenceDetector,
@@ -1897,7 +2403,7 @@ mod update_lifecycle {
                     self.payloads.clone(),
                     fixed_time,
                 ),
-                RuntimeUpdatePayloadAcquirer::with_git_transport(
+                RuntimeSkillSourceModule::with_git_transport(
                     self.payloads.clone(),
                     self.snapshots.clone(),
                     self.evidence.clone(),
@@ -1907,8 +2413,15 @@ mod update_lifecycle {
             )
         }
 
-        fn check_service(&self) -> UpdateCheckService<RuntimePlanningFactSource> {
-            UpdateCheckService::new(self.facts.clone(), self.evidence.clone())
+        fn check_service(
+            &self,
+        ) -> UpdateCheckService<
+            InstalledUpdateSubjectProvider<RuntimePlanningFactSource, RuntimeTargetFactResolver>,
+        > {
+            UpdateCheckService::new(
+                InstalledUpdateSubjectProvider::new(self.facts.clone(), self.targets.clone()),
+                self.evidence.clone(),
+            )
         }
 
         async fn install(&self) {
@@ -1917,7 +2430,7 @@ mod update_lifecycle {
                 self.git_transport.clone(),
             )
             .discover_parsed_with_cancellation(
-                self.context(),
+                self.context().environment,
                 ParsedSource {
                     source_type: SourceType::Git,
                     url: self.remote.source(),
@@ -1949,18 +2462,20 @@ mod update_lifecycle {
                     self.targets.clone(),
                     self.payloads.clone(),
                     fixed_time,
+                    Arc::new(EmptyLibraryCandidateSource),
                 ),
                 self.executor(),
             );
             for (skill_name, handle) in ["alpha", "beta"].into_iter().zip(handles) {
                 let context = self.context();
-                let selection_facts = InstallPlanningFactSource::current(&self.facts, &context)
+                let selection_facts = ScopePlanningSnapshotSource::snapshot(&self.facts, &context)
                     .await
                     .expect("load lifecycle Agent selection facts");
                 let agent_selection = test_submission_for_agents_and_own_directories(
                     &context,
                     &selection_facts.agent_runtime,
                     &selection_facts.eve_targets,
+                    &selection_facts.resolved_context.skill_root,
                     &self.targets,
                     &["codebuddy", "minimax-code", "custom-test"],
                     InstallMode::Copy,
@@ -2008,7 +2523,15 @@ mod update_lifecycle {
                 .check(&UpdateCheckRequest {
                     context: self.context(),
                     mode: UpdateCheckMode::Automatic,
-                    selection: UpdateCheckSelection::All,
+                    selection: UpdateCheckSelection::Skills(
+                        ["alpha", "beta"]
+                            .into_iter()
+                            .map(|skill_name| crate::application::resources::SkillIdentity {
+                                context: self.context(),
+                                skill_name: skill_name.to_string(),
+                            })
+                            .collect(),
+                    ),
                 })
                 .await
                 .expect("automatic update check");
@@ -2199,7 +2722,7 @@ mod update_lifecycle {
                     self.payloads.clone(),
                     fixed_time,
                 ),
-                RuntimeUpdatePayloadAcquirer::with_git_transport(
+                RuntimeSkillSourceModule::with_git_transport(
                     self.payloads.clone(),
                     self.snapshots.clone(),
                     self.evidence.clone(),

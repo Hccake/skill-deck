@@ -138,7 +138,7 @@ pub struct CopySourceSnapshot {
     pub revisions: RuntimeRevisions,
     pub lock_entry: Option<Value>,
     pub project_identity: ResolvedTargetFact,
-    pub canonical_identity: ResolvedTargetFact,
+    pub standard_identity: ResolvedTargetFact,
     pub agent_intents: Vec<AgentWriteIntent>,
 }
 
@@ -1493,11 +1493,13 @@ mod tests {
                     environment: EnvironmentRef::Native,
                     native_path: "/work/source".to_string(),
                 },
+                storage_access: crate::environment::types::StorageAccess::Native,
                 fingerprint: EntryFingerprint("entry-v1-source".to_string()),
                 entry_kind: TargetEntryKind::Directory,
                 link_target: None,
+                link_target_identity: None,
             },
-            canonical_identity: ResolvedTargetFact {
+            standard_identity: ResolvedTargetFact {
                 key: PhysicalTargetKey {
                     backend: ExecutionBackend::NativeUnix,
                     physical_parent: PhysicalParentIdentity::Unix {
@@ -1510,9 +1512,11 @@ mod tests {
                     environment: EnvironmentRef::Native,
                     native_path: "/source/.agents/skills/demo".to_string(),
                 },
+                storage_access: crate::environment::types::StorageAccess::Native,
                 fingerprint: EntryFingerprint("entry-v1-demo".to_string()),
                 entry_kind: TargetEntryKind::Directory,
                 link_target: None,
+                link_target_identity: None,
             },
             agent_intents: Vec::new(),
         }
@@ -2072,7 +2076,7 @@ mod tests {
             "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
         )
         .unwrap();
-        let canonical_payload = build_skill_payload(temp.path()).unwrap();
+        let original_payload = build_skill_payload(temp.path()).unwrap();
         let metadata = PayloadPlanningMetadata {
             skill_name: "demo".to_string(),
             install_dir_name: "demo".to_string(),
@@ -2090,7 +2094,7 @@ mod tests {
             .acquire_payload_with_metadata(
                 &discovery,
                 "skills/demo",
-                canonical_payload,
+                original_payload,
                 metadata.clone(),
             )
             .await

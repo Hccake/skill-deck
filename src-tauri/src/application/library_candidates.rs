@@ -147,3 +147,81 @@ impl LibraryCandidateSet {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LibraryCandidateSnapshotError {
+    EmptyEvidenceDigest,
+    DuplicateSelectedAgent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LibraryCandidateSnapshot {
+    evidence_digest: String,
+    selected_agent_ids: Vec<AgentId>,
+    candidates: LibraryCandidateSet,
+}
+
+impl LibraryCandidateSnapshot {
+    pub(crate) fn new(
+        evidence_digest: impl Into<String>,
+        mut selected_agent_ids: Vec<AgentId>,
+        candidates: LibraryCandidateSet,
+    ) -> Result<Self, LibraryCandidateSnapshotError> {
+        let evidence_digest = evidence_digest.into();
+        if evidence_digest.trim().is_empty() {
+            return Err(LibraryCandidateSnapshotError::EmptyEvidenceDigest);
+        }
+        selected_agent_ids.sort();
+        if selected_agent_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(LibraryCandidateSnapshotError::DuplicateSelectedAgent);
+        }
+        Ok(Self {
+            evidence_digest,
+            selected_agent_ids,
+            candidates,
+        })
+    }
+
+    pub(crate) fn evidence_digest(&self) -> &str {
+        &self.evidence_digest
+    }
+
+    pub(crate) fn selected_agent_ids(&self) -> &[AgentId] {
+        &self.selected_agent_ids
+    }
+
+    pub(crate) fn candidates(&self) -> &LibraryCandidateSet {
+        &self.candidates
+    }
+}
+
+pub(crate) type LibraryCandidateFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+pub(crate) trait LibraryCandidateSource: Send + Sync {
+    fn load_candidates<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+        skill: &'a SkillDirectoryName,
+    ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, AppError>>;
+}
+
+#[cfg(test)]
+pub(crate) struct EmptyLibraryCandidateSource;
+
+#[cfg(test)]
+impl LibraryCandidateSource for EmptyLibraryCandidateSource {
+    fn load_candidates<'a>(
+        &'a self,
+        _context: &'a SkillLocationRef,
+        _skill: &'a SkillDirectoryName,
+    ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, AppError>> {
+        Box::pin(async {
+            LibraryCandidateSnapshot::new(
+                "digest-v1-empty-library-candidates",
+                Vec::new(),
+                LibraryCandidateSet::empty(),
+            )
+            .map_err(candidate_configuration_error)
+        })
+    }
+}
+
