@@ -27,10 +27,9 @@ pub enum MutationUnitStatus {
 #[specta(rename_all = "camelCase")]
 pub enum OperationErrorCode {
     Validation,
+    SkillPlacementTargetConflict,
     WellKnownScopeNotFound,
     EnvironmentUnavailable,
-    EnvironmentChanged,
-    ContextChanged,
     StorageUnsupported,
     CapabilityUnavailable,
     UnsafePath,
@@ -43,10 +42,13 @@ pub enum OperationErrorCode {
     StalePayload,
     StaleTarget,
     ExternalLockChanged,
+    UpstreamSkillNameChanged,
+    UpstreamSkillDeleted,
     MutationCancelled,
     ExecutionFailed,
     RestoreFailed,
     RecoveryRequired,
+    LibraryRecoveryIncomplete,
     ConfigurationReadOnly,
     ConfigurationCorrupted,
 }
@@ -142,6 +144,45 @@ impl ErrorReport {
             AppError::Validation { field, message } => {
                 let mut report = Self::with_details(OperationErrorCode::Validation, false, message);
                 report.field = field;
+                report
+            }
+            AppError::LibraryReferenceConflict { usages } => {
+                let mut report = Self::new(OperationErrorCode::Validation);
+                report.field = Some("libraryUsages".to_string());
+                report
+                    .parameters
+                    .insert("count".to_string(), usages.len().to_string());
+                report
+            }
+            AppError::SkillPlacementTargetConflict {
+                skill_name,
+                agent_ids,
+                target_path,
+                target_kind,
+            } => {
+                let mut report = Self::new(OperationErrorCode::SkillPlacementTargetConflict);
+                report
+                    .parameters
+                    .insert("skillName".to_string(), skill_name);
+                report.parameters.insert(
+                    "agentIds".to_string(),
+                    agent_ids
+                        .iter()
+                        .map(AgentId::as_str)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                );
+                report
+                    .parameters
+                    .insert("targetPath".to_string(), target_path);
+                report.parameters.insert(
+                    "targetKind".to_string(),
+                    match target_kind {
+                        crate::error::SkillPlacementTargetKind::File => "file",
+                        crate::error::SkillPlacementTargetKind::Other => "other",
+                    }
+                    .to_string(),
+                );
                 report
             }
             AppError::AgentSelectionInvalid { reason } => {
@@ -242,12 +283,6 @@ impl ErrorReport {
             AppError::WslCommandTimedOut | AppError::WslOutputLimitExceeded { .. } => {
                 Self::new(OperationErrorCode::EnvironmentUnavailable).with_retryable(true)
             }
-            AppError::EnvironmentChanged { .. } => {
-                Self::new(OperationErrorCode::EnvironmentChanged).with_retryable(true)
-            }
-            AppError::ContextChanged { .. } => {
-                Self::new(OperationErrorCode::ContextChanged).with_retryable(true)
-            }
             AppError::StorageUnsupported { path }
             | AppError::StorageMappingUnsupported { path, .. } => {
                 let mut report = Self::new(OperationErrorCode::StorageUnsupported);
@@ -308,6 +343,26 @@ impl ErrorReport {
             AppError::StaleTarget => {
                 Self::new(OperationErrorCode::StaleTarget).with_retryable(true)
             }
+            AppError::UpstreamSkillNameChanged {
+                expected_name,
+                actual_name,
+            } => {
+                let mut report = Self::new(OperationErrorCode::UpstreamSkillNameChanged);
+                report
+                    .parameters
+                    .insert("expectedName".to_string(), expected_name);
+                report
+                    .parameters
+                    .insert("actualName".to_string(), actual_name);
+                report
+            }
+            AppError::UpstreamSkillDeleted { skill_name } => {
+                let mut report = Self::new(OperationErrorCode::UpstreamSkillDeleted);
+                report
+                    .parameters
+                    .insert("skillName".to_string(), skill_name);
+                report
+            }
             AppError::StaleAgentRuntime {
                 expected_registry_revision,
                 actual_registry_revision,
@@ -323,7 +378,7 @@ impl ErrorReport {
                 };
                 Self::new(code).with_retryable(true)
             }
-            AppError::ExternalLockChanged { target } | AppError::LockConflict { target } => {
+            AppError::LockConflict { target } => {
                 let mut report = Self::new(OperationErrorCode::ExternalLockChanged);
                 report
                     .parameters
@@ -337,6 +392,19 @@ impl ErrorReport {
                 recovery_resource_id,
                 message,
             } => Self::recovery_required(recovery_resource_id, redact_public_text(message)),
+            AppError::LibraryRecoveryIncomplete {
+                environment,
+                message,
+            } => {
+                let mut report = Self::with_details(
+                    OperationErrorCode::LibraryRecoveryIncomplete,
+                    true,
+                    message,
+                );
+                report.severity = ErrorSeverity::Critical;
+                report.environment = Some(environment);
+                report
+            }
             AppError::RestoreFailed { message } => {
                 Self::with_details(OperationErrorCode::RestoreFailed, false, message)
             }
@@ -595,9 +663,20 @@ mod tests {
                 },
                 OperationErrorCode::PayloadSessionExpired,
             ),
+            (
+                AppError::SkillPlacementTargetConflict {
+                    skill_name: "demo".to_string(),
+                    agent_ids: vec![
+                        crate::core::agent_definition::AgentId::parse("agent-demo").unwrap()
+                    ],
+                    target_path: "/agent/skills/demo".to_string(),
+                    target_kind: crate::error::SkillPlacementTargetKind::File,
+                },
+                OperationErrorCode::SkillPlacementTargetConflict,
+            ),
             (AppError::SelfCopy, OperationErrorCode::SelfCopy),
             (
-                AppError::ExternalLockChanged {
+                AppError::LockConflict {
                     target: crate::error::LockConflictTarget::Skill {
                         skill_name: "demo".to_string(),
                     },

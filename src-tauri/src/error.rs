@@ -5,7 +5,16 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use thiserror::Error;
 
-use crate::environment::types::EnvironmentRef;
+use crate::core::agent_definition::AgentId;
+use crate::environment::types::{EnvironmentRef, SkillLocationRef};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum SkillPlacementTargetKind {
+    File,
+    Other,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -185,6 +194,23 @@ pub enum AppError {
     #[error("Invalid source: {value}")]
     InvalidSource { value: String },
 
+    #[error("Upstream Skill '{expected_name}' is now named '{actual_name}'")]
+    UpstreamSkillNameChanged {
+        #[serde(rename = "expectedName")]
+        #[specta(rename = "expectedName")]
+        expected_name: String,
+        #[serde(rename = "actualName")]
+        #[specta(rename = "actualName")]
+        actual_name: String,
+    },
+
+    #[error("Upstream Skill '{skill_name}' no longer exists")]
+    UpstreamSkillDeleted {
+        #[serde(rename = "skillName")]
+        #[specta(rename = "skillName")]
+        skill_name: String,
+    },
+
     #[error("Source acquisition failed during Well-known and direct download attempts")]
     SourceAcquisitionFailed {
         #[serde(rename = "wellKnownReason")]
@@ -334,18 +360,25 @@ pub enum AppError {
         message: String,
     },
 
-    #[error("Environment changed ({expected_revision} -> {actual_revision})")]
-    #[allow(dead_code)]
-    EnvironmentChanged {
-        expected_revision: String,
-        actual_revision: String,
-    },
+    #[error("The resource is referenced by Skill Library applications")]
+    LibraryReferenceConflict { usages: Vec<SkillLocationRef> },
 
-    #[error("Context changed ({expected_revision} -> {actual_revision})")]
-    #[allow(dead_code)]
-    ContextChanged {
-        expected_revision: String,
-        actual_revision: String,
+    #[error(
+        "Skill placement target for '{skill_name}' contains an unsupported entry: {target_path}"
+    )]
+    SkillPlacementTargetConflict {
+        #[serde(rename = "skillName")]
+        #[specta(rename = "skillName")]
+        skill_name: String,
+        #[serde(rename = "agentIds")]
+        #[specta(rename = "agentIds")]
+        agent_ids: Vec<AgentId>,
+        #[serde(rename = "targetPath")]
+        #[specta(rename = "targetPath")]
+        target_path: String,
+        #[serde(rename = "targetKind")]
+        #[specta(rename = "targetKind")]
+        target_kind: SkillPlacementTargetKind,
     },
 
     #[error("Storage is unsupported: {path}")]
@@ -387,10 +420,6 @@ pub enum AppError {
     #[error("Target preview is stale")]
     StaleTarget,
 
-    #[error("Skill lock changed externally: {target}")]
-    #[allow(dead_code)]
-    ExternalLockChanged { target: LockConflictTarget },
-
     #[error("Execution failed: {message}")]
     ExecutionFailed { message: String },
 
@@ -400,6 +429,12 @@ pub enum AppError {
     #[error("Recovery is required: {message}")]
     RecoveryRequired {
         recovery_resource_id: RecoveryResourceId,
+        message: String,
+    },
+
+    #[error("Skill Library recovery is incomplete: {message}")]
+    LibraryRecoveryIncomplete {
+        environment: EnvironmentRef,
         message: String,
     },
 

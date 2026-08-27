@@ -121,7 +121,7 @@ where
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub async fn execute(
         &self,
         plan: MutationPlan,
@@ -422,6 +422,7 @@ mod tests {
         None,
         StageSecond,
         CancelAfterSecond,
+        Recheck,
         Lock,
         Cleanup,
         LockAndRestoreRequired,
@@ -471,6 +472,9 @@ mod tests {
                     .lock()
                     .unwrap()
                     .push(format!("recheck:{}", staged.unit_id));
+                if self.failure == Failure::Recheck {
+                    return Err(AppError::StaleTarget);
+                }
                 Ok(())
             })
         }
@@ -710,8 +714,8 @@ mod tests {
             source: None,
             target: context(),
             expected_revisions: revisions(),
-            canonical_entry: None,
-            required_agent_entries: Vec::new(),
+            primary_entry: None,
+            additional_entries: Vec::new(),
             lock_mutation: Some(lock_mutation(id)),
             expected_targets: vec![ExpectedTargetEntry {
                 key: target,
@@ -772,6 +776,31 @@ mod tests {
                 "swap:one",
                 "verify:one",
                 "lock:one",
+                "cleanup:one",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_entry_recheck_stops_before_swap_verify_and_lock() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let results = coordinator(Failure::Recheck, log.clone())
+            .execute(
+                plan(vec![unit("one", key("one"))]),
+                CancellationSignal::default(),
+            )
+            .await;
+
+        assert_eq!(results[0].status, MutationUnitStatus::Failed);
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec![
+                "runtime:global",
+                "stage:one",
+                "marker:one",
+                "runtime:global",
+                "recheck:one",
+                "restore:one",
                 "cleanup:one",
             ]
         );
