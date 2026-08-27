@@ -48,6 +48,7 @@ pub struct ListSkillsResult {
     pub agents: Vec<ResolvedAgent>,
     /// 项目目录是否存在（project scope 时有意义，global 始终为 true）
     pub path_exists: bool,
+    pub library_application: crate::application::library_application::LibraryApplicationSummary,
 }
 
 #[derive(Debug)]
@@ -346,6 +347,11 @@ pub fn project_skill_snapshot(
         skills,
         agents,
         path_exists,
+        library_application: crate::application::library_application::LibraryApplicationSummary {
+            ordered_libraries: Vec::new(),
+            selected_agent_ids: Vec::new(),
+            pending: false,
+        },
     })
 }
 

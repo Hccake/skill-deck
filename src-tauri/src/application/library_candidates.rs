@@ -73,6 +73,86 @@ pub(crate) enum LibraryCandidateError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LibraryCatalogMember {
+    pub(crate) library_id: LibraryId,
+    pub(crate) member_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LibraryCatalogMemberIndex {
+    library_ids: BTreeSet<LibraryId>,
+    by_directory_name: BTreeMap<SkillDirectoryName, Vec<LibraryCatalogMember>>,
+}
+
+impl LibraryCatalogMemberIndex {
+    pub(crate) fn build(catalog: &LibraryCatalog) -> Result<Self, LibraryCandidateError> {
+        let mut library_ids = BTreeSet::new();
+        let mut by_directory_name =
+            BTreeMap::<SkillDirectoryName, Vec<LibraryCatalogMember>>::new();
+        for library in &catalog.libraries {
+            library_ids.insert(library.id.clone());
+            let mut members_in_library = BTreeMap::<SkillDirectoryName, String>::new();
+            for member in &library.skills {
+                let directory_name =
+                    SkillDirectoryName::try_from(member.name.as_str()).map_err(|_| {
+                        LibraryCandidateError::InvalidCatalogMemberName {
+                            library_id: library.id.clone(),
+                            member_name: member.name.clone(),
+                        }
+                    })?;
+                if let Some(first_member_name) =
+                    members_in_library.insert(directory_name.clone(), member.name.clone())
+                {
+                    return Err(LibraryCandidateError::DuplicateCatalogMemberDirectory {
+                        library_id: library.id.clone(),
+                        first_member_name,
+                        duplicate_member_name: member.name.clone(),
+                    });
+                }
+                by_directory_name
+                    .entry(directory_name)
+                    .or_default()
+                    .push(LibraryCatalogMember {
+                        library_id: library.id.clone(),
+                        member_name: member.name.clone(),
+                    });
+            }
+        }
+        Ok(Self {
+            library_ids,
+            by_directory_name,
+        })
+    }
+
+    pub(crate) fn members_for(
+        &self,
+        ordered_library_ids: &[LibraryId],
+    ) -> Result<BTreeMap<SkillDirectoryName, Vec<LibraryCatalogMember>>, LibraryCandidateError>
+    {
+        let mut grouped = BTreeMap::<SkillDirectoryName, Vec<LibraryCatalogMember>>::new();
+        for library_id in ordered_library_ids {
+            if !self.library_ids.contains(library_id) {
+                return Err(LibraryCandidateError::UnknownLibrary {
+                    library_id: library_id.clone(),
+                });
+            }
+            for (directory_name, members) in &self.by_directory_name {
+                if let Some(member) = members
+                    .iter()
+                    .find(|member| &member.library_id == library_id)
+                {
+                    grouped
+                        .entry(directory_name.clone())
+                        .or_default()
+                        .push(member.clone());
+                }
+            }
+        }
+        Ok(grouped)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LibraryCandidateSet {
     recognized: Vec<LibraryVersionCandidate>,
     ordered: Vec<LibraryVersionCandidate>,
@@ -204,6 +284,64 @@ pub(crate) trait LibraryCandidateSource: Send + Sync {
     ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, AppError>>;
 }
 
+pub(crate) struct RepositoryLibraryCandidateSource {
+    repository: Arc<dyn LibraryApplicationRepository>,
+}
+
+impl RepositoryLibraryCandidateSource {
+    pub(crate) fn new(repository: Arc<dyn LibraryApplicationRepository>) -> Self {
+        Self { repository }
+    }
+}
+
+impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
+    fn load_candidates<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+        skill: &'a SkillDirectoryName,
+    ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, AppError>> {
+        Box::pin(async move {
+            let record = self.repository.load_application(context).await?;
+            if record.pending_operation.is_some() {
+                return Err(AppError::MutationBusy);
+            }
+            let catalog = self.repository.load_catalog(context).await?;
+            let evidence_digest =
+                crate::application::mutation::plan::stable_digest(&(&record.current, &catalog))?;
+            let index = LibraryCatalogMemberIndex::build(&catalog)
+                .map_err(candidate_configuration_error)?;
+            let mut grouped = index
+                .members_for(&record.current.ordered_library_ids)
+                .map_err(candidate_configuration_error)?;
+            let mut candidates = Vec::new();
+            for member in grouped.remove(skill).unwrap_or_default() {
+                let locator = self
+                    .repository
+                    .library_skill_locator(context, &member.library_id, &member.member_name)
+                    .await?;
+                candidates.push(LibraryVersionCandidate::new(
+                    member.library_id,
+                    member.member_name,
+                    locator,
+                ));
+            }
+            let candidates = LibraryCandidateSet::for_skill(
+                &context.environment,
+                skill,
+                candidates.clone(),
+                candidates,
+            )
+            .map_err(candidate_configuration_error)?;
+            LibraryCandidateSnapshot::new(
+                evidence_digest,
+                record.current.selected_agent_ids,
+                candidates,
+            )
+            .map_err(candidate_configuration_error)
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) struct EmptyLibraryCandidateSource;
 
@@ -225,3 +363,481 @@ impl LibraryCandidateSource for EmptyLibraryCandidateSource {
     }
 }
 
+fn candidate_configuration_error(error: impl std::fmt::Debug) -> AppError {
+    AppError::ConfigurationCorrupted {
+        message: format!("invalid Skill Library candidate snapshot: {error:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::application::installed_skill_resolver::SkillDirectoryName;
+    use crate::application::library_application::{
+        LibraryApplicationFuture, LibraryApplicationRecord, LibraryApplicationRepository,
+        LibraryApplicationState, PendingLibraryApplication,
+    };
+    use crate::application::skill_libraries::{
+        LibraryCatalog, LibraryId, LibrarySkillRecord, SkillLibraryRecord, LIBRARY_SCHEMA_VERSION,
+    };
+    use crate::core::agent_definition::AgentId;
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
+
+    #[test]
+    fn candidate_set_rejects_another_skill_or_environment() {
+        let skill = SkillDirectoryName::try_from("demo").unwrap();
+        let native = EnvironmentRef::Native;
+        let wrong_skill = LibraryVersionCandidate::new(
+            LibraryId::parse("library-one"),
+            "other",
+            ResourceLocator {
+                environment: native.clone(),
+                native_path: "/libraries/library-one/skills/other".to_string(),
+            },
+        );
+        assert!(matches!(
+            LibraryCandidateSet::for_skill(&native, &skill, vec![wrong_skill], Vec::new(),),
+            Err(LibraryCandidateError::CandidateSkillMismatch { .. })
+        ));
+
+        let wrong_environment = LibraryVersionCandidate::new(
+            LibraryId::parse("library-one"),
+            "demo",
+            ResourceLocator {
+                environment: EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".to_string(),
+                },
+                native_path: "/libraries/library-one/skills/demo".to_string(),
+            },
+        );
+        assert!(matches!(
+            LibraryCandidateSet::for_skill(&native, &skill, vec![wrong_environment], Vec::new(),),
+            Err(LibraryCandidateError::CandidateEnvironmentMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn candidate_set_rejects_unrecognized_and_duplicate_ordered_candidates() {
+        let first = LibraryVersionCandidate::new(
+            LibraryId::parse("first"),
+            "demo",
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: "/libraries/first/skills/demo".to_string(),
+            },
+        );
+        let second = LibraryVersionCandidate::new(
+            LibraryId::parse("second"),
+            "demo",
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: "/libraries/second/skills/demo".to_string(),
+            },
+        );
+
+        assert_eq!(
+            LibraryCandidateSet::new(vec![first.clone()], vec![second]),
+            Err(LibraryCandidateError::OrderedCandidateNotRecognized)
+        );
+        assert_eq!(
+            LibraryCandidateSet::new(vec![first.clone()], vec![first.clone(), first]),
+            Err(LibraryCandidateError::DuplicateOrderedCandidate)
+        );
+    }
+
+    #[test]
+    fn candidate_set_rejects_two_candidates_from_one_library_for_the_same_skill() {
+        let skill = SkillDirectoryName::try_from("ce-review").unwrap();
+        let library_id = LibraryId::parse("library-one");
+        let first = LibraryVersionCandidate::new(
+            library_id.clone(),
+            "CE:Review",
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: "/libraries/library-one/skills/CE:Review".to_string(),
+            },
+        );
+        let second = LibraryVersionCandidate::new(
+            library_id,
+            "ce-review",
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: "/libraries/library-one/skills/ce-review".to_string(),
+            },
+        );
+
+        assert_eq!(
+            LibraryCandidateSet::for_skill(
+                &EnvironmentRef::Native,
+                &skill,
+                vec![first.clone(), second],
+                vec![first],
+            ),
+            Err(LibraryCandidateError::DuplicateLibraryCandidate {
+                library_id: LibraryId::parse("library-one"),
+            })
+        );
+    }
+
+    #[test]
+    fn catalog_member_index_reports_the_conflicting_names_in_one_library() {
+        let library_id = LibraryId::parse("library-one");
+        let skill_record = |name: &str| LibrarySkillRecord {
+            name: name.to_string(),
+            description: String::new(),
+            source_record: serde_json::json!({}),
+            content_manifest_hash: "manifest".to_string(),
+            updated_at: None,
+            extra: serde_json::Map::new(),
+        };
+        let catalog = LibraryCatalog {
+            schema_version: LIBRARY_SCHEMA_VERSION,
+            libraries: vec![SkillLibraryRecord {
+                id: library_id.clone(),
+                name: "Library One".to_string(),
+                skills: vec![skill_record("CE:Review"), skill_record("ce-review")],
+                extra: serde_json::Map::new(),
+            }],
+            extra: serde_json::Map::new(),
+        };
+
+        assert!(matches!(
+            LibraryCatalogMemberIndex::build(&catalog),
+            Err(LibraryCandidateError::DuplicateCatalogMemberDirectory {
+                library_id: actual_library_id,
+                first_member_name,
+                duplicate_member_name,
+            }) if actual_library_id == library_id
+                && first_member_name == "CE:Review"
+                && duplicate_member_name == "ce-review"
+        ));
+    }
+
+    struct MemoryRepository {
+        record: LibraryApplicationRecord,
+        catalog: LibraryCatalog,
+        locator_requests: Mutex<Vec<(LibraryId, String)>>,
+    }
+
+    impl LibraryApplicationRepository for MemoryRepository {
+        fn load_application<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+        ) -> LibraryApplicationFuture<'a, Result<LibraryApplicationRecord, AppError>> {
+            Box::pin(async move { Ok(self.record.clone()) })
+        }
+
+        fn save_application<'a>(
+            &'a self,
+            _record: &'a LibraryApplicationRecord,
+        ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn library_skill_locator<'a>(
+            &'a self,
+            context: &'a SkillLocationRef,
+            library_id: &'a LibraryId,
+            skill_name: &'a str,
+        ) -> LibraryApplicationFuture<'a, Result<ResourceLocator, AppError>> {
+            Box::pin(async move {
+                self.locator_requests
+                    .lock()
+                    .unwrap()
+                    .push((library_id.clone(), skill_name.to_string()));
+                Ok(ResourceLocator {
+                    environment: context.environment.clone(),
+                    native_path: format!("/libraries/{}/skills/{skill_name}", library_id.as_str()),
+                })
+            })
+        }
+
+        fn load_catalog<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+        ) -> LibraryApplicationFuture<'a, Result<LibraryCatalog, AppError>> {
+            Box::pin(async move { Ok(self.catalog.clone()) })
+        }
+
+        fn remove_application<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+        ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn agent(id: &str) -> AgentId {
+        AgentId::parse(id).unwrap()
+    }
+
+    #[test]
+    fn snapshot_validates_evidence_and_selected_agents() {
+        assert_eq!(
+            LibraryCandidateSnapshot::new("", Vec::new(), LibraryCandidateSet::empty(),),
+            Err(LibraryCandidateSnapshotError::EmptyEvidenceDigest)
+        );
+        assert_eq!(
+            LibraryCandidateSnapshot::new(
+                "digest-v1-library",
+                vec![agent("codex"), agent("codex")],
+                LibraryCandidateSet::empty(),
+            ),
+            Err(LibraryCandidateSnapshotError::DuplicateSelectedAgent)
+        );
+
+        let snapshot = LibraryCandidateSnapshot::new(
+            "digest-v1-library",
+            vec![agent("cursor"), agent("codex")],
+            LibraryCandidateSet::empty(),
+        )
+        .unwrap();
+        assert_eq!(snapshot.evidence_digest(), "digest-v1-library");
+        assert_eq!(
+            snapshot.selected_agent_ids(),
+            &[agent("codex"), agent("cursor")]
+        );
+        assert!(snapshot.candidates().ordered().is_empty());
+    }
+
+    struct FixedSource(LibraryCandidateSnapshot);
+
+    impl LibraryCandidateSource for FixedSource {
+        fn load_candidates<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+            _skill: &'a SkillDirectoryName,
+        ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, crate::error::AppError>>
+        {
+            Box::pin(async move { Ok(self.0.clone()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn source_returns_the_validated_snapshot_contract() {
+        let expected = LibraryCandidateSnapshot::new(
+            "digest-v1-library",
+            vec![agent("codex")],
+            LibraryCandidateSet::empty(),
+        )
+        .unwrap();
+        let source = FixedSource(expected.clone());
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let skill = SkillDirectoryName::try_from("demo").unwrap();
+
+        let actual = source.load_candidates(&context, &skill).await.unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn repository_source_preserves_library_order_and_real_member_names() {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let first_id = LibraryId::parse("first");
+        let second_id = LibraryId::parse("second");
+        let skill_record = |name: &str| LibrarySkillRecord {
+            name: name.to_string(),
+            description: String::new(),
+            source_record: serde_json::json!({}),
+            content_manifest_hash: "manifest".to_string(),
+            updated_at: None,
+            extra: serde_json::Map::new(),
+        };
+        let library_record = |id: LibraryId, name: &str| SkillLibraryRecord {
+            id,
+            name: name.to_string(),
+            skills: vec![skill_record(name)],
+            extra: serde_json::Map::new(),
+        };
+        let repository = Arc::new(MemoryRepository {
+            record: LibraryApplicationRecord {
+                schema_version:
+                    crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
+                target: context.clone(),
+                current: LibraryApplicationState {
+                    ordered_library_ids: vec![first_id.clone(), second_id.clone()],
+                    selected_agent_ids: vec![agent("cursor"), agent("codex")],
+                },
+                pending_operation: None,
+            },
+            catalog: LibraryCatalog {
+                schema_version: LIBRARY_SCHEMA_VERSION,
+                libraries: vec![
+                    library_record(first_id.clone(), "CE:Review"),
+                    library_record(second_id.clone(), "ce-review"),
+                ],
+                extra: serde_json::Map::new(),
+            },
+            locator_requests: Mutex::new(Vec::new()),
+        });
+        let source = RepositoryLibraryCandidateSource::new(repository.clone());
+        let skill = SkillDirectoryName::try_from("ce-review").unwrap();
+
+        let snapshot = source.load_candidates(&context, &skill).await.unwrap();
+
+        assert_eq!(
+            snapshot.selected_agent_ids(),
+            &[agent("codex"), agent("cursor")]
+        );
+        assert_eq!(
+            snapshot
+                .candidates()
+                .ordered()
+                .iter()
+                .map(|candidate| (
+                    candidate.library_id().as_str(),
+                    candidate.member_name(),
+                    candidate.locator().native_path.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("first", "CE:Review", "/libraries/first/skills/CE:Review"),
+                ("second", "ce-review", "/libraries/second/skills/ce-review"),
+            ]
+        );
+        assert_eq!(
+            snapshot.candidates().recognized(),
+            snapshot.candidates().ordered()
+        );
+        assert_eq!(
+            *repository.locator_requests.lock().unwrap(),
+            vec![
+                (first_id, "CE:Review".to_string()),
+                (second_id, "ce-review".to_string()),
+            ]
+        );
+        assert!(snapshot.evidence_digest().starts_with("digest-v1-"));
+    }
+
+    #[tokio::test]
+    async fn repository_source_rejects_one_library_with_two_names_for_the_same_directory() {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let library_id = LibraryId::parse("library-one");
+        let skill_record = |name: &str| LibrarySkillRecord {
+            name: name.to_string(),
+            description: String::new(),
+            source_record: serde_json::json!({}),
+            content_manifest_hash: "manifest".to_string(),
+            updated_at: None,
+            extra: serde_json::Map::new(),
+        };
+        let repository = Arc::new(MemoryRepository {
+            record: LibraryApplicationRecord {
+                schema_version:
+                    crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
+                target: context.clone(),
+                current: LibraryApplicationState {
+                    ordered_library_ids: vec![library_id.clone()],
+                    selected_agent_ids: Vec::new(),
+                },
+                pending_operation: None,
+            },
+            catalog: LibraryCatalog {
+                schema_version: LIBRARY_SCHEMA_VERSION,
+                libraries: vec![SkillLibraryRecord {
+                    id: library_id,
+                    name: "Library One".to_string(),
+                    skills: vec![skill_record("CE:Review"), skill_record("ce-review")],
+                    extra: serde_json::Map::new(),
+                }],
+                extra: serde_json::Map::new(),
+            },
+            locator_requests: Mutex::new(Vec::new()),
+        });
+        let source = RepositoryLibraryCandidateSource::new(repository);
+
+        let result = source
+            .load_candidates(
+                &context,
+                &SkillDirectoryName::try_from("ce-review").unwrap(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AppError::ConfigurationCorrupted { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn repository_source_rejects_a_pending_application() {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let current = LibraryApplicationState::default();
+        let repository = Arc::new(MemoryRepository {
+            record: LibraryApplicationRecord {
+                schema_version:
+                    crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
+                target: context.clone(),
+                current: current.clone(),
+                pending_operation: Some(PendingLibraryApplication {
+                    operation_id: "operation-pending".to_string(),
+                    before_application: current.clone(),
+                    target_application: current,
+                    preview_fingerprint: "preview-pending".to_string(),
+                }),
+            },
+            catalog: LibraryCatalog {
+                schema_version: LIBRARY_SCHEMA_VERSION,
+                libraries: Vec::new(),
+                extra: serde_json::Map::new(),
+            },
+            locator_requests: Mutex::new(Vec::new()),
+        });
+        let source = RepositoryLibraryCandidateSource::new(repository);
+
+        let result = source
+            .load_candidates(&context, &SkillDirectoryName::try_from("demo").unwrap())
+            .await;
+
+        assert!(matches!(result, Err(AppError::MutationBusy)));
+    }
+
+    #[tokio::test]
+    async fn empty_source_returns_deterministic_empty_evidence() {
+        let source = EmptyLibraryCandidateSource;
+        let global = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let project = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
+                project_id: "project-one".to_string(),
+            },
+        };
+
+        let first = source
+            .load_candidates(&global, &SkillDirectoryName::try_from("first").unwrap())
+            .await
+            .unwrap();
+        let second = source
+            .load_candidates(&project, &SkillDirectoryName::try_from("second").unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.evidence_digest(),
+            "digest-v1-empty-library-candidates"
+        );
+        assert!(first.selected_agent_ids().is_empty());
+        assert!(first.candidates().recognized().is_empty());
+        assert!(first.candidates().ordered().is_empty());
+    }
+}

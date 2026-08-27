@@ -395,6 +395,247 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
     }
 }
 
+impl LibraryUsageProvider for RuntimeSkillLibraryRepository {
+    fn usages<'a>(
+        &'a self,
+        environment: &'a EnvironmentRef,
+        library_id: &'a LibraryId,
+    ) -> LibraryFuture<'a, Result<Vec<LibraryUsage>, AppError>> {
+        Box::pin(async move {
+            let mut usages = Vec::new();
+            for (context, project) in self.usage_candidates(environment).await? {
+                let record = self.load_application(&context).await?;
+                if let Some(state) = library_usage_state(&record, library_id) {
+                    usages.push(LibraryUsage {
+                        context,
+                        project,
+                        state,
+                    });
+                }
+            }
+            Ok(usages)
+        })
+    }
+
+    fn usage_projection<'a>(
+        &'a self,
+        environment: &'a EnvironmentRef,
+    ) -> LibraryFuture<'a, Result<Vec<LibraryUsageProjection>, AppError>> {
+        Box::pin(async move {
+            let mut accumulator = LibraryUsageAccumulator::default();
+            for (context, _) in self.usage_candidates(environment).await? {
+                accumulator.observe(&self.load_application(&context).await?);
+            }
+            Ok(accumulator.finish())
+        })
+    }
+
+    fn agent_usages<'a>(
+        &'a self,
+        environment: &'a EnvironmentRef,
+        agent_id: &'a crate::core::agent_definition::AgentId,
+    ) -> LibraryFuture<'a, Result<Vec<LibraryUsage>, AppError>> {
+        Box::pin(async move {
+            let mut usages = Vec::new();
+            for (context, project) in self.usage_candidates(environment).await? {
+                let record = self.load_application(&context).await?;
+                let state = if record.current.selected_agent_ids.contains(agent_id) {
+                    Some(LibraryUsageState::Confirmed)
+                } else if record.pending_operation.as_ref().is_some_and(|pending| {
+                    pending
+                        .before_application
+                        .selected_agent_ids
+                        .contains(agent_id)
+                        || pending
+                            .target_application
+                            .selected_agent_ids
+                            .contains(agent_id)
+                }) {
+                    Some(LibraryUsageState::PendingAdjustment)
+                } else {
+                    None
+                };
+                if let Some(state) = state {
+                    usages.push(LibraryUsage {
+                        context,
+                        project,
+                        state,
+                    });
+                }
+            }
+            Ok(usages)
+        })
+    }
+}
+
+impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
+    fn load_application<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<LibraryApplicationRecord, AppError>> {
+        Box::pin(async move {
+            let bytes = match &context.environment {
+                EnvironmentRef::Native => {
+                    NativeAtomicDocumentIo
+                        .read_optional(&self.native_application(context)?)
+                        .await?
+                }
+                EnvironmentRef::Wsl { distro_name } => {
+                    let distro_name = distro_name.clone();
+                    let context = context.clone();
+                    self.wsl
+                        .with_session_retry(&distro_name, move |session| {
+                            let context = context.clone();
+                            async move {
+                                let target = wsl_application_locator(&session, &context.scope)?;
+                                WslAtomicDocumentIo::from_active_session(session)
+                                    .read_optional(&target)
+                                    .await
+                            }
+                        })
+                        .await?
+                }
+            };
+            let record = bytes
+                .map(|bytes| serde_json::from_slice(&bytes).map_err(AppError::from))
+                .unwrap_or_else(|| Ok(LibraryApplicationRecord::empty(context.clone())))?;
+            if record.schema_version != LIBRARY_APPLICATION_SCHEMA_VERSION
+                || record.target != *context
+            {
+                return Err(AppError::ConfigurationCorrupted {
+                    message: "invalid Skill Library application record".to_string(),
+                });
+            }
+            Ok(record)
+        })
+    }
+
+    fn save_application<'a>(
+        &'a self,
+        record: &'a LibraryApplicationRecord,
+    ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            let bytes = serde_json::to_vec_pretty(record)?;
+            match &record.target.environment {
+                EnvironmentRef::Native => {
+                    NativeAtomicDocumentIo
+                        .write_atomic(&self.native_application(&record.target)?, bytes)
+                        .await
+                }
+                EnvironmentRef::Wsl { distro_name } => {
+                    let distro_name = distro_name.clone();
+                    let scope = record.target.scope.clone();
+                    self.wsl
+                        .with_session_retry(&distro_name, move |session| {
+                            let bytes = bytes.clone();
+                            let scope = scope.clone();
+                            async move {
+                                let target = wsl_application_locator(&session, &scope)?;
+                                WslAtomicDocumentIo::from_active_session(session)
+                                    .write_atomic(&target, bytes)
+                                    .await
+                            }
+                        })
+                        .await
+                }
+            }
+        })
+    }
+
+    fn library_skill_locator<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+        library_id: &'a LibraryId,
+        skill_name: &'a str,
+    ) -> LibraryApplicationFuture<'a, Result<ResourceLocator, AppError>> {
+        Box::pin(async move {
+            validate_storage_component(library_id.as_str())?;
+            let install_dir_name = InstalledSkillResolver::install_dir_name(skill_name)?;
+            match &context.environment {
+                EnvironmentRef::Native => Ok(ResourceLocator {
+                    environment: EnvironmentRef::Native,
+                    native_path: self
+                        .native_skill_path(library_id, skill_name)?
+                        .to_string_lossy()
+                        .into_owned(),
+                }),
+                EnvironmentRef::Wsl { distro_name } => {
+                    let distro_name = distro_name.clone();
+                    let library_id = library_id.as_str().to_string();
+                    let skill_name = install_dir_name;
+                    self.wsl
+                        .with_session_retry(&distro_name, move |session| {
+                            let library_id = library_id.clone();
+                            let skill_name = skill_name.clone();
+                            async move {
+                                Ok(ResourceLocator {
+                                    environment: EnvironmentRef::Wsl {
+                                        distro_name: session.distro_name,
+                                    },
+                                    native_path: format!(
+                                        "{}/.skill-deck/skill-libraries/libraries/{}/skills/{}",
+                                        session.home.trim_end_matches('/'),
+                                        library_id,
+                                        skill_name
+                                    ),
+                                })
+                            }
+                        })
+                        .await
+                }
+            }
+        })
+    }
+
+    fn load_catalog<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<LibraryCatalog, AppError>> {
+        Box::pin(async move { SkillLibraryRepository::load(self, &context.environment).await })
+    }
+
+    fn remove_application<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            let SkillLocation::Project { project_id } = &context.scope else {
+                return Err(AppError::Validation {
+                    field: Some("context".to_string()),
+                    message: "only Project Skill Library applications can be removed".to_string(),
+                });
+            };
+            validate_storage_component(project_id)?;
+            match &context.environment {
+                EnvironmentRef::Native => {
+                    let path = PathBuf::from(self.native_application(context)?.native_path);
+                    tokio::task::spawn_blocking(move || match fs::remove_file(path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(AppError::from(error)),
+                    })
+                    .await
+                    .map_err(|error| AppError::ExecutionFailed {
+                        message: format!("Skill Library application cleanup task failed: {error}"),
+                    })?
+                }
+                EnvironmentRef::Wsl { distro_name } => {
+                    let distro_name = distro_name.clone();
+                    let project_id = project_id.clone();
+                    self.wsl
+                        .with_session_retry(&distro_name, move |session| {
+                            let project_id = project_id.clone();
+                            async move { remove_library_application(&session, &project_id).await }
+                        })
+                        .await
+                }
+            }
+        })
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NativeLibraryTransaction {
     destination: String,
     phase: NativeLibraryTransactionPhase,

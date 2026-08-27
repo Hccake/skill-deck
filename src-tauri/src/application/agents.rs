@@ -4,8 +4,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
-use crate::application::runtime_facts::AgentRegistrySnapshotSource;
+use crate::application::skill_libraries::LibraryUsage;
 use crate::core::agent_definition::{
     AgentFieldError, AgentId, AgentSource, CustomAgentDefinition, PathSpec, ScopeDefinition,
 };
@@ -102,6 +103,7 @@ pub struct AgentDeleteImpact {
     pub scopes: Vec<AgentDeleteScopeImpact>,
     pub loses_management_capability: bool,
     pub files_will_be_deleted: bool,
+    pub library_usages: Vec<LibraryUsage>,
 }
 
 #[derive(Clone)]
@@ -200,6 +202,15 @@ impl ManagedAgentRegistry {
                 read_only: true,
             });
         snapshot
+    }
+
+    pub(crate) fn active_custom_definition(&self, id: &AgentId) -> Option<CustomAgentDefinition> {
+        self.registry()
+            .settings_records()
+            .active_custom
+            .iter()
+            .find(|agent| &agent.definition.id == id)
+            .map(|agent| agent.definition.clone())
     }
 
     fn preview_registry(
@@ -899,6 +910,7 @@ fn build_delete_impact(
         scopes,
         loses_management_capability: true,
         files_will_be_deleted: false,
+        library_usages: Vec::new(),
     }
 }
 
