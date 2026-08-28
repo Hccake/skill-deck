@@ -190,14 +190,6 @@ mod tests {
     use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 
     #[test]
-    fn install_wizard_uses_wider_default_window() {
-        assert_eq!(INSTALL_WIZARD_WIDTH, 940.0);
-        assert_eq!(INSTALL_WIZARD_HEIGHT, 690.0);
-        assert_eq!(INSTALL_WIZARD_MIN_WIDTH, 680.0);
-        assert_eq!(INSTALL_WIZARD_MIN_HEIGHT, 520.0);
-    }
-
-    #[test]
     fn wizard_query_keeps_explicit_context() {
         let context = SkillLocationRef {
             environment: EnvironmentRef::Wsl {

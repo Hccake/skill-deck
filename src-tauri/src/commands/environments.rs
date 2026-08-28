@@ -73,6 +73,7 @@ pub async fn remove_environment_project(
         runtime.wsl(),
         runtime.projects(),
         runtime.admission(),
+        runtime.library_application(),
     )
     .await
 }

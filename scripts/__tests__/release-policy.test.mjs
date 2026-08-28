@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { parse } from "yaml";
 
@@ -18,8 +20,37 @@ const qualityWorkflowUrl = new URL(
   import.meta.url,
 );
 const releaseVerifierUrl = new URL("../verify-release-assets.mjs", import.meta.url);
+const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const readWorkflow = async (url) => parse(await readFile(url, "utf8"));
+
+test("Tauri package exposes only the desktop application binary", () => {
+  const metadata = JSON.parse(
+    execFileSync(
+      "cargo",
+      [
+        "metadata",
+        "--format-version",
+        "1",
+        "--no-deps",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+      ],
+      { cwd: repositoryRoot, encoding: "utf8" },
+    ),
+  );
+  const app = metadata.packages.find(
+    (entry) => entry.manifest_path
+      .replaceAll("\\", "/")
+      .endsWith("/src-tauri/Cargo.toml"),
+  );
+  const binaries = app.targets
+    .filter((target) => target.kind.includes("bin"))
+    .map((target) => target.name)
+    .sort();
+
+  assert.deepEqual(binaries, ["app"]);
+});
 
 test("CI and Release run the same quality workflow for an exact commit", async () => {
   const [quality, ci, release] = await Promise.all([

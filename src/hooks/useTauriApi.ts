@@ -31,6 +31,16 @@ import type {
   NetworkProxySettings, ProxyConnectionTestResult,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
   SourceSelectionIntent,
+  ExecuteAddLibrarySkillsRequest, LibraryAddPreview, LibraryAddResponse,
+  PreviewAddLibrarySkillsRequest, LibraryId, LibraryWorkspaceSnapshot, SkillLibraryDetail,
+  ApplyLibraryApplicationRequest, LibraryApplicationDraft, LibraryApplicationPreview,
+  LibraryApplicationResponse, LibraryApplicationSummary,
+  LibraryAgentOptions,
+  ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdatePreview,
+  LibraryUpdateContinuation, LibraryUpdatePreviewToken, LibraryUpdateRiskConfirmation,
+  UpdateLibrarySkillsRequest,
+  RemoveLibrarySkillRequest,
+  LibraryUsage,
 } from '@/bindings';
 
 export type {
@@ -57,6 +67,16 @@ export type {
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
   NetworkProxySettings, ProxyConnectionTestResult,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
+  ExecuteAddLibrarySkillsRequest, LibraryAddPreview, LibraryAddResponse,
+  PreviewAddLibrarySkillsRequest, LibraryId, LibraryWorkspaceSnapshot, SkillLibraryDetail,
+  ApplyLibraryApplicationRequest, LibraryApplicationDraft, LibraryApplicationPreview,
+  LibraryApplicationResponse, LibraryApplicationSummary,
+  LibraryAgentOptions,
+  ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdatePreview,
+  LibraryUpdateContinuation, LibraryUpdatePreviewToken, LibraryUpdateRiskConfirmation,
+  UpdateLibrarySkillsRequest,
+  RemoveLibrarySkillRequest,
+  LibraryUsage,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -77,6 +97,13 @@ export async function getAgentSettingsSnapshot(
   context: SkillLocationRef,
 ): Promise<AgentSettingsSnapshot> {
   return commands.getAgentSettingsSnapshot(context);
+}
+
+export async function getAgentLibraryUsages(
+  environment: EnvironmentRef,
+  id: AgentId,
+): Promise<LibraryUsage[]> {
+  return unwrap(await commands.getAgentLibraryUsages(environment, id));
 }
 
 export async function validateCustomAgentDraft(
@@ -169,6 +196,133 @@ export async function listSkills(context: SkillLocationRef): Promise<ListSkillsR
   return unwrap(await commands.listSkills(context));
 }
 
+export async function listSkillLibraries(
+  environment: EnvironmentRef,
+): Promise<LibraryWorkspaceSnapshot> {
+  return unwrap(await commands.listSkillLibraries(environment));
+}
+
+export async function createSkillLibrary(
+  environment: EnvironmentRef,
+  name: string,
+): Promise<LibraryWorkspaceSnapshot> {
+  return unwrap(await commands.createSkillLibrary(environment, name));
+}
+
+export async function renameSkillLibrary(
+  environment: EnvironmentRef,
+  libraryId: LibraryId,
+  name: string,
+): Promise<LibraryWorkspaceSnapshot> {
+  return unwrap(await commands.renameSkillLibrary(environment, libraryId, name));
+}
+
+export async function getSkillLibrary(
+  environment: EnvironmentRef,
+  libraryId: LibraryId,
+): Promise<SkillLibraryDetail> {
+  return unwrap(await commands.getSkillLibrary(environment, libraryId));
+}
+
+export async function readLibrarySkillContent(
+  environment: EnvironmentRef,
+  libraryId: LibraryId,
+  skillName: string,
+): Promise<string> {
+  return unwrap(await commands.readLibrarySkillContent(environment, libraryId, skillName));
+}
+
+export async function discoverSkillSource(
+  environment: EnvironmentRef,
+  source: string,
+  operationId: string,
+  selectionIntent: SourceSelectionIntent = {
+    wildcardRequested: false,
+    explicitSkillNames: [],
+  },
+): Promise<FetchResult> {
+  return unwrap(await commands.discoverSkillSource(
+    environment,
+    source,
+    operationId,
+    selectionIntent,
+  ));
+}
+
+export async function addSkillsToLibrary(
+  request: ExecuteAddLibrarySkillsRequest,
+): Promise<LibraryAddResponse> {
+  return unwrap(await commands.addSkillsToLibrary(request));
+}
+
+export async function previewAddLibrarySkills(
+  request: PreviewAddLibrarySkillsRequest,
+): Promise<LibraryAddPreview> {
+  return unwrap(await commands.previewAddLibrarySkills(request));
+}
+
+export async function getLibraryApplication(
+  context: SkillLocationRef,
+): Promise<LibraryApplicationSummary> {
+  return unwrap(await commands.getLibraryApplication(context));
+}
+
+export async function getLibraryAgentOptions(
+  context: SkillLocationRef,
+): Promise<LibraryAgentOptions> {
+  return unwrap(await commands.getLibraryAgentOptions(context));
+}
+
+export async function previewLibraryApplication(
+  draft: LibraryApplicationDraft,
+): Promise<LibraryApplicationPreview> {
+  return unwrap(await commands.previewLibraryApplication(draft));
+}
+
+export async function applyLibraryApplication(
+  request: ApplyLibraryApplicationRequest,
+): Promise<LibraryApplicationResponse> {
+  return unwrap(await commands.applyLibraryApplication(request));
+}
+
+export async function retryLibraryApplication(
+  context: SkillLocationRef,
+): Promise<LibraryApplicationResponse> {
+  return unwrap(await commands.retryLibraryApplication(context));
+}
+
+export async function checkLibrarySkillUpdates(
+  environment: EnvironmentRef,
+  libraryId: LibraryId,
+): Promise<UpdateCheckResponse> {
+  return unwrap(await commands.checkLibrarySkillUpdates(environment, libraryId));
+}
+
+export async function updateLibrarySkills(
+  request: ExecuteLibraryUpdateRequest,
+): Promise<LibraryUpdateExecutionOutcome> {
+  return unwrap(await commands.updateLibrarySkills(request));
+}
+
+export async function previewLibrarySkillUpdates(
+  request: UpdateLibrarySkillsRequest,
+): Promise<LibraryUpdatePreview> {
+  return unwrap(await commands.previewLibrarySkillUpdates(request));
+}
+
+export async function removeLibrarySkill(
+  request: RemoveLibrarySkillRequest,
+): Promise<SkillLibraryDetail> {
+  return unwrap(await commands.removeLibrarySkill(request));
+}
+
+export async function deleteSkillLibrary(
+  environment: EnvironmentRef,
+  libraryId: LibraryId,
+): Promise<LibraryWorkspaceSnapshot> {
+  return unwrap(await commands.deleteSkillLibrary(environment, libraryId));
+}
+
 /**
  * Read SKILL.md content (markdown body, frontmatter stripped).
  * Takes the skill's canonical directory path.
@@ -252,21 +406,6 @@ export async function clearGithubCredential(): Promise<GithubCredentialClearResu
 }
 
 // ============ 安装相关 API ============
-
-/**
- * 从来源获取可用的 skills 列表
- */
-export async function fetchAvailable(
-  context: SkillLocationRef,
-  source: string,
-  operationId: string,
-  selectionIntent: SourceSelectionIntent = {
-    wildcardRequested: false,
-    explicitSkillNames: [],
-  },
-): Promise<FetchResult> {
-  return unwrap(await commands.fetchAvailable(context, source, operationId, selectionIntent));
-}
 
 export async function acquireSelectedPayloads(
   request: AcquireSelectedPayloadsRequest,
@@ -416,8 +555,9 @@ export async function previewUpdate(request: UpdateRequest): Promise<UpdatePrevi
 export async function updateSkill(
   execution: UpdateExecutionRequest,
   expectedToken: PreviewToken,
+  acknowledgeRedirect = false,
 ): Promise<UpdateResponse> {
-  return unwrap(await commands.updateSkill(execution, expectedToken));
+  return unwrap(await commands.updateSkill(execution, expectedToken, acknowledgeRedirect));
 }
 
 /**
@@ -426,8 +566,9 @@ export async function updateSkill(
 export async function updateSkillsBatch(
   execution: UpdateExecutionRequest,
   expectedToken: PreviewToken,
+  acknowledgeRedirect = false,
 ): Promise<UpdateResponse> {
-  return unwrap(await commands.updateSkillsBatch(execution, expectedToken));
+  return unwrap(await commands.updateSkillsBatch(execution, expectedToken, acknowledgeRedirect));
 }
 
 // ============ 向导窗口 API ============

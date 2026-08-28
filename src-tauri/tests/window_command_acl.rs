@@ -14,8 +14,8 @@ fn save_custom_agent() -> &'static str {
 }
 
 #[tauri::command]
-fn fetch_available() -> &'static str {
-    "fetch-available"
+fn discover_skill_source() -> &'static str {
+    "discover-skill-source"
 }
 
 #[tauri::command]
@@ -76,6 +76,16 @@ fn preview_install() -> &'static str {
 #[tauri::command]
 fn install_skills() -> &'static str {
     "install-skills"
+}
+
+#[tauri::command]
+fn preview_add_library_skills() -> &'static str {
+    "preview-add-library-skills"
+}
+
+#[tauri::command]
+fn add_skills_to_library() -> &'static str {
+    "add-skills-to-library"
 }
 
 #[tauri::command]
@@ -158,7 +168,7 @@ fn test_app() -> App<MockRuntime> {
         .invoke_handler(tauri::generate_handler![
             list_agents,
             save_custom_agent,
-            fetch_available,
+            discover_skill_source,
             acquire_selected_payloads,
             confirm_install_agent_selection,
             get_install_agent_selection,
@@ -171,6 +181,8 @@ fn test_app() -> App<MockRuntime> {
             execute_lifecycle_action,
             preview_install,
             install_skills,
+            preview_add_library_skills,
+            add_skills_to_library,
             list_recovery_resources,
             open_recovery_resource,
             open_skill_resource,
@@ -292,7 +304,7 @@ fn assert_denied(result: Result<Value, Value>, command: &str) {
 }
 
 #[test]
-fn main_window_allows_skill_repair_commands() {
+fn main_window_applies_representative_business_command_permissions() {
     let app = test_app();
     let main = window(&app, "main");
 
@@ -354,8 +366,8 @@ fn main_window_allows_skill_repair_commands() {
         Ok(Value::from("get-discover-skill-detail"))
     );
     assert_eq!(
-        invoke(&main, "fetch_available"),
-        Ok(Value::from("fetch-available"))
+        invoke(&main, "discover_skill_source"),
+        Ok(Value::from("discover-skill-source"))
     );
     assert_eq!(
         invoke(&main, "acquire_selected_payloads"),
@@ -368,6 +380,14 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "install_skills"),
         Ok(Value::from("install-skills"))
+    );
+    assert_eq!(
+        invoke(&main, "preview_add_library_skills"),
+        Ok(Value::from("preview-add-library-skills"))
+    );
+    assert_eq!(
+        invoke(&main, "add_skills_to_library"),
+        Ok(Value::from("add-skills-to-library"))
     );
     assert_eq!(
         invoke(&main, "get_install_agent_selection"),
@@ -401,8 +421,8 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     let wizard = window(&app, "install-wizard");
 
     assert_eq!(
-        invoke(&wizard, "fetch_available"),
-        Ok(Value::from("fetch-available"))
+        invoke(&wizard, "discover_skill_source"),
+        Ok(Value::from("discover-skill-source"))
     );
     assert_eq!(
         invoke(&wizard, "get_install_agent_selection"),
@@ -423,6 +443,14 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_eq!(
         invoke(&wizard, "install_skills"),
         Ok(Value::from("install-skills"))
+    );
+    assert_denied(
+        invoke(&wizard, "preview_add_library_skills"),
+        "preview_add_library_skills",
+    );
+    assert_denied(
+        invoke(&wizard, "add_skills_to_library"),
+        "add_skills_to_library",
     );
     assert_eq!(
         invoke(&wizard, "search_discover_skills"),

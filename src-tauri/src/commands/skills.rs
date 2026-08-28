@@ -12,7 +12,18 @@ pub async fn list_skills(
     context: SkillLocationRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ListSkillsResult, AppError> {
-    crate::application::skills::list_skills(context, runtime.wsl(), runtime.agents()).await
+    let mut result =
+        crate::application::skills::list_skills(context.clone(), runtime.wsl(), runtime.agents())
+            .await?;
+    let managed_names = runtime
+        .library_application()
+        .managed_skill_names(context.clone())
+        .await?;
+    result
+        .skills
+        .retain(|skill| !managed_names.contains(&skill.name));
+    result.library_application = runtime.library_application().read(context).await?;
+    Ok(result)
 }
 
 #[tauri::command]

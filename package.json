@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "docs:check": "node scripts/check-docs.mjs",
-    "bindings:generate": "cargo test --manifest-path src-tauri/Cargo.toml command_surface_tests::export_bindings -- --ignored --exact",
-    "bindings:check": "node scripts/check-bindings.mjs",
+    "bindings:check": "cargo test --manifest-path src-tauri/Cargo.toml --lib bindings_contract_tests::generated_bindings_match_committed_file -- --exact",
     "build": "node scripts/sync-version.mjs && tsc -b && vite build",
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests",

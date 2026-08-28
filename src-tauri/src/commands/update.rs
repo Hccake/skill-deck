@@ -32,10 +32,11 @@ pub async fn preview_update(
 pub async fn update_skill(
     execution: UpdateExecutionRequest,
     expected_token: PreviewToken,
+    acknowledge_redirect: bool,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
     validate_single_skill_update(&execution)?;
-    execute_update(execution, expected_token, runtime).await
+    execute_update(execution, expected_token, acknowledge_redirect, runtime).await
 }
 
 fn validate_single_skill_update(execution: &UpdateExecutionRequest) -> Result<(), AppError> {
@@ -53,14 +54,16 @@ fn validate_single_skill_update(execution: &UpdateExecutionRequest) -> Result<()
 pub async fn update_skills_batch(
     execution: UpdateExecutionRequest,
     expected_token: PreviewToken,
+    acknowledge_redirect: bool,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
-    execute_update(execution, expected_token, runtime).await
+    execute_update(execution, expected_token, acknowledge_redirect, runtime).await
 }
 
 async fn execute_update(
     execution: UpdateExecutionRequest,
     expected_token: PreviewToken,
+    acknowledge_redirect: bool,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
     let context = execution.request.context.clone();
@@ -70,26 +73,32 @@ async fn execute_update(
     guard.transition(MutationPhase::Acquiring, None, true);
     let result = runtime
         .update()
-        .execute_with_stage_observer(&execution, expected_token, guard.cancellation(), |event| {
-            let UpdateExecutionProgress {
-                stage,
-                subject,
-                current,
-                total,
-            } = event;
-            guard.transition(
-                match stage {
-                    UpdateExecutionStage::Validating => MutationPhase::Validating,
-                    UpdateExecutionStage::Updating => MutationPhase::Committing,
-                },
-                Some(MutationProgress {
+        .execute_with_confirmation_and_stage_observer(
+            &execution,
+            expected_token,
+            guard.cancellation(),
+            acknowledge_redirect,
+            |event| {
+                let UpdateExecutionProgress {
+                    stage,
                     subject,
                     current,
                     total,
-                }),
-                matches!(stage, UpdateExecutionStage::Validating),
-            );
-        })
+                } = event;
+                guard.transition(
+                    match stage {
+                        UpdateExecutionStage::Validating => MutationPhase::Validating,
+                        UpdateExecutionStage::Updating => MutationPhase::Committing,
+                    },
+                    Some(MutationProgress {
+                        subject,
+                        current,
+                        total,
+                    }),
+                    matches!(stage, UpdateExecutionStage::Validating),
+                );
+            },
+        )
         .await;
     guard.transition(MutationPhase::Finishing, None, false);
     result
