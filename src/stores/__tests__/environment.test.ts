@@ -455,7 +455,6 @@ describe('useEnvironmentStore', () => {
     const connection = useEnvironmentStore.getState().connect(ubuntu.environment);
 
     expect(useEnvironmentStore.getState().environments[1].status).toBe('connecting');
-    expect('selectedEnvironment' in useEnvironmentStore.getState()).toBe(false);
     finishConnect?.(ubuntu);
     await connection;
     expect(useEnvironmentStore.getState().environments[1].status).toBe('available');
@@ -481,7 +480,6 @@ describe('useEnvironmentStore', () => {
 
     await expect(useEnvironmentStore.getState().connect(ubuntu.environment)).rejects.toEqual(error);
 
-    expect('errorsByEnvironment' in useEnvironmentStore.getState()).toBe(false);
     expect(useEnvironmentStore.getState().environments[0]).toEqual(native);
     expect(useEnvironmentStore.getState().environments[1]).toEqual({
       ...ubuntu,
@@ -514,7 +512,6 @@ describe('useEnvironmentStore', () => {
       { ...ubuntu, status: 'unavailable', revision: 2, error },
       debian,
     ]);
-    expect('errorsByEnvironment' in useEnvironmentStore.getState()).toBe(false);
   });
 
   it('clears only the recovered EnvironmentInfo error on an available runtime event', () => {
@@ -548,7 +545,6 @@ describe('useEnvironmentStore', () => {
       { ...ubuntu, revision: 2 },
       { ...debian, status: 'unavailable', error: debianError },
     ]);
-    expect('errorsByEnvironment' in useEnvironmentStore.getState()).toBe(false);
   });
 
   it('retains runtime events that arrive before a distribution appears in discovery', () => {

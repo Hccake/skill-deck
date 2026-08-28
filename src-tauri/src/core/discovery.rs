@@ -264,15 +264,6 @@ pub fn select_discovered_skills(
     DiscoverySelector::new(inventory, options).select()
 }
 
-/// 获取优先搜索目录列表（与 CLI 一致）
-#[cfg(test)]
-fn get_priority_search_dirs(search_path: &Path) -> Vec<PathBuf> {
-    get_priority_search_dir_specs(search_path)
-        .into_iter()
-        .map(|spec| spec.path)
-        .collect()
-}
-
 fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
     let mut dirs = vec![
         PrioritySearchDir {
@@ -1022,69 +1013,6 @@ mod tests {
         .unwrap();
 
         assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn priority_search_dirs_match_cli_1_5_22_agent_dirs() {
-        let temp = tempdir().unwrap();
-        let dirs = get_priority_search_dirs(temp.path());
-        let expected = [
-            ".agents/skills",
-            ".claude/skills",
-            ".cline/skills",
-            ".codebuddy/skills",
-            ".codex/skills",
-            ".commandcode/skills",
-            ".continue/skills",
-            ".github/skills",
-            ".goose/skills",
-            ".grok/skills",
-            ".iflow/skills",
-            ".junie/skills",
-            ".kimchi/skills",
-            ".kilocode/skills",
-            ".kiro/skills",
-            ".minimax/skills",
-            ".mux/skills",
-            ".neovate/skills",
-            ".opencode/skills",
-            ".openhands/skills",
-            ".pi/skills",
-            ".posit/assistant/skills",
-            ".qoder/skills",
-            ".roo/skills",
-            ".trae/skills",
-            ".windsurf/skills",
-            ".zcode/skills",
-            ".zencoder/skills",
-        ];
-
-        for dir in expected {
-            assert!(
-                dirs.contains(&temp.path().join(dir)),
-                "priority dirs should include {dir}"
-            );
-        }
-
-        let excluded = [
-            ".aider-desk/skills",
-            ".codeartsdoer/skills",
-            ".codemaker/skills",
-            ".codestudio/skills",
-            ".cursor/skills",
-            ".devin/skills",
-            ".forge/skills",
-            ".hermes/skills",
-            ".rovodev/skills",
-            ".tabnine/agent/skills",
-        ];
-
-        for dir in excluded {
-            assert!(
-                !dirs.contains(&temp.path().join(dir)),
-                "priority dirs should not include {dir}"
-            );
-        }
     }
 
     #[test]

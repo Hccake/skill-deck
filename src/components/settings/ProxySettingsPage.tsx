@@ -822,7 +822,7 @@ function ConnectionResults({
       {entries.map(([key, target, label, probe, wslProxyConfigured]) => {
         const status = testing ? 'testing' : probe?.status ?? 'idle';
         const succeeded = status === 'succeeded';
-        const skipped = status === 'skipped' || status === 'idle';
+        const skipped = status === 'idle';
         const showWslProxyHint = key.startsWith('wslGit:')
           && probe?.reasonCode === 'git_network'
           && wslProxyConfigured;

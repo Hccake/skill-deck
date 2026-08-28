@@ -75,37 +75,6 @@ pub fn availability_for_resolved_scope(scope: &ResolvedAgentScope) -> AgentAvail
     }
 }
 
-#[cfg(test)]
-pub fn resolved_agent_presence(
-    agent_id: &AgentId,
-    resolved: &ResolvedAgent,
-    skill_name: &str,
-    is_global: bool,
-) -> SkillAgentPresenceInfo {
-    let scope = if is_global {
-        &resolved.global
-    } else {
-        &resolved.project
-    };
-    let sanitized_name = sanitize_name(skill_name);
-    let standard_exists = scope
-        .standard_path
-        .as_ref()
-        .is_some_and(|path| PathBuf::from(path).join(&sanitized_name).exists());
-    let private_exists = scope
-        .private_path
-        .as_ref()
-        .is_some_and(|path| PathBuf::from(path).join(&sanitized_name).exists());
-    resolved_agent_presence_from_paths(
-        agent_id,
-        resolved,
-        skill_name,
-        is_global,
-        standard_exists,
-        private_exists,
-    )
-}
-
 pub fn resolved_agent_presence_from_paths(
     agent_id: &AgentId,
     resolved: &ResolvedAgent,

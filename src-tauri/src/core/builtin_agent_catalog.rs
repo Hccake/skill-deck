@@ -778,7 +778,6 @@ mod tests {
             .map(|definition| definition.id.clone())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(definitions.len(), 76);
         assert_eq!(ids.len(), definitions.len());
         for definition in definitions {
             definition

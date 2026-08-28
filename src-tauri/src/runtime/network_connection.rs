@@ -25,8 +25,6 @@ const TEST_GIT_URL: &str = "https://github.com/hccake/skill-deck.git";
 pub enum ProxyConnectionStatus {
     Succeeded,
     Failed,
-    #[allow(dead_code)]
-    Skipped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]

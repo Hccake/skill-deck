@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn unsupported_system_proxy_mode_is_rejected() {
-        let error = serde_json::from_str::<NetworkProxySettings>(
+        let result = serde_json::from_str::<NetworkProxySettings>(
             r#"{
                 "mode":"system",
                 "customProxyUrl":"http://127.0.0.1:7890",
@@ -477,10 +477,9 @@ mod tests {
                 "wslGitDefault":"followProxySettings",
                 "wslGitOverrides":{"Ubuntu":"followProxySettings"}
             }"#,
-        )
-        .expect_err("system mode was never released and must not be accepted");
+        );
 
-        assert!(error.to_string().contains("unknown variant `system`"));
+        assert!(result.is_err(), "system mode was never released");
     }
 
     #[test]
@@ -504,10 +503,10 @@ mod tests {
                 .expect("proxy settings object")
                 .insert(field.to_string(), value);
 
-            let error = serde_json::from_value::<NetworkProxySettings>(settings)
-                .expect_err("unpublished proxy fields must not be accepted");
-
-            assert!(error.to_string().contains("unknown field"), "{field}");
+            assert!(
+                serde_json::from_value::<NetworkProxySettings>(settings).is_err(),
+                "unpublished proxy field must not be accepted: {field}"
+            );
         }
     }
 

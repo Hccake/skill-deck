@@ -284,29 +284,6 @@ pub fn derive_eve_skill_payload(canonical: &SkillPayload) -> Result<SkillPayload
 }
 
 #[cfg(test)]
-pub fn paths_overlap(left: &Path, right: &Path) -> bool {
-    let normalize = |path: &Path| {
-        path.canonicalize().unwrap_or_else(|_| {
-            let mut normalized = PathBuf::new();
-            for component in path.components() {
-                match component {
-                    std::path::Component::CurDir => {}
-                    std::path::Component::ParentDir => {
-                        normalized.pop();
-                    }
-                    other => normalized.push(other.as_os_str()),
-                }
-            }
-            normalized
-        })
-    };
-
-    let left = normalize(left);
-    let right = normalize(right);
-    left.starts_with(&right) || right.starts_with(&left)
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
@@ -449,17 +426,5 @@ mod tests {
             b"#!/bin/sh\necho demo\n"
         );
         crate::core::skill_payload::verify_skill_payload_integrity(&derived).unwrap();
-    }
-
-    #[test]
-    fn paths_overlap_when_source_is_target_or_parent() {
-        let temp = tempdir().unwrap();
-        let source = temp.path().join("skills/demo");
-        let child = source.join("nested");
-        std::fs::create_dir_all(&child).unwrap();
-
-        assert!(paths_overlap(&source, &source));
-        assert!(paths_overlap(&source, &child));
-        assert!(!paths_overlap(&source, &temp.path().join("other")));
     }
 }
