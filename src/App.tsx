@@ -17,6 +17,7 @@ import { UnsavedChangesProvider } from '@/lifecycle/UnsavedChangesProvider';
 
 const MainLayout = lazy(() => import('@/layouts/MainLayout'));
 const SkillsPage = lazy(() => import('@/pages/SkillsPage').then((module) => ({ default: module.SkillsPage })));
+const LibraryPage = lazy(() => import('@/pages/LibraryPage').then((module) => ({ default: module.LibraryPage })));
 const DiscoverPage = lazy(() => import('@/pages/DiscoverPage').then((module) => ({ default: module.DiscoverPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 const WizardPage = lazy(() => import('@/pages/WizardPage').then((module) => ({ default: module.WizardPage })));
@@ -87,6 +88,7 @@ function ApplicationShell() {
               </Suspense>
             )}>
               <Route path="/" element={<SkillsPage />} />
+              <Route path="/libraries" element={<LibraryPage />} />
               <Route path="/discover" element={<DiscoverPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>

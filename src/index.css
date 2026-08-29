@@ -205,6 +205,125 @@
     container-name: skills-page;
   }
 
+  .library-page-shell {
+    container-type: inline-size;
+    container-name: library-page;
+  }
+
+  .libraries-sidebar {
+    width: 256px;
+    transition: width 180ms ease-out;
+  }
+
+  .library-workspace {
+    container-type: inline-size;
+    container-name: library-workspace;
+  }
+
+  .library-workspace-gutter {
+    padding-inline: 24px;
+  }
+
+  .library-workspace-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .library-header-identity,
+  .library-header-facts {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+  }
+
+  .library-header-identity {
+    gap: 8px;
+  }
+
+  .library-header-facts {
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .library-header-actions {
+    margin-left: auto;
+  }
+
+  .library-usage-exact {
+    display: inline-flex;
+  }
+
+  .library-usage-compact-count {
+    display: none;
+  }
+
+  @container library-page (max-width: 900px) {
+    .libraries-sidebar {
+      width: 224px;
+    }
+  }
+
+  @container library-page (max-width: 760px) {
+    .libraries-sidebar {
+      width: 208px;
+    }
+  }
+
+  @container library-workspace (max-width: 719px) {
+    .library-secondary-action {
+      width: 28px;
+      padding-inline: 0;
+    }
+
+    .library-secondary-action-label,
+    .library-usage-exact {
+      display: none;
+    }
+
+    .library-usage-compact-count {
+      display: inline-flex;
+    }
+
+    .library-update-summary {
+      max-width: 144px;
+    }
+  }
+
+  @container library-workspace (max-width: 519px) {
+    .library-workspace-gutter {
+      padding-inline: 16px;
+    }
+
+    .library-workspace-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      row-gap: 8px;
+      padding-bottom: 12px;
+    }
+
+    .library-header-identity {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    .library-header-actions {
+      grid-column: 2;
+      grid-row: 1;
+      margin-left: 0;
+    }
+
+    .library-header-facts {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      justify-content: flex-start;
+    }
+
+    .library-update-summary {
+      max-width: 160px;
+    }
+  }
+
   .skills-context-sidebar {
     width: 272px;
     transition: width 180ms ease-out;

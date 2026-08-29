@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Sun, Moon, Package, Settings, Check, Compass } from 'lucide-react';
+import { Sun, Moon, Package, Settings, Check, Compass, SquareLibrary } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { RecoveryCenter } from '@/components/recovery/RecoveryCenter';
 import {
@@ -20,7 +20,7 @@ import { InstallWizardStatusControl } from './InstallWizardStatusControl';
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium transition-all duration-200',
+    'flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200',
     isActive
       ? 'bg-foreground text-background shadow-sm'
       : 'text-muted-foreground hover:text-foreground hover:bg-foreground/10 dark:hover:bg-foreground/15'
@@ -59,17 +59,21 @@ export function Header() {
 
       {/* Center: Segmented Navigation (Capsule Shape for Global Nav) */}
       <nav className="flex items-center space-x-0.5 sm:space-x-1 bg-muted/40 p-1 rounded-full border border-border/50 shrink-0">
-        <NavLink to="/" end className={getNavLinkClass} onClick={(event) => guardNavigation(event, '/')}>
-          <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-          <span className="hidden min-[400px]:inline">{t('nav.skills')}</span>
+        <NavLink to="/" end className={getNavLinkClass} aria-label={t('nav.skills')} onClick={(event) => guardNavigation(event, '/')}>
+          <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" aria-hidden="true" />
+          <span className="hidden lg:inline">{t('nav.skills')}</span>
         </NavLink>
-        <NavLink to="/discover" className={getNavLinkClass} onClick={(event) => guardNavigation(event, '/discover')}>
-          <Compass className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-          <span className="hidden min-[400px]:inline">{t('nav.discover')}</span>
+        <NavLink to="/libraries" className={getNavLinkClass} aria-label={t('nav.libraries')} onClick={(event) => guardNavigation(event, '/libraries')}>
+          <SquareLibrary className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" aria-hidden="true" />
+          <span className="hidden lg:inline">{t('nav.libraries')}</span>
         </NavLink>
-        <NavLink to="/settings" className={getNavLinkClass} onClick={(event) => guardNavigation(event, '/settings')}>
-          <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-          <span className="hidden min-[400px]:inline">{t('nav.settings')}</span>
+        <NavLink to="/discover" className={getNavLinkClass} aria-label={t('nav.discover')} onClick={(event) => guardNavigation(event, '/discover')}>
+          <Compass className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" aria-hidden="true" />
+          <span className="hidden lg:inline">{t('nav.discover')}</span>
+        </NavLink>
+        <NavLink to="/settings" className={getNavLinkClass} aria-label={t('nav.settings')} onClick={(event) => guardNavigation(event, '/settings')}>
+          <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" aria-hidden="true" />
+          <span className="hidden lg:inline">{t('nav.settings')}</span>
         </NavLink>
       </nav>
 
