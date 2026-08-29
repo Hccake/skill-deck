@@ -1,9 +1,9 @@
 // src/components/skills/SkillDetailPanel.tsx
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { toast } from 'sonner';
+import { Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,8 +18,12 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  CopyablePath,
+  DetailBody,
+  DetailField,
+  DetailSourceLink,
+} from '@/components/skills/detail/DetailPrimitives';
 import { formatTime } from '@/lib/utils';
 import type { InstalledSkill, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
@@ -55,6 +59,8 @@ interface SkillDetailPanelProps {
   onManageAgents: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onRepairSource?: (skill: InstalledSkill) => void;
+  /** 打开 Git 凭据设置。路由归页面所有，面板保持无路由依赖。 */
+  onConfigureGitCredentials?: () => void;
 }
 
 export const SkillDetailPanel = memo(function SkillDetailPanel({
@@ -73,10 +79,10 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onManageAgents,
   onCopyToProject,
   onRepairSource,
+  onConfigureGitCredentials,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
   const writeBlocked = useBusinessWriteBlocked();
-  const [copied, setCopied] = useState(false);
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayAgents = skill.associatedAgents.filter(
@@ -101,15 +107,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     };
   }, []);
 
-  const handleCopyPath = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(skill.canonicalPath);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      console.error('Failed to copy path');
-    }
-  }, [skill.canonicalPath]);
 
   const handleDelete = useCallback(() => {
     onDelete(skill);
@@ -122,6 +119,15 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const handleManageAgents = useCallback(() => {
     onManageAgents(skill);
   }, [onManageAgents, skill]);
+
+  // WebView 里 <a target="_blank"> 不会交给系统浏览器，外部地址一律走 Tauri opener。
+  const handleOpenSource = useCallback((url: string | null | undefined) => {
+    if (!url) return;
+    void openUrl(url).catch((error: unknown) => {
+      console.error('Failed to open Skill source:', error);
+      toast.error(t('skills.card.sourceOpenFailed'));
+    });
+  }, [t]);
 
   const handleCopyToProject = useCallback(() => {
     onCopyToProject?.(skill);
@@ -338,16 +344,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             </div>
 
             {/* Source link */}
-            {skill.source && skill.sourceUrl ? (
-              <a
-                href={skill.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-primary font-medium hover:underline"
-              >
-                <Link2 className="h-3.5 w-3.5" />
-                {skill.source}
-              </a>
+            {skill.source ? (
+              <DetailSourceLink label={skill.source} url={skill.sourceUrl} />
             ) : null}
             {showCannotCheckStatus ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -399,20 +397,27 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 <div className="flex flex-wrap gap-2">
                   {typedFailure.reason === 'rateLimited'
                     || typedFailure.reason === 'authenticationRequired' ? (
-                    <Button asChild variant="outline" size="sm">
-                      <a href="/settings?section=git">
-                        <KeyRound className="h-3.5 w-3.5" />
-                        {t('skills.updateEvidence.actions.configureToken')}
-                      </a>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={onConfigureGitCredentials}
+                      disabled={!onConfigureGitCredentials}
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      {t('skills.updateEvidence.actions.configureToken')}
                     </Button>
                   ) : null}
                   {['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
                     && skill.sourceUrl ? (
-                    <Button asChild variant="outline" size="sm">
-                      <a href={skill.sourceUrl} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {t('skills.updateEvidence.actions.openSource')}
-                      </a>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpenSource(skill.sourceUrl)}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {t('skills.updateEvidence.actions.openSource')}
                     </Button>
                   ) : null}
                   {!cooldownActive && onCheckUpdates ? (
@@ -434,57 +439,21 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             {/* Metadata grid */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pb-4 border-b border-border">
               {skill.installedAt ? (
-                <div className="flex flex-col">
-                  <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
-                    {t('skills.detail.installed')}
-                  </span>
-                  <span className="text-sm font-semibold text-accent-foreground mt-1">
-                    {formatTime(skill.installedAt, i18n.language)}
-                  </span>
-                </div>
+                <DetailField label={t('skills.detail.installed')}>
+                  {formatTime(skill.installedAt, i18n.language)}
+                </DetailField>
               ) : null}
               {skill.updatedAt ? (
-                <div className="flex flex-col">
-                  <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
-                    {t('skills.detail.updated')}
-                  </span>
-                  <span className="text-sm font-semibold text-accent-foreground mt-1">
-                    {formatTime(skill.updatedAt, i18n.language)}
-                  </span>
-                </div>
+                <DetailField label={t('skills.detail.updated')}>
+                  {formatTime(skill.updatedAt, i18n.language)}
+                </DetailField>
               ) : null}
-              <div className="flex flex-col col-span-2 md:col-span-1">
-                <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
-                  {t('skills.detail.installPath')}
-                </span>
-                <div className="flex min-w-0 items-center gap-1 mt-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <code
-                        tabIndex={0}
-                        className="min-w-0 flex-1 truncate bg-sidebar px-2 py-1 font-mono text-sm text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                      >
-                        {skill.canonicalPath}
-                      </code>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-all text-left text-wrap">
-                      <p className="font-mono">{skill.canonicalPath}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon-xs" className="h-5 w-5 shrink-0 text-muted-foreground hover:bg-muted/50 border-none shadow-none" onClick={handleCopyPath}>
-                        {copied ? (
-                          <Check className="h-3 w-3 text-success" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent><p>{t('common.copy')}</p></TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
+              <DetailField
+                label={t('skills.detail.installPath')}
+                className="col-span-2 md:col-span-1"
+              >
+                <CopyablePath value={skill.canonicalPath} />
+              </DetailField>
             </div>
 
             {/* Agents row */}
@@ -528,27 +497,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
             {/* Markdown 正文 */}
             <div className="pb-10">
-              {loading ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-6 w-1/3" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-5/6" />
-                  <Skeleton className="h-4 w-11/12" />
-                  <Skeleton className="h-32 w-full mt-6" />
-                </div>
-              ) : content ? (
-                <div className="skill-prose skill-prose-with-lists">
-                  <MarkdownContent content={content} />
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-                  <p className="text-sm pb-4">{t('skills.detail.emptyContent')}</p>
-                  <Button variant="outline" size="sm" onClick={onRetry} className="bg-transparent">
-                    <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                    {t('skills.detail.retry')}
-                  </Button>
-                </div>
-              )}
+              <DetailBody loading={loading} content={content} onRetry={onRetry} />
             </div>
 
           </div>
@@ -558,10 +507,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   );
 });
 
-// Extracted for memo optimization (rerender-memo)
-const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
-});
 
 const UpdatingStatusBadge = memo(function UpdatingStatusBadge({
   phase,

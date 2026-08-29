@@ -230,6 +230,19 @@ describe('ConfirmStep', () => {
     })));
   });
 
+  it('explains direct priority for a Library override', async () => {
+    const outcome = readyPreview(['/existing/demo']);
+    if (outcome.status !== 'ready') throw new Error('ready preview expected');
+    Object.assign(outcome.preview.skills[0], {
+      overridesLibrary: true,
+    });
+    preview.mockResolvedValue(outcome);
+    render(<StatefulConfirmHarness />);
+
+    expect(await screen.findByText('addSkill.confirm.libraryOverrideTitle')).toBeDefined();
+    expect(screen.getByText('addSkill.confirm.libraryOverrideBadge')).toBeDefined();
+  });
+
   it('shows a direct-download conflict on the affected Skill row', async () => {
     preview.mockResolvedValue(readyPreview(['/existing/demo'], ['validation']));
     render(<StatefulConfirmHarness />);

@@ -23,7 +23,7 @@ const eventMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  fetchAvailable: (...args: unknown[]) => fetchAvailableMock(...args),
+  discoverSkillSource: (...args: unknown[]) => fetchAvailableMock(...args),
 }));
 
 vi.mock('@tauri-apps/api/event', () => eventMocks);
@@ -179,7 +179,7 @@ describe('SourceStep', () => {
       expect(screen.getByTestId('discovery-session').textContent).toBe('discovery-1');
     });
     expect(fetchAvailableMock).toHaveBeenCalledWith(
-      nativeGlobal,
+      nativeGlobal.environment,
       'openclaw/community-skills',
       expect.any(String),
       { wildcardRequested: false, explicitSkillNames: [] },
@@ -209,7 +209,7 @@ describe('SourceStep', () => {
     fireEvent.click(fetchButton);
 
     await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(
-      nativeGlobal,
+      nativeGlobal.environment,
       'openclaw/community-skills',
       expect.any(String),
       { wildcardRequested: false, explicitSkillNames: [] },
@@ -363,7 +363,7 @@ describe('SourceStep', () => {
     await user.click(await screen.findByText('install search result'));
 
     expect(fetchAvailableMock).toHaveBeenCalledWith(
-      nativeGlobal,
+      nativeGlobal.environment,
       'openclaw/community-skills@demo',
       expect.any(String),
       { wildcardRequested: false, explicitSkillNames: [] },
@@ -398,7 +398,7 @@ describe('SourceStep', () => {
     );
 
     await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(
-      context,
+      context.environment,
       'owner/repo',
       expect.any(String),
       { wildcardRequested: false, explicitSkillNames: [] },
@@ -425,7 +425,7 @@ describe('SourceStep', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
     await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(
-      nativeGlobal,
+      nativeGlobal.environment,
       'owner/repo',
       expect.any(String),
       {

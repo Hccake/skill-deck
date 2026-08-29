@@ -21,6 +21,8 @@ interface SkillSearchProps {
   installedSkillKeys: Set<string>;
   /** 点击安装按钮的回调，传入选中的搜索结果 */
   onInstall: (skill: SearchSkill) => void;
+  /** 调用方提供的动作名称；安装向导未传入时沿用安装文案。 */
+  actionLabel?: string;
 }
 
 async function searchSkillsAPI(query: string): Promise<SearchSkill[]> {
@@ -44,27 +46,29 @@ const SearchResultItem = memo(function SearchResultItem({
   skill,
   isInstalled,
   onInstall,
+  actionLabel,
   t,
 }: {
   skill: SearchSkill;
   isInstalled: boolean;
   onInstall: (skill: SearchSkill) => void;
+  actionLabel?: string;
   t: TFunction;
 }) {
   return (
-    <div className="flex items-center justify-between py-3 px-4 mb-2 bg-card/40 hover:bg-card border border-transparent hover:border-border/50 rounded-xl transition-all shadow-sm">
+    <div className="flex min-w-0 items-center justify-between gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted/35">
       <div className="min-w-0 flex-1">
-        <div className="font-heading font-semibold text-sm tracking-tight truncate">
+        <div className="truncate text-sm font-medium">
           {skill.name}
         </div>
-        <div className="text-xs text-muted-foreground truncate mt-0.5">
+        <div className="mt-0.5 truncate text-xs text-muted-foreground" translate="no">
           {skill.source}
         </div>
       </div>
-      <div className="flex items-center gap-4 ml-4 shrink-0">
+      <div className="ml-2 flex shrink-0 items-center gap-3">
         {skill.installs > 0 ? (
-          <span className="text-xs text-muted-foreground flex items-center">
-            <Download className="inline h-3.5 w-3.5 mr-1.5 opacity-70" />
+          <span className="flex items-center text-xs text-muted-foreground">
+            <Download className="mr-1 size-3.5 opacity-70" aria-hidden="true" />
             {formatInstalls(skill.installs)}
           </span>
         ) : null}
@@ -74,12 +78,12 @@ const SearchResultItem = memo(function SearchResultItem({
           </Badge>
         ) : (
           <Button
-            variant="default"
+            variant="outline"
             size="sm"
-            className="h-8 px-4 text-xs font-medium shadow-sm"
+            className="h-7 px-2.5 text-xs"
             onClick={() => onInstall(skill)}
           >
-            {t('skills.discover.install')}
+            {actionLabel ?? t('skills.discover.install')}
           </Button>
         )}
       </div>
@@ -87,7 +91,7 @@ const SearchResultItem = memo(function SearchResultItem({
   );
 });
 
-export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps) {
+export function SkillSearch({ installedSkillKeys, onInstall, actionLabel }: SkillSearchProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchSkill[]>([]);
@@ -151,19 +155,23 @@ export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps)
   return (
     <div className="flex flex-col h-full">
       {/* 搜索框 */}
-      <div className="relative mb-6 shrink-0">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+      <div className="relative mb-3 shrink-0">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
-          type="text"
+          type="search"
+          name="online-skill-search"
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={t('skills.discover.searchPlaceholder')}
           placeholder={t('skills.discover.searchPlaceholder')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="pl-12 h-14 text-lg bg-card/80 backdrop-blur-sm border-muted-foreground/20 shadow-sm focus-visible:shadow-md focus-visible:ring-primary/20 rounded-2xl transition-all"
+          className="h-9 pl-9"
         />
       </div>
 
       {/* 结果区域 */}
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border bg-background">
         {/* 初始提示 */}
         {!query || query.length < 2 ? (
           <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
@@ -171,7 +179,7 @@ export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps)
           </div>
         ) : loading && results.length === 0 ? (
           /* 加载中骨架屏 */
-          <div className="space-y-3">
+          <div className="space-y-3 p-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="flex items-center justify-between py-2">
                 <div className="space-y-2">
@@ -201,13 +209,14 @@ export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps)
           </div>
         ) : (
           /* 结果列表 — 使用 memo 化的 SearchResultItem */
-          <div className="divide-y">
+          <div>
             {results.map((skill) => (
               <SearchResultItem
                 key={skill.slug}
                 skill={skill}
                 isInstalled={installedSkillKeys.has(`${skill.source}::${skill.name}`)}
                 onInstall={onInstall}
+                actionLabel={actionLabel}
                 t={t}
               />
             ))}

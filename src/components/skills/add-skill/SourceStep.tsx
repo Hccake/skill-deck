@@ -1,16 +1,14 @@
 // src/components/skills/add-skill/SourceStep.tsx
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
 import { Info } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { fetchAvailable } from '@/hooks/useTauriApi';
-import { isSkillsShPackUrl, parseSkillsCommand } from '@/utils/parse-skills-command';
+import { parseSkillsCommand } from '@/utils/parse-skills-command';
 import { formatAppError } from '@/utils/format-app-error';
-import { toAppError } from '@/utils/to-app-error';
+import { useSourceDiscovery } from '@/hooks/useSourceDiscovery';
 import { SkillSearch } from '../skill-search/SkillSearch';
 import type { SearchSkill } from '../skill-search/SkillSearch';
 import { useSkillsDataStore } from '@/stores/skills-data';
@@ -18,18 +16,6 @@ import { contextKey, globalContext } from '@/lib/context';
 import type { WizardState } from './types';
 
 const EMPTY_SKILLS: never[] = [];
-
-/** 克隆进度事件 */
-interface CloneProgress {
-  phase: 'connecting' | 'cloning' | 'done' | 'error';
-  elapsed_secs: number;
-  timeout_secs: number;
-  message: string | null;
-}
-
-interface CloneProgressEvent extends CloneProgress {
-  operation_id: string;
-}
 
 interface SourceStepProps {
   state: WizardState;
@@ -40,9 +26,22 @@ interface SourceStepProps {
 
 export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStepProps) {
   const { t } = useTranslation();
-  const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
-  const currentOperationIdRef = useRef<string | null>(null);
+  const {
+    status: discoveryStatus,
+    operationId: discoveryOperationId,
+    result: discoveryResult,
+    selection: discoverySelection,
+    error: discoveryError,
+    cloneProgress,
+    discover,
+    reset: resetDiscovery,
+  } = useSourceDiscovery(state.context.environment);
+  const updateStateRef = useRef(updateState);
+  const onNextRef = useRef(onNext);
+  const consumedOperationIdRef = useRef<string | null>(null);
   const autoFetchPendingRef = useRef(autoFetch && state.fetchStatus === 'idle');
+  useEffect(() => { updateStateRef.current = updateState; });
+  useEffect(() => { onNextRef.current = onNext; });
 
   // 已安装 skill key 集合（用于 SkillSearch 组件）
   const globalKey = contextKey(globalContext(state.context.environment));
@@ -65,29 +64,46 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
     return source.replace(/@[^@]+$/, '');
   }, [state.sourceInput]);
 
-  // 监听克隆进度事件
+  // 将共享来源发现结果提交到安装向导状态，每次请求只消费一次。
   useEffect(() => {
-    const unlisten = listen<CloneProgressEvent>('clone-progress', (event) => {
-      if (event.payload.operation_id !== currentOperationIdRef.current) return;
-      setCloneProgress({
-        phase: event.payload.phase,
-        elapsed_secs: event.payload.elapsed_secs,
-        timeout_secs: event.payload.timeout_secs,
-        message: event.payload.message,
-      });
-    });
+    if (!discoveryOperationId || consumedOperationIdRef.current === discoveryOperationId) return;
 
-    return () => {
-      currentOperationIdRef.current = null;
-      unlisten.then((fn) => fn());
-    };
-  }, []);
+    if (discoveryStatus === 'error' && discoveryError) {
+      consumedOperationIdRef.current = discoveryOperationId;
+      updateStateRef.current({
+        fetchStatus: 'error',
+        fetchError: discoveryError,
+        redirectedDownloadHost: null,
+        redirectAcknowledged: false,
+        discoverySession: undefined,
+        preparation: { status: 'idle' },
+      });
+      return;
+    }
+
+    if (discoveryStatus !== 'success' || !discoveryResult || !discoverySelection) return;
+
+    consumedOperationIdRef.current = discoveryOperationId;
+    updateStateRef.current({
+      source: discoverySelection.source,
+      fetchStatus: 'success',
+      availableSkills: discoveryResult.skills,
+      selectedSkills: discoverySelection.selectedSkillNames,
+      skillFilter: discoveryResult.skillFilter,
+      gitRef: discoveryResult.gitRef ?? null,
+      discoverySession: discoveryResult.discoverySession,
+      preparation: { status: 'idle' },
+      redirectedDownloadHost: discoveryResult.redirectedDownloadHost ?? null,
+      redirectAcknowledged: false,
+      agentSelectionIntent: discoverySelection.agentSelectionIntent,
+    });
+    onNextRef.current();
+  }, [discoveryError, discoveryOperationId, discoveryResult, discoverySelection, discoveryStatus]);
 
   // 核心 fetch 逻辑，接受 source 参数
   const handleFetchWithSource = useCallback(async (source: string) => {
     if (!source.trim()) {
-      currentOperationIdRef.current = null;
-      setCloneProgress(null);
+      resetDiscovery();
       updateState({
         fetchStatus: 'error',
         fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
@@ -96,99 +112,25 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
     }
 
     updateState({ fetchStatus: 'loading', fetchError: null });
-    setCloneProgress(null);
-    const operationId = crypto.randomUUID();
-    currentOperationIdRef.current = operationId;
-
-    try {
-      // 解析 CLI 命令（如 npx skills add repo --skill x -a y）
-      const parsed = parseSkillsCommand(source);
-      const actualSource = parsed.isCommand ? parsed.source : source.trim();
-
-      if (!actualSource) {
-        currentOperationIdRef.current = null;
-        updateState({
-          fetchStatus: 'error',
-          fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
-        });
-        return;
-      }
-
-      const result = await fetchAvailable(
-        state.context,
-        actualSource,
-        operationId,
-        {
-          wildcardRequested: parsed.wildcardRequested,
-          explicitSkillNames: parsed.skills,
-        },
-      );
-
-      if (currentOperationIdRef.current !== operationId) return;
-
-      if (result.skills.length === 0) {
-        updateState({
-          fetchStatus: 'error',
-          fetchError: { kind: 'noSkillsFound' },
-        });
-        return;
-      }
-
-      // 合并 skillFilter（@skill 语法）和 CLI --skill 参数
-      const preselectedFromFilter = result.skillFilter
-        ? result.skills
-            .filter(s => s.name === result.skillFilter)
-            .map(s => s.name)
-        : [];
-      const preselectedFromCommand = parsed.skills.filter(name =>
-        result.skills.some(s => s.name === name)
-      );
-      const hasExplicitSkillSelection = Boolean(result.skillFilter) || parsed.skills.length > 0;
-      const preselected = parsed.wildcardRequested
-        ? result.skills.map(skill => skill.name)
-        : !hasExplicitSkillSelection && isSkillsShPackUrl(actualSource)
-        ? result.skills.map(skill => skill.name)
-        : [...new Set([...preselectedFromFilter, ...preselectedFromCommand])];
-
-      updateState({
-        source: actualSource,
-        fetchStatus: 'success',
-        availableSkills: result.skills,
-        selectedSkills: preselected,
-        skillFilter: result.skillFilter,
-        gitRef: result.gitRef ?? null,
-        discoverySession: result.discoverySession,
-        preparation: { status: 'idle' },
-        redirectedDownloadHost: result.redirectedDownloadHost ?? null,
-        redirectAcknowledged: false,
-        agentSelectionIntent: {
-          wildcardRequested: parsed.agentWildcardRequested,
-          explicitAgentIds: parsed.agents,
-        },
-      });
-
-      // 自动进入下一步
-      onNext();
-    } catch (error) {
-      if (currentOperationIdRef.current !== operationId) return;
+    const parsed = parseSkillsCommand(source);
+    if (!(parsed.isCommand ? parsed.source : source.trim())) {
+      resetDiscovery();
       updateState({
         fetchStatus: 'error',
-        fetchError: toAppError(error),
-        redirectedDownloadHost: null,
-        redirectAcknowledged: false,
-        discoverySession: undefined,
-        preparation: { status: 'idle' },
+        fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
       });
+      return;
     }
-  }, [updateState, onNext, state.context, t]);
+    await discover(source);
+  }, [discover, resetDiscovery, t, updateState]);
 
   const handleFetch = useCallback(() => {
     handleFetchWithSource(state.sourceInput);
   }, [handleFetchWithSource, state.sourceInput]);
 
   const handleSourceInputChange = useCallback((sourceInput: string) => {
-    currentOperationIdRef.current = null;
-    setCloneProgress(null);
+    resetDiscovery();
+    consumedOperationIdRef.current = null;
     updateState({
       sourceInput,
       source: '',
@@ -208,7 +150,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         explicitAgentIds: [],
       },
     });
-  }, [updateState]);
+  }, [resetDiscovery, updateState]);
 
   // autoFetch 仅在 fetchStatus 为 idle（从未 fetch 过）时触发
   // 回退再进入时 fetchStatus 已非 idle，不会重复触发，用户可自由修改 source
@@ -231,12 +173,12 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   }, [handleFetchWithSource, handleSourceInputChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && state.fetchStatus !== 'loading') {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing && state.fetchStatus !== 'loading') {
       handleFetch();
     }
   }, [handleFetch, state.fetchStatus]);
 
-  const isLoading = state.fetchStatus === 'loading';
+  const isLoading = discoveryStatus === 'loading';
 
   // 获取阶段文字
   const getPhaseText = () => {
@@ -297,6 +239,10 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
             <TabsContent value="manual" className="m-0 px-2 mt-2">
               <div className="relative group">
                 <Input
+                  name="install-skill-source"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label={t('addSkill.source.label')}
                   value={state.sourceInput}
                   onChange={(e) => handleSourceInputChange(e.target.value)}
                   onKeyDown={handleKeyDown}

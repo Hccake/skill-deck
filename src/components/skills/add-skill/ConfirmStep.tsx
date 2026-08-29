@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RedirectHostConfirmation } from '@/components/source-discovery/RedirectHostConfirmation';
 import type { InstallAgentSelectionSnapshot } from '@/bindings';
 import type { AgentSelectionSessionController } from '@/hooks/useAgentSelectionSession';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
@@ -85,6 +85,9 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
     [state.availableSkills],
   );
   const overwriteCount = state.selectedSkills.filter((name) => (state.overwrites[name] ?? []).length > 0).length;
+  const libraryOverrideCount = state.preparation.status === 'ready'
+    ? state.preparation.prepared.preview.skills.filter((skill) => skill.overridesLibrary).length
+    : 0;
   const blockedSkills = new Set(
     state.preparation.status === 'ready'
       ? state.preparation.prepared.preview.skills
@@ -122,26 +125,19 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
         </Alert>
       ) : null}
 
-      {state.redirectedDownloadHost ? (
-        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-3">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-            <div className="min-w-0 space-y-1">
-              <p className="text-sm font-medium">{t('addSkill.confirm.redirectTitle')}</p>
-              <p className="text-sm text-muted-foreground">
-                {t('addSkill.confirm.redirectBody', { host: state.redirectedDownloadHost })}
-              </p>
-            </div>
-          </div>
-          <label className="flex cursor-pointer items-start gap-2 text-sm">
-            <Checkbox
-              checked={state.redirectAcknowledged}
-              onCheckedChange={(checked) => updateState({ redirectAcknowledged: checked === true })}
-              className="mt-0.5"
-            />
-            <span>{t('addSkill.confirm.redirectAcknowledge')}</span>
-          </label>
+      {libraryOverrideCount > 0 ? (
+        <div className="border-y border-border/70 py-3 text-sm">
+          <p className="font-medium">{t('addSkill.confirm.libraryOverrideTitle')}</p>
+          <p className="mt-1 text-muted-foreground">{t('addSkill.confirm.libraryOverrideDescription', { count: libraryOverrideCount })}</p>
         </div>
+      ) : null}
+
+      {state.redirectedDownloadHost ? (
+        <RedirectHostConfirmation
+          host={state.redirectedDownloadHost}
+          acknowledged={state.redirectAcknowledged === true}
+          onAcknowledgedChange={(redirectAcknowledged) => updateState({ redirectAcknowledged })}
+        />
       ) : null}
 
       <section className="space-y-2">
@@ -169,6 +165,8 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{name}</span>
                 {blockedSkills.has(name) ? (
                   <Badge variant="destructive">{t('addSkill.confirm.directDownloadConflict')}</Badge>
+                ) : state.preparation.status === 'ready' && state.preparation.prepared.preview.skills.find((item) => item.skillName === name)?.overridesLibrary ? (
+                  <Badge variant="outline">{t('addSkill.confirm.libraryOverrideBadge')}</Badge>
                 ) : (state.overwrites[name] ?? []).length > 0 ? (
                   <Badge variant="outline">{t('addSkill.confirm.overwriteGroup')}</Badge>
                 ) : null}

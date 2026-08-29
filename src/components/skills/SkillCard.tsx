@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from 'react';
+import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
@@ -14,10 +14,15 @@ import {
   Wrench,
 } from 'lucide-react';
 import { cn, toTitleCase } from '@/lib/utils';
-import { formatSkillCardDate } from '@/lib/skill-card-presentation';
+import { formatSkillCardDate, isOpenableUrl, useCardActivation } from '@/lib/skill-card-presentation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { CardContent } from '@/components/ui/card';
+import {
+  SkillCardMarker,
+  SkillCardProgressBar,
+  SkillCardShell,
+} from '@/components/skills/card/SkillCardPrimitives';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import {
   AlertDialog,
@@ -88,16 +93,6 @@ function resolveAttentionKeys(skill: SkillListItem, hasDuplicateLocations: boole
   return keys;
 }
 
-function isOpenableUrl(value: string | null | undefined): value is string {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
-
 interface SkillCardProps {
   skill: SkillListItem;
   displayScope: InstalledSkillLocation;
@@ -130,8 +125,6 @@ export const SkillCard = memo(function SkillCard({
   onRepairSource,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
-  const progressBarRef = useRef<HTMLDivElement>(null);
-  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const effectiveAgents = Array.from(new Set(skill.associatedAgents));
   const scopeIcon = displayScope === 'global' ? Globe : Folder;
   const ScopeIcon = scopeIcon;
@@ -192,20 +185,7 @@ export const SkillCard = memo(function SkillCard({
   const updatedAt = skill.updatedAt
     ? formatSkillCardDate(skill.updatedAt, i18n.language)
     : null;
-  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    pointerDownRef.current = { x: event.clientX, y: event.clientY };
-  }, []);
-
-  const handleCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (window.getSelection()?.toString()) return;
-    const pointerDown = pointerDownRef.current;
-    pointerDownRef.current = null;
-    if (pointerDown) {
-      const distance = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
-      if (distance > 4) return;
-    }
-    onClick?.(skill);
-  }, [onClick, skill]);
+  const activation = useCardActivation(onClick ? () => onClick(skill) : undefined);
 
   const handleOpenSource = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -242,19 +222,15 @@ export const SkillCard = memo(function SkillCard({
   ) : null;
 
   return (
-    <Card
-      className="group relative gap-0 rounded-xl border border-border bg-card py-0 transition-all duration-200 hover:border-primary/40 hover:shadow-sm"
-      onPointerDown={handlePointerDown}
-      onClick={handleCardClick}
+    <SkillCardShell
+      onPointerDown={onClick ? activation.onPointerDown : undefined}
+      onClick={onClick ? activation.onClick : undefined}
     >
       <CardContent className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-x-2.5 p-4">
         <Tooltip>
           <TooltipTrigger asChild>
-            <div
-              data-testid="skill-scope-marker"
-              className="flex size-6 items-center justify-center rounded bg-muted/60 text-muted-foreground ring-1 ring-inset ring-border/50"
-            >
-              <ScopeIcon className="size-3.5 text-foreground/70" aria-hidden="true" />
+            <div>
+              <SkillCardMarker icon={ScopeIcon} testId="skill-scope-marker" />
             </div>
           </TooltipTrigger>
           <TooltipContent><p>{t(`skills.scopeIcon.${displayScope}`)}</p></TooltipContent>
@@ -497,19 +473,10 @@ export const SkillCard = memo(function SkillCard({
         </div>
       </CardContent>
 
-      {activeUpdatePhase ? (
-        <div className="absolute inset-x-0 bottom-0">
-          <div className="h-0.5 overflow-hidden bg-primary/15">
-            <div ref={progressBarRef} className="h-full bg-primary transition-all duration-500" style={{ width: '10%' }} />
-          </div>
-        </div>
-      ) : null}
-      {updateStatus === 'done' ? (
-        <div className="absolute inset-x-0 bottom-0 h-0.5 bg-success transition-opacity duration-700" />
-      ) : null}
-      {updateStatus === 'failed' ? (
-        <div className="absolute inset-x-0 bottom-0 h-0.5 bg-destructive" />
-      ) : null}
-    </Card>
+      <SkillCardProgressBar
+        active={Boolean(activeUpdatePhase)}
+        outcome={updateStatus === 'done' ? 'done' : updateStatus === 'failed' ? 'failed' : undefined}
+      />
+    </SkillCardShell>
   );
 });

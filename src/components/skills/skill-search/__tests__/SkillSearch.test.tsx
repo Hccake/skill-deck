@@ -72,12 +72,12 @@ describe('SkillSearch', () => {
 
     render(<SkillSearch installedSkillKeys={new Set()} onInstall={vi.fn()} />);
 
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'ab' } });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'ab' } });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
 
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'abc' } });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'abc' } });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
@@ -96,5 +96,27 @@ describe('SkillSearch', () => {
 
     expect(screen.queryByText('old-result')).toBeNull();
     expect(screen.getByText('new-result')).toBeTruthy();
+  });
+
+  it('uses the caller action label when a search result selects a source', async () => {
+    const onInstall = vi.fn();
+    searchMock.mockResolvedValue(searchResponse('library-result'));
+
+    render(
+      <SkillSearch
+        installedSkillKeys={new Set()}
+        onInstall={onInstall}
+        actionLabel="Use source"
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'library' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    await flushAsyncWork();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use source' }));
+    expect(onInstall).toHaveBeenCalledWith(expect.objectContaining({ name: 'library-result' }));
   });
 });
