@@ -1,12 +1,15 @@
 import { useTranslation } from 'react-i18next';
-import { LoaderCircle } from 'lucide-react';
+import { ArrowUpRight, LoaderCircle } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { AgentDeleteImpact } from '@/bindings';
+import { Button } from '@/components/ui/button';
+import { LibraryUsageIdentity } from '@/components/library';
+import { libraryUsageIdentityKey } from '@/lib/libraries/usage-presentation';
+import type { AgentDeleteImpact, LibraryUsage } from '@/bindings';
 
 type DeletePreviewState = 'loading' | 'ready' | 'error';
 
@@ -23,6 +26,7 @@ export function AgentDeleteDialog({
   onClose,
   onConfirm,
   onRetryPreview,
+  onOpenLibraryUsage,
 }: {
   target: { agentId: string; displayName: string } | null;
   impact: AgentDeleteImpact | null;
@@ -36,6 +40,7 @@ export function AgentDeleteDialog({
   onClose: () => void;
   onConfirm: () => void;
   onRetryPreview: () => void;
+  onOpenLibraryUsage: (usage: LibraryUsage) => void;
 }) {
   const { t } = useTranslation();
   const previewReady = previewState === 'ready' && impact !== null;
@@ -75,6 +80,26 @@ export function AgentDeleteDialog({
                 <p role="alert" className="text-sm text-destructive">
                   {t('settings.agents.deleteError')}
                 </p>
+              ) : null}
+              {impact.libraryUsages.length > 0 ? (
+                <div className="border-y border-warning/40 py-3">
+                  <p className="font-medium text-warning">{t('settings.agents.libraryUsageDeleteBlocked')}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {impact.libraryUsages.map((usage) => (
+                      <Button
+                        key={libraryUsageIdentityKey(usage)}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-auto max-w-full justify-start gap-2 py-1.5"
+                        onClick={() => onOpenLibraryUsage(usage)}
+                      >
+                        <LibraryUsageIdentity usage={usage} showPath={false} />
+                        <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                      </Button>
+                    ))}
+                  </div>
+                </div>
               ) : null}
               <p className="font-medium text-success">{t('settings.agents.deleteFilesSafe')}</p>
               {impact.scopes.map((scope) => (
@@ -132,7 +157,7 @@ export function AgentDeleteDialog({
           ) : null}
           {previewReady ? (
             <AlertDialogAction
-              disabled={writeBlocked || deleting || confirmation !== impact.agentId}
+              disabled={writeBlocked || deleting || confirmation !== impact.agentId || impact.libraryUsages.length > 0}
               onClick={(event) => { event.preventDefault(); onConfirm(); }}
             >
               {t(deleting

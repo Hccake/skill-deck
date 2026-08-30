@@ -11,10 +11,10 @@ import {
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMemoryRouter, RouterProvider, useSearchParams } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider, useSearchParams } from 'react-router-dom';
 import { AgentSettingsPage } from '../AgentSettingsPage';
 import { UnsavedChangesProvider } from '@/lifecycle/UnsavedChangesProvider';
-import type { AgentSettingsSnapshot } from '@/bindings';
+import type { AgentSettingsSnapshot, LibraryUsage } from '@/bindings';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
@@ -26,7 +26,13 @@ globalThis.ResizeObserver = class ResizeObserver {
 Element.prototype.scrollIntoView = vi.fn();
 
 function render(ui: React.ReactElement) {
-  return testingRender(ui, { wrapper: TooltipProvider });
+  return testingRender(ui, {
+    wrapper: ({ children }) => (
+      <MemoryRouter>
+        <TooltipProvider>{children}</TooltipProvider>
+      </MemoryRouter>
+    ),
+  });
 }
 
 function deferred<T>() {
@@ -83,7 +89,7 @@ function renderRoutedAgentSettings(initialEntry = '/settings?section=agents') {
     path: '*',
     element: <RoutedAgentSettingsHarness />,
   }], { initialEntries: [initialEntry] });
-  render(<RouterProvider router={router} />);
+  testingRender(<RouterProvider router={router} />, { wrapper: TooltipProvider });
   return router;
 }
 
@@ -100,11 +106,13 @@ const actions = {
     agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
     environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
     filesWillBeDeleted: false,
+    libraryUsages: [] as LibraryUsage[],
   })),
   deleteAgent: vi.fn(async (_context?: unknown, _id?: unknown, _revision?: unknown) => []),
   deleteInvalid: vi.fn((_context?: unknown, _index?: unknown, _revision?: unknown) => undefined),
 };
 const listRuntimeAgents = vi.fn();
+const getLibraryUsages = vi.fn();
 const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const registryState = vi.hoisted(() => ({
   snapshot: null as AgentSettingsSnapshot | null,
@@ -135,6 +143,7 @@ const pageState = vi.hoisted(() => ({
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listAgents: (selectedContext: unknown) => listRuntimeAgents(selectedContext),
+  getAgentLibraryUsages: (...args: unknown[]) => getLibraryUsages(...args),
 }));
 
 vi.mock('@/workflows/agent-definitions', () => ({
@@ -224,10 +233,12 @@ describe('AgentSettingsPage', () => {
     actions.saveDraft.mockResolvedValue(undefined);
     actions.deleteAgent.mockResolvedValue([]);
     listRuntimeAgents.mockReturnValue(new Promise(() => undefined));
+    getLibraryUsages.mockResolvedValue([]);
     actions.loadDeleteImpact.mockResolvedValue({
       agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
       environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
       filesWillBeDeleted: false,
+      libraryUsages: [],
     });
     useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
@@ -962,6 +973,20 @@ describe('AgentSettingsPage', () => {
     expect(router.state.location.search).not.toContain('view=');
   });
 
+  it('shows the Scopes that block read-path changes for a referenced Agent', async () => {
+    getLibraryUsages.mockResolvedValue([{
+      context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+      project: null,
+      state: 'confirmed',
+    }]);
+    render(<AgentSettingsPage context={context} />);
+
+    openCustomEditor();
+
+    expect(await screen.findByText('settings.agents.libraryUsageTitle')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'libraries.usage.globalLocation' })).toBeDefined();
+  });
+
   it('uses read-only Agent IDs in edit pages so they remain focusable', async () => {
     render(<AgentSettingsPage context={context} />);
     openCustomEditor();
@@ -1135,6 +1160,7 @@ describe('AgentSettingsPage', () => {
       agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
       environmentRevision: 'environment-1', losesManagementCapability: true,
       filesWillBeDeleted: false,
+      libraryUsages: [],
       scopes: [{
         scope: 'project',
         paths: [{
@@ -1186,6 +1212,7 @@ describe('AgentSettingsPage', () => {
         agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
         environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
         filesWillBeDeleted: false,
+        libraryUsages: [],
       });
     render(<AgentSettingsPage context={context} />);
 
@@ -1223,11 +1250,13 @@ describe('AgentSettingsPage', () => {
         agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
         environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
         filesWillBeDeleted: false,
+        libraryUsages: [],
       })
       .mockResolvedValueOnce({
         agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-2',
         environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
         filesWillBeDeleted: false,
+        libraryUsages: [],
       });
     actions.deleteAgent.mockRejectedValueOnce({
       kind: 'staleRegistryRevision', expected: 'registry-1', actual: 'registry-2',
@@ -1459,6 +1488,7 @@ describe('AgentSettingsPage', () => {
       agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
       environmentRevision: 'environment-1', losesManagementCapability: true,
       filesWillBeDeleted: false,
+      libraryUsages: [],
       scopes: [{
         scope: 'global',
         paths: [{
@@ -1482,6 +1512,39 @@ describe('AgentSettingsPage', () => {
     fireEvent.click(confirmButton);
 
     await waitFor(() => expect(actions.deleteAgent).toHaveBeenCalled());
+  });
+
+  it('blocks Agent deletion and lists every referencing Library Scope', async () => {
+    actions.loadDeleteImpact.mockResolvedValue({
+      agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
+      environmentRevision: 'environment-1', losesManagementCapability: true,
+      filesWillBeDeleted: false,
+      scopes: [],
+      libraryUsages: [{
+        context: {
+          environment: { kind: 'native' },
+          scope: { scope: 'project', project_id: 'project-1' },
+        },
+        project: {
+          id: 'project-1',
+          nativePath: '/work/skill-deck',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        state: 'confirmed',
+      }],
+    });
+    render(<AgentSettingsPage context={context} />);
+
+    selectCustomDeleteAction();
+    const input = await screen.findByLabelText('settings.agents.deleteConfirmId');
+    fireEvent.change(input, { target: { value: 'my-agent' } });
+
+    expect(screen.getByText('settings.agents.libraryUsageDeleteBlocked')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'skill-deck' })).toBeDefined();
+    expect(screen.queryByText('/work/skill-deck')).toBeNull();
+    expect((screen.getByRole('button', { name: 'settings.agents.confirmDelete' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('keeps a stale draft for explicit reload and review instead of overwriting', async () => {

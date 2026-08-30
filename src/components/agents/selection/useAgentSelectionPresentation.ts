@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 
-export type AgentSelectionUsage = 'install' | 'manage' | 'copyToProject';
+export type AgentSelectionUsage = 'install' | 'manage' | 'copyToProject' | 'libraryApplication';
 
 export interface AgentSelectionPresentation {
   automatic: {

@@ -9,7 +9,7 @@ import { RepairSourceDialog } from '../RepairSourceDialog';
 import type { InstalledSkill } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
-  fetchAvailable: vi.fn(),
+  discoverSkillSource: vi.fn(),
   acquireSelectedPayloads: vi.fn(),
   previewInstall: vi.fn(),
   installSkills: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  fetchAvailable: (...args: unknown[]) => mocks.fetchAvailable(...args),
+  discoverSkillSource: (...args: unknown[]) => mocks.discoverSkillSource(...args),
   acquireSelectedPayloads: (...args: unknown[]) => mocks.acquireSelectedPayloads(...args),
   previewInstall: (...args: unknown[]) => mocks.previewInstall(...args),
   installSkills: (...args: unknown[]) => mocks.installSkills(...args),
@@ -96,7 +96,7 @@ describe('RepairSourceDialog', () => {
       copyContext: undefined,
       repairSourceTarget: null,
     });
-    mocks.fetchAvailable.mockResolvedValue({
+    mocks.discoverSkillSource.mockResolvedValue({
       discoverySession,
       sourceType: 'github',
       sourceUrl: 'https://github.com/owner/repo',
@@ -245,7 +245,7 @@ describe('RepairSourceDialog', () => {
       activeMutation: {
         id: 'mutation-1',
         kind: 'update',
-        context,
+        target: { kind: 'skillLocation', environment: context.environment, scope: context.scope },
         phase: 'preparing',
         progress: null,
         cancelable: true,

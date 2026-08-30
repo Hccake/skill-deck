@@ -80,16 +80,17 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
   }),
   confirm: async () => {
     if (isBusinessWriteBlocked()) return;
-    const { context, skillNames, preview, batch, conflictDecisions, phase, confirming } = get();
+    const { context, skillNames, preview, batch, conflictDecisions, phase, confirming, executionError } = get();
     if (phase !== 'ready' || confirming || !context || !preview) return;
     const generation = get().generation;
     set({ phase: 'executing', confirming: true });
     try {
       const execution = { request: { context, skillNames }, overwritePrivateEntries: [...conflictDecisions] };
+      const acknowledgeRedirect = executionError?.kind === 'directDownloadRedirectConfirmationRequired';
       const outcome = await runBusinessWrite(() => (
         batch
-          ? updateSkillsBatch(execution, preview.token)
-          : updateSkill(execution, preview.token)
+          ? updateSkillsBatch(execution, preview.token, acknowledgeRedirect)
+          : updateSkill(execution, preview.token, acknowledgeRedirect)
       ));
       if (get().generation !== generation) return;
       if (outcome.status === 'notRun') {
@@ -102,7 +103,15 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
       set({ phase: 'result', result, executionError: null, confirming: false });
     } catch (error) {
       if (get().generation !== generation) return;
-      set({ phase: 'result', result: null, executionError: toAppError(error), confirming: false });
+      const executionError = toAppError(error);
+      set({
+        phase: executionError.kind === 'directDownloadRedirectConfirmationRequired'
+          ? 'ready'
+          : 'result',
+        result: null,
+        executionError,
+        confirming: false,
+      });
     }
   },
   retryFailed: async () => {
@@ -116,7 +125,16 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
   },
   acceptMutation: (mutation) => {
     const { context, phase } = get();
-    if (!context || !mutation || mutation.kind !== 'update' || contextKey(mutation.context) !== contextKey(context)) return;
+    if (
+      !context
+      || !mutation
+      || mutation.kind !== 'update'
+      || mutation.target.kind !== 'skillLocation'
+      || contextKey({
+        environment: mutation.target.environment,
+        scope: mutation.target.scope,
+      }) !== contextKey(context)
+    ) return;
     if (phase !== 'result' && phase !== 'closed') set({ phase: 'executing' });
   },
   close: () => set((state) => ({ ...closedState, generation: state.generation + 1 })),

@@ -116,8 +116,6 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.payloadStorageRequiresCleanup');
     case 'validation':
       return error.data.message;
-    case 'environmentChanged':
-    case 'contextChanged':
     case 'payloadSessionExpired':
     case 'staleContext':
     case 'staleRegistry':
@@ -139,13 +137,25 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.storageUnsupported');
     case 'selfCopy':
       return t('addSkill.error.selfCopy');
-    case 'externalLockChanged':
-      return t('addSkill.error.externalLockChanged');
+    case 'libraryReferenceConflict':
+      return t('libraries.referenceConflict', { count: error.data.usages.length });
+    case 'skillPlacementTargetConflict':
+      return t('mutation.result.errors.skillPlacementTargetConflict', {
+        skillName: error.data.skillName,
+        targetPath: error.data.targetPath,
+        targetKind: t(`mutation.result.targetKinds.${error.data.targetKind}`),
+      });
+    case 'upstreamSkillNameChanged':
+      return t('libraries.updateStatus.nameChangeBlocked');
+    case 'upstreamSkillDeleted':
+      return t('libraries.updateStatus.deletedUpstream');
     case 'executionFailed':
     case 'restoreFailed':
     case 'recoveryRequired':
     case 'configurationCorrupted':
       return error.data.message;
+    case 'libraryRecoveryIncomplete':
+      return t('libraries.recoveryIncomplete');
     case 'lockConflict': {
       const { target } = error.data;
       return target.kind === 'skill'

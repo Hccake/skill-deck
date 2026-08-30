@@ -54,7 +54,12 @@ function skill(name: string, scope: 'global' | 'project' = 'global'): InstalledS
 }
 
 function result(name: string, scope: 'global' | 'project' = 'global'): ListSkillsResult {
-  return { skills: [skill(name, scope)], agents: [], pathExists: true };
+  return {
+    skills: [skill(name, scope)],
+    agents: [],
+    pathExists: true,
+    libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+  };
 }
 
 function deferred<T>() {
@@ -263,7 +268,10 @@ describe('context-keyed Skill snapshots', () => {
     expect(mocks.checkUpdates).toHaveBeenCalledWith({
       context: ubuntuGlobal,
       mode: 'force',
-      selection: { kind: 'all' },
+      selection: {
+        kind: 'skills',
+        skills: [{ context: ubuntuGlobal, skillName: 'toolkit' }],
+      },
     });
     expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuGlobal)].skills[0].hasUpdate)
       .toBe(true);

@@ -15,7 +15,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
 const mutation: ActiveMutation = {
   id: 'mutation-1',
   kind: 'copy',
-  context: {
+  target: { kind: 'skillLocation',
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'project', project_id: 'project-1' },
   },

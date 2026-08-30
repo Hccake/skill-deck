@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { AgentIcon } from '@/components/agents/AgentIcon';
@@ -28,6 +29,8 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { LibraryUsageIdentity } from '@/components/library';
+import { libraryUsageIdentityKey } from '@/lib/libraries/usage-presentation';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { environmentKey } from '@/lib/context';
@@ -37,7 +40,8 @@ import {
 } from '@/lifecycle/unsaved-changes-context';
 import { useAgentRegistryStore } from '@/stores/agent-registry';
 import { agentDefinitionWorkflow } from '@/workflows/agent-definitions';
-import { listAgents } from '@/hooks/useTauriApi';
+import { getAgentLibraryUsages, listAgents } from '@/hooks/useTauriApi';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type {
   AgentCommandError,
@@ -50,6 +54,7 @@ import type {
   CustomScopeDefinition,
   InvalidCustomAgentRecord,
   ResolvedAgent,
+  LibraryUsage,
 } from '@/bindings';
 
 interface AgentSettingsPageProps {
@@ -122,6 +127,9 @@ export function AgentSettingsPage({
   onNavigate,
 }: AgentSettingsPageProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const selectGlobal = useWorkspaceContextStore((state) => state.selectGlobal);
+  const selectProject = useWorkspaceContextStore((state) => state.selectProject);
   const unsavedChanges = useOptionalUnsavedChanges();
   const key = environmentKey(context.environment);
   const snapshot = useAgentRegistryStore((state) => state.settingsByEnvironment[key]);
@@ -161,6 +169,7 @@ export function AgentSettingsPage({
   const [deletingInvalid, setDeletingInvalid] = useState(false);
   const [runtimeAgents, setRuntimeAgents] = useState<Partial<Record<string, ResolvedAgent>>>({});
   const [runtimeState, setRuntimeState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [agentLibraryUsages, setAgentLibraryUsages] = useState<LibraryUsage[]>([]);
   const [runtimeRetry, setRuntimeRetry] = useState(0);
 
   const validationRequestId = useRef(0);
@@ -243,6 +252,27 @@ export function AgentSettingsPage({
       if (requestId === runtimeRequestId.current) runtimeRequestId.current += 1;
     };
   }, [registryRevision, runtimeContext, runtimeRetry]);
+
+  useEffect(() => {
+    if (!originalId) {
+      setAgentLibraryUsages([]);
+      return;
+    }
+    setAgentLibraryUsages((current) => current.length > 0 ? [] : current);
+    let ignored = false;
+    void getAgentLibraryUsages(context.environment, originalId)
+      .then((usages) => {
+        if (!ignored && usages.length > 0) setAgentLibraryUsages(usages);
+      })
+      .catch(() => undefined);
+    return () => { ignored = true; };
+  }, [context.environment, originalId]);
+
+  const openLibraryUsage = (usage: LibraryUsage) => {
+    if (usage.context.scope.scope === 'global') selectGlobal();
+    else selectProject(usage.context.scope.project_id);
+    navigate('/skills');
+  };
 
   useEffect(() => {
     if (!routeDraftKey) {
@@ -582,28 +612,51 @@ export function AgentSettingsPage({
   return (
     <div className={draft ? 'min-h-full' : 'space-y-5'}>
       {draft ? (
-        <AgentDefinitionFormPage
-          key={formSession}
-          draft={draft}
-          mode={formMode}
-          originalId={originalId}
-          errors={formInteracted || validationAttempted ? fieldErrors : []}
-          readOnly={readOnly}
-          saving={saving}
-          stale={staleRevision}
-          deleted={staleDeleted}
-          onChange={(nextDraft) => {
-            setFormInteracted(true);
-            setDraft((current) => (
-              current && !originalId
-                ? updateAgentDraft(current, nextDraft, detachedDraftFields.current)
-                : nextDraft
-            ));
-          }}
-          onBack={requestCloseDraft}
-          onSave={() => void save()}
-          onReload={() => void reloadStaleDraft()}
-        />
+        <div className="space-y-3">
+          {agentLibraryUsages.length > 0 ? (
+            <div className="border-y border-warning/40 py-3 text-sm">
+              <p className="font-medium text-warning">{t('settings.agents.libraryUsageTitle')}</p>
+              <p className="mt-1 text-muted-foreground">{t('settings.agents.libraryUsageDescription')}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {agentLibraryUsages.map((usage) => (
+                  <Button
+                    key={libraryUsageIdentityKey(usage)}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-auto max-w-full justify-start gap-2 py-1.5"
+                    onClick={() => openLibraryUsage(usage)}
+                  >
+                    <LibraryUsageIdentity usage={usage} showPath={false} />
+                    <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <AgentDefinitionFormPage
+            key={formSession}
+            draft={draft}
+            mode={formMode}
+            originalId={originalId}
+            errors={formInteracted || validationAttempted ? fieldErrors : []}
+            readOnly={readOnly}
+            saving={saving}
+            stale={staleRevision}
+            deleted={staleDeleted}
+            onChange={(nextDraft) => {
+              setFormInteracted(true);
+              setDraft((current) => (
+                current && !originalId
+                  ? updateAgentDraft(current, nextDraft, detachedDraftFields.current)
+                  : nextDraft
+              ));
+            }}
+            onBack={requestCloseDraft}
+            onSave={() => void save()}
+            onReload={() => void reloadStaleDraft()}
+          />
+        </div>
       ) : (
         <>
       <div
@@ -896,6 +949,7 @@ export function AgentSettingsPage({
             );
           }
         }}
+        onOpenLibraryUsage={openLibraryUsage}
       />
 
       <AlertDialog

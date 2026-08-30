@@ -13,10 +13,9 @@ type Translate = (
 
 const ERROR_CODES = new Set<OperationErrorCode>([
   'validation',
+  'skillPlacementTargetConflict',
   'wellKnownScopeNotFound',
   'environmentUnavailable',
-  'environmentChanged',
-  'contextChanged',
   'storageUnsupported',
   'capabilityUnavailable',
   'unsafePath',
@@ -33,6 +32,7 @@ const ERROR_CODES = new Set<OperationErrorCode>([
   'executionFailed',
   'restoreFailed',
   'recoveryRequired',
+  'libraryRecoveryIncomplete',
   'configurationReadOnly',
   'configurationCorrupted',
 ]);
@@ -42,6 +42,12 @@ export function formatMutationError(error: ErrorReport, t: Translate): string {
   const parameters = code !== 'unknown' && Object.keys(error.parameters).length > 0
     ? error.parameters
     : undefined;
+  if (code === 'skillPlacementTargetConflict' && parameters?.targetKind) {
+    return t(`mutation.result.errors.${code}`, {
+      ...parameters,
+      targetKind: t(`mutation.result.targetKinds.${parameters.targetKind}`),
+    });
+  }
   return t(`mutation.result.errors.${code}`, parameters);
 }
 

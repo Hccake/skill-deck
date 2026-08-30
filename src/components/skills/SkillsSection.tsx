@@ -1,15 +1,16 @@
 // src/components/skills/SkillsSection.tsx
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Check, ArrowUpCircle, RefreshCw, CircleAlert } from 'lucide-react';
+import { Plus, Check, ArrowUpCircle, RefreshCw, CircleAlert, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SkillCard } from './SkillCard';
+import { LibraryApplicationStrip } from './LibraryApplicationStrip';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentId, InstalledSkill, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { AgentId, InstalledSkill, InstalledSkillLocation, LibraryApplicationSummary, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
   buildUpdatePlan,
   isSkillUpdateActive,
@@ -62,6 +63,8 @@ interface SkillsSectionProps {
   onAdd: () => void;
   onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   emptyState?: React.ReactNode;
+  libraryApplication?: LibraryApplicationSummary;
+  onManageLibraries?: () => void;
 }
 
 export const SkillsSection = memo(function SkillsSection({
@@ -87,6 +90,8 @@ export const SkillsSection = memo(function SkillsSection({
   onAdd,
   onCheckUpdates,
   emptyState,
+  libraryApplication = { orderedLibraries: [], selectedAgentIds: [], pending: false },
+  onManageLibraries,
 }: SkillsSectionProps) {
   const { t, i18n } = useTranslation();
   const writeBlocked = useBusinessWriteBlocked();
@@ -347,7 +352,10 @@ export const SkillsSection = memo(function SkillsSection({
         
         {/* Right Actions: Secondary maintenance actions + primary add action */}
         <div data-testid="skills-section-actions" className="flex shrink-0 items-center gap-2">
-          {pathExists && !isAnyUpdating && (updatesCount > 0 || (onCheckUpdates && skills.length > 0 && checkableCount > 0)) && (
+          {pathExists && (
+            (!isAnyUpdating && (updatesCount > 0 || (onCheckUpdates && skills.length > 0 && checkableCount > 0)))
+            || onManageLibraries
+          ) ? (
             <div data-testid="skills-section-secondary-actions" className="flex items-center gap-0.5">
               {updatesCount > 0 && (
                 <Button
@@ -390,8 +398,20 @@ export const SkillsSection = memo(function SkillsSection({
                   </Button>
                 )
               )}
+              {onManageLibraries ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                  onClick={onManageLibraries}
+                >
+                  <SlidersHorizontal className="size-3.5" aria-hidden="true" />
+                  {t('libraries.manage')}
+                </Button>
+              ) : null}
             </div>
-          )}
+          ) : null}
           
           {/* 路径不存在时隐藏 Add 按钮 */}
           {pathExists && (
@@ -409,6 +429,10 @@ export const SkillsSection = memo(function SkillsSection({
         </div>
       </div>
 
+      {pathExists ? (
+        <LibraryApplicationStrip application={libraryApplication} />
+      ) : null}
+
       {!pathExists && <ProjectUnavailableState />}
 
       {/* Skills List */}
@@ -419,9 +443,12 @@ export const SkillsSection = memo(function SkillsSection({
           ) : (
             <div className="grid gap-3">
               {skills.map((skill) => {
-                const updateStatus = updatingSkills.get(
-                  getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath })
-                );
+                const identityKey = getSkillIdentityKey({
+                  name: skill.name,
+                  scope: skill.scope,
+                  projectPath,
+                });
+                const updateStatus = updatingSkills.get(identityKey);
                 return (
                   <SkillCard
                     key={skill.name}

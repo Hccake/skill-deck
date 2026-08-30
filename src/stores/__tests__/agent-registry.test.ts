@@ -85,6 +85,7 @@ function deleteImpact(revision: string): AgentDeleteImpact {
     scopes: [],
     losesManagementCapability: false,
     filesWillBeDeleted: false,
+    libraryUsages: [],
   };
 }
 

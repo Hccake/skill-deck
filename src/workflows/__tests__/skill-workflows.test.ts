@@ -86,15 +86,16 @@ const removePreview = {
   token,
   context,
   skillName: skill.name,
-  canonical: 'directory',
+  standard: 'directory',
   physicalEntries: [],
+  restoresLibrary: false,
 } as RemovePreview;
 
 const managePreview = {
   token,
   context,
   skillName: skill.name,
-  canonicalPayload: null,
+  originalPayload: null,
   confirmation: null,
 } satisfies ManageAgentsPreview;
 

@@ -35,17 +35,3 @@ describe('add skill copy', () => {
     expect(en.addSkill.complete.skipped).toBe('Not written: {{agents}}');
   });
 });
-
-describe('copy to project copy', () => {
-  it('keeps source maintenance messaging out of the Chinese copy flow', () => {
-    expect('metadataWarning' in zhCN.skills.copyToProject).toBe(false);
-    expect('sourceRepairRequired' in zhCN.skills.copyToProject).toBe(false);
-    expect('repairSource' in zhCN.skills.copyToProject).toBe(false);
-  });
-
-  it('keeps source maintenance messaging out of the English copy flow', () => {
-    expect('metadataWarning' in en.skills.copyToProject).toBe(false);
-    expect('sourceRepairRequired' in en.skills.copyToProject).toBe(false);
-    expect('repairSource' in en.skills.copyToProject).toBe(false);
-  });
-});

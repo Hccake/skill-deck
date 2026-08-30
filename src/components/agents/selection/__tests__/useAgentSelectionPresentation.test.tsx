@@ -17,6 +17,7 @@ describe('useAgentSelectionPresentation', () => {
     ['install', 'install'],
     ['manage', 'manage'],
     ['copyToProject', 'copyToProject'],
+    ['libraryApplication', 'libraryApplication'],
   ] as const)('provides complete %s copy without exposing the usage to the view', (usage, suffix) => {
     const { result } = renderHook(() => useAgentSelectionPresentation(usage));
 

@@ -17,6 +17,7 @@ import { CompactSkillList } from './CompactSkillList';
 import { CrossStorageWarningBanner } from './CrossStorageWarningBanner';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { RepairSourceDialog } from './RepairSourceDialog';
+import { ManageLibraryApplicationDialog } from './ManageLibraryApplicationDialog';
 import { GlobalEmptyState, ProjectEmptyState, SkillFilterEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ import { formatAppError } from '@/utils/format-app-error';
 import { openSkillRemoval } from '@/workflows/skill-remove';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
+import { projectPathBasename } from '@/lib/projects/presentation';
 import {
   countSkillsByAgent,
   filterSkills,
@@ -35,11 +37,12 @@ import {
   hasCommittedUpdateComparison,
   type SkillUpdateDisplayStatus,
 } from '@/stores/skills-utils';
-import type { AgentId, InstalledSkill, ResolvedAgent } from '@/bindings';
+import type { AgentId, InstalledSkill, LibraryApplicationSummary, ResolvedAgent, SkillLocationRef } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
   agents: [],
+  libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
   pathExists: true,
   loading: false,
   error: null,
@@ -70,6 +73,9 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     ? projects.find((project) => project.binding.id === selectedScope.project_id)
     : null;
   const projectPath = selectedProject?.binding.nativePath;
+  const configuredProjectName = selectedProject?.binding.displayName?.trim();
+  const selectedProjectName = configuredProjectName
+    || (projectPath ? projectPathBasename(projectPath) : undefined);
 
   // ① Store — 细粒度 selector 订阅
   const snapshots = useSkillsDataStore((state) => state.snapshots);
@@ -118,6 +124,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const selectSkill = useSkillDetailStore((s) => s.selectSkill);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
+  // 分栏视图需要知道详情属于哪一行，卡片据此显示选中态。
   const openAdd = useSkillDialogStore((s) => s.openAdd);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
@@ -126,6 +133,11 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgentFilter, setSelectedAgentFilter] = useState<AgentId | null>(null);
+  const [manageLibraries, setManageLibraries] = useState<{
+    context: SkillLocationRef;
+    application: LibraryApplicationSummary;
+    projectName?: string;
+  } | null>(null);
   const listScrollRef = useRef<HTMLDivElement>(null);
 
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
@@ -456,6 +468,17 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           onSkillClick={selectSkill}
           projectEmptyState={projectFilterEmptyState}
           globalEmptyState={globalFilterEmptyState}
+          projectLibraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+          globalLibraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+          onManageProjectLibraries={isProjectSelected ? () => setManageLibraries({
+            context: selectedContext,
+            application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+            projectName: selectedProjectName,
+          }) : undefined}
+          onManageGlobalLibraries={() => setManageLibraries({
+            context: selectedGlobalContext,
+            application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+          })}
         />
       ) : (
         /* 卡片列表 — 未选中时 */
@@ -485,6 +508,12 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               onAdd={handleAddProject}
               onCheckUpdates={handleCheckProjectUpdates}
               emptyState={projectEmptyState}
+              libraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+              onManageLibraries={() => setManageLibraries({
+                context: selectedContext,
+                application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+                projectName: selectedProjectName,
+              })}
             />
           )}
 
@@ -509,12 +538,28 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             onAdd={handleAddGlobal}
             onCheckUpdates={handleCheckGlobalUpdates}
             emptyState={globalEmptyState}
+            libraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+            onManageLibraries={() => setManageLibraries({
+              context: selectedGlobalContext,
+              application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+            })}
           />
         </div>
       )}
 
       <DeleteSkillDialog />
       <RepairSourceDialog />
+      <ManageLibraryApplicationDialog
+        open={manageLibraries !== null}
+        context={manageLibraries?.context ?? null}
+        projectName={manageLibraries?.projectName}
+        application={manageLibraries?.application ?? null}
+        onOpenChange={(open) => !open && setManageLibraries(null)}
+        onApplied={async () => {
+          if (!manageLibraries) return;
+          await refreshWorkspace(manageLibraries.context, { origin: 'passive' });
+        }}
+      />
     </div>
   );
 }

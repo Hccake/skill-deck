@@ -2,10 +2,13 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render as testingRender, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { CompactSkillList } from '../CompactSkillList';
 import type { InstalledSkill } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+
+const render = (ui: React.ReactElement) => testingRender(<MemoryRouter>{ui}</MemoryRouter>);
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -41,7 +44,7 @@ describe('CompactSkillList', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'update',
-        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+        target: { kind: 'skillLocation', environment: { kind: 'native' }, scope: { scope: 'global' } },
         id: 'mutation-1',
         phase: 'preparing',
         progress: null,
@@ -86,5 +89,47 @@ describe('CompactSkillList', () => {
     expect(screen.getByText('project-filter-empty')).toBeDefined();
     expect(screen.getByText('global-filter-empty')).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'skills.add' })).toHaveLength(2);
+  });
+
+  it('shows every applied Library without an overflow control', () => {
+    render(
+      <CompactSkillList
+        globalSkills={[]}
+        projectSkills={[]}
+        selectedSkillRef={null}
+        isProjectSelected
+        projectTitle="Project Skills"
+        onSkillClick={vi.fn()}
+        projectLibraryApplication={{
+          orderedLibraries: [
+            { id: 'project-a', name: 'Project A', skillCount: 1 },
+            { id: 'project-b', name: 'Project B', skillCount: 1 },
+            { id: 'project-c', name: 'Project C', skillCount: 1 },
+          ],
+          selectedAgentIds: [],
+          pending: false,
+        }}
+        globalLibraryApplication={{
+          orderedLibraries: [{ id: 'global-a', name: 'Global A', skillCount: 1 }],
+          selectedAgentIds: [],
+          pending: true,
+        }}
+        onManageProjectLibraries={vi.fn()}
+        onManageGlobalLibraries={vi.fn()}
+      />
+    );
+
+    const summaries = screen.getAllByTestId('applied-libraries-summary');
+    expect(summaries).toHaveLength(2);
+    const manageLibraries = screen.getAllByRole('button', { name: 'libraries.manage' });
+    expect(manageLibraries).toHaveLength(2);
+    expect(screen.queryByText('libraries.applied')).toBeNull();
+    expect(within(summaries[0]).queryByRole('link')).toBeNull();
+    const projectLibrary = within(summaries[0]).getAllByTestId('library-summary-item')[0];
+    expect(within(projectLibrary).getByText('libraries.skillCount')).toBeTruthy();
+    expect(screen.getByText('Project B')).toBeDefined();
+    expect(screen.getByText('Project C')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /^\+\d+$/ })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('libraries.pending');
   });
 });

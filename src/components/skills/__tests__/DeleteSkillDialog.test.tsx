@@ -52,29 +52,30 @@ describe('DeleteSkillDialog', () => {
         token: {} as never,
         context,
         skillName: 'toolkit',
-        canonical: 'directory',
+        standard: 'directory',
         physicalEntries: [
           {
             entryId: 'entry-copy',
             displayPath: { environment: { kind: 'native' }, nativePath: agentPath },
             kind: 'directory',
             physicalTargetKey: 'target-copy',
-            owners: [{
+            readers: [{
               agentId: 'custom-agent',
               displayName: 'A Custom Agent With An Exceptionally Long Display Name',
               logicalTargetId: 'custom-agent',
             }],
-            willBreakIfCanonicalRemoved: false,
+            willBreakIfStandardRemoved: false,
           },
           {
             entryId: 'entry-link',
             displayPath: { environment: { kind: 'native' }, nativePath: '/agents/codex/toolkit' },
             kind: 'symlink',
             physicalTargetKey: 'target-link',
-            owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex' }],
-            willBreakIfCanonicalRemoved: false,
+            readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex' }],
+            willBreakIfStandardRemoved: false,
           },
         ],
+        restoresLibrary: false,
       },
     });
   });
@@ -124,6 +125,17 @@ describe('DeleteSkillDialog', () => {
 
     expect(screen.queryByText('skills.deleteConfirm.noAgentEntries')).toBeNull();
     expect(screen.getAllByTestId('delete-skill-entry')).toHaveLength(1);
+  });
+
+  it('explains that deleting the direct installation restores the Library winner', () => {
+    const preview = useSkillDialogStore.getState().deletePreview!;
+    useSkillDialogStore.setState({
+      deletePreview: { ...preview, restoresLibrary: true },
+    });
+
+    render(<DeleteSkillDialog />);
+
+    expect(screen.getByText('skills.deleteConfirm.restoresLibrary')).not.toBeNull();
   });
 
   it('focuses the safe action when the destructive dialog opens', async () => {

@@ -76,6 +76,7 @@ describe('Agent selection session', () => {
     const states: ManageInstallOptionState[] = [{
       optionId: 'writer',
       currentEntry: 'unrecognized',
+      currentVersion: 'external',
       initialSelected: false,
       allowedResults: 'none',
       selectedEffect: null,

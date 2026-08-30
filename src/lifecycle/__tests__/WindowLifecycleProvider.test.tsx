@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
 const mutation: ActiveMutation = {
   id: 'mutation-1',
   kind: 'install',
-  context: {
+  target: { kind: 'skillLocation',
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'global' },
   },

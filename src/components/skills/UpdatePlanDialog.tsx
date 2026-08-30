@@ -29,7 +29,7 @@ import type {
   AgentId,
   SkillLocationRef,
   ErrorReport,
-  ObservedEntryOwner,
+  ObservedEntryReader,
   UpdateSkillPreview,
   UpdateSkillResult,
 } from '@/bindings';
@@ -64,11 +64,11 @@ function updateSkillStatus(item: UpdateSkillResult, sourceError?: ErrorReport | 
 }
 
 function ownerLabels(
-  owners: ObservedEntryOwner[],
+  readers: ObservedEntryReader[],
   names?: Map<AgentId, string>,
 ): string {
-  return owners
-    .map((owner) => names?.get(owner.agentId) ?? owner.displayName ?? owner.agentId)
+  return readers
+    .map((reader) => names?.get(reader.agentId) ?? reader.displayName ?? reader.agentId)
     .join(' · ');
 }
 
@@ -129,7 +129,7 @@ function PreviewSkillRow({
               />
               <span className="min-w-0">
                 <span className="block text-foreground">
-                  {ownerLabels(entry.owners, agentDisplayNames)}
+                  {ownerLabels(entry.readers, agentDisplayNames)}
                 </span>
                 <span>{t('skills.updatePlan.preserveConflictDefault')}</span>
               </span>
@@ -220,7 +220,11 @@ export function UpdatePlanDialog({
   const batch = skillNames.length > 1;
   const executing = phase === 'executing';
   const matchingUpdateMutation = context !== null && activeMutation?.kind === 'update'
-    && contextKey(activeMutation.context) === contextKey(context);
+    && activeMutation.target.kind === 'skillLocation'
+    && contextKey({
+      environment: activeMutation.target.environment,
+      scope: activeMutation.target.scope,
+    }) === contextKey(context);
   const writeBlocked = businessWriteBlocked;
 
   useEffect(() => {
@@ -354,6 +358,11 @@ export function UpdatePlanDialog({
             />
           ) : phase === 'ready' && preview ? (
             <div className="space-y-4">
+              {executionError ? (
+                <p className="text-sm text-warning" role="alert">
+                  {formatAppError(executionError, t)}
+                </p>
+              ) : null}
               {!batch && singleSkill ? (
                 <>
                   <div className="flex items-start justify-between gap-4 border-b border-border pb-3">

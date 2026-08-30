@@ -22,6 +22,7 @@ const ERROR_MESSAGE_KEYS: Record<AgentSelectionUsage, string> = {
   install: 'addSkill.agents.loadError',
   copyToProject: 'skills.copyToProject.agentsLoadError',
   manage: 'skills.manageAgents.previewError',
+  libraryApplication: 'libraries.selectionLoadError',
 };
 
 export function AgentSelectionPanel<TSnapshot extends AgentSelectionEnvelope>({

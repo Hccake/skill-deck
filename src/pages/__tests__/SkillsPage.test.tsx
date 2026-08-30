@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
@@ -293,7 +294,7 @@ describe('SkillsPage', () => {
   });
 
   it('updates the panel layout without remounting the group when entering split view', () => {
-    const { rerender } = render(<SkillsPage />);
+    const { rerender } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(mocks.resizable.lifecycle).toEqual(['mount:skills-page-layout']);
     expect(mocks.skillsPanelLifecycle).toEqual(['mount']);
@@ -309,7 +310,7 @@ describe('SkillsPage', () => {
     };
     mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('test-skill')]);
 
-    rerender(<SkillsPage />);
+    rerender(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(mocks.resizable.lifecycle).toEqual(['mount:skills-page-layout']);
     expect(mocks.skillsPanelLifecycle).toEqual(['mount']);
@@ -320,7 +321,7 @@ describe('SkillsPage', () => {
   });
 
   it('waits for the target panel count before applying the split layout', async () => {
-    const { rerender } = render(<SkillsPage />);
+    const { rerender } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     mocks.resizable.getLayout
       .mockReturnValueOnce({ 'skills-list-panel': 100 })
@@ -335,7 +336,7 @@ describe('SkillsPage', () => {
     };
     mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('test-skill')]);
 
-    rerender(<SkillsPage />);
+    rerender(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(mocks.resizable.setLayout).not.toHaveBeenCalled();
 
@@ -357,7 +358,7 @@ describe('SkillsPage', () => {
     mocks.updateWorkflowState.context = nativeGlobal;
     mocks.updateWorkflowState.skillNames = ['toolkit'];
 
-    const { getByText } = render(<SkillsPage />);
+    const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(getByText('skill-detail-panel').getAttribute('data-update-status')).toBe('updating');
   });
@@ -370,7 +371,7 @@ describe('SkillsPage', () => {
     mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
     mocks.skillsDataState.checkingUpdateScopes = new Set(['native/global']);
 
-    const { getByText } = render(<SkillsPage />);
+    const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
     const detailButton = getByText('skill-detail-panel');
 
     expect(detailButton.getAttribute('data-checking-updates')).toBe('true');
@@ -394,7 +395,7 @@ describe('SkillsPage', () => {
     mocks.updateWorkflowState.context = nativeGlobal;
     mocks.updateWorkflowState.skillNames = ['toolkit'];
 
-    const { getByText, getByTestId } = render(<SkillsPage />);
+    const { getByText, getByTestId } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
     fireEvent.click(getByText('detail-update'));
 
     expect(mocks.updateWorkflowState.open).toHaveBeenCalledWith(
@@ -412,7 +413,7 @@ describe('SkillsPage', () => {
     };
     mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
 
-    const { getByText } = render(<SkillsPage />);
+    const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
     fireEvent.click(getByText('detail-manage-agents'));
 
     expect(mocks.skillDialogState.openManageAgents).toHaveBeenCalledWith(
@@ -436,7 +437,7 @@ describe('SkillsPage', () => {
     };
     mocks.skillsDataState.checkingUpdateScopes = new Set(['wsl:ubuntu/global']);
 
-    const { getByText } = render(<SkillsPage />);
+    const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(getByText('skill-detail-panel').getAttribute('data-checking-updates')).toBe('true');
   });
@@ -483,7 +484,7 @@ describe('SkillsPage', () => {
     mocks.skillDialogState.copySkill = makeSkill('toolkit', { scope: 'project' });
     mocks.skillDialogState.copyContext = mocks.workspaceContextState.selectedContext;
 
-    const { getByText, queryByText } = render(<SkillsPage />);
+    const { getByText, queryByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     await waitFor(() => expect(getByText('/home/me/target')).toBeDefined());
     expect(queryByText('/home/me/current')).toBeNull();
@@ -532,7 +533,7 @@ describe('SkillsPage', () => {
     mocks.skillDialogState.copyContext = mocks.workspaceContextState.selectedContext;
     mocks.tauriApi.listSkills.mockRejectedValue(new Error('inspection failed'));
 
-    const { findByRole, getByText } = render(<SkillsPage />);
+    const { findByRole, getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(await findByRole('status', {
       name: 'skills.copyToProject.presenceUnknown',
@@ -551,7 +552,7 @@ describe('SkillsPage', () => {
       makeSkill('toolkit', { updatedAt: '2026-04-07T12:00:00.000Z' }),
     ]);
 
-    const { getByText } = render(<SkillsPage />);
+    const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     expect(getByText('skill-detail-panel').getAttribute('data-skill-name')).toBe('toolkit');
   });
@@ -563,7 +564,7 @@ describe('SkillsPage', () => {
     };
     mocks.skillsDataState.snapshots['native/global'] = snapshot();
 
-    render(<SkillsPage />);
+    render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     await waitFor(() => {
       expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);

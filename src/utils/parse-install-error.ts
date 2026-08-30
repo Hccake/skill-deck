@@ -305,8 +305,6 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.retryOrContact')],
       };
 
-    case 'environmentChanged':
-    case 'contextChanged':
     case 'payloadSessionExpired':
     case 'staleContext':
     case 'staleRegistry':
@@ -343,15 +341,10 @@ export function parseInstallError(
     case 'selfCopy':
       return { message: t('addSkill.error.selfCopy') };
 
-    case 'externalLockChanged':
-      return {
-        message: t('addSkill.error.externalLockChanged'),
-        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
-      };
-
     case 'executionFailed':
     case 'restoreFailed':
     case 'recoveryRequired':
+    case 'libraryRecoveryIncomplete':
     case 'configurationCorrupted':
       return {
         message: error.data.message,
@@ -374,6 +367,33 @@ export function parseInstallError(
         suggestions: [
           t('addSkill.error.suggestion.retryOrContact'),
         ],
+      };
+
+    case 'libraryReferenceConflict':
+      return {
+        message: t('libraries.referenceConflict', { count: error.data.usages.length }),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'skillPlacementTargetConflict':
+      return {
+        message: t('mutation.result.errors.skillPlacementTargetConflict', {
+          skillName: error.data.skillName,
+          targetPath: error.data.targetPath,
+          targetKind: t(`mutation.result.targetKinds.${error.data.targetKind}`),
+        }),
+      };
+
+    case 'upstreamSkillNameChanged':
+      return {
+        message: t('libraries.updateStatus.nameChangeBlocked'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'upstreamSkillDeleted':
+      return {
+        message: t('libraries.updateStatus.deletedUpstream'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
       };
 
     case 'yaml':

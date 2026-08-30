@@ -95,7 +95,7 @@ export async function executeManageAgentChanges(
       skillName: manageAgentsSkill.name,
       agentSelection,
       confirmEntityDirectories,
-      canonicalPayload: preview.canonicalPayload,
+      originalPayload: preview.originalPayload,
     }));
     if (execution.status === 'notRun') return { status: 'blocked' };
     const result = execution.value;

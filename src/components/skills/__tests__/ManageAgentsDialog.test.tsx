@@ -65,10 +65,10 @@ function snapshot(): ManageAgentSelectionSnapshot {
       userModeOptionIds: ['cursor', 'unknown'],
     }),
     optionStates: [
-      { optionId: 'claude', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null },
-      { optionId: 'cursor', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
-      { optionId: 'unknown', currentEntry: 'unrecognized', initialSelected: false, allowedResults: 'none', selectedEffect: null, unselectedEffect: null, disabledReason: 'unrecognizedEntry' },
-      { optionId: 'eve-root', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { optionId: 'claude', currentEntry: 'link', currentVersion: 'direct', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null },
+      { optionId: 'cursor', currentEntry: 'none', currentVersion: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { optionId: 'unknown', currentEntry: 'unrecognized', currentVersion: 'external', initialSelected: false, allowedResults: 'none', selectedEffect: null, unselectedEffect: null, disabledReason: 'unrecognizedEntry' },
+      { optionId: 'eve-root', currentEntry: 'none', currentVersion: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
     ],
   };
 }
@@ -232,8 +232,8 @@ describe('ManageAgentsDialog', () => {
     );
     current.selection.userModeOptionIds.push('zed', 'trae');
     current.optionStates.push(
-      { optionId: 'zed', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
-      { optionId: 'trae', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { optionId: 'zed', currentEntry: 'none', currentVersion: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { optionId: 'trae', currentEntry: 'none', currentVersion: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
     );
     await renderDialog({ loadedSnapshot: current });
 
@@ -260,7 +260,7 @@ describe('ManageAgentsDialog', () => {
     current.selection.installOptions.push({ id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
     current.selection.initialSelectedOptionIds.push('zed');
     current.selection.userModeOptionIds.push('zed');
-    current.optionStates.push({ optionId: 'zed', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null });
+    current.optionStates.push({ optionId: 'zed', currentEntry: 'link', currentVersion: 'direct', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null });
     await renderDialog({ loadedSnapshot: current });
 
     expect(screen.getByRole('checkbox', { name: 'Zed' }).getAttribute('data-state')).toBe('checked');
@@ -284,6 +284,34 @@ describe('ManageAgentsDialog', () => {
     const claudeRow = screen.getByRole('checkbox', { name: 'Claude Code' }).closest('[data-slot="agent-selection-row"]');
     expect(within(claudeRow as HTMLElement).getByText('agentSelection.detection.detected'))
       .toBeDefined();
+  });
+
+  it('shows Library availability without selecting a direct Agent association', async () => {
+    const current = snapshot();
+    current.optionStates[1] = {
+      ...current.optionStates[1],
+      currentEntry: 'link',
+      currentVersion: 'library',
+    };
+    await renderDialog({ loadedSnapshot: current });
+
+    expect(screen.getByRole('checkbox', { name: 'Cursor' }).getAttribute('data-state'))
+      .toBe('unchecked');
+    expect(screen.getByText('agentSelection.current.library')).toBeDefined();
+  });
+
+  it('explains that removing a direct association restores the Library version', async () => {
+    const user = userEvent.setup();
+    const current = snapshot();
+    current.optionStates[0] = {
+      ...current.optionStates[0],
+      unselectedEffect: 'restoreLibrary',
+    };
+    await renderDialog({ loadedSnapshot: current });
+
+    await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
+
+    expect(screen.getByText('agentSelection.effect.restoreLibrary')).toBeDefined();
   });
 
   it('connects a current installation state to its pending action', async () => {

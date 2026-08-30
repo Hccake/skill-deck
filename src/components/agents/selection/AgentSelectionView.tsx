@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Copy,
   Info,
+  LibraryBig,
   Link2,
   TriangleAlert,
   UsersRound,
@@ -584,7 +585,7 @@ function EntryState({ option, state, selected, mode }: {
   mode: InstallMode;
 }) {
   const { t } = useTranslation();
-  const current = state ? currentEntryPresentation(state.currentEntry, t) : null;
+  const current = state ? currentEntryPresentation(state, t) : null;
   const effect = state ? effectPresentation(option, state, selected, mode, t) : null;
   const disabledReason = option.disabledReason ? t(`agentSelection.disabled.${option.disabledReason}`) : null;
   return (
@@ -672,7 +673,15 @@ function DetectionDot({ tone }: { tone: 'detected' | 'neutral' | 'warning' }) {
   );
 }
 
-function currentEntryPresentation(value: ManageInstallOptionState['currentEntry'], t: (key: string) => string) {
+function currentEntryPresentation(state: ManageInstallOptionState, t: (key: string) => string) {
+  if (state.currentVersion === 'library') {
+    return {
+      label: t('agentSelection.current.library'),
+      Icon: LibraryBig,
+      warning: state.currentEntry === 'brokenLink',
+    };
+  }
+  const value = state.currentEntry;
   if (value === 'none') return null;
   if (value === 'copy') return { label: t('agentSelection.current.copy'), Icon: Copy, warning: false };
   if (value === 'link') return { label: t('agentSelection.current.link'), Icon: Link2, warning: false };
@@ -690,6 +699,9 @@ function effectPresentation(
   mode: InstallMode,
   t: (key: string) => string,
 ) {
+  if (!selected && state.unselectedEffect === 'restoreLibrary') {
+    return { label: t('agentSelection.effect.restoreLibrary'), tone: 'default' as const };
+  }
   if (!selected && state.unselectedEffect === 'remove') {
     return { label: t('agentSelection.effect.remove'), tone: 'destructive' as const };
   }

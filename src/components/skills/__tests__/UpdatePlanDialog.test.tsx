@@ -18,6 +18,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({
 }) }));
 
 const context: SkillLocationRef = { environment: { kind: 'native' }, scope: { scope: 'global' } };
+const target = { kind: 'skillLocation' as const, environment: context.environment, scope: context.scope };
 
 describe('UpdatePlanDialog', () => {
   beforeEach(() => {
@@ -92,7 +93,7 @@ describe('UpdatePlanDialog', () => {
     const confirm = vi.fn();
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 0, overwritePrivateEntries: [{ entryId: 'private', owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
+      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 0, overwritePrivateEntries: [{ entryId: 'private', readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
       conflictDecisions: new Set(), confirm,
     });
 
@@ -157,8 +158,8 @@ describe('UpdatePlanDialog', () => {
           capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [
-            { entryId: 'private-a', owners: [{ agentId: 'custom-a', displayName: 'Custom', logicalTargetId: 'target-a' }] },
-            { entryId: 'private-b', owners: [{ agentId: 'custom-b', displayName: 'Custom', logicalTargetId: 'target-b' }] },
+            { entryId: 'private-a', readers: [{ agentId: 'custom-a', displayName: 'Custom', logicalTargetId: 'target-a' }] },
+            { entryId: 'private-b', readers: [{ agentId: 'custom-b', displayName: 'Custom', logicalTargetId: 'target-b' }] },
           ],
           blockingReasons: [],
           fallbackForecasts: [],
@@ -181,7 +182,7 @@ describe('UpdatePlanDialog', () => {
   it('shows clean-copy totals without making clean copies selectable', () => {
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 2, overwritePrivateEntries: [{ entryId: 'private', owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
+      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 2, overwritePrivateEntries: [{ entryId: 'private', readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
     });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
@@ -262,7 +263,7 @@ describe('UpdatePlanDialog', () => {
     const onOpenChange = vi.fn();
     const cancelActiveMutation = vi.fn().mockResolvedValue(true);
     const activeMutation: ActiveMutation = {
-      id: 'update-1', kind: 'update', context, phase: 'acquiring', progress: null, cancelable: true,
+      id: 'update-1', kind: 'update', target, phase: 'acquiring', progress: null, cancelable: true,
     };
     useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
     useMutationStore.setState({ activeMutation, cancelActiveMutation });
@@ -278,7 +279,7 @@ describe('UpdatePlanDialog', () => {
     const onOpenChange = vi.fn();
     const cancelActiveMutation = vi.fn().mockResolvedValue(true);
     const activeMutation: ActiveMutation = {
-      id: 'update-1', kind: 'update', context, phase: 'acquiring', progress: null, cancelable: true,
+      id: 'update-1', kind: 'update', target, phase: 'acquiring', progress: null, cancelable: true,
     };
     useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
     useMutationStore.setState({ activeMutation, cancelActiveMutation });
@@ -327,7 +328,7 @@ describe('UpdatePlanDialog', () => {
   it('removes closing controls while its active update is irreversible', () => {
     const onOpenChange = vi.fn();
     const activeMutation: ActiveMutation = {
-      id: 'update-1', kind: 'update', context, phase: 'committing', progress: null, cancelable: false,
+      id: 'update-1', kind: 'update', target, phase: 'committing', progress: null, cancelable: false,
     };
     useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
     useMutationStore.setState({ activeMutation });
@@ -344,7 +345,7 @@ describe('UpdatePlanDialog', () => {
     'announces the %s phase with Backend progress',
     (phase) => {
       const activeMutation: ActiveMutation = {
-        id: 'update-1', kind: 'update', context,
+        id: 'update-1', kind: 'update', target,
         phase,
         progress: { subject: '/private/path', current: 2, total: 5 }, cancelable: true,
       };
@@ -362,7 +363,7 @@ describe('UpdatePlanDialog', () => {
 
   it('shows count progress while a batch update is executing', () => {
     const activeMutation: ActiveMutation = {
-      id: 'update-1', kind: 'update', context, phase: 'committing',
+      id: 'update-1', kind: 'update', target, phase: 'committing',
       progress: { subject: 'reviewer', current: 2, total: 5 }, cancelable: true,
     };
     useSkillUpdateWorkflow.setState({

@@ -6,7 +6,7 @@ import { useMutationStore } from '@/stores/mutation';
 const mocks = vi.hoisted(() => ({ getInstallWizardSession: vi.fn(), getInstallAgentSelection: vi.fn() }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  fetchAvailable: vi.fn(),
+  discoverSkillSource: vi.fn(),
   installSkills: vi.fn(),
   acquireSelectedPayloads: vi.fn(),
   previewInstall: vi.fn(),
@@ -34,7 +34,7 @@ function request(stopRequested = () => false) {
 
 function api() {
   return {
-    fetchAvailable: vi.fn().mockResolvedValue({
+    discoverSkillSource: vi.fn().mockResolvedValue({
       discoverySession: { sessionId: 'discovery-1' },
       skills: [{ name: 'toolkit', relativePath: 'skills/toolkit' }],
     }),
@@ -75,7 +75,7 @@ describe('repairSkillSource', () => {
     await expect(repairSkillSource(request(), workflowApi as never)).resolves.toEqual({
       status: 'blocked',
     });
-    expect(workflowApi.fetchAvailable).not.toHaveBeenCalled();
+    expect(workflowApi.discoverSkillSource).not.toHaveBeenCalled();
     expect(workflowApi.prepareInstall).not.toHaveBeenCalled();
     expect(workflowApi.installSkills).not.toHaveBeenCalled();
   });
@@ -87,7 +87,12 @@ describe('repairSkillSource', () => {
       status: 'succeeded',
       response: { units: [{ unitId: 'toolkit', status: 'succeeded' }] },
     });
-    expect(workflowApi.fetchAvailable).toHaveBeenCalledWith(context, 'owner/repo', 'repair-1');
+    expect(workflowApi.discoverSkillSource).toHaveBeenCalledWith(
+      context.environment,
+      'owner/repo',
+      'repair-1',
+      { wildcardRequested: false, explicitSkillNames: ['toolkit'] },
+    );
   });
 
   it('preserves an existing extra installation for an Agent that also reads the standard directory', async () => {

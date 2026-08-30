@@ -21,6 +21,13 @@ describe('Agent selection copy', () => {
     expect(en.skills.manageAgents.title).toBe('Manage Agents Linked to “{{name}}”');
   });
 
+  it('distinguishes Library availability from a direct Agent association', () => {
+    expect(zhCN.agentSelection.current.library).toBe('通过 Skill 库可用');
+    expect(zhCN.agentSelection.effect.restoreLibrary).toBe('将改用 Skill 库版本');
+    expect(en.agentSelection.current.library).toBe('Available from a Skill Library');
+    expect(en.agentSelection.effect.restoreLibrary).toBe('Will use the Skill Library version');
+  });
+
   it('distinguishes selectable Agents from the read-only overflow summary', () => {
     expect(zhCN.agentSelection.otherAgents).toBe('其他可选 Agent（{{count}}）');
     expect(en.agentSelection.otherAgents).toBe('Other selectable Agents ({{count}})');

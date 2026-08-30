@@ -1,6 +1,7 @@
 // src/pages/SkillsPage.tsx
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useGroupRef } from 'react-resizable-panels';
+import { useNavigate } from 'react-router-dom';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { contextKey, globalContext } from '@/lib/context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
@@ -43,6 +44,7 @@ const LIST_VIEW_LAYOUT = {
 } as const;
 
 export function SkillsPage() {
+  const navigate = useNavigate();
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const selectedContextKey = contextKey(selectedContext);
   const selectedGlobalContext = globalContext(selectedContext.environment);
@@ -255,6 +257,7 @@ export function SkillsPage() {
                   onManageAgents={handleManageAgents}
                   onCopyToProject={selectedSkill.scope === 'project' ? handleCopyToProject : undefined}
                   onRepairSource={handleRepairSource}
+                  onConfigureGitCredentials={() => navigate('/settings?section=git')}
                 />
               </ResizablePanel>
             </>

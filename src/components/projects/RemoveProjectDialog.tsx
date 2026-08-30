@@ -77,11 +77,11 @@ export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProje
             {t('context.removeConfirm.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
+            variant="destructive"
             onClick={(event) => {
               event.preventDefault();
               void confirm();
             }}
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             disabled={writeBlocked || submitting}
           >
             {t(submitting

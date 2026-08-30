@@ -6,6 +6,20 @@ const t = (key: string, params?: Record<string, unknown>) =>
   `${key}${params ? JSON.stringify(params) : ''}`;
 
 describe('formatAppError', () => {
+  it('formats a Skill placement conflict with its target path', () => {
+    expect(formatAppError({
+      kind: 'skillPlacementTargetConflict',
+      data: {
+        skillName: 'demo',
+        agentIds: ['agent-demo'],
+        targetPath: '/agent/skills/demo',
+        targetKind: 'file',
+      },
+    }, t as never)).toBe(
+      'mutation.result.errors.skillPlacementTargetConflict{"skillName":"demo","targetPath":"/agent/skills/demo","targetKind":"mutation.result.targetKinds.file"}',
+    );
+  });
+
   it('does not report a generic Git failure as a network error', () => {
     const error = {
       kind: 'gitCloneFailed',

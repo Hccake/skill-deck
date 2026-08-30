@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { fetchAvailable } from '@/hooks/useTauriApi';
+import { discoverSkillSource } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
@@ -84,7 +84,12 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     setValidationOwner(owner);
     setValidateState('checking');
     try {
-      const result = await fetchAvailable(target.context, source.trim(), crypto.randomUUID());
+      const result = await discoverSkillSource(
+        target.context.environment,
+        source.trim(),
+        crypto.randomUUID(),
+        { wildcardRequested: false, explicitSkillNames: [target.skillName] },
+      );
       const hasSkill = result.skills.some((skill) => skill.name === target.skillName);
       setValidateState(hasSkill ? 'valid' : 'missing');
       setValidationOwner(null);

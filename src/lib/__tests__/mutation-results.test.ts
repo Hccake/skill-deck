@@ -33,6 +33,17 @@ describe('mutation result presentation', () => {
       'mutation.result.errors.executionFailed{"operation":"install"}',
     );
     expect(formatMutationError(errorReport(), t)).not.toContain('permission denied');
+    expect(formatMutationError(errorReport({
+      code: 'skillPlacementTargetConflict',
+      parameters: {
+        skillName: 'demo',
+        agentIds: 'agent-demo',
+        targetPath: '/agent/skills/demo',
+        targetKind: 'file',
+      },
+    }), t)).toBe(
+      'mutation.result.errors.skillPlacementTargetConflict{"skillName":"demo","agentIds":"agent-demo","targetPath":"/agent/skills/demo","targetKind":"mutation.result.targetKinds.file"}',
+    );
   });
 
   it('falls back safely for an unknown runtime error code', () => {

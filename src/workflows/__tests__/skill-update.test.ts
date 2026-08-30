@@ -94,11 +94,41 @@ describe('skill update workflow', () => {
   });
 
   it('preserves conflicts unless explicitly selected', async () => {
-    mocks.previewUpdate.mockResolvedValue({ ...preview(), skills: [{ ...preview().skills[0]!, overwritePrivateEntries: [{ entryId: 'private-entry', owners: [] }] }] });
+    mocks.previewUpdate.mockResolvedValue({ ...preview(), skills: [{ ...preview().skills[0]!, overwritePrivateEntries: [{ entryId: 'private-entry', readers: [] }] }] });
     mocks.updateSkill.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
     await useSkillUpdateWorkflow.getState().confirm();
-    expect(mocks.updateSkill).toHaveBeenCalledWith(expect.objectContaining({ overwritePrivateEntries: [] }), expect.anything());
+    expect(mocks.updateSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ overwritePrivateEntries: [] }),
+      expect.anything(),
+      false,
+    );
+  });
+
+  it('reuses the prepared update after confirming a redirected source host', async () => {
+    const redirect = {
+      kind: 'directDownloadRedirectConfirmationRequired',
+      data: { host: 'cdn.example.com' },
+    } satisfies AppError;
+    mocks.previewUpdate.mockResolvedValue(preview());
+    mocks.updateSkill
+      .mockRejectedValueOnce(redirect)
+      .mockResolvedValueOnce({ sources: [], skills: [], outcome: 'succeeded' });
+    await useSkillUpdateWorkflow.getState().open(context, ['demo']);
+
+    await useSkillUpdateWorkflow.getState().confirm();
+    expect(useSkillUpdateWorkflow.getState()).toMatchObject({
+      phase: 'ready',
+      executionError: redirect,
+    });
+
+    await useSkillUpdateWorkflow.getState().confirm();
+    expect(mocks.updateSkill).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      true,
+    );
+    expect(useSkillUpdateWorkflow.getState().phase).toBe('result');
   });
 
   it('applies the completed result through the snapshot facade without storing it there', async () => {

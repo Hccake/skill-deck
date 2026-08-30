@@ -85,7 +85,7 @@ describe('SkillDetailPanel', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'install',
-        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+        target: { kind: 'skillLocation', environment: { kind: 'native' }, scope: { scope: 'global' } },
         id: 'mutation-1',
         phase: 'preparing',
         progress: null,
@@ -363,6 +363,7 @@ describe('SkillDetailPanel', () => {
   });
 
   it('shows the latest typed failure, valid evidence time, retry time, and next action', () => {
+    const onConfigureGitCredentials = vi.fn();
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -395,6 +396,7 @@ describe('SkillDetailPanel', () => {
               },
             },
           } as never}
+          onConfigureGitCredentials={onConfigureGitCredentials}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -413,8 +415,13 @@ describe('SkillDetailPanel', () => {
     expect(screen.getByText('skills.updateEvidence.lastChecked')).toBeTruthy();
     expect(screen.getByText('skills.updateEvidence.lastAttempt')).toBeTruthy();
     expect(screen.getByText('skills.updateEvidence.retryAt')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'skills.updateEvidence.actions.configureToken' }).getAttribute('href'))
-      .toBe('/settings?section=git');
+    // 桌面应用里 <a href> 会整页重载，配置凭据改为由页面提供的路由回调。
+    const configureToken = screen.getByRole('button', {
+      name: 'skills.updateEvidence.actions.configureToken',
+    });
+    expect(screen.queryByRole('link', { name: 'skills.updateEvidence.actions.configureToken' })).toBeNull();
+    fireEvent.click(configureToken);
+    expect(onConfigureGitCredentials).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('must not be shown')).toBeNull();
   });
 

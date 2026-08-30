@@ -10,7 +10,174 @@
     "edit": "编辑",
     "save": "保存",
     "delete": "删除",
-    "retry": "重试"
+    "retry": "重试",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "confirm": "确认"
+  },
+  "libraries": {
+    "title": "Skill 库",
+    "usage": {
+      "applied": "应用于 {{count}} 处",
+      "appliedWithPending": "应用于 {{count}} 处 · 调整未完成",
+      "appliedToLocation": "已应用到 {{location}}",
+      "globalLocation": "全局 Skill",
+      "pendingOnly": "应用调整未完成",
+      "viewDetails": "{{summary}}，查看全部使用位置",
+      "unapplied": "未应用"
+    },
+    "appliedTo": "已应用到",
+    "pendingAdjustment": "应用调整未完成",
+    "pendingAdjustmentDescription": "上次库应用变更尚未完成，这些位置的内容可能与目标不一致。",
+    "unappliedHint": "在 Skills 页的全局或项目区域应用此库后，Agent 才能读取其中的 Skill。",
+    "moreUsages": "+{{count}}",
+    "lockedMembership": "使用中的库不能增删成员",
+    "lockedDelete": "使用中的库不能删除",
+    "lockedDeleteApplied": "此库正在被使用。请先在 Skills 页解除全局或项目应用。",
+    "lockedDeletePending": "此库存在未完成的应用调整。请先在 Skills 页继续处理。",
+    "lockedDeleteAppliedWithPending": "此库正在被使用，且存在未完成的应用调整。请先在 Skills 页继续处理并解除应用。",
+    "deleteNamed": "删除 {{name}}",
+    "create": "新建库",
+    "rename": "重命名库",
+    "renameNamed": "重命名 {{name}}",
+    "name": "库名称",
+    "nameDialogDescription": "设置当前 Environment 中的 Skill 库名称。",
+    "skillCount": "{{count}} 个 Skill",
+    "addSkill": "添加 Skill",
+    "addSkillDescription": "从来源中选择 Skill 并写入当前库。",
+    "addFlow": {
+      "title": "添加到「{{library}}」",
+      "environment": {
+        "native": "当前系统",
+        "wsl": "WSL · {{name}}"
+      },
+      "steps": {
+        "label": "添加 Skill 步骤",
+        "source": "选择来源",
+        "selection": "选择 Skill",
+        "review": "核对并添加"
+      },
+      "source": {
+        "label": "Skill 来源",
+        "add": "添加",
+        "read": "读取来源",
+        "loading": "正在读取来源…"
+      },
+      "selection": {
+        "title": "选择 Skill",
+        "count": "已选择 {{selected}} / {{available}}",
+        "selectAll": "全选当前结果",
+        "alreadyInLibrary": "已在库中",
+        "allExisting": "来源中的 Skill 已全部存在于当前库。",
+        "agentIntentIgnored": "命令中的 Agent 参数不适用于 Skill 库；添加后可在 Skills 页应用此库。",
+        "review": "核对所选 Skill"
+      },
+      "preparing": "正在准备添加内容…",
+      "executing": "正在添加 Skill…",
+      "error": {
+        "writeBlocked": "当前有其他写操作正在进行，请稍后重试。",
+        "previewMissing": "添加内容已失效，请返回重新选择。"
+      },
+      "review": {
+        "summary": "将添加 {{count}} 个 Skill",
+        "confirm": "添加 Skill"
+      },
+      "result": {
+        "succeeded": "已添加 {{count}} 个 Skill",
+        "partial": "{{succeeded}} 个已添加，{{failed}} 个失败",
+        "retry": "重试失败项"
+      }
+    },
+    "addAll": "添加发现的 Skill",
+    "inspectSource": "读取来源",
+    "addSelected": "添加所选 Skill",
+    "addPreview": "将向当前库添加 {{count}} 个 Skill。",
+    "redirectConfirmation": "下载地址已跳转到 {{host}}，确认后继续写入。",
+    "addResult": {
+      "succeeded": "已添加",
+      "failed": "添加失败",
+      "cancelled": "已取消",
+      "notRun": "未执行"
+    },
+    "source": "Skill 来源",
+    "pluginName": "Plugin",
+    "refName": "分支",
+    "sourcePlaceholder": "Git 仓库、本地目录或 URL…",
+    "empty": "当前库还没有 Skill。",
+    "noLibraries": "创建一个库以开始整理 Skill。",
+    "searchSkills": "搜索库内 Skill…",
+    "searchResultCount": "{{visible}} / {{total}}",
+    "noSearchResults": "没有匹配的库内 Skill。",
+    "skillContent": "{{name}} 的内容",
+    "contentError": "无法读取此 Skill 的内容。",
+    "loadError": "无法加载 Skill 库。",
+    "detailLoadError": "无法读取所选 Skill 库。",
+    "referenceConflict": "此操作被 {{count}} 个 Skill 库应用引用阻止。请先在对应 Skill 位置解除引用。",
+    "recoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。",
+    "pending": "存在未完成变更",
+    "pendingDescription": "上次库变更尚未完成。Skill Deck 将根据当前目录状态继续完成已确认的目标。",
+    "continue": "继续完成更改",
+    "manage": "管理 Skill 库",
+    "manageGlobal": "管理全局 Skill 库",
+    "manageProject": "管理「{{name}}」的 Skill 库",
+    "manageProjectFallback": "管理项目 Skill 库",
+    "manageDescription": "选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。",
+    "appliedSection": "应用的 Skill 库",
+    "availableSection": "未应用的 Skill 库",
+    "selectedCount": "已选择 {{count}} 个",
+    "noneSelected": "尚未选择 Skill 库",
+    "noLibrariesAvailable": "当前没有 Skill 库",
+    "selectLibraryBeforeAgents": "选择 Skill 库后可以关联 Agent",
+    "linkableAgents": "选择后关联",
+    "linkableAgentsHelp": "所选 Skill 库会通过链接应用到这些 Agent 的专用 Skill 目录。",
+    "noLinkableAgents": "当前没有可关联的 Agent",
+    "selectionLoadError": "无法加载 Skill 库或关联 Agent。",
+    "save": "保存",
+    "saving": "正在保存…",
+    "saveError": "无法保存 Skill 库设置，请重试。",
+    "targetConflictAgent": "{{agents}} 的专用 Skill 目录中存在无法安全处理的 {{skill}}，请取消关联后再保存。",
+    "targetConflictScope": "通用 Skill 目录中的 {{skill}} 不是可管理的 Skill，请处理该目录项后再保存。",
+    "cancelConflictingAgents": "取消关联 {{agents}}",
+    "priorityOrder": "Skill 库优先级",
+    "priorityHelp": "越靠前的 Skill 库优先级越高。",
+    "moveUp": "提高 {{name}} 的优先级",
+    "moveDown": "降低 {{name}} 的优先级",
+    "copyOnlyUnsupported": "{{names}} 需要复制或转换 Skill，无法关联 Skill 库。",
+    "agentPathMigration": "重新应用会把 {{name}} 的库链接从 {{from}} 迁移到 {{to}}。",
+    "resuming": "正在继续…",
+    "checkUpdates": "检查更新",
+    "updateSummary": {
+      "incomplete": "本次检查未完成",
+      "updateAvailable": "{{count}} 个有更新",
+      "allUpToDate": "全部已是最新",
+      "cannotCheck": "{{count}} 个无法检查",
+      "deletedUpstream": "{{count}} 个上游已删除",
+      "moreAttention": "另有 {{count}} 项需要处理"
+    },
+    "update": "更新",
+    "updateCount": "更新 {{count}} 项",
+    "confirmUpdateTitle": "更新库内 Skill",
+    "confirmUpdateDescription": "将更新 {{count}} 个 Skill。已经应用此库的位置会通过现有链接直接使用新内容。",
+    "maintenanceError": "库内容维护失败，请检查来源后重试。",
+    "inUse": "此库正在使用中。请先从以下位置移除应用关系，再调整库成员或删除库。",
+    "removeSkill": "从库中移除 {{name}}",
+    "removeSkillTitle": "移除 {{name}}",
+    "removeSkillDescription": "该 Skill 的独立库内容将被删除，其他库中的同名 Skill 不受影响。",
+    "deleteLibrary": "删除库",
+    "deleteLibraryTitle": "删除 {{name}}",
+    "deleteLibraryDescriptionWithCount": "将删除此库及其中的 {{count}} 个 Skill。",
+    "deleteLibraryIrreversible": "此操作无法撤销。",
+    "deletingLibrary": "正在删除…",
+    "retryDeleteLibrary": "重试删除",
+    "deleteLibraryAlreadyMissing": "该 Skill 库已不存在，列表已刷新。",
+    "updateStatus": {
+      "upToDate": "已是最新",
+      "updateAvailable": "有可用更新",
+      "nameChangeBlocked": "上游名称已变化，当前成员无法更新",
+      "cannotCheck": "无法检查",
+      "deletedUpstream": "上游已删除",
+      "unavailable": "无法检查"
+    }
   },
   "agentSelection": {
     "title": "关联 Agent",
@@ -34,6 +201,10 @@
       "copyToProject": {
         "title": "复制后可直接使用",
         "help": "Skill 会复制到目标 Project 的通用 Skill 目录，这些 Agent 可以直接读取，无需额外设置。"
+      },
+      "libraryApplication": {
+        "title": "无需关联即可使用",
+        "help": "这些 Agent 可以直接读取当前 Scope 的通用 Skill 目录。"
       }
     },
     "selectable": {
@@ -50,6 +221,9 @@
       },
       "copyToProject": {
         "description": "复制完成后，这些 Agent 可以从目标 Project 的通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。"
+      },
+      "libraryApplication": {
+        "description": "选择后，Skill 库会通过链接应用到 Agent 自己的 Skill 目录。"
       },
       "selectedCount": "已选择 {{count}} 个 Agent"
     },
@@ -78,11 +252,13 @@
     "current": {
       "link": "链接",
       "copy": "副本",
+      "library": "通过 Skill 库可用",
       "brokenLink": "链接失效",
       "unrecognized": "无法识别"
     },
     "effect": {
       "remove": "将移除",
+      "restoreLibrary": "将改用 Skill 库版本",
       "repair": "将修复",
       "copy": "将复制",
       "createLink": "将创建链接",
@@ -98,6 +274,7 @@
   },
   "nav": {
     "skills": "Skills",
+    "libraries": "Skill 库",
     "discover": "发现",
     "settings": "设置"
   },
@@ -182,13 +359,13 @@
     "removeConfirm": {
       "title": "移除项目",
       "description": "确定要从 Skill Deck 中移除「{{name}}」吗？这不会删除本地文件。",
-      "unregisterOnly": "此操作只解除 Skill Deck 中的项目注册，项目目录及其中的文件不会发生变化。",
+      "unregisterOnly": "Skill Deck 会先移除项目中的库应用链接和记录，再解除项目注册。项目内直接安装的 Skill 和其他文件保持不变。",
       "cancel": "取消",
       "cancelling": "正在取消...",
       "installing": "下载已完成，正在安装更新。",
       "confirm": "移除",
       "removing": "正在移除…",
-      "removeError": "无法从 Skill Deck 中移除此项目，本地文件未受影响，请重试。",
+      "removeError": "无法移除此项目。项目仍保持注册；库应用清理可能已经完成，请检查后重试。",
       "retry": "重试"
     }
   },
@@ -317,6 +494,7 @@
       "linkMode": "链接",
       "copyMode": "副本",
       "copyWarning": "部分 Agent 的 Skill 目录中保留了独立副本，本次操作会将其一并删除。",
+      "restoresLibrary": "当前位置仍应用了包含此 Skill 的库。删除直接安装版本后，将在同一次操作中恢复当前胜出的库版本。",
       "previewError": "无法加载当前删除范围，请重试。",
       "executionError": "删除未完成，当前范围仍保留，可以再次尝试。",
       "recoveryRequired": "删除未完成，相关文件需要检查。请先处理下方恢复项。",
@@ -837,6 +1015,9 @@
       "retryDelete": "重试删除",
       "deleteTitle": "删除 {{name}}？",
       "deleteDescription": "此操作只会从 Skill Deck 中移除用户添加的 Agent 信息。",
+      "libraryUsageTitle": "此 Agent 正被 Skill 库应用使用",
+      "libraryUsageDescription": "显示名称和检测设置仍可修改；Agent ID、全局或项目读取位置需要在以下 Scope 解除库应用选择后才能修改。",
+      "libraryUsageDeleteBlocked": "请先从以下 Scope 的库应用中取消选择此 Agent，再删除 Agent。",
       "deleteFilesSafe": "不会删除已安装的 Skill 文件，也不会删除 Agent 专用 Skill 目录。",
       "deleteManagementWarning": "当前与此 Agent 关联的 Skill 可能无法继续被检测或管理，重新添加相同信息后可恢复。",
       "deleteObservedSkillCount": "检测到 {{count}}{{suffix}} 个 Skill",
@@ -1142,7 +1323,6 @@
       "updatingTitle": "正在更新 v{{version}}",
       "noReleaseNotes": "前往 GitHub 查看详情",
       "retry": "重试",
-      "hide": "隐藏",
       "errorTitle": "无法完成应用更新",
       "errorDescription": "当前版本未被改变。你可以隐藏此窗口，稍后再次重试。",
       "installError": "无法下载或安装应用更新。",
@@ -1225,13 +1405,16 @@
         "symlink": "符号链接",
         "copy": "复制"
       },
+      "targetKinds": {
+        "file": "文件",
+        "other": "其他目录项"
+      },
       "errors": {
         "unknown": "操作因未知原因失败。",
         "validation": "当前请求已失效，请检查后重试。",
+        "skillPlacementTargetConflict": "{{skillName}} 的目标 Skill 目录 {{targetPath}} 中存在无法管理的{{targetKind}}，请处理后重试。",
         "wellKnownScopeNotFound": "{{rootUrl}} 的 {{scopePath}} 下没有可用 Skill，请检查 scoped 地址。",
         "environmentUnavailable": "所选环境当前不可用。",
-        "environmentChanged": "环境已发生变化，请检查刷新后的计划。",
-        "contextChanged": "所选范围已发生变化，请检查刷新后的计划。",
         "storageUnsupported": "此存储位置不支持当前操作。",
         "capabilityUnavailable": "所选环境无法执行当前操作。",
         "unsafePath": "目标路径不在允许的 Skill 目录中。",
@@ -1249,7 +1432,8 @@
         "restoreFailed": "Skill Deck 未能妥善完成这次操作，相关文件需要检查。",
         "recoveryRequired": "继续前请先检查恢复数据。",
         "configurationReadOnly": "配置版本高于当前应用，现以只读方式打开。",
-        "configurationCorrupted": "无法安全读取配置。"
+        "configurationCorrupted": "无法安全读取配置。",
+        "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。"
       },
       "fallbacks": {
         "symlinkUnavailable": "由于符号链接不可用，已改为复制。",
@@ -1454,6 +1638,9 @@
       "conflictZone": "已有目标目录",
       "freshZone": "新增写入",
       "overwriteGroup": "目标目录已存在",
+      "libraryOverrideTitle": "直接安装版本将优先使用",
+      "libraryOverrideDescription": "{{count}} 个同名 Skill 当前由 Skill 库提供。安装后保留库应用关系，并由本次直接安装内容覆盖使用。",
+      "libraryOverrideBadge": "覆盖库版本",
       "directDownloadConflict": "不能覆盖",
       "redirectTitle": "下载地址已跳转到其他站点",
       "redirectBody": "Skill 内容将从 {{host}} 下载。请确认你信任该站点后再继续。",
@@ -1537,7 +1724,6 @@
       "staleState": "安装依据已发生变化，请刷新预览并重新确认。",
       "storageUnsupported": "不支持所选存储位置。",
       "selfCopy": "来源与目标指向同一个物理位置。",
-      "externalLockChanged": "Skill 信息已发生变化，请刷新后重试。",
       "lockConflict": "「{{skill}}」的信息已发生变化，请刷新后重试。",
       "agentDefaultsConflict": "Agent 默认选择已发生变化，请刷新后重试。",
       "redirectConfirmationRequired": "下载地址已跳转到 {{host}}，请确认后再安装",

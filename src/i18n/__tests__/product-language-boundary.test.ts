@@ -34,12 +34,10 @@ describe('product language boundary', () => {
 
   it('describes concurrent changes without exposing lock storage', () => {
     expect(zhCN.addSkill.error).toMatchObject({
-      externalLockChanged: 'Skill 信息已发生变化，请刷新后重试。',
       lockConflict: '「{{skill}}」的信息已发生变化，请刷新后重试。',
       agentDefaultsConflict: 'Agent 默认选择已发生变化，请刷新后重试。',
     });
     expect(en.addSkill.error).toMatchObject({
-      externalLockChanged: 'Skill information changed. Refresh and try again.',
       lockConflict: '{{skill}} changed. Refresh and try again.',
       agentDefaultsConflict: 'The default Agent selection changed. Refresh and try again.',
     });

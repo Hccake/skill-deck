@@ -215,6 +215,13 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                     ) : null}
                   </div>
 
+                  {preview.restoresLibrary ? (
+                    <div className="mb-3 flex items-start gap-2 border-y border-border/60 py-3 text-sm">
+                      <Link2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span>{t('skills.deleteConfirm.restoresLibrary')}</span>
+                    </div>
+                  ) : null}
+
                   <div
                     data-testid="delete-skill-entry-list"
                     className="min-w-0 divide-y divide-border/60 border-y border-border/60"
@@ -263,7 +270,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 max-w-full items-start gap-3">
                               <span className="min-w-0 flex-1 break-words text-sm font-medium">
-                                {entry.owners.map((owner) => owner.displayName).join(', ')}
+                                {entry.readers.map((reader) => reader.displayName).join(', ')}
                               </span>
                               <Badge
                                 variant="secondary"

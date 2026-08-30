@@ -138,7 +138,7 @@ describe('GlobalEnvironmentSwitcher', () => {
     ['a write operation is active', null, {
       id: 'mutation-1',
       kind: 'install' as const,
-      context: { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } },
+      target: { kind: 'skillLocation' as const, environment: { kind: 'native' as const }, scope: { scope: 'global' as const } },
       phase: 'preparing' as const,
       progress: null,
       cancelable: true,

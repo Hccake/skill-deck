@@ -30,7 +30,9 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
     selectInstallWizardSessionBlocksWrites,
   );
   const environments = useEnvironmentStore((state) => state.environments);
-  const mutationEnvironment = activeMutation?.context.environment ?? { kind: 'native' as const };
+  const mutationEnvironment = activeMutation
+    ? activeMutation.target.environment
+    : { kind: 'native' as const };
   const { projects } = useProjectWorkspace(mutationEnvironment);
 
   useMutationMonitor(pollIntervalMs);
@@ -38,20 +40,25 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
   const labels = useMemo(() => {
     if (!activeMutation) return null;
 
-    const key = environmentKey(activeMutation.context.environment);
+    const targetEnvironment = activeMutation.target.environment;
+    const key = environmentKey(targetEnvironment);
     const environment = environments.find(
       (entry) => environmentKey(entry.environment) === key,
     );
     const environmentLabel = environment
       ? environmentDisplayName(environment, t)
-      : environmentRefDisplayName(activeMutation.context.environment, undefined, t);
+      : environmentRefDisplayName(targetEnvironment, undefined, t);
     if (!environmentLabel) return null;
 
-    if (activeMutation.context.scope.scope === 'global') {
+    if (activeMutation.target.kind === 'library') {
+      return { environmentLabel, scopeLabel: t('libraries.title') };
+    }
+
+    if (activeMutation.target.scope.scope === 'global') {
       return { environmentLabel, scopeLabel: t('context.global') };
     }
 
-    const projectId = activeMutation.context.scope.project_id;
+    const projectId = activeMutation.target.scope.project_id;
     const project = projects.find(
       (entry) => entry.binding.id === projectId,
     );

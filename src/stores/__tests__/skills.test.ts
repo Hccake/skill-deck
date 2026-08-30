@@ -32,6 +32,16 @@ const context: SkillLocationRef = {
   scope: { scope: 'global' },
 };
 
+function selected(
+  target: SkillLocationRef,
+  names: string[] = ['toolkit'],
+): UpdateCheckSelection {
+  return {
+    kind: 'skills',
+    skills: names.map((skillName) => ({ context: target, skillName })),
+  };
+}
+
 function skill(overrides: Partial<SkillListItem> = {}): SkillListItem {
   return {
     name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit',
@@ -159,7 +169,7 @@ describe('skills data store', () => {
   it('delegates automatic freshness decisions to the Backend', async () => {
     setSkills([skill()]);
     await useSkillsDataStore.getState().syncUpdates(context);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({ context, mode: 'automatic', selection: { kind: 'all' } });
+    expect(mocks.checkUpdates).toHaveBeenCalledWith({ context, mode: 'automatic', selection: selected(context) });
   });
 
   it('admits an automatic check only after an eligible snapshot and only once per session', async () => {
@@ -180,7 +190,7 @@ describe('skills data store', () => {
     expect(mocks.checkUpdates).toHaveBeenCalledWith({
       context,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(context),
     });
   });
 
@@ -204,7 +214,7 @@ describe('skills data store', () => {
     expect(mocks.checkUpdates).toHaveBeenCalledWith({
       context,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(context),
     });
   });
 
@@ -233,7 +243,7 @@ describe('skills data store', () => {
     expect(mocks.checkUpdates).toHaveBeenCalledWith({
       context,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(context),
     });
   });
 
@@ -270,12 +280,12 @@ describe('skills data store', () => {
     expect(mocks.checkUpdates).toHaveBeenNthCalledWith(1, {
       context,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(context),
     });
     expect(mocks.checkUpdates).toHaveBeenNthCalledWith(2, {
       context: ubuntuContext,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(ubuntuContext, ['reviewer']),
     });
   });
 
@@ -317,17 +327,17 @@ describe('skills data store', () => {
     expect(mocks.checkUpdates).toHaveBeenNthCalledWith(1, {
       context,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(context),
     });
     expect(mocks.checkUpdates).toHaveBeenNthCalledWith(2, {
       context: projectA,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(projectA),
     });
     expect(mocks.checkUpdates).toHaveBeenNthCalledWith(3, {
       context: projectB,
       mode: 'automatic',
-      selection: { kind: 'all' },
+      selection: selected(projectB),
     });
   });
 
@@ -889,6 +899,7 @@ describe('skills data store', () => {
   });
 
   it('rejects a duplicate Force request before sending a second IPC call', async () => {
+    setSkills([skill()]);
     const pending = deferred<UpdateCheckResponse>();
     mocks.checkUpdates.mockReturnValue(pending.promise);
 
@@ -953,7 +964,7 @@ describe('skills data store', () => {
     await useSkillsDataStore.getState().syncUpdates(projectContext);
     expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
     expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context: projectContext, mode: 'automatic', selection: { kind: 'all' },
+      context: projectContext, mode: 'automatic', selection: selected(projectContext),
     });
   });
 

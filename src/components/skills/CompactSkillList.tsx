@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus } from 'lucide-react';
+import { Plus, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -10,7 +10,8 @@ import {
   type SkillIdentity,
 } from '@/lib/skills/identity';
 import { CompactSkillItem } from './CompactSkillItem';
-import type { InstalledSkill } from '@/bindings';
+import { LibraryApplicationStrip } from './LibraryApplicationStrip';
+import type { InstalledSkill, LibraryApplicationSummary } from '@/bindings';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface CompactSkillListProps {
@@ -26,6 +27,10 @@ interface CompactSkillListProps {
   onSkillClick: (skill: InstalledSkill) => void;
   projectEmptyState?: ReactNode;
   globalEmptyState?: ReactNode;
+  projectLibraryApplication?: LibraryApplicationSummary;
+  globalLibraryApplication?: LibraryApplicationSummary;
+  onManageProjectLibraries?: () => void;
+  onManageGlobalLibraries?: () => void;
 }
 
 export const CompactSkillList = memo(function CompactSkillList({
@@ -41,6 +46,10 @@ export const CompactSkillList = memo(function CompactSkillList({
   onSkillClick,
   projectEmptyState,
   globalEmptyState,
+  projectLibraryApplication,
+  globalLibraryApplication,
+  onManageProjectLibraries,
+  onManageGlobalLibraries,
 }: CompactSkillListProps) {
   const { t } = useTranslation();
   const writeBlocked = useBusinessWriteBlocked();
@@ -57,12 +66,20 @@ export const CompactSkillList = memo(function CompactSkillList({
                   {projectTitle}
                   <span className="font-normal opacity-70">({projectSkills.length})</span>
                 </div>
-                {pathExists && onAddProject ? (
-                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
-                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Button>
-                ) : null}
+                <div className="flex items-center gap-0.5">
+                  {pathExists && onManageProjectLibraries ? (
+                    <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={onManageProjectLibraries} aria-label={t('libraries.manage')} title={t('libraries.manage')}>
+                      <SlidersHorizontal className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  ) : null}
+                  {pathExists && onAddProject ? (
+                    <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
+                      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Button>
+                  ) : null}
+                </div>
               </div>
+              {pathExists && projectLibraryApplication ? <LibraryApplicationStrip application={projectLibraryApplication} compact /> : null}
               {projectSkills.length > 0
                 ? projectSkills.map((skill) => (
                     <CompactSkillItem
@@ -83,12 +100,20 @@ export const CompactSkillList = memo(function CompactSkillList({
                 {t('skills.globalSkills')}
                 <span className="font-normal opacity-70">({globalSkills.length})</span>
               </div>
-              {onAddGlobal ? (
-                <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
-                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                </Button>
-              ) : null}
+              <div className="flex items-center gap-0.5">
+                {onManageGlobalLibraries ? (
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={onManageGlobalLibraries} aria-label={t('libraries.manage')} title={t('libraries.manage')}>
+                    <SlidersHorizontal className="size-3.5" aria-hidden="true" />
+                  </Button>
+                ) : null}
+                {onAddGlobal ? (
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </div>
             </div>
+            {globalLibraryApplication ? <LibraryApplicationStrip application={globalLibraryApplication} compact /> : null}
             {globalSkills.length > 0
               ? globalSkills.map((skill) => (
                   <CompactSkillItem

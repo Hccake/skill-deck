@@ -10,7 +10,174 @@
     "edit": "Edit",
     "save": "Save",
     "delete": "Delete",
-    "retry": "Retry"
+    "retry": "Retry",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "confirm": "Confirm"
+  },
+  "libraries": {
+    "title": "Skill Libraries",
+    "usage": {
+      "applied": "Applied in {{count}} places",
+      "appliedWithPending": "Applied in {{count}} places · adjustment unfinished",
+      "appliedToLocation": "Applied to {{location}}",
+      "globalLocation": "Global Skills",
+      "pendingOnly": "Application adjustment unfinished",
+      "viewDetails": "{{summary}}. View all usage locations",
+      "unapplied": "Not applied"
+    },
+    "appliedTo": "Applied to",
+    "pendingAdjustment": "Application adjustment unfinished",
+    "pendingAdjustmentDescription": "The last library application change did not finish, so these locations may not match the target yet.",
+    "unappliedHint": "Apply this library from the global or project area on the Skills page so Agents can read its Skills.",
+    "moreUsages": "+{{count}}",
+    "lockedMembership": "Members cannot change while the library is in use",
+    "lockedDelete": "A library in use cannot be deleted",
+    "lockedDeleteApplied": "This Library is in use. Remove its global or project applications from the Skills page first.",
+    "lockedDeletePending": "This Library has an unfinished application adjustment. Continue it from the Skills page first.",
+    "lockedDeleteAppliedWithPending": "This Library is in use and has an unfinished application adjustment. Continue it and remove the applications from the Skills page first.",
+    "deleteNamed": "Delete {{name}}",
+    "create": "Create Library",
+    "rename": "Rename Library",
+    "renameNamed": "Rename {{name}}",
+    "name": "Library name",
+    "nameDialogDescription": "Set the Skill Library name in the current Environment.",
+    "skillCount": "{{count}} Skills",
+    "addSkill": "Add Skill",
+    "addSkillDescription": "Select Skills from a source and add them to this Library.",
+    "addFlow": {
+      "title": "Add to “{{library}}”",
+      "environment": {
+        "native": "Current system",
+        "wsl": "WSL · {{name}}"
+      },
+      "steps": {
+        "label": "Add Skill steps",
+        "source": "Choose Source",
+        "selection": "Choose Skills",
+        "review": "Review & Add"
+      },
+      "source": {
+        "label": "Skill source",
+        "add": "Add",
+        "read": "Read Source",
+        "loading": "Reading Source…"
+      },
+      "selection": {
+        "title": "Choose Skills",
+        "count": "{{selected}} / {{available}} selected",
+        "selectAll": "Select visible",
+        "alreadyInLibrary": "Already in Library",
+        "allExisting": "Every Skill from this Source is already in this Library.",
+        "agentIntentIgnored": "Agent options in this command do not apply to a Skill Library. Apply the Library from the Skills page after adding.",
+        "review": "Review Selected Skills"
+      },
+      "preparing": "Preparing additions…",
+      "executing": "Adding Skills…",
+      "error": {
+        "writeBlocked": "Another write is in progress. Try again after it finishes.",
+        "previewMissing": "The prepared additions expired. Go back and choose the Skills again."
+      },
+      "review": {
+        "summary": "Add {{count}} Skills",
+        "confirm": "Add Skills"
+      },
+      "result": {
+        "succeeded": "Added {{count}} Skills",
+        "partial": "{{succeeded}} added, {{failed}} failed",
+        "retry": "Retry Failed"
+      }
+    },
+    "addAll": "Add discovered Skills",
+    "inspectSource": "Read Source",
+    "addSelected": "Add Selected Skills",
+    "addPreview": "{{count}} Skills will be added to this Library.",
+    "redirectConfirmation": "The download redirected to {{host}}. Confirm to continue.",
+    "addResult": {
+      "succeeded": "Added",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "notRun": "Not run"
+    },
+    "source": "Skill source",
+    "pluginName": "Plugin",
+    "refName": "Ref",
+    "sourcePlaceholder": "Git repository, local folder, or URL…",
+    "empty": "This Library has no Skills yet.",
+    "noLibraries": "Create a Library to start collecting Skills.",
+    "searchSkills": "Search Library Skills…",
+    "searchResultCount": "{{visible}} / {{total}}",
+    "noSearchResults": "No Library Skills match this search.",
+    "skillContent": "Content for {{name}}",
+    "contentError": "This Skill content could not be read.",
+    "loadError": "Skill Libraries could not be loaded.",
+    "detailLoadError": "The selected Skill Library could not be loaded.",
+    "referenceConflict": "This action is blocked by {{count}} Skill Library applications. Remove the references from those Scopes first.",
+    "recoveryIncomplete": "Skill Library recovery is incomplete. Restore access to this Environment and try again.",
+    "pending": "Unfinished change",
+    "pendingDescription": "The previous Library change is unfinished. Skill Deck will continue toward the confirmed target from the current directory state.",
+    "continue": "Continue Changes",
+    "manage": "Manage Skill Libraries",
+    "manageGlobal": "Manage Global Skill Libraries",
+    "manageProject": "Manage Skill Libraries for “{{name}}”",
+    "manageProjectFallback": "Manage Project Skill Libraries",
+    "manageDescription": "Choose and order the Skill Libraries used here, and select the Agents that need links.",
+    "appliedSection": "Applied Skill Libraries",
+    "availableSection": "Unapplied Skill Libraries",
+    "selectedCount": "{{count}} selected",
+    "noneSelected": "No Skill Libraries selected",
+    "noLibrariesAvailable": "No Skill Libraries are available",
+    "selectLibraryBeforeAgents": "Select a Skill Library to associate Agents",
+    "linkableAgents": "Associate when selected",
+    "linkableAgentsHelp": "The selected Skill Libraries are linked into these Agents' dedicated Skill directories.",
+    "noLinkableAgents": "No Agents can be associated here",
+    "selectionLoadError": "Skill Libraries or associated Agents could not be loaded.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saveError": "Skill Library settings could not be saved. Try again.",
+    "targetConflictAgent": "{{agents}} has an unsupported {{skill}} entry in its private Skill directory. Remove the association before saving.",
+    "targetConflictScope": "{{skill}} in the shared Skill directory cannot be managed. Resolve the entry before saving.",
+    "cancelConflictingAgents": "Remove {{agents}} association",
+    "priorityOrder": "Skill Library priority",
+    "priorityHelp": "Skill Libraries closer to the top have higher priority.",
+    "moveUp": "Raise priority for {{name}}",
+    "moveDown": "Lower priority for {{name}}",
+    "copyOnlyUnsupported": "{{names}} require copied or transformed Skills and cannot be associated with Skill Libraries.",
+    "agentPathMigration": "Reapplying moves {{name}} Library links from {{from}} to {{to}}.",
+    "resuming": "Continuing…",
+    "checkUpdates": "Check for Updates",
+    "updateSummary": {
+      "incomplete": "This check did not finish",
+      "updateAvailable": "{{count}} with updates",
+      "allUpToDate": "All up to date",
+      "cannotCheck": "{{count}} cannot be checked",
+      "deletedUpstream": "{{count}} deleted upstream",
+      "moreAttention": "{{count}} more need attention"
+    },
+    "update": "Update",
+    "updateCount": "Update {{count}}",
+    "confirmUpdateTitle": "Update Library Skills",
+    "confirmUpdateDescription": "{{count}} Skills will be updated. Scopes already using this Library will read the new content through their existing links.",
+    "maintenanceError": "Library maintenance failed. Check the source and try again.",
+    "inUse": "This Library is in use. Remove it from these locations before changing membership or deleting the Library.",
+    "removeSkill": "Remove {{name}} from Library",
+    "removeSkillTitle": "Remove {{name}}",
+    "removeSkillDescription": "This Library's independent Skill content will be deleted. Skills with the same name in other Libraries are unaffected.",
+    "deleteLibrary": "Delete Library",
+    "deleteLibraryTitle": "Delete {{name}}",
+    "deleteLibraryDescriptionWithCount": "This Library and its {{count}} Skills will be deleted.",
+    "deleteLibraryIrreversible": "This action cannot be undone.",
+    "deletingLibrary": "Deleting…",
+    "retryDeleteLibrary": "Retry Delete",
+    "deleteLibraryAlreadyMissing": "This Skill Library no longer exists. The list was refreshed.",
+    "updateStatus": {
+      "upToDate": "Up to date",
+      "updateAvailable": "Update available",
+      "nameChangeBlocked": "Upstream name changed; this Library member cannot be updated",
+      "cannotCheck": "Unable to check",
+      "deletedUpstream": "Removed upstream",
+      "unavailable": "Unable to check"
+    }
   },
   "agentSelection": {
     "title": "Linked Agents",
@@ -34,6 +201,10 @@
       "copyToProject": {
         "title": "Available after copying",
         "help": "This Skill is copied to the target Project's common Skill directory. These Agents can read it directly with no additional configuration."
+      },
+      "libraryApplication": {
+        "title": "Available without association",
+        "help": "These Agents can read the current Scope's common Skill directory directly."
       }
     },
     "selectable": {
@@ -50,6 +221,9 @@
       },
       "copyToProject": {
         "description": "After copying, these Agents can read this Skill from the target Project's common Skill directory. Select an Agent only when its own Skill directory also needs a link or copy."
+      },
+      "libraryApplication": {
+        "description": "When selected, the Skill Libraries are linked into the Agent's own Skill directory."
       },
       "selectedCount": "{{count}} Agents selected"
     },
@@ -78,11 +252,13 @@
     "current": {
       "link": "Link",
       "copy": "Copy",
+      "library": "Available from a Skill Library",
       "brokenLink": "Broken link",
       "unrecognized": "Unrecognized"
     },
     "effect": {
       "remove": "Will remove",
+      "restoreLibrary": "Will use the Skill Library version",
       "repair": "Will repair",
       "copy": "Will copy",
       "createLink": "Will create link",
@@ -98,6 +274,7 @@
   },
   "nav": {
     "skills": "Skills",
+    "libraries": "Libraries",
     "discover": "Discover",
     "settings": "Settings"
   },
@@ -182,13 +359,13 @@
     "removeConfirm": {
       "title": "Remove Project",
       "description": "Remove \"{{name}}\" from Skill Deck? This will not delete local files.",
-      "unregisterOnly": "Only the Skill Deck registration is removed. The project directory and its files remain unchanged.",
+      "unregisterOnly": "Skill Deck first removes managed Library links and the application record, then unregisters the Project. Directly installed Skills and other Project files remain unchanged.",
       "cancel": "Cancel",
       "cancelling": "Cancelling...",
       "installing": "The download is complete. Installing the update.",
       "confirm": "Remove",
       "removing": "Removing…",
-      "removeError": "The project could not be removed from Skill Deck. Your files were not changed. Try again.",
+      "removeError": "The Project could not be removed and remains registered. Library application cleanup may already be complete; check the Project and try again.",
       "retry": "Retry"
     }
   },
@@ -317,6 +494,7 @@
       "linkMode": "Link",
       "copyMode": "Copy",
       "copyWarning": "Some Agent directories contain independent copies of this Skill. This operation will delete them as well.",
+      "restoresLibrary": "This Scope still applies a Library containing this Skill. Removing the direct installation restores the current winning Library version in the same operation.",
       "previewError": "The current deletion scope could not be loaded. Try again.",
       "executionError": "Deletion did not finish. The current scope is still available to retry.",
       "recoveryRequired": "Deletion did not finish. Some files need to be checked before continuing.",
@@ -837,6 +1015,9 @@
       "retryDelete": "Retry deletion",
       "deleteTitle": "Delete {{name}}?",
       "deleteDescription": "This removes the Agent information you added from Skill Deck.",
+      "libraryUsageTitle": "This Agent is used by Skill Library applications",
+      "libraryUsageDescription": "The display name and detection settings can still change. Remove this Agent from the Library application in these Scopes before changing its ID or Global and Project read locations.",
+      "libraryUsageDeleteBlocked": "Remove this Agent from the Library application in these Scopes before deleting it.",
       "deleteFilesSafe": "Installed Skill files and Agent directories will not be deleted.",
       "deleteManagementWarning": "Skills currently associated with this Agent may no longer be detected or managed until the same information is added again.",
       "deleteObservedSkillCount": "{{count}}{{suffix}} Skill(s) detected",
@@ -1142,7 +1323,6 @@
       "updatingTitle": "Updating to v{{version}}",
       "noReleaseNotes": "View details on GitHub",
       "retry": "Retry",
-      "hide": "Hide",
       "errorTitle": "Update could not be completed",
       "errorDescription": "Your current version is unchanged. You can hide this dialog and retry later.",
       "installError": "The update could not be downloaded or installed.",
@@ -1225,13 +1405,16 @@
         "symlink": "Symbolic link",
         "copy": "Copy"
       },
+      "targetKinds": {
+        "file": "file",
+        "other": "directory entry"
+      },
       "errors": {
         "unknown": "The operation failed for an unknown reason.",
         "validation": "The request is no longer valid. Review it and try again.",
+        "skillPlacementTargetConflict": "The target Skill directory {{targetPath}} for {{skillName}} contains a {{targetKind}} that cannot be managed. Resolve it and try again.",
         "wellKnownScopeNotFound": "No Skills were found for {{scopePath}} on {{rootUrl}}. Check the scoped address.",
         "environmentUnavailable": "The selected environment is unavailable.",
-        "environmentChanged": "The environment changed. Review the refreshed plan.",
-        "contextChanged": "The selected context changed. Review the refreshed plan.",
         "storageUnsupported": "This storage location is not supported for the operation.",
         "capabilityUnavailable": "The selected environment cannot perform this operation.",
         "unsafePath": "The target path is outside the allowed Skill locations.",
@@ -1249,7 +1432,8 @@
         "restoreFailed": "Skill Deck could not safely complete this operation. The related files need review.",
         "recoveryRequired": "Review the recovery data before continuing.",
         "configurationReadOnly": "The configuration is newer than this app and is read-only.",
-        "configurationCorrupted": "The configuration could not be read safely."
+        "configurationCorrupted": "The configuration could not be read safely.",
+        "libraryRecoveryIncomplete": "Skill Library recovery is incomplete. Restore access to this Environment and try again."
       },
       "fallbacks": {
         "symlinkUnavailable": "Copied because a symbolic link was unavailable.",
@@ -1454,6 +1638,9 @@
       "conflictZone": "Existing targets",
       "freshZone": "New writes",
       "overwriteGroup": "Target exists",
+      "libraryOverrideTitle": "Directly installed versions take priority",
+      "libraryOverrideDescription": "{{count}} matching Skills are currently provided by Skill Libraries. The Library applications remain, while this direct installation becomes the active content.",
+      "libraryOverrideBadge": "Overrides Library",
       "directDownloadConflict": "Cannot overwrite",
       "redirectTitle": "Download redirected to another site",
       "redirectBody": "The Skill content will be downloaded from {{host}}. Continue only if you trust this site.",
@@ -1537,7 +1724,6 @@
       "staleState": "The installation facts changed. Refresh the preview and confirm again.",
       "storageUnsupported": "The selected storage location is not supported.",
       "selfCopy": "The source and destination resolve to the same physical location.",
-      "externalLockChanged": "Skill information changed. Refresh and try again.",
       "lockConflict": "{{skill}} changed. Refresh and try again.",
       "agentDefaultsConflict": "The default Agent selection changed. Refresh and try again.",
       "redirectConfirmationRequired": "Confirm the download redirect to {{host}} before installation",

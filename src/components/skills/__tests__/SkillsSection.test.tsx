@@ -2,15 +2,20 @@
 
 import '@/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render as testingRender, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render as testingRender, screen, waitFor, within } from '@testing-library/react';
 import { SkillsSection } from '../SkillsSection';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { MemoryRouter } from 'react-router-dom';
 import type { InstalledSkill } from '@/bindings';
 import type { SkillListItem } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
 
 const render = (ui: Parameters<typeof testingRender>[0]) => (
-  testingRender(ui, { wrapper: TooltipProvider })
+  testingRender(ui, {
+    wrapper: ({ children }) => (
+      <MemoryRouter><TooltipProvider>{children}</TooltipProvider></MemoryRouter>
+    ),
+  })
 );
 
 vi.mock('react-i18next', () => ({
@@ -67,6 +72,62 @@ describe('SkillsSection', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('keeps the current Scope libraries visible while Skill filters are active', () => {
+    const onManageLibraries = vi.fn();
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[]}
+        scope="global"
+        updatingSkills={new Map()}
+        filterActive
+        libraryApplication={{
+          orderedLibraries: [{ id: 'frontend', name: 'Frontend', skillCount: 3 }],
+          selectedAgentIds: [],
+          pending: true,
+        }}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onManageLibraries={onManageLibraries}
+      />
+    );
+
+    const actions = screen.getByTestId('skills-section-actions');
+    const summary = screen.getByTestId('applied-libraries-summary');
+    const library = within(summary).getByTestId('library-summary-item');
+
+    expect(within(summary).queryByText('libraries.applied')).toBeNull();
+    expect(within(summary).queryByRole('button', { name: 'libraries.manage' })).toBeNull();
+    expect(within(summary).queryByRole('link')).toBeNull();
+    const libraryName = within(library).getByText('Frontend');
+    expect(libraryName).toBeTruthy();
+    expect(within(library).getByText('libraries.skillCount')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('libraries.pending');
+    fireEvent.click(within(actions).getByRole('button', { name: 'libraries.manage' }));
+    expect(onManageLibraries).toHaveBeenCalledOnce();
+  });
+
+  it('does not reserve summary space when the Scope has no applied Libraries', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onManageLibraries={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'libraries.manage' })).toBeTruthy();
+    expect(screen.queryByTestId('applied-libraries-summary')).toBeNull();
   });
 
   it('keeps the summary blank until a comparison has been committed', () => {
@@ -512,7 +573,7 @@ describe('SkillsSection', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'install',
-        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+        target: { kind: 'skillLocation', environment: { kind: 'native' }, scope: { scope: 'global' } },
         id: 'mutation-1',
         phase: 'preparing',
         progress: null,

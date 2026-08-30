@@ -29,7 +29,7 @@ const request: ProjectRemovalRequest = {
 const activeMutation: ActiveMutation = {
   id: 'mutation-1',
   kind: 'install',
-  context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+  target: { kind: 'skillLocation', environment: { kind: 'native' }, scope: { scope: 'global' } },
   phase: 'preparing',
   progress: null,
   cancelable: true,

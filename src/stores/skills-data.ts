@@ -28,6 +28,7 @@ import type {
   UpdateCheckResponse,
   UpdateCheckOutcome,
   UpdateResponse,
+  LibraryApplicationSummary,
 } from '@/bindings';
 
 type UpdateCheckResult =
@@ -255,17 +256,20 @@ interface SkillsDataState {
   reconcileAutomaticChecks: (context: SkillLocationRef) => Promise<void>;
   forceCheckUpdates: (
     context: SkillLocationRef,
-    selection: UpdateCheckSelection,
+    selection: UpdateCheckIntent,
   ) => Promise<UpdateCheckOutcome | null>;
   applyUpdateResult: (context: SkillLocationRef, response: UpdateResponse) => Promise<void>;
   markSourceRepairSucceeded: (context: SkillLocationRef, skillName: string) => void;
   clearNativeGithubProviderCooldown: () => void;
 }
 
+type UpdateCheckIntent = UpdateCheckSelection | { kind: 'all' };
+
 export interface ContextSkillSnapshot {
   skills: SkillListItem[];
   updateCheck?: UpdateCheckDisplaySnapshot;
   agents: ResolvedAgent[];
+  libraryApplication?: LibraryApplicationSummary;
   pathExists: boolean;
   loading: boolean;
   error: AppError | null;
@@ -276,6 +280,7 @@ function emptyContextSnapshot(): ContextSkillSnapshot {
   return {
     skills: [],
     agents: [],
+    libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
     pathExists: true,
     loading: false,
     error: null,
@@ -406,6 +411,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
               )
             : current.updateCheck,
           agents: result.agents,
+          libraryApplication: result.libraryApplication,
           pathExists: result.pathExists,
           loading: false,
           error: null,
@@ -528,6 +534,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   reconcileAutomaticChecks: async (context) => {
     const key = contextKey(context);
     let selection: UpdateCheckSelection | null = null;
+    let fullSelection = false;
     set((state) => {
       const session = state.updateCheckSessions[key] ?? emptyUpdateCheckSession();
       const snapshot = state.snapshots[key];
@@ -560,7 +567,11 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         ]),
       );
       if (!session.initialAttempted) {
-        selection = { kind: 'all' };
+        fullSelection = true;
+        selection = {
+          kind: 'skills',
+          skills: eligible.map((skill) => ({ context, skillName: skill.name })),
+        };
       } else {
         const changed = eligible.filter((skill) => (
           state.updateCheckSessions[key]?.observedSkills[skill.name]
@@ -620,23 +631,21 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       }
       if (!result.ok || !isAdmittedUpdateCheckRequest(ticket)) return;
       const previous = updateInfoCache.get(key);
-      const retainedResults = admittedSelection.kind === 'skills'
+      const retainedResults = !fullSelection
         ? (previous?.results ?? []).filter((item) => (
             !admittedSelection.skills.some((selected) => selected.skillName === item.name)
           ))
         : [];
-      const results = admittedSelection.kind === 'skills'
+      const results = !fullSelection
         ? [
             ...retainedResults,
             ...preserveLastConfirmedUpdates(previous?.results ?? [], result.response.skills),
           ]
         : preserveLastConfirmedUpdates(previous?.results ?? [], result.response.skills);
-      const sources = admittedSelection.kind === 'skills'
+      const sources = !fullSelection
         ? mergeSourceUpdateInfo(previous?.sources ?? [], result.response.sources, retainedResults)
         : result.response.sources;
-      const completeness: 'partial' | 'complete' = admittedSelection.kind === 'skills'
-        ? 'partial'
-        : 'complete';
+      const completeness: 'partial' | 'complete' = fullSelection ? 'complete' : 'partial';
       const cacheEntry = {
         results,
         sources,
@@ -692,6 +701,18 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
   forceCheckUpdates: async (context, selection) => {
     const cacheKey = contextKey(context);
+    const effectiveSelection: UpdateCheckSelection = selection.kind === 'all'
+      ? {
+          kind: 'skills',
+          skills: (get().snapshots[cacheKey]?.skills ?? []).map((skill) => ({
+            context,
+            skillName: skill.name,
+          })),
+        }
+      : selection;
+    if (effectiveSelection.kind === 'skills' && effectiveSelection.skills.length === 0) {
+      return null;
+    }
     const admitted = (() => {
       let result = false;
       set((state) => {
@@ -719,7 +740,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       const response = await checkUpdates({
         context,
         mode: 'force',
-        selection,
+        selection: effectiveSelection,
       });
       if (!isAdmittedUpdateCheckRequest(ticket)) return response.outcome;
       const now = Date.now();

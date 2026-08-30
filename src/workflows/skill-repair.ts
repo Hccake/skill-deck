@@ -1,4 +1,4 @@
-import { fetchAvailable, getInstallAgentSelection, installSkills } from '@/hooks/useTauriApi';
+import { discoverSkillSource, getInstallAgentSelection, installSkills } from '@/hooks/useTauriApi';
 import type {
   AgentId,
   AppError,
@@ -38,14 +38,14 @@ export type RepairOutcome =
   };
 
 export interface RepairWorkflowApi {
-  fetchAvailable: typeof fetchAvailable;
+  discoverSkillSource: typeof discoverSkillSource;
   prepareInstall: typeof prepareInstall;
   installSkills: typeof installSkills;
   getInstallAgentSelection: typeof getInstallAgentSelection;
 }
 
 const defaultApi: RepairWorkflowApi = {
-  fetchAvailable,
+  discoverSkillSource,
   prepareInstall,
   installSkills,
   getInstallAgentSelection,
@@ -80,7 +80,12 @@ export async function repairSkillSource(
 
   let available: FetchResult;
   try {
-    available = await api.fetchAvailable(request.context, request.source.trim(), request.operationId);
+    available = await api.discoverSkillSource(
+      request.context.environment,
+      request.source.trim(),
+      request.operationId,
+      { wildcardRequested: false, explicitSkillNames: [request.skillName] },
+    );
   } catch (error) {
     return { status: 'failed', stage: 'validation', error: toAppError(error) };
   }

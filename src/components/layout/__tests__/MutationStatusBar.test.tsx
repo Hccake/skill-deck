@@ -8,7 +8,7 @@ import type { ActiveMutation, EnvironmentInfo, ProjectInfo } from '@/bindings';
 
 const mutation: ActiveMutation = {
   kind: 'update',
-  context: {
+  target: { kind: 'skillLocation',
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'project', project_id: 'project-1' },
   },
@@ -110,7 +110,7 @@ describe('MutationStatusBar', () => {
           order: null,
           suppressCrossStorageWarning: false,
         },
-        storage: { access: 'native', owner: mutation.context.environment },
+        storage: { access: 'native', owner: mutation.target.environment },
       }],
     };
 

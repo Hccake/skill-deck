@@ -248,7 +248,7 @@ describe('WizardPage mutation guard', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'update',
-        context: {
+        target: { kind: 'skillLocation',
           environment: { kind: 'native' },
           scope: { scope: 'global' },
         },

@@ -4,6 +4,7 @@ import '@/test-utils';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { MemoryRouter } from 'react-router-dom';
 import { SkillsSection } from '../SkillsSection';
 import type { SkillListItem } from '@/stores/skills-utils';
 
@@ -40,8 +41,9 @@ describe('installed Skill list presentation', () => {
     } as SkillListItem;
 
     render(
-      <TooltipProvider>
-        <SkillsSection
+      <MemoryRouter>
+        <TooltipProvider>
+          <SkillsSection
           title="Global"
           skills={[skill]}
           scope="global"
@@ -52,8 +54,9 @@ describe('installed Skill list presentation', () => {
           onPrepareUpdate={vi.fn(async () => true)}
           onDelete={vi.fn()}
           onAdd={vi.fn()}
-        />
-      </TooltipProvider>
+          />
+        </TooltipProvider>
+      </MemoryRouter>
     );
 
     const title = screen.getByTestId('skill-card-title');

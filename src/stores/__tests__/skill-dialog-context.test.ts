@@ -87,8 +87,9 @@ describe('Skill dialog context capture', () => {
       token,
       context,
       skillName: 'toolkit',
-      canonical: 'directory',
+      standard: 'directory',
       physicalEntries: [],
+      restoresLibrary: false,
     });
     mocks.removeSkill.mockResolvedValue({ units: [{ status: 'succeeded' }] });
     mocks.previewCopySkillToProjects.mockResolvedValue({
