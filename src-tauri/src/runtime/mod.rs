@@ -247,9 +247,11 @@ impl RuntimeServiceGraph {
             agent_selection_targets.clone(),
             execution.executor(wsl.clone(), Arc::new(agent_selection_facts.clone())),
         ));
-        let library_candidates: Arc<dyn LibraryCandidateSource> = Arc::new(
-            RepositoryLibraryCandidateSource::new(library_repository.clone()),
-        );
+        let library_candidates: Arc<dyn LibraryCandidateSource> =
+            Arc::new(RepositoryLibraryCandidateSource::new(
+                library_repository.clone(),
+                agent_selection_targets.clone(),
+            ));
         let install = build_runtime_install_service(
             payloads.clone(),
             wsl.clone(),

@@ -1375,10 +1375,30 @@ async fn native_scope_version_election_survives_a_continuous_product_workflow() 
         .expect("native Scope version-election workflow");
 }
 
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn native_scope_version_election_recognizes_library_links_across_path_aliases() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("path alias fixture");
+    let physical_root = temp.path().join("physical");
+    let logical_root = temp.path().join("logical");
+    fs::create_dir(&physical_root).expect("physical root");
+    symlink(&physical_root, &logical_root).expect("logical root alias");
+
+    run_native_scope_version_election_workflow_at(&logical_root)
+        .await
+        .expect("native Scope version-election workflow through a path alias");
+}
+
 #[cfg(test)]
 async fn run_native_scope_version_election_workflow() -> Result<(), AppError> {
     let temp = tempfile::tempdir()?;
-    let root = temp.path();
+    run_native_scope_version_election_workflow_at(temp.path()).await
+}
+
+#[cfg(test)]
+async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<(), AppError> {
     let project_path = root.join("project");
     let projects_path = root.join("state/projects.json");
     let global_lock_path = root.join("state/global-lock.json");
@@ -1449,8 +1469,9 @@ async fn run_native_scope_version_election_workflow() -> Result<(), AppError> {
         targets.clone(),
         executor(&execution, &environments, &facts),
     ));
-    let library_candidates: Arc<dyn LibraryCandidateSource> =
-        Arc::new(RepositoryLibraryCandidateSource::new(repository));
+    let library_candidates: Arc<dyn LibraryCandidateSource> = Arc::new(
+        RepositoryLibraryCandidateSource::new(repository, targets.clone()),
+    );
     let agent_a = AgentId::parse("codebuddy").expect("Agent A id");
     let agent_b = AgentId::parse("minimax-code").expect("Agent B id");
     let canonical = project_path.join(".agents/skills/demo");

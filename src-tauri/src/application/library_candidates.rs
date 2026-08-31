@@ -7,6 +7,7 @@ use crate::application::installed_skill_resolver::SkillDirectoryName;
 use crate::application::library_application::LibraryApplicationRepository;
 use crate::application::skill_libraries::{LibraryCatalog, LibraryId};
 use crate::core::agent_definition::AgentId;
+use crate::environment::planning::{ResolvedTargetFact, TargetFactResolver};
 use crate::environment::types::{
     same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
 };
@@ -16,10 +17,11 @@ use crate::error::AppError;
 pub(crate) struct LibraryVersionCandidate {
     library_id: LibraryId,
     member_name: String,
-    locator: ResourceLocator,
+    physical_locator: ResourceLocator,
 }
 
 impl LibraryVersionCandidate {
+    #[cfg(test)]
     pub(crate) fn new(
         library_id: LibraryId,
         member_name: impl Into<String>,
@@ -28,7 +30,15 @@ impl LibraryVersionCandidate {
         Self {
             library_id,
             member_name: member_name.into(),
-            locator,
+            physical_locator: locator,
+        }
+    }
+
+    fn from_resolved_fact(member: &LibraryCatalogMember, fact: ResolvedTargetFact) -> Self {
+        Self {
+            library_id: member.library_id.clone(),
+            member_name: member.member_name.clone(),
+            physical_locator: fact.destination,
         }
     }
 
@@ -41,7 +51,7 @@ impl LibraryVersionCandidate {
     }
 
     pub(crate) fn locator(&self) -> &ResourceLocator {
-        &self.locator
+        &self.physical_locator
     }
 }
 
@@ -72,7 +82,7 @@ pub(crate) enum LibraryCandidateError {
     OrderedCandidateNotRecognized,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LibraryCatalogMember {
     pub(crate) library_id: LibraryId,
     pub(crate) member_name: String,
@@ -176,7 +186,7 @@ impl LibraryCandidateSet {
                     member_name: candidate.member_name.clone(),
                 });
             }
-            if !same_environment_identity(environment, &candidate.locator.environment) {
+            if !same_environment_identity(environment, &candidate.locator().environment) {
                 return Err(LibraryCandidateError::CandidateEnvironmentMismatch {
                     member_name: candidate.member_name.clone(),
                 });
@@ -286,11 +296,18 @@ pub(crate) trait LibraryCandidateSource: Send + Sync {
 
 pub(crate) struct RepositoryLibraryCandidateSource {
     repository: Arc<dyn LibraryApplicationRepository>,
+    targets: Arc<dyn TargetFactResolver>,
 }
 
 impl RepositoryLibraryCandidateSource {
-    pub(crate) fn new(repository: Arc<dyn LibraryApplicationRepository>) -> Self {
-        Self { repository }
+    pub(crate) fn new<T>(repository: Arc<dyn LibraryApplicationRepository>, targets: T) -> Self
+    where
+        T: TargetFactResolver + 'static,
+    {
+        Self {
+            repository,
+            targets: Arc::new(targets),
+        }
     }
 }
 
@@ -313,18 +330,15 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
             let mut grouped = index
                 .members_for(&record.current.ordered_library_ids)
                 .map_err(candidate_configuration_error)?;
-            let mut candidates = Vec::new();
-            for member in grouped.remove(skill).unwrap_or_default() {
-                let locator = self
-                    .repository
-                    .library_skill_locator(context, &member.library_id, &member.member_name)
-                    .await?;
-                candidates.push(LibraryVersionCandidate::new(
-                    member.library_id,
-                    member.member_name,
-                    locator,
-                ));
-            }
+            let members = grouped.remove(skill).unwrap_or_default();
+            let candidates = ResolvedLibraryCandidateIndex::load(
+                self.repository.as_ref(),
+                self.targets.as_ref(),
+                context,
+                &members,
+            )
+            .await?
+            .candidates_for(&members)?;
             let candidates = LibraryCandidateSet::for_skill(
                 &context.environment,
                 skill,
@@ -339,6 +353,62 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
             )
             .map_err(candidate_configuration_error)
         })
+    }
+}
+
+pub(crate) struct ResolvedLibraryCandidateIndex {
+    by_member: BTreeMap<LibraryCatalogMember, LibraryVersionCandidate>,
+}
+
+impl ResolvedLibraryCandidateIndex {
+    pub(crate) async fn load<T: TargetFactResolver + ?Sized>(
+        repository: &dyn LibraryApplicationRepository,
+        targets: &T,
+        context: &SkillLocationRef,
+        members: &[LibraryCatalogMember],
+    ) -> Result<Self, AppError> {
+        let members = members.iter().cloned().collect::<BTreeSet<_>>();
+        let mut unresolved = Vec::with_capacity(members.len());
+        for member in &members {
+            unresolved.push(
+                repository
+                    .library_skill_locator(context, &member.library_id, &member.member_name)
+                    .await?,
+            );
+        }
+        let resolved = if unresolved.is_empty() {
+            Vec::new()
+        } else {
+            targets.resolve(context, &unresolved, None).await?
+        };
+        if resolved.len() != members.len() {
+            return Err(AppError::StaleTarget);
+        }
+        Ok(Self {
+            by_member: members
+                .into_iter()
+                .zip(resolved)
+                .map(|(member, fact)| {
+                    let candidate = LibraryVersionCandidate::from_resolved_fact(&member, fact);
+                    (member, candidate)
+                })
+                .collect(),
+        })
+    }
+
+    pub(crate) fn candidates_for(
+        &self,
+        members: &[LibraryCatalogMember],
+    ) -> Result<Vec<LibraryVersionCandidate>, AppError> {
+        members
+            .iter()
+            .map(|member| {
+                self.by_member
+                    .get(member)
+                    .cloned()
+                    .ok_or(AppError::StaleTarget)
+            })
+            .collect()
     }
 }
 
@@ -371,6 +441,7 @@ fn candidate_configuration_error(error: impl std::fmt::Debug) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -383,9 +454,15 @@ mod tests {
         LibraryCatalog, LibraryId, LibrarySkillRecord, SkillLibraryRecord, LIBRARY_SCHEMA_VERSION,
     };
     use crate::core::agent_definition::AgentId;
+    use crate::environment::planning::RuntimeTargetFactResolver;
     use crate::environment::types::{
         EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
     };
+    use crate::environment::wsl::WslRuntime;
+
+    fn targets() -> RuntimeTargetFactResolver {
+        RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()))
+    }
 
     #[test]
     fn candidate_set_rejects_another_skill_or_environment() {
@@ -520,6 +597,7 @@ mod tests {
     struct MemoryRepository {
         record: LibraryApplicationRecord,
         catalog: LibraryCatalog,
+        locator_root: PathBuf,
         locator_requests: Mutex<Vec<(LibraryId, String)>>,
     }
 
@@ -545,13 +623,23 @@ mod tests {
             skill_name: &'a str,
         ) -> LibraryApplicationFuture<'a, Result<ResourceLocator, AppError>> {
             Box::pin(async move {
+                let install_dir_name =
+                    crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                        skill_name,
+                    )?;
                 self.locator_requests
                     .lock()
                     .unwrap()
                     .push((library_id.clone(), skill_name.to_string()));
                 Ok(ResourceLocator {
                     environment: context.environment.clone(),
-                    native_path: format!("/libraries/{}/skills/{skill_name}", library_id.as_str()),
+                    native_path: self
+                        .locator_root
+                        .join(library_id.as_str())
+                        .join("skills")
+                        .join(install_dir_name)
+                        .to_string_lossy()
+                        .into_owned(),
                 })
             })
         }
@@ -638,7 +726,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repository_source_preserves_library_order_and_real_member_names() {
+    async fn repository_source_projects_members_and_preserves_order_and_real_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let locator_root = temp.path().join("libraries");
+        std::fs::create_dir_all(locator_root.join("first/skills/ce-review")).unwrap();
+        std::fs::create_dir_all(locator_root.join("second/skills/ce-review")).unwrap();
+        let physical_root = std::fs::canonicalize(&locator_root).unwrap();
         let context = SkillLocationRef {
             environment: EnvironmentRef::Native,
             scope: SkillLocation::Global,
@@ -678,9 +771,10 @@ mod tests {
                 ],
                 extra: serde_json::Map::new(),
             },
+            locator_root,
             locator_requests: Mutex::new(Vec::new()),
         });
-        let source = RepositoryLibraryCandidateSource::new(repository.clone());
+        let source = RepositoryLibraryCandidateSource::new(repository.clone(), targets());
         let skill = SkillDirectoryName::try_from("ce-review").unwrap();
 
         let snapshot = source.load_candidates(&context, &skill).await.unwrap();
@@ -689,21 +783,25 @@ mod tests {
             snapshot.selected_agent_ids(),
             &[agent("codex"), agent("cursor")]
         );
+        let candidates = snapshot.candidates().ordered();
         assert_eq!(
-            snapshot
-                .candidates()
-                .ordered()
+            candidates
                 .iter()
-                .map(|candidate| (
-                    candidate.library_id().as_str(),
-                    candidate.member_name(),
-                    candidate.locator().native_path.as_str(),
-                ))
+                .map(|candidate| (candidate.library_id().as_str(), candidate.member_name()))
                 .collect::<Vec<_>>(),
-            vec![
-                ("first", "CE:Review", "/libraries/first/skills/CE:Review"),
-                ("second", "ce-review", "/libraries/second/skills/ce-review"),
-            ]
+            vec![("first", "CE:Review"), ("second", "ce-review")]
+        );
+        assert_eq!(
+            candidates[0].locator().native_path,
+            physical_root
+                .join("first/skills/ce-review")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            candidates[1].locator().native_path,
+            physical_root
+                .join("second/skills/ce-review")
+                .to_string_lossy()
         );
         assert_eq!(
             snapshot.candidates().recognized(),
@@ -755,9 +853,10 @@ mod tests {
                 }],
                 extra: serde_json::Map::new(),
             },
+            locator_root: PathBuf::from("/libraries"),
             locator_requests: Mutex::new(Vec::new()),
         });
-        let source = RepositoryLibraryCandidateSource::new(repository);
+        let source = RepositoryLibraryCandidateSource::new(repository, targets());
 
         let result = source
             .load_candidates(
@@ -797,9 +896,10 @@ mod tests {
                 libraries: Vec::new(),
                 extra: serde_json::Map::new(),
             },
+            locator_root: PathBuf::from("/libraries"),
             locator_requests: Mutex::new(Vec::new()),
         });
-        let source = RepositoryLibraryCandidateSource::new(repository);
+        let source = RepositoryLibraryCandidateSource::new(repository, targets());
 
         let result = source
             .load_candidates(&context, &SkillDirectoryName::try_from("demo").unwrap())
