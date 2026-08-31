@@ -984,10 +984,9 @@ mod tests {
         assert_eq!(fields.len() % 7, 0);
         assert_eq!(fields[7], "E");
         assert_eq!(fields[8], "000000");
-        assert!(fields
-            .chunks_exact(7)
-            .skip(2)
-            .all(|record| record[0] == "M"));
+        let (records, remainder) = fields.as_chunks::<7>();
+        assert!(remainder.is_empty());
+        assert!(records.iter().skip(2).all(|record| record[0] == "M"));
     }
 
     #[test]

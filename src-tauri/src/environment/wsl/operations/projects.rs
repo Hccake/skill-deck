@@ -68,8 +68,10 @@ pub fn parse_project_storage(
     if fields.first().copied() != Some(b"1".as_slice()) || fields.len() != 1 + project_count * 2 {
         return Err(protocol_error());
     }
-    fields[1..]
-        .chunks_exact(2)
+    let (records, remainder) = fields[1..].as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    records
+        .iter()
         .map(|record| match record[0] {
             b"error" => Ok(ProjectStorageInfo {
                 access: StorageAccess::Unsupported,
