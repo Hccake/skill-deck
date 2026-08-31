@@ -559,13 +559,13 @@ where
         )
         .await?;
         let current_selected = current_agent_ids.iter().collect::<BTreeSet<_>>();
-        let mut units = Vec::new();
-        let mut direct_skill_names = BTreeSet::new();
-        let mut directory_change_skill_names = BTreeSet::new();
-        let mut added_skill_names = BTreeSet::new();
-        let mut removed_skill_names = BTreeSet::new();
-        let mut switched_skill_names = BTreeSet::new();
-        let mut observed_targets = Vec::new();
+        let eligible_option_ids = agent_options
+            .options
+            .iter()
+            .map(|option| &option.option_id)
+            .collect::<BTreeSet<_>>();
+        let mut prepared_groups = Vec::with_capacity(groups.len());
+        let mut destinations = Vec::new();
         for group in groups {
             let current_candidates = candidate_index.candidates_for(&group.current_members)?;
             let target_candidates = candidate_index.candidates_for(&group.target_members)?;
@@ -573,14 +573,14 @@ where
                 &draft.context.environment,
                 &group.directory_name,
                 current_candidates.clone(),
-                current_candidates.clone(),
+                current_candidates,
             )
             .map_err(|_| AppError::StaleContext)?;
             let target_candidate_set = LibraryCandidateSet::for_skill(
                 &draft.context.environment,
                 &group.directory_name,
                 target_candidates.clone(),
-                target_candidates.clone(),
+                target_candidates,
             )
             .map_err(|_| AppError::StaleContext)?;
             let mut logical_targets = vec![LogicalLibraryTarget {
@@ -592,11 +592,6 @@ where
                 reader_agent_ids: Vec::new(),
                 library_link_target: true,
             }];
-            let eligible_option_ids = agent_options
-                .options
-                .iter()
-                .map(|option| &option.option_id)
-                .collect::<BTreeSet<_>>();
             logical_targets.extend(agent_options.catalog.options().map(|resolved| {
                 let option_id = resolved.public.id.clone();
                 LogicalLibraryTarget {
@@ -628,26 +623,51 @@ where
                         library_link_target: true,
                     }),
             );
-            let destinations = logical_targets
-                .iter()
-                .map(|logical| logical.destination.clone())
-                .collect::<Vec<_>>();
-            let target_facts = self
-                .targets
+            destinations.extend(
+                logical_targets
+                    .iter()
+                    .map(|logical| logical.destination.clone()),
+            );
+            prepared_groups.push((
+                group,
+                current_candidate_set,
+                target_candidate_set,
+                logical_targets,
+            ));
+        }
+        let target_facts = if destinations.is_empty() {
+            Vec::new()
+        } else {
+            self.targets
                 .resolve(&draft.context, &destinations, None)
-                .await?;
-            if target_facts.len() != destinations.len() {
-                return Err(AppError::StaleTarget);
-            }
+                .await?
+        };
+        if target_facts.len() != destinations.len() {
+            return Err(AppError::StaleTarget);
+        }
+        let mut target_facts = target_facts.into_iter();
+        let mut units = Vec::new();
+        let mut direct_skill_names = BTreeSet::new();
+        let mut directory_change_skill_names = BTreeSet::new();
+        let mut added_skill_names = BTreeSet::new();
+        let mut removed_skill_names = BTreeSet::new();
+        let mut switched_skill_names = BTreeSet::new();
+        let mut observed_targets = Vec::new();
+        for (group, current_candidate_set, target_candidate_set, logical_targets) in prepared_groups
+        {
+            let group_facts = target_facts
+                .by_ref()
+                .take(logical_targets.len())
+                .collect::<Vec<_>>();
             ensure_library_link_targets_supported(
                 logical_targets
                     .iter()
-                    .zip(&target_facts)
+                    .zip(&group_facts)
                     .filter_map(|(logical, fact)| logical.library_link_target.then_some(fact)),
             )?;
             let mut resolved = BTreeMap::new();
             let mut legacy = Vec::new();
-            for (logical, fact) in logical_targets.into_iter().zip(target_facts) {
+            for (logical, fact) in logical_targets.into_iter().zip(group_facts) {
                 observed_targets.push((fact.key.clone(), fact.fingerprint.clone()));
                 match logical.placement {
                     DirectoryPlacementRef::Catalog(id) => {
@@ -1259,7 +1279,13 @@ mod tests {
         primary_entry_kind: TargetEntryKind,
         agent_entry_kind: TargetEntryKind,
         agent_link_target: Option<String>,
-        candidate_resolve_calls: Arc<AtomicUsize>,
+        resolve_calls: Arc<TargetResolveCalls>,
+    }
+
+    #[derive(Default)]
+    struct TargetResolveCalls {
+        candidates: AtomicUsize,
+        placements: AtomicUsize,
     }
 
     impl TargetFactResolver for FixedTargets {
@@ -1275,7 +1301,15 @@ mod tests {
                         .iter()
                         .all(|destination| destination.native_path.starts_with("/libraries/"))
                 {
-                    self.candidate_resolve_calls.fetch_add(1, Ordering::SeqCst);
+                    self.resolve_calls.candidates.fetch_add(1, Ordering::SeqCst);
+                } else if !logical_destinations.is_empty()
+                    && logical_destinations.iter().all(|destination| {
+                        let parent = std::path::Path::new(&destination.native_path).parent();
+                        parent == Some(std::path::Path::new(TEST_SKILL_ROOT))
+                            || parent == Some(std::path::Path::new(TEST_AGENT_ROOT))
+                    })
+                {
+                    self.resolve_calls.placements.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(logical_destinations
                     .iter()
@@ -1384,7 +1418,7 @@ mod tests {
         LibraryApplicationModule<FixedFacts, FixedTargets, RecordingExecutor>,
         RecordingExecutor,
         LibraryApplicationDraft,
-        Arc<AtomicUsize>,
+        Arc<TargetResolveCalls>,
     ) {
         let context = SkillLocationRef {
             environment: EnvironmentRef::Native,
@@ -1483,7 +1517,7 @@ mod tests {
             }),
         });
         let executor = RecordingExecutor::default();
-        let candidate_resolve_calls = Arc::new(AtomicUsize::new(0));
+        let resolve_calls = Arc::new(TargetResolveCalls::default());
         let module = LibraryApplicationModule::new(
             repository,
             facts,
@@ -1491,7 +1525,7 @@ mod tests {
                 primary_entry_kind,
                 agent_entry_kind,
                 agent_link_target: agent_link_target.map(str::to_string),
-                candidate_resolve_calls: Arc::clone(&candidate_resolve_calls),
+                resolve_calls: Arc::clone(&resolve_calls),
             },
             executor.clone(),
         );
@@ -1500,7 +1534,7 @@ mod tests {
             ordered_library_ids: target_library_ids,
             selected_agent_ids: vec![agent_id],
         };
-        (module, executor, draft, candidate_resolve_calls)
+        (module, executor, draft, resolve_calls)
     }
 
     async fn applied_result(
@@ -1729,7 +1763,7 @@ mod tests {
     async fn switching_physical_aliases_uses_one_task_and_the_target_member() {
         let first = LibraryId::parse("first");
         let second = LibraryId::parse("second");
-        let (module, executor, draft, candidate_resolve_calls) = application_fixture_with(
+        let (module, executor, draft, resolve_calls) = application_fixture_with(
             TargetEntryKind::Missing,
             TargetEntryKind::Missing,
             None,
@@ -1752,7 +1786,7 @@ mod tests {
         );
 
         let preview = module.preview(draft.clone()).await.unwrap();
-        assert_eq!(candidate_resolve_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(resolve_calls.candidates.load(Ordering::SeqCst), 1);
         assert_eq!(preview.switched_skill_names, vec!["ce-review"]);
 
         let (plan, _response) = applied_result(&module, &executor, draft).await;
@@ -1767,6 +1801,29 @@ mod tests {
             Some(PreparedEntryAction::Link { target })
                 if target.native_path == "/libraries/second/skills/ce-review"
         ));
+    }
+
+    #[tokio::test]
+    async fn multi_skill_application_resolves_candidates_and_placements_once() {
+        let library_id = LibraryId::parse("library-one");
+        let (module, _executor, draft, resolve_calls) = application_fixture_with(
+            TargetEntryKind::Missing,
+            TargetEntryKind::Missing,
+            None,
+            vec![SkillLibraryRecord {
+                id: library_id.clone(),
+                name: "Library One".to_string(),
+                skills: vec![skill("alpha"), skill("beta")],
+                extra: serde_json::Map::new(),
+            }],
+            Vec::new(),
+            vec![library_id],
+        );
+
+        module.preview(draft).await.unwrap();
+
+        assert_eq!(resolve_calls.candidates.load(Ordering::SeqCst), 1);
+        assert_eq!(resolve_calls.placements.load(Ordering::SeqCst), 1);
     }
 
     #[test]

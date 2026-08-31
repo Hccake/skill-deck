@@ -134,6 +134,12 @@ struct InstallSkillPlacement {
     direct: bool,
 }
 
+struct PendingInstallOption {
+    id: DirectoryPlacementId,
+    content: DirectoryContentKind,
+    direct: bool,
+}
+
 struct InstallSelection {
     selected_option_ids: BTreeSet<AgentInstallOptionId>,
     eve_subagents: BTreeSet<String>,
@@ -270,47 +276,57 @@ where
             payloads.push(payload);
         }
 
-        let mut library_candidate_sets = Vec::with_capacity(seeds.len());
-        for skill in &canonical_skills {
-            let directory_name = SkillDirectoryName::try_from(skill.as_str())?;
-            library_candidate_sets.push(
-                self.library_candidates
-                    .load_candidates(&request.context, &directory_name)
-                    .await?,
-            );
+        let directory_names = canonical_skills
+            .iter()
+            .map(|skill| SkillDirectoryName::try_from(skill.as_str()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let library_candidate_sets = self
+            .library_candidates
+            .load_candidate_sets(&request.context, &directory_names)
+            .await?;
+        if library_candidate_sets.len() != seeds.len() {
+            return Err(AppError::StaleTarget);
         }
 
-        for (seed, skill) in seeds.iter_mut().zip(&canonical_skills) {
-            let install_dir_name = SkillDirectoryName::try_from(skill.as_str())?;
+        let mut option_batches = Vec::with_capacity(seeds.len());
+        let mut option_destinations = Vec::new();
+        for install_dir_name in &directory_names {
             let options = catalog
                 .options()
                 .map(|option| {
-                    let direct = selection.selected_option_ids.contains(&option.public.id);
-                    (option, direct)
+                    option_destinations
+                        .push(option.placement.root.join_child(install_dir_name.as_ref()));
+                    PendingInstallOption {
+                        id: DirectoryPlacementId::Option(option.public.id.clone()),
+                        content: option.placement.content.clone(),
+                        direct: selection.selected_option_ids.contains(&option.public.id),
+                    }
                 })
                 .collect::<Vec<_>>();
-            let destinations = options
-                .iter()
-                .map(|(option, _)| option.placement.root.join_child(install_dir_name.as_ref()))
-                .collect::<Vec<_>>();
-            let facts = if destinations.is_empty() {
-                Vec::new()
-            } else {
-                self.targets
-                    .resolve(&request.context, &destinations, None)
-                    .await?
-            };
-            if facts.len() != destinations.len() {
-                return Err(AppError::StaleTarget);
-            }
-            seed.placements.extend(options.into_iter().zip(facts).map(
-                |((option, direct), fact)| InstallSkillPlacement {
-                    id: DirectoryPlacementId::Option(option.public.id.clone()),
-                    fact,
-                    content: option.placement.content.clone(),
-                    direct,
-                },
-            ));
+            option_batches.push(options);
+        }
+        let option_facts = if option_destinations.is_empty() {
+            Vec::new()
+        } else {
+            self.targets
+                .resolve(&request.context, &option_destinations, None)
+                .await?
+        };
+        if option_facts.len() != option_destinations.len() {
+            return Err(AppError::StaleTarget);
+        }
+        let mut option_facts = option_facts.into_iter();
+        for (seed, options) in seeds.iter_mut().zip(option_batches) {
+            seed.placements.extend(options.into_iter().map(|option| {
+                InstallSkillPlacement {
+                    id: option.id,
+                    fact: option_facts
+                        .next()
+                        .expect("validated option fact count matches planned options"),
+                    content: option.content,
+                    direct: option.direct,
+                }
+            }));
         }
         validate_payload_targets(&payloads, &derived_payloads, &seeds).await?;
 
@@ -778,6 +794,7 @@ fn observed_digest(
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use tempfile::tempdir;
@@ -839,133 +856,302 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn planner_builds_canonical_private_and_lock_as_one_unit() {
-        let temp = tempdir().unwrap();
-        let physical_root = fs::canonicalize(temp.path()).unwrap();
-        let canonical_root = physical_root.join(".agents/skills");
-        fs::create_dir_all(&canonical_root).unwrap();
-        let source = temp.path().join("source/demo");
+    struct CountingCandidates {
+        snapshot: crate::application::library_candidates::LibraryCandidateSnapshot,
+        single_calls: Arc<AtomicUsize>,
+        batch_calls: Arc<AtomicUsize>,
+    }
+
+    impl crate::application::library_candidates::LibraryCandidateSource for CountingCandidates {
+        fn load_candidates<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+            _skill: &'a SkillDirectoryName,
+        ) -> crate::application::library_candidates::LibraryCandidateFuture<
+            'a,
+            Result<crate::application::library_candidates::LibraryCandidateSnapshot, AppError>,
+        > {
+            self.single_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(self.snapshot.clone()) })
+        }
+
+        fn load_candidate_sets<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+            skills: &'a [SkillDirectoryName],
+        ) -> crate::application::library_candidates::LibraryCandidateFuture<
+            'a,
+            Result<Vec<crate::application::library_candidates::LibraryCandidateSnapshot>, AppError>,
+        > {
+            self.batch_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(vec![self.snapshot.clone(); skills.len()]) })
+        }
+    }
+
+    #[derive(Clone)]
+    struct CountingTargets {
+        inner: RuntimeTargetFactResolver,
+        option_root: std::path::PathBuf,
+        option_resolve_calls: Arc<AtomicUsize>,
+    }
+
+    impl TargetFactResolver for CountingTargets {
+        fn resolve<'a>(
+            &'a self,
+            context: &'a SkillLocationRef,
+            logical_destinations: &'a [ResourceLocator],
+            cancellation: Option<crate::core::mutation::CancellationSignal>,
+        ) -> crate::environment::planning::TargetFactFuture<
+            'a,
+            Result<Vec<ResolvedTargetFact>, AppError>,
+        > {
+            if !logical_destinations.is_empty()
+                && logical_destinations.iter().all(|destination| {
+                    std::path::Path::new(&destination.native_path).parent()
+                        == Some(self.option_root.as_path())
+                })
+            {
+                self.option_resolve_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            self.inner
+                .resolve(context, logical_destinations, cancellation)
+        }
+    }
+
+    impl ContentManifestReader for CountingTargets {
+        fn read<'a>(
+            &'a self,
+            target: &'a crate::environment::content_manifest::ContentManifestTarget,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            crate::environment::content_manifest::ContentManifest,
+                            AppError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            self.inner.read(target)
+        }
+    }
+
+    struct MultiSkillInstallFixture {
+        _temp: tempfile::TempDir,
+        planner: ConcreteInstallPlanner<Facts, CountingTargets>,
+        request: InstallRequest,
+        manager: Arc<PayloadSessionManager>,
+        handles: Vec<crate::application::payload_session::AcquiredPayloadHandle>,
+        canonical_root: std::path::PathBuf,
+        private_root: std::path::PathBuf,
+        payload_id: String,
+        single_candidate_calls: Arc<AtomicUsize>,
+        batch_candidate_calls: Arc<AtomicUsize>,
+        option_resolve_calls: Arc<AtomicUsize>,
+    }
+
+    impl MultiSkillInstallFixture {
+        async fn new() -> Self {
+            let temp = tempdir().unwrap();
+            let physical_root = fs::canonicalize(temp.path()).unwrap();
+            let canonical_root = physical_root.join(".agents/skills");
+            let private_root = physical_root.join(".custom/skills");
+            fs::create_dir_all(&canonical_root).unwrap();
+            let manager = Arc::new(PayloadSessionManager::in_memory(
+                PayloadSessionLimits {
+                    ttl_ms: 60_000,
+                    max_sessions: 4,
+                    max_bytes: 1_000_000,
+                },
+                || 1_000,
+            ));
+            let discovery = manager
+                .discover(EnvironmentRef::Native, "source-fingerprint")
+                .await
+                .unwrap();
+            let mut handles = Vec::new();
+            for (name, computed_hash) in [
+                ("demo", "cli-computed-hash"),
+                ("other", "cli-other-computed-hash"),
+            ] {
+                handles.push(
+                    acquire_local_payload(&manager, &discovery, temp.path(), name, computed_hash)
+                        .await,
+                );
+            }
+            let context = SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
+            };
+            let facts = ScopePlanningSnapshot {
+                resolved_context: ResolvedContext {
+                    context: context.clone(),
+                    project: None,
+                    home: locator(&physical_root),
+                    skill_root: locator(&canonical_root),
+                    lock: locator(&physical_root.join(".agents/.skill-lock.json")),
+                },
+                agent_runtime: runtime(private_root.to_string_lossy().as_ref()),
+                revisions: RuntimeRevisions {
+                    registry: "registry-1".to_string(),
+                    environment: "environment-1".to_string(),
+                    context: ContextSnapshotRevision::parse("context-v1-install").unwrap(),
+                },
+                lock_schema: LockSchema::Global,
+                lock_document: LosslessLockDocument::empty(LockSchema::Global),
+                eve_targets: Vec::new(),
+            };
+            let target_resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
+            let agent_selection = test_submission_for_agents(
+                &context,
+                &facts.agent_runtime,
+                &facts.eve_targets,
+                &facts.resolved_context.skill_root,
+                &target_resolver,
+                &["custom-private"],
+                InstallMode::Symlink,
+            )
+            .await;
+            let option_resolve_calls = Arc::new(AtomicUsize::new(0));
+            let target_resolver = CountingTargets {
+                inner: target_resolver,
+                option_root: private_root.clone(),
+                option_resolve_calls: Arc::clone(&option_resolve_calls),
+            };
+            let single_candidate_calls = Arc::new(AtomicUsize::new(0));
+            let batch_candidate_calls = Arc::new(AtomicUsize::new(0));
+            let empty_candidates =
+                crate::application::library_candidates::LibraryCandidateSnapshot::new(
+                    "empty-library-candidates",
+                    Vec::new(),
+                    crate::application::library_candidates::LibraryCandidateSet::empty(),
+                )
+                .unwrap();
+            let planner = ConcreteInstallPlanner::new(
+                Facts(facts),
+                target_resolver,
+                Arc::clone(&manager),
+                || "2026-07-18T00:00:00.000Z".to_string(),
+                Arc::new(CountingCandidates {
+                    snapshot: empty_candidates,
+                    single_calls: Arc::clone(&single_candidate_calls),
+                    batch_calls: Arc::clone(&batch_candidate_calls),
+                }),
+            );
+            let request = InstallRequest {
+                context,
+                source: "owner/repo".to_string(),
+                discovery_session: discovery,
+                payloads: handles.clone(),
+                skills: vec!["demo".to_string(), "other".to_string()],
+                agent_selection,
+                acknowledge_redirect: true,
+            };
+            let payload_id = handles[0].payload_id.clone();
+            Self {
+                _temp: temp,
+                planner,
+                request,
+                manager,
+                handles,
+                canonical_root,
+                private_root,
+                payload_id,
+                single_candidate_calls,
+                batch_candidate_calls,
+                option_resolve_calls,
+            }
+        }
+
+        async fn leases(&self) -> Vec<PinnedPayloadLease> {
+            let mut leases = Vec::with_capacity(self.handles.len());
+            for handle in &self.handles {
+                leases.push(self.manager.pin_verified(handle).await.unwrap());
+            }
+            leases
+        }
+    }
+
+    async fn acquire_local_payload(
+        manager: &Arc<PayloadSessionManager>,
+        discovery: &crate::application::payload_session::DiscoverySessionHandle,
+        root: &std::path::Path,
+        name: &str,
+        computed_hash: &str,
+    ) -> crate::application::payload_session::AcquiredPayloadHandle {
+        let source = root.join("source").join(name);
         fs::create_dir_all(&source).unwrap();
         fs::write(
             source.join("SKILL.md"),
-            b"---\nname: demo\ndescription: Demo\n---\nbody",
+            format!("---\nname: {name}\ndescription: {name}\n---\nbody"),
         )
         .unwrap();
         let payload = build_skill_payload(&source).unwrap();
-        let payload_id = payload.payload_id.clone();
-        let manager = Arc::new(PayloadSessionManager::in_memory(
-            PayloadSessionLimits {
-                ttl_ms: 60_000,
-                max_sessions: 4,
-                max_bytes: 1_000_000,
-            },
-            || 1_000,
-        ));
-        let discovery = manager
-            .discover(EnvironmentRef::Native, "source-fingerprint")
-            .await
-            .unwrap();
-        let handle = manager
+        manager
             .acquire_payload_with_metadata(
-                &discovery,
-                "skills/demo",
+                discovery,
+                &format!("skills/{name}"),
                 payload,
                 PayloadPlanningMetadata {
-                    skill_name: "demo".to_string(),
-                    install_dir_name: "demo".to_string(),
+                    skill_name: name.to_string(),
+                    install_dir_name: name.to_string(),
                     source: "/tmp/local-skills".to_string(),
                     source_type: "local".to_string(),
                     source_url: None,
                     ref_name: None,
-                    skill_path: "skills/demo".to_string(),
+                    skill_path: format!("skills/{name}"),
                     plugin_name: None,
-                    computed_hash: "cli-computed-hash".to_string(),
+                    computed_hash: computed_hash.to_string(),
                     upstream_revision: None,
                     well_known: None,
                 },
             )
             .await
-            .unwrap();
-        let context = SkillLocationRef {
-            environment: EnvironmentRef::Native,
-            scope: SkillLocation::Global,
-        };
-        let private_root = physical_root.join(".custom/skills");
-        let facts = ScopePlanningSnapshot {
-            resolved_context: ResolvedContext {
-                context: context.clone(),
-                project: None,
-                home: locator(&physical_root),
-                skill_root: locator(&canonical_root),
-                lock: locator(&physical_root.join(".agents/.skill-lock.json")),
-            },
-            agent_runtime: runtime(private_root.to_string_lossy().as_ref()),
-            revisions: RuntimeRevisions {
-                registry: "registry-1".to_string(),
-                environment: "environment-1".to_string(),
-                context: ContextSnapshotRevision::parse("context-v1-install").unwrap(),
-            },
-            lock_schema: LockSchema::Global,
-            lock_document: LosslessLockDocument::empty(LockSchema::Global),
-            eve_targets: Vec::new(),
-        };
-        let target_resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
-        let agent_selection = test_submission_for_agents(
-            &context,
-            &facts.agent_runtime,
-            &facts.eve_targets,
-            &facts.resolved_context.skill_root,
-            &target_resolver,
-            &["custom-private"],
-            InstallMode::Symlink,
-        )
-        .await;
-        let planner = ConcreteInstallPlanner::new(
-            Facts(facts),
-            target_resolver,
-            Arc::clone(&manager),
-            || "2026-07-18T00:00:00.000Z".to_string(),
-            Arc::new(EmptyLibraryCandidateSource),
-        );
-        let request = InstallRequest {
-            context,
-            source: "owner/repo".to_string(),
-            discovery_session: discovery,
-            payloads: vec![handle.clone()],
-            skills: vec!["demo".to_string()],
-            agent_selection,
-            acknowledge_redirect: true,
-        };
+            .unwrap()
+    }
 
-        let preview_lease = manager.pin_verified(&handle).await.unwrap();
-        let preview = planner
-            .preview(InstallOperation::Install, &request, vec![preview_lease])
+    #[tokio::test]
+    async fn planner_builds_canonical_private_and_lock_as_one_unit() {
+        let fixture = MultiSkillInstallFixture::new().await;
+        let preview = fixture
+            .planner
+            .preview(
+                InstallOperation::Install,
+                &fixture.request,
+                fixture.leases().await,
+            )
             .await
             .unwrap();
-        let execute_lease = manager.pin_verified(&handle).await.unwrap();
-        let (token, plan) = planner
-            .rebuild(InstallOperation::Install, &request, vec![execute_lease])
+        let (token, plan) = fixture
+            .planner
+            .rebuild(
+                InstallOperation::Install,
+                &fixture.request,
+                fixture.leases().await,
+            )
             .await
             .unwrap();
         let InstallPreviewOutcome::Ready {
             preview: repair_preview,
-        } = planner
+        } = fixture
+            .planner
             .preview(
                 InstallOperation::Repair,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
+                &fixture.request,
+                fixture.leases().await,
             )
             .await
             .unwrap()
         else {
             panic!("expected ready repair preview");
         };
-        let (repair_token, repair_plan) = planner
+        let (repair_token, repair_plan) = fixture
+            .planner
             .rebuild(
                 InstallOperation::Repair,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
+                &fixture.request,
+                fixture.leases().await,
             )
             .await
             .unwrap();
@@ -978,20 +1164,20 @@ mod tests {
         assert_eq!(repair_preview.token, repair_token);
         assert_eq!(repair_plan.kind, MutationKind::Repair);
         assert_ne!(preview.token, repair_preview.token);
-        assert_eq!(preview.skills.len(), 1);
-        assert_eq!(plan.payloads.len(), 1);
-        assert_eq!(plan.units.len(), 1);
+        assert_eq!(preview.skills.len(), 2);
+        assert_eq!(plan.payloads.len(), 2);
+        assert_eq!(plan.units.len(), 2);
         let unit = &plan.units[0];
         let canonical = unit.primary_entry.as_ref().unwrap();
         assert_eq!(
             canonical.destination.native_path,
-            canonical_root.join("demo").to_string_lossy()
+            fixture.canonical_root.join("demo").to_string_lossy()
         );
         assert!(canonical.reader_agent_ids.is_empty());
         assert_eq!(unit.additional_entries.len(), 1);
         assert_eq!(
             unit.additional_entries[0].destination.native_path,
-            private_root.join("demo").to_string_lossy()
+            fixture.private_root.join("demo").to_string_lossy()
         );
         assert!(matches!(
             unit.additional_entries[0].action,
@@ -1006,7 +1192,26 @@ mod tests {
             lock.replacement().unwrap()["skillFolderHash"],
             "cli-computed-hash"
         );
-        assert_ne!(payload_id.as_str(), "cli-computed-hash");
+        assert_ne!(fixture.payload_id, "cli-computed-hash");
+    }
+
+    #[tokio::test]
+    async fn multi_skill_planner_batches_candidates_and_option_targets() {
+        let fixture = MultiSkillInstallFixture::new().await;
+
+        fixture
+            .planner
+            .preview(
+                InstallOperation::Install,
+                &fixture.request,
+                fixture.leases().await,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fixture.single_candidate_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.batch_candidate_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.option_resolve_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

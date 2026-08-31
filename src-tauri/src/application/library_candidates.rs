@@ -292,6 +292,20 @@ pub(crate) trait LibraryCandidateSource: Send + Sync {
         context: &'a SkillLocationRef,
         skill: &'a SkillDirectoryName,
     ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, AppError>>;
+
+    fn load_candidate_sets<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+        skills: &'a [SkillDirectoryName],
+    ) -> LibraryCandidateFuture<'a, Result<Vec<LibraryCandidateSnapshot>, AppError>> {
+        Box::pin(async move {
+            let mut snapshots = Vec::with_capacity(skills.len());
+            for skill in skills {
+                snapshots.push(self.load_candidates(context, skill).await?);
+            }
+            Ok(snapshots)
+        })
+    }
 }
 
 pub(crate) struct RepositoryLibraryCandidateSource {
@@ -318,6 +332,22 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
         skill: &'a SkillDirectoryName,
     ) -> LibraryCandidateFuture<'a, Result<LibraryCandidateSnapshot, AppError>> {
         Box::pin(async move {
+            self.load_candidate_sets(context, std::slice::from_ref(skill))
+                .await?
+                .pop()
+                .ok_or(AppError::StaleTarget)
+        })
+    }
+
+    fn load_candidate_sets<'a>(
+        &'a self,
+        context: &'a SkillLocationRef,
+        skills: &'a [SkillDirectoryName],
+    ) -> LibraryCandidateFuture<'a, Result<Vec<LibraryCandidateSnapshot>, AppError>> {
+        Box::pin(async move {
+            if skills.is_empty() {
+                return Ok(Vec::new());
+            }
             let record = self.repository.load_application(context).await?;
             if record.pending_operation.is_some() {
                 return Err(AppError::MutationBusy);
@@ -327,31 +357,41 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
                 crate::application::mutation::plan::stable_digest(&(&record.current, &catalog))?;
             let index = LibraryCatalogMemberIndex::build(&catalog)
                 .map_err(candidate_configuration_error)?;
-            let mut grouped = index
+            let grouped = index
                 .members_for(&record.current.ordered_library_ids)
                 .map_err(candidate_configuration_error)?;
-            let members = grouped.remove(skill).unwrap_or_default();
-            let candidates = ResolvedLibraryCandidateIndex::load(
+            let member_groups = skills
+                .iter()
+                .map(|skill| grouped.get(skill).cloned().unwrap_or_default())
+                .collect::<Vec<_>>();
+            let members = member_groups.iter().flatten().cloned().collect::<Vec<_>>();
+            let candidate_index = ResolvedLibraryCandidateIndex::load(
                 self.repository.as_ref(),
                 self.targets.as_ref(),
                 context,
                 &members,
             )
-            .await?
-            .candidates_for(&members)?;
-            let candidates = LibraryCandidateSet::for_skill(
-                &context.environment,
-                skill,
-                candidates.clone(),
-                candidates,
-            )
-            .map_err(candidate_configuration_error)?;
-            LibraryCandidateSnapshot::new(
-                evidence_digest,
-                record.current.selected_agent_ids,
-                candidates,
-            )
-            .map_err(candidate_configuration_error)
+            .await?;
+            skills
+                .iter()
+                .zip(member_groups)
+                .map(|(skill, members)| {
+                    let candidates = candidate_index.candidates_for(&members)?;
+                    let candidates = LibraryCandidateSet::for_skill(
+                        &context.environment,
+                        skill,
+                        candidates.clone(),
+                        candidates,
+                    )
+                    .map_err(candidate_configuration_error)?;
+                    LibraryCandidateSnapshot::new(
+                        evidence_digest.clone(),
+                        record.current.selected_agent_ids.clone(),
+                        candidates,
+                    )
+                    .map_err(candidate_configuration_error)
+                })
+                .collect()
         })
     }
 }
@@ -442,6 +482,7 @@ fn candidate_configuration_error(error: impl std::fmt::Debug) -> AppError {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -454,7 +495,7 @@ mod tests {
         LibraryCatalog, LibraryId, LibrarySkillRecord, SkillLibraryRecord, LIBRARY_SCHEMA_VERSION,
     };
     use crate::core::agent_definition::AgentId;
-    use crate::environment::planning::RuntimeTargetFactResolver;
+    use crate::environment::planning::{RuntimeTargetFactResolver, TargetFactFuture};
     use crate::environment::types::{
         EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
     };
@@ -462,6 +503,25 @@ mod tests {
 
     fn targets() -> RuntimeTargetFactResolver {
         RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()))
+    }
+
+    #[derive(Clone)]
+    struct CountingTargets {
+        inner: RuntimeTargetFactResolver,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl TargetFactResolver for CountingTargets {
+        fn resolve<'a>(
+            &'a self,
+            context: &'a SkillLocationRef,
+            logical_destinations: &'a [ResourceLocator],
+            cancellation: Option<crate::core::mutation::CancellationSignal>,
+        ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner
+                .resolve(context, logical_destinations, cancellation)
+        }
     }
 
     #[test]
@@ -597,7 +657,7 @@ mod tests {
     struct MemoryRepository {
         record: LibraryApplicationRecord,
         catalog: LibraryCatalog,
-        locator_root: PathBuf,
+        locator_root: Option<PathBuf>,
         locator_requests: Mutex<Vec<(LibraryId, String)>>,
     }
 
@@ -635,6 +695,8 @@ mod tests {
                     environment: context.environment.clone(),
                     native_path: self
                         .locator_root
+                        .as_ref()
+                        .expect("test must fail before resolving a Library member locator")
                         .join(library_id.as_str())
                         .join("skills")
                         .join(install_dir_name)
@@ -771,7 +833,7 @@ mod tests {
                 ],
                 extra: serde_json::Map::new(),
             },
-            locator_root,
+            locator_root: Some(locator_root),
             locator_requests: Mutex::new(Vec::new()),
         });
         let source = RepositoryLibraryCandidateSource::new(repository.clone(), targets());
@@ -818,6 +880,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repository_source_loads_multiple_skill_candidates_with_one_projection() {
+        let temp = tempfile::tempdir().unwrap();
+        let locator_root = temp.path().join("libraries");
+        for skill in ["alpha", "beta"] {
+            std::fs::create_dir_all(locator_root.join("library-one/skills").join(skill)).unwrap();
+        }
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let library_id = LibraryId::parse("library-one");
+        let repository = Arc::new(MemoryRepository {
+            record: LibraryApplicationRecord {
+                schema_version:
+                    crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
+                target: context.clone(),
+                current: LibraryApplicationState {
+                    ordered_library_ids: vec![library_id.clone()],
+                    selected_agent_ids: Vec::new(),
+                },
+                pending_operation: None,
+            },
+            catalog: LibraryCatalog {
+                schema_version: LIBRARY_SCHEMA_VERSION,
+                libraries: vec![SkillLibraryRecord {
+                    id: library_id,
+                    name: "Library One".to_string(),
+                    skills: ["alpha", "beta"]
+                        .into_iter()
+                        .map(|name| LibrarySkillRecord {
+                            name: name.to_string(),
+                            description: String::new(),
+                            source_record: serde_json::json!({}),
+                            content_manifest_hash: format!("manifest-{name}"),
+                            updated_at: None,
+                            extra: serde_json::Map::new(),
+                        })
+                        .collect(),
+                    extra: serde_json::Map::new(),
+                }],
+                extra: serde_json::Map::new(),
+            },
+            locator_root: Some(locator_root),
+            locator_requests: Mutex::new(Vec::new()),
+        });
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source = RepositoryLibraryCandidateSource::new(
+            repository,
+            CountingTargets {
+                inner: targets(),
+                calls: Arc::clone(&calls),
+            },
+        );
+        let skills = [
+            SkillDirectoryName::try_from("alpha").unwrap(),
+            SkillDirectoryName::try_from("beta").unwrap(),
+        ];
+
+        let snapshots = source.load_candidate_sets(&context, &skills).await.unwrap();
+
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn repository_source_rejects_one_library_with_two_names_for_the_same_directory() {
         let context = SkillLocationRef {
             environment: EnvironmentRef::Native,
@@ -853,7 +980,7 @@ mod tests {
                 }],
                 extra: serde_json::Map::new(),
             },
-            locator_root: PathBuf::from("/libraries"),
+            locator_root: None,
             locator_requests: Mutex::new(Vec::new()),
         });
         let source = RepositoryLibraryCandidateSource::new(repository, targets());
@@ -896,7 +1023,7 @@ mod tests {
                 libraries: Vec::new(),
                 extra: serde_json::Map::new(),
             },
-            locator_root: PathBuf::from("/libraries"),
+            locator_root: None,
             locator_requests: Mutex::new(Vec::new()),
         });
         let source = RepositoryLibraryCandidateSource::new(repository, targets());
