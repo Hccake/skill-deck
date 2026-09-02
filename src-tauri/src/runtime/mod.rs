@@ -156,6 +156,7 @@ impl RuntimeServiceGraph {
         recovery_root: std::path::PathBuf,
         library_root: std::path::PathBuf,
         agents: ManagedAgentRegistry,
+        worker_artifact_directory: Option<std::path::PathBuf>,
     ) -> Result<Self, AppError> {
         let config = crate::core::read_config()?;
         let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
@@ -163,9 +164,10 @@ impl RuntimeServiceGraph {
         let http = network_services.http_client();
         let download = download::RuntimeDownloadAccess::new(http.clone());
         let git_source = network_services.git_source();
-        let wsl = Arc::new(WslRuntime::new_with_support(
+        let wsl = Arc::new(WslRuntime::new_with_worker_artifact_directory(
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
+            worker_artifact_directory,
         ));
         let connection_probe = network_connection::RuntimeNetworkConnectionProbe::new(wsl.clone());
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;

@@ -320,7 +320,10 @@ pub enum AppError {
     WslOutputLimitExceeded { stream: String, limit: u32 },
 
     #[error("WSL command failed with exit code {exit_code:?}: {stderr}")]
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[allow(
+        dead_code,
+        reason = "保留已发布的 AppError IPC 形状；WSL 业务 shell 已由 typed Worker request 替代"
+    )]
     WslCommandFailed {
         #[serde(rename = "exitCode")]
         exit_code: Option<i32>,

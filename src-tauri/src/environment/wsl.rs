@@ -2,9 +2,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use specta::Type;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::time::timeout;
@@ -21,6 +23,16 @@ use crate::error::AppError;
 
 pub mod operations;
 pub(crate) mod protocol;
+mod worker;
+
+#[cfg(target_os = "windows")]
+fn wsl_command() -> tokio::process::Command {
+    let executable = std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .map(|root| root.join("System32").join("wsl.exe"))
+        .unwrap_or_else(|| std::path::PathBuf::from("wsl.exe"));
+    tokio_command(executable)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +54,7 @@ pub(crate) struct WslSession {
 struct CachedWslSession {
     generation: u64,
     session: WslSession,
+    worker: Option<worker::WorkerSession>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,13 +110,7 @@ pub(crate) struct WslRuntime {
     listener: Arc<Mutex<Option<EnvironmentRuntimeListener>>>,
     quiescence: Arc<Notify>,
     source_retirement: Arc<Notify>,
-    deferred_source_cleanups: Arc<Mutex<Vec<WslSourceCleanupIntent>>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WslSourceCleanupIntent {
-    distro_name: String,
-    native_root: String,
+    worker_artifact_directory: Option<Arc<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -147,6 +154,14 @@ impl WslRuntime {
     }
 
     pub fn new_with_support(supported: bool, wsl_integration_enabled: bool) -> Self {
+        Self::new_with_worker_artifact_directory(supported, wsl_integration_enabled, None)
+    }
+
+    pub fn new_with_worker_artifact_directory(
+        supported: bool,
+        wsl_integration_enabled: bool,
+        worker_artifact_directory: Option<PathBuf>,
+    ) -> Self {
         Self {
             state: Arc::new(Mutex::new(WslRuntimeState::new(
                 supported,
@@ -156,8 +171,17 @@ impl WslRuntime {
             listener: Arc::new(Mutex::new(None)),
             quiescence: Arc::new(Notify::new()),
             source_retirement: Arc::new(Notify::new()),
-            deferred_source_cleanups: Arc::new(Mutex::new(Vec::new())),
+            worker_artifact_directory: worker_artifact_directory.map(Arc::new),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_wsl_test() -> Self {
+        Self::new_with_worker_artifact_directory(
+            true,
+            true,
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/wsl-worker/current")),
+        )
     }
 
     pub fn wsl_integration_enabled(&self) -> bool {
@@ -168,6 +192,18 @@ impl WslRuntime {
                 .capability,
             WslCapabilityState::Enabled | WslCapabilityState::Disabling
         )
+    }
+
+    fn worker_artifact_directory(&self, distro_name: &str) -> Result<&std::path::Path, AppError> {
+        self.worker_artifact_directory
+            .as_ref()
+            .map(|directory| directory.as_path())
+            .ok_or_else(|| AppError::EnvironmentUnavailable {
+                environment: EnvironmentRef::Wsl {
+                    distro_name: distro_name.to_string(),
+                },
+                message: "WSL worker artifact directory is not configured".to_string(),
+            })
     }
 
     #[cfg(test)]
@@ -314,35 +350,52 @@ impl WslRuntime {
         self.discover_with(discover).await
     }
 
-    async fn connect_with<C, CFut>(
-        &self,
-        distro_name: &str,
-        mut connector: C,
-    ) -> Result<WslSession, AppError>
-    where
-        C: FnMut(String) -> CFut,
-        CFut: Future<Output = Result<WslSession, AppError>>,
-    {
+    pub async fn connect(&self, distro_name: &str) -> Result<WslSession, AppError> {
         let expected_cycle = self.enabled_cycle(distro_name)?;
         let reconnect_lock = self.reconnect_lock(distro_name);
         let _reconnect = reconnect_lock.lock().await;
         let permit = self.acquire_wsl_access_for_cycle(distro_name, Some(expected_cycle))?;
-        let mut session = connector(distro_name.to_string()).await?;
-        self.insert_with_permit(&mut session, &permit)?;
+        #[cfg(target_os = "windows")]
+        ensure_wsl2_candidate(
+            distro_name,
+            &discover_wsl_distributions().await.map_err(|error| {
+                AppError::EnvironmentUnavailable {
+                    environment: EnvironmentRef::Wsl {
+                        distro_name: distro_name.to_string(),
+                    },
+                    message: error.to_string(),
+                }
+            })?,
+        )?;
+        let mut session = connect_wsl_environment(distro_name).await?;
+        let worker =
+            match worker::connect_worker(&session, self.worker_artifact_directory(distro_name)?)
+                .await
+            {
+                Ok(worker) => worker,
+                Err(error) => {
+                    self.publish_connect_failure_if_cycle(
+                        distro_name,
+                        permit.capability_revision,
+                        error.clone(),
+                    );
+                    return Err(error);
+                }
+            };
+        let worker_closed = worker.closed_receiver();
+        self.insert_with_permit(&mut session, &permit, Some(worker))?;
+        self.monitor_worker(
+            distro_name.to_string(),
+            session.runtime_generation,
+            worker_closed,
+        );
         Ok(session)
-    }
-
-    pub async fn connect(&self, distro_name: &str) -> Result<WslSession, AppError> {
-        self.connect_with(distro_name, |distro_name| async move {
-            connect_wsl_environment(&distro_name).await
-        })
-        .await
     }
 
     #[cfg(test)]
     pub(crate) fn insert(&self, mut session: WslSession) {
         if let Ok(permit) = self.acquire_wsl_access(&session.distro_name) {
-            let _ = self.insert_with_permit(&mut session, &permit);
+            let _ = self.insert_with_permit(&mut session, &permit, None);
         }
     }
 
@@ -350,6 +403,7 @@ impl WslRuntime {
         &self,
         session: &mut WslSession,
         permit: &WslAccessPermit,
+        worker: Option<worker::WorkerSession>,
     ) -> Result<(), AppError> {
         let distro_name = session.distro_name.clone();
         let key = EnvironmentKey::wsl(&distro_name);
@@ -376,6 +430,7 @@ impl WslRuntime {
             CachedWslSession {
                 generation,
                 session: session.clone(),
+                worker,
             },
         );
         state.runtime.insert(
@@ -533,6 +588,104 @@ impl WslRuntime {
         }
     }
 
+    fn publish_connect_failure_if_cycle(
+        &self,
+        distro_name: &str,
+        capability_revision: u64,
+        error: AppError,
+    ) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        if state.capability_revision != capability_revision
+            || state.capability != WslCapabilityState::Enabled
+        {
+            return;
+        }
+        state.next_generation = state.next_generation.saturating_add(1);
+        let revision = state.next_generation;
+        state.runtime.insert(
+            EnvironmentKey::wsl(distro_name),
+            EnvironmentRuntimeStatus {
+                revision,
+                status: EnvironmentStatus::Unavailable,
+                error: Some(error.clone()),
+            },
+        );
+        drop(state);
+        self.publish(EnvironmentRuntimeEvent {
+            capability_revision,
+            revision,
+            environment: EnvironmentRef::Wsl {
+                distro_name: distro_name.to_string(),
+            },
+            status: EnvironmentStatus::Unavailable,
+            error: Some(error),
+        });
+    }
+
+    fn monitor_worker(
+        &self,
+        distro_name: String,
+        generation: u64,
+        mut closed: tokio::sync::watch::Receiver<bool>,
+    ) {
+        let registry = self.clone();
+        tokio::spawn(async move {
+            if !*closed.borrow() && closed.changed().await.is_err() {
+                return;
+            }
+            if *closed.borrow() {
+                registry.publish_worker_closed_if_current(&distro_name, generation);
+            }
+        });
+    }
+
+    fn publish_worker_closed_if_current(&self, distro_name: &str, generation: u64) {
+        let error = AppError::EnvironmentUnavailable {
+            environment: EnvironmentRef::Wsl {
+                distro_name: distro_name.to_string(),
+            },
+            message: "WSL worker session closed".to_string(),
+        };
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        let key = EnvironmentKey::wsl(distro_name);
+        if state.capability != WslCapabilityState::Enabled
+            || state
+                .sessions
+                .get(&key)
+                .is_none_or(|cached| cached.generation != generation)
+        {
+            return;
+        }
+        state.sessions.remove(&key);
+        state.next_generation = state.next_generation.saturating_add(1);
+        let revision = state.next_generation;
+        state.runtime.insert(
+            key,
+            EnvironmentRuntimeStatus {
+                revision,
+                status: EnvironmentStatus::Unavailable,
+                error: Some(error.clone()),
+            },
+        );
+        let capability_revision = state.capability_revision;
+        drop(state);
+        self.publish(EnvironmentRuntimeEvent {
+            capability_revision,
+            revision,
+            environment: EnvironmentRef::Wsl {
+                distro_name: distro_name.to_string(),
+            },
+            status: EnvironmentStatus::Unavailable,
+            error: Some(error),
+        });
+    }
+
     async fn get_or_connect_using<C, CFut>(
         &self,
         distro_name: &str,
@@ -556,7 +709,7 @@ impl WslRuntime {
             return Ok((cached, permit));
         }
         let mut session = connector(distro_name.to_string()).await?;
-        self.insert_with_permit(&mut session, &permit)?;
+        self.insert_with_permit(&mut session, &permit, None)?;
         self.get_cached(distro_name)
             .map(|cached| (cached, permit))
             .ok_or_else(|| AppError::EnvironmentUnavailable {
@@ -600,8 +753,6 @@ impl WslRuntime {
         let (initial, initial_access) = self
             .get_or_connect_using(distro_name, expected_cycle, &mut connector)
             .await?;
-        self.reconcile_deferred_source_cleanups(&initial.session)
-            .await;
         match operation(initial.session.clone()).await {
             Ok(result) => Ok(result),
             Err(AppError::EnvironmentUnavailable { .. }) => {
@@ -624,7 +775,7 @@ impl WslRuntime {
                             }
                             Err(error) => return Err(error),
                         };
-                        self.insert_with_permit(&mut session, &access)?;
+                        self.insert_with_permit(&mut session, &access, None)?;
                         self.get_cached(distro_name).ok_or_else(|| {
                             AppError::EnvironmentUnavailable {
                                 environment: EnvironmentRef::Wsl {
@@ -651,43 +802,6 @@ impl WslRuntime {
                 result
             }
             Err(error) => Err(error),
-        }
-    }
-
-    async fn reconcile_deferred_source_cleanups(&self, session: &WslSession) {
-        let pending = {
-            let mut intents = self
-                .deferred_source_cleanups
-                .lock()
-                .expect("WSL cleanup queue lock poisoned");
-            let mut pending = Vec::new();
-            let mut retained = Vec::new();
-            for intent in intents.drain(..) {
-                if intent
-                    .distro_name
-                    .eq_ignore_ascii_case(&session.distro_name)
-                {
-                    pending.push(intent);
-                } else {
-                    retained.push(intent);
-                }
-            }
-            *intents = retained;
-            pending
-        };
-        for intent in pending {
-            if crate::environment::wsl::operations::source_acquisition::cleanup_wsl_source(
-                session,
-                &intent.native_root,
-            )
-            .await
-            .is_err()
-            {
-                self.deferred_source_cleanups
-                    .lock()
-                    .expect("WSL cleanup queue lock poisoned")
-                    .push(intent);
-            }
         }
     }
 
@@ -736,15 +850,47 @@ impl WslWorkspace {
         &self.distro_name
     }
 
-    pub(crate) fn defer_source_cleanup(&self, native_root: String) {
-        self.registry
-            .deferred_source_cleanups
-            .lock()
-            .expect("WSL cleanup queue lock poisoned")
-            .push(WslSourceCleanupIntent {
-                distro_name: self.distro_name.clone(),
-                native_root,
+    pub(crate) fn filesystem_inspector(
+        &self,
+    ) -> Arc<dyn crate::environment::inspection::FilesystemInspector> {
+        Arc::new(operations::inspection::WslInspector::new(self.clone()))
+    }
+
+    pub(crate) fn payload_storage(
+        &self,
+    ) -> Arc<dyn crate::application::payload_session::PayloadSessionStorage> {
+        Arc::new(operations::acquire::WslPayloadSessionStorage::new(
+            self.clone(),
+        ))
+    }
+
+    pub(crate) fn defer_worker_source_release(
+        &self,
+        handle: operations::source_acquisition::WorkerSourceHandle,
+    ) {
+        let workspace = self.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let Some(cached) = workspace.registry.get_cached(&workspace.distro_name) else {
+                    return;
+                };
+                if cached.generation != handle.generation {
+                    return;
+                }
+                let Some(worker) = cached.worker else {
+                    return;
+                };
+                let _ = worker
+                    .request_control_with_cancellation(
+                        environment_protocol::Message::ReleaseSource {
+                            source_id: handle.id,
+                        },
+                        std::time::Duration::from_secs(10),
+                        None,
+                    )
+                    .await;
             });
+        }
     }
 
     pub(crate) fn register_source_owner(&self) -> Result<(), AppError> {
@@ -779,15 +925,6 @@ impl WslWorkspace {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn deferred_source_cleanup_count(&self) -> usize {
-        self.registry
-            .deferred_source_cleanups
-            .lock()
-            .expect("WSL cleanup queue lock poisoned")
-            .len()
-    }
-
     pub(crate) async fn with_access<T, O, OFut>(&self, operation: O) -> Result<T, AppError>
     where
         O: FnOnce() -> OFut,
@@ -799,19 +936,485 @@ impl WslWorkspace {
         operation().await
     }
 
-    async fn with_session_retry<T, O, OFut>(&self, operation: O) -> Result<T, AppError>
+    pub(crate) async fn inspect_filesystem(
+        &self,
+        request: environment_protocol::InspectionRequest,
+    ) -> Result<environment_protocol::InspectionResponse, AppError> {
+        self.request_worker_payload(environment_protocol::Message::InspectFilesystem { request })
+            .await
+    }
+
+    pub(crate) async fn map_host_path(
+        &self,
+        path: String,
+        cancellation: Option<crate::core::mutation::CancellationSignal>,
+    ) -> Result<String, AppError> {
+        if path.is_empty() || path.contains('\0') {
+            return Err(AppError::Validation {
+                field: Some("bridgePath".to_string()),
+                message: "Host bridge path is invalid".to_string(),
+            });
+        }
+        let message = environment_protocol::Message::MapHostPaths {
+            request: environment_protocol::MapHostPathsRequest {
+                paths: vec![path.clone()],
+                deadline_millis: 10_000,
+            },
+        };
+        let response: environment_protocol::MapHostPathsResponse = match cancellation {
+            Some(cancellation) => {
+                self.request_worker_payload_with_cancellation(message, cancellation)
+                    .await
+            }
+            None => self.request_worker_payload(message).await,
+        }
+        .map_err(|error| match error {
+            AppError::CapabilityUnavailable { capability, .. }
+                if capability == "wslPathMapping" =>
+            {
+                AppError::StorageMappingUnsupported {
+                    path: path.clone(),
+                    environment: EnvironmentRef::Wsl {
+                        distro_name: self.distro_name.clone(),
+                    },
+                }
+            }
+            error => error,
+        })?;
+        match response.mapped.as_slice() {
+            [mapped] if mapped.starts_with('/') && !mapped.contains('\0') => Ok(mapped.clone()),
+            _ => Err(AppError::ConfigurationCorrupted {
+                message: "invalid WSL path mapping response".to_string(),
+            }),
+        }
+    }
+
+    pub(crate) async fn map_path_to_windows(
+        &self,
+        path: String,
+    ) -> Result<Option<String>, AppError> {
+        if !path.starts_with('/') || path.contains('\0') {
+            return Err(AppError::Validation {
+                field: Some("storagePath".to_string()),
+                message: "WSL storage path must be absolute".to_string(),
+            });
+        }
+        let response: environment_protocol::MapWindowsPathsResponse = self
+            .request_worker_payload(environment_protocol::Message::MapPathsToWindows {
+                request: environment_protocol::MapWindowsPathsRequest {
+                    paths: vec![path],
+                    deadline_millis: 10_000,
+                },
+            })
+            .await?;
+        match response.mapped.as_slice() {
+            [mapped] => Ok(mapped.clone()),
+            _ => Err(AppError::ConfigurationCorrupted {
+                message: "invalid WSL Windows path mapping response".to_string(),
+            }),
+        }
+    }
+
+    pub(crate) async fn request_worker_payload<T>(
+        &self,
+        message: environment_protocol::Message,
+    ) -> Result<T, AppError>
     where
-        O: FnMut(WslSession) -> OFut,
-        OFut: Future<Output = Result<T, AppError>>,
+        T: serde::de::DeserializeOwned,
     {
-        self.registry
-            .with_session_retry_in_cycle(
+        let payload = self.request_worker_bytes(message, None).await?;
+        environment_protocol::decode_payload(&payload).map_err(|error| {
+            AppError::ConfigurationCorrupted {
+                message: format!("invalid WSL Worker response payload: {error}"),
+            }
+        })
+    }
+
+    pub(crate) async fn request_worker_payload_with_cancellation<T>(
+        &self,
+        message: environment_protocol::Message,
+        cancellation: crate::core::mutation::CancellationSignal,
+    ) -> Result<T, AppError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let payload = self
+            .request_worker_bytes(message, Some(cancellation))
+            .await?;
+        environment_protocol::decode_payload(&payload).map_err(|error| {
+            AppError::ConfigurationCorrupted {
+                message: format!("invalid WSL Worker response payload: {error}"),
+            }
+        })
+    }
+
+    pub(crate) async fn request_worker_control_once(
+        &self,
+        message: environment_protocol::Message,
+        cancellation: Option<crate::core::mutation::CancellationSignal>,
+        limit: std::time::Duration,
+    ) -> Result<(u64, environment_protocol::Message), AppError> {
+        let (worker, generation, _access) = self.worker_for_cycle().await?;
+        let result = worker
+            .request_control_with_cancellation(message, limit, cancellation)
+            .await;
+        if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
+            self.registry.publish_unavailable_if_current(
                 &self.distro_name,
-                Some(self.capability_cycle),
-                |distro_name| async move { connect_wsl_environment(&distro_name).await },
-                operation,
+                generation,
+                error.clone(),
+            );
+        }
+        result.map(|message| (generation, message))
+    }
+
+    pub(crate) async fn request_worker_control_for_generation(
+        &self,
+        generation: u64,
+        message: environment_protocol::Message,
+        cancellation: Option<crate::core::mutation::CancellationSignal>,
+        limit: std::time::Duration,
+    ) -> Result<environment_protocol::Message, AppError> {
+        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        self.require_worker_generation(generation, current_generation)?;
+        let result = worker
+            .request_control_with_cancellation(message, limit, cancellation)
+            .await;
+        if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
+            self.registry.publish_unavailable_if_current(
+                &self.distro_name,
+                current_generation,
+                error.clone(),
+            );
+        }
+        result
+    }
+
+    pub(crate) async fn request_worker_payload_for_generation<T>(
+        &self,
+        generation: u64,
+        message: environment_protocol::Message,
+        max_payload_bytes: usize,
+        cancellation: Option<crate::core::mutation::CancellationSignal>,
+        limit: std::time::Duration,
+    ) -> Result<T, AppError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        self.require_worker_generation(generation, current_generation)?;
+        let result = worker
+            .request_payload_with_limit(message, limit, max_payload_bytes, cancellation)
+            .await;
+        if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
+            self.registry.publish_unavailable_if_current(
+                &self.distro_name,
+                current_generation,
+                error.clone(),
+            );
+        }
+        let payload = result?;
+        environment_protocol::decode_payload(&payload).map_err(|error| {
+            AppError::ConfigurationCorrupted {
+                message: format!("invalid WSL Worker response payload: {error}"),
+            }
+        })
+    }
+
+    pub(crate) async fn request_worker_payload_once<T>(
+        &self,
+        message: environment_protocol::Message,
+        max_payload_bytes: usize,
+        cancellation: Option<crate::core::mutation::CancellationSignal>,
+        limit: std::time::Duration,
+    ) -> Result<(u64, T), AppError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let (worker, generation, _access) = self.worker_for_cycle().await?;
+        let result = worker
+            .request_payload_with_limit(message, limit, max_payload_bytes, cancellation)
+            .await;
+        if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
+            self.registry.publish_unavailable_if_current(
+                &self.distro_name,
+                generation,
+                error.clone(),
+            );
+        }
+        let payload = result?;
+        let decoded = environment_protocol::decode_payload(&payload).map_err(|error| {
+            AppError::ConfigurationCorrupted {
+                message: format!("invalid WSL Worker response payload: {error}"),
+            }
+        })?;
+        Ok((generation, decoded))
+    }
+
+    pub(crate) async fn request_worker_bytes_for_generation(
+        &self,
+        generation: u64,
+        message: environment_protocol::Message,
+        max_payload_bytes: usize,
+        limit: std::time::Duration,
+    ) -> Result<Vec<u8>, AppError> {
+        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        self.require_worker_generation(generation, current_generation)?;
+        worker
+            .request_payload_with_limit(message, limit, max_payload_bytes, None)
+            .await
+    }
+
+    pub(crate) async fn send_worker_transfer_for_generation(
+        &self,
+        generation: u64,
+        transfer_id: u64,
+        payload: &[u8],
+        max_payload_bytes: usize,
+        limit: std::time::Duration,
+    ) -> Result<environment_protocol::Message, AppError> {
+        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        self.require_worker_generation(generation, current_generation)?;
+        worker
+            .send_prepared_transfer(transfer_id, payload, max_payload_bytes, limit)
+            .await
+    }
+
+    pub(crate) async fn execute_worker_mutation(
+        &self,
+        generation: u64,
+        resource_id: &str,
+        request: &environment_protocol::MutationUnitRequest,
+        cancellation: crate::core::mutation::CancellationSignal,
+    ) -> Result<environment_protocol::MutationUnitOutcome, AppError> {
+        let payload = environment_protocol::encode_payload(request).map_err(|error| {
+            AppError::ConfigurationCorrupted {
+                message: format!("failed to encode WSL Worker mutation request: {error}"),
+            }
+        })?;
+        if payload.len() > environment_protocol::MAX_MUTATION_TRANSFER_BYTES {
+            return Err(AppError::CapabilityUnavailable {
+                capability: "wslMutationRequestSize".to_string(),
+                path: None,
+            });
+        }
+        let digest = format!("sha256:{:x}", sha2::Sha256::digest(&payload));
+        let prepared = self
+            .request_worker_control_for_generation(
+                generation,
+                environment_protocol::Message::PrepareMutationUnit {
+                    resource_id: resource_id.to_string(),
+                    total_bytes: payload.len() as u64,
+                    sha256: digest,
+                },
+                Some(cancellation.clone()),
+                std::time::Duration::from_secs(10),
+            )
+            .await?;
+        let transfer_id = match prepared {
+            environment_protocol::Message::TransferReady { transfer_id } => transfer_id,
+            environment_protocol::Message::Error { code, phase, .. } => {
+                return Err(AppError::ExecutionFailed {
+                    message: format!(
+                        "WSL Worker mutation preparation failed during {phase}: {code}"
+                    ),
+                });
+            }
+            _ => {
+                return Err(AppError::ConfigurationCorrupted {
+                    message: "invalid WSL Worker mutation preparation response".to_string(),
+                });
+            }
+        };
+        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        self.require_worker_generation(generation, current_generation)?;
+        match worker
+            .send_prepared_mutation(
+                transfer_id,
+                &payload,
+                cancellation,
+                std::time::Duration::from_secs(125),
             )
             .await
+        {
+            Ok(outcome) => Ok(outcome),
+            Err(worker::MutationSessionError {
+                accepted_resource_id: Some(accepted),
+                error,
+            }) => Err(AppError::RecoveryRequired {
+                recovery_resource_id: crate::error::RecoveryResourceId::parse(accepted)
+                    .unwrap_or_else(|_| {
+                        crate::error::RecoveryResourceId::parse(resource_id.to_string())
+                            .expect("validated mutation resource ID")
+                    }),
+                message: error.to_string(),
+            }),
+            Err(worker::MutationSessionError { error, .. }) => Err(error),
+        }
+    }
+
+    fn require_worker_generation(&self, expected: u64, actual: u64) -> Result<(), AppError> {
+        if expected == actual {
+            Ok(())
+        } else {
+            Err(AppError::EnvironmentUnavailable {
+                environment: EnvironmentRef::Wsl {
+                    distro_name: self.distro_name.clone(),
+                },
+                message: "WSL Worker handle belongs to an expired session".to_string(),
+            })
+        }
+    }
+
+    async fn request_worker_bytes(
+        &self,
+        message: environment_protocol::Message,
+        cancellation: Option<crate::core::mutation::CancellationSignal>,
+    ) -> Result<Vec<u8>, AppError> {
+        for attempt in 0..=1 {
+            let (worker, generation, _access) = self.worker_for_cycle().await?;
+            let result = match &cancellation {
+                Some(cancellation) => {
+                    worker
+                        .request_payload_with_cancellation(
+                            message.clone(),
+                            std::time::Duration::from_secs(35),
+                            cancellation.clone(),
+                        )
+                        .await
+                }
+                None => {
+                    worker
+                        .request_payload(message.clone(), std::time::Duration::from_secs(35))
+                        .await
+                }
+            };
+            match result {
+                Ok(payload) => return Ok(payload),
+                Err(error @ AppError::EnvironmentUnavailable { .. }) if attempt == 0 => {
+                    self.registry.publish_unavailable_if_current(
+                        &self.distro_name,
+                        generation,
+                        error,
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("WSL Worker read retry has a fixed attempt count")
+    }
+
+    async fn worker_for_cycle(
+        &self,
+    ) -> Result<(worker::WorkerSession, u64, WslAccessPermit), AppError> {
+        let access = self
+            .registry
+            .acquire_wsl_access_for_cycle(&self.distro_name, Some(self.capability_cycle))?;
+        if let Some(cached) = self.registry.get_cached(&self.distro_name) {
+            if let Some(worker) = cached.worker {
+                return Ok((worker, cached.generation, access));
+            }
+        }
+        drop(access);
+
+        let reconnect_lock = self.registry.reconnect_lock(&self.distro_name);
+        let _reconnect = reconnect_lock.lock().await;
+        let access = self
+            .registry
+            .acquire_wsl_access_for_cycle(&self.distro_name, Some(self.capability_cycle))?;
+        if let Some(cached) = self.registry.get_cached(&self.distro_name) {
+            if let Some(worker) = cached.worker {
+                return Ok((worker, cached.generation, access));
+            }
+            self.ensure_wsl2_candidate().await?;
+            let worker = match worker::connect_worker(
+                &cached.session,
+                self.registry.worker_artifact_directory(&self.distro_name)?,
+            )
+            .await
+            {
+                Ok(worker) => worker,
+                Err(error) => {
+                    self.registry.publish_unavailable_if_current(
+                        &self.distro_name,
+                        cached.generation,
+                        error.clone(),
+                    );
+                    return Err(error);
+                }
+            };
+            let closed = worker.closed_receiver();
+            {
+                let mut state = self
+                    .registry
+                    .state
+                    .lock()
+                    .expect("environment registry lock poisoned");
+                let key = EnvironmentKey::wsl(&self.distro_name);
+                if state.capability_revision != self.capability_cycle
+                    || state.capability != WslCapabilityState::Enabled
+                {
+                    return Err(WslRuntime::disabled_error(&self.distro_name));
+                }
+                let current = state.sessions.get_mut(&key).ok_or_else(|| {
+                    AppError::EnvironmentUnavailable {
+                        environment: EnvironmentRef::Wsl {
+                            distro_name: self.distro_name.clone(),
+                        },
+                        message: "WSL session changed while connecting its Worker".to_string(),
+                    }
+                })?;
+                if current.generation != cached.generation {
+                    return Err(WslRuntime::disabled_error(&self.distro_name));
+                }
+                current.worker = Some(worker.clone());
+            }
+            self.registry
+                .monitor_worker(self.distro_name.clone(), cached.generation, closed);
+            return Ok((worker, cached.generation, access));
+        }
+
+        self.ensure_wsl2_candidate().await?;
+        let mut session = connect_wsl_environment(&self.distro_name).await?;
+        let worker = match worker::connect_worker(
+            &session,
+            self.registry.worker_artifact_directory(&self.distro_name)?,
+        )
+        .await
+        {
+            Ok(worker) => worker,
+            Err(error) => {
+                self.registry.publish_connect_failure_if_cycle(
+                    &self.distro_name,
+                    self.capability_cycle,
+                    error.clone(),
+                );
+                return Err(error);
+            }
+        };
+        let closed = worker.closed_receiver();
+        self.registry
+            .insert_with_permit(&mut session, &access, Some(worker.clone()))?;
+        let generation = session.runtime_generation;
+        self.registry
+            .monitor_worker(self.distro_name.clone(), generation, closed);
+        Ok((worker, generation, access))
+    }
+
+    async fn ensure_wsl2_candidate(&self) -> Result<(), AppError> {
+        #[cfg(target_os = "windows")]
+        ensure_wsl2_candidate(
+            &self.distro_name,
+            &discover_wsl_distributions().await.map_err(|error| {
+                AppError::EnvironmentUnavailable {
+                    environment: EnvironmentRef::Wsl {
+                        distro_name: self.distro_name.clone(),
+                    },
+                    message: error.to_string(),
+                }
+            })?,
+        )?;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -884,23 +1487,6 @@ impl WslDisableTransition {
             }
         };
         timeout(limit, wait).await.map_err(|_| ())
-    }
-
-    pub(crate) async fn flush_deferred_source_cleanups(&self) {
-        let sessions = self
-            .registry
-            .state
-            .lock()
-            .expect("environment registry lock poisoned")
-            .sessions
-            .values()
-            .map(|cached| cached.session.clone())
-            .collect::<Vec<_>>();
-        for session in sessions {
-            self.registry
-                .reconcile_deferred_source_cleanups(&session)
-                .await;
-        }
     }
 
     pub(crate) async fn wait_for_source_retirement(
@@ -997,13 +1583,25 @@ impl Drop for WslEnableTransition {
 }
 
 pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
-    let decoded = if bytes.len() >= 2 && bytes.len().is_multiple_of(2) {
+    let looks_utf16 = bytes.len() >= 2
+        && bytes.len().is_multiple_of(2)
+        && bytes
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .filter(|byte| **byte == 0)
+            .count()
+            > bytes.len() / 8;
+    let decoded = if looks_utf16 {
         let (pairs, remainder) = bytes.as_chunks::<2>();
         debug_assert!(remainder.is_empty());
-        let utf16 = pairs
+        let mut utf16 = pairs
             .iter()
             .map(|pair| u16::from_le_bytes(*pair))
             .collect::<Vec<_>>();
+        if utf16.first() == Some(&0xfeff) {
+            utf16.remove(0);
+        }
         String::from_utf16(&utf16).unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
     } else {
         String::from_utf8_lossy(bytes).into_owned()
@@ -1012,8 +1610,39 @@ pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
         .lines()
         .map(|line| line.trim_matches(['\0', '\r', ' ', '\t']))
         .filter(|line| !line.is_empty())
-        .map(str::to_string)
+        .filter_map(parse_wsl_verbose_line)
+        .filter_map(|(name, version)| (version == 2).then_some(name))
         .collect()
+}
+
+fn parse_wsl_verbose_line(line: &str) -> Option<(String, u8)> {
+    let line = line.strip_prefix('*').unwrap_or(line).trim_start();
+    let columns = line
+        .split('\t')
+        .flat_map(|column| column.split("  "))
+        .map(str::trim)
+        .filter(|column| !column.is_empty())
+        .collect::<Vec<_>>();
+    if columns.len() < 3 {
+        return None;
+    }
+    let version = columns.last()?.parse().ok()?;
+    Some((columns[0].to_string(), version))
+}
+
+fn ensure_wsl2_candidate(distro_name: &str, candidates: &[String]) -> Result<(), AppError> {
+    if candidates
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(distro_name))
+    {
+        return Ok(());
+    }
+    Err(AppError::EnvironmentUnavailable {
+        environment: EnvironmentRef::Wsl {
+            distro_name: distro_name.to_string(),
+        },
+        message: "the distribution is not an available WSL 2 environment".to_string(),
+    })
 }
 
 enum WslDiscoveryCommandOutcome {
@@ -1036,7 +1665,7 @@ fn interpret_wsl_discovery_outcome(
             Ok(Vec::new())
         }
         WslDiscoveryCommandOutcome::TimedOut => Err(AppError::EnvironmentDiscoveryFailed {
-            message: "wsl.exe --list --quiet timed out".to_string(),
+            message: "wsl.exe --list --verbose timed out".to_string(),
         }),
         WslDiscoveryCommandOutcome::SpawnFailed(error) => {
             Err(AppError::EnvironmentDiscoveryFailed {
@@ -1052,7 +1681,7 @@ fn interpret_wsl_discovery_outcome(
             let message = String::from_utf8_lossy(&stderr).trim().to_string();
             Err(AppError::EnvironmentDiscoveryFailed {
                 message: if message.is_empty() {
-                    "wsl.exe --list --quiet exited unsuccessfully".to_string()
+                    "wsl.exe --list --verbose exited unsuccessfully".to_string()
                 } else {
                     message
                 },
@@ -1106,8 +1735,8 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
 
 #[cfg(target_os = "windows")]
 async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
-    let mut command = tokio_command("wsl.exe");
-    command.args(["--list", "--quiet"]);
+    let mut command = wsl_command();
+    command.args(["--list", "--verbose"]);
     let outcome = match timeout(Duration::from_secs(10), command.output()).await {
         Err(_) => WslDiscoveryCommandOutcome::TimedOut,
         Ok(Err(error)) => WslDiscoveryCommandOutcome::SpawnFailed(error),
@@ -1128,7 +1757,7 @@ async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
 #[cfg(target_os = "windows")]
 async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppError> {
     const SCRIPT: &str = include_str!("wsl/scripts/session.sh");
-    let mut command = tokio_command("wsl.exe");
+    let mut command = wsl_command();
     command.args([
         "--distribution",
         distro_name,
@@ -1815,6 +2444,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn current_worker_closure_invalidates_the_environment() {
+        let registry = WslRuntime::default();
+        registry.insert(sample_session("Ubuntu", "alice"));
+        let generation = registry.get("Ubuntu").unwrap().runtime_generation;
+        let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
+        registry.monitor_worker("Ubuntu".to_string(), generation, closed_rx);
+
+        closed_tx.send(true).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if registry
+                    .runtime_status("Ubuntu")
+                    .is_some_and(|runtime| runtime.status == EnvironmentStatus::Unavailable)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(registry.get("Ubuntu").is_none());
+        assert!(matches!(
+            registry.runtime_status("Ubuntu").unwrap().error,
+            Some(AppError::EnvironmentUnavailable { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn concurrent_session_failures_share_one_reconnect() {
         let registry = Arc::new(WslRuntime::default());
         registry.insert(sample_session("Ubuntu", "old-user"));
@@ -1911,17 +2570,30 @@ mod tests {
     }
 
     #[test]
-    fn parses_utf16_wsl_list_and_removes_nul_and_blank_lines() {
-        let text = "Ubuntu-24.04\0\r\nDebian\0\r\n\r\n";
-        let bytes = text
+    fn parses_utf8_and_utf16_verbose_wsl_lists() {
+        let text = "  NAME              STATE           VERSION\r\n* Ubuntu-24.04      Running         2\r\n  Legacy            Stopped         1\r\n  Imported Distro   Stopped         2\r\n\r\n";
+        let utf16 = text
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>();
+        let expected = vec!["Ubuntu-24.04", "Imported Distro"];
 
-        assert_eq!(
-            parse_wsl_list_output(&bytes),
-            vec!["Ubuntu-24.04", "Debian"]
-        );
+        assert_eq!(parse_wsl_list_output(text.as_bytes()), expected);
+        assert_eq!(parse_wsl_list_output(&utf16), expected);
+    }
+
+    #[test]
+    fn connection_requires_a_discovered_wsl2_candidate() {
+        let candidates = vec!["Ubuntu".to_string(), "Debian".to_string()];
+
+        super::ensure_wsl2_candidate("ubuntu", &candidates).unwrap();
+        assert!(matches!(
+            super::ensure_wsl2_candidate("Legacy", &candidates),
+            Err(AppError::EnvironmentUnavailable {
+                environment: EnvironmentRef::Wsl { ref distro_name },
+                ..
+            }) if distro_name == "Legacy"
+        ));
     }
 
     #[test]
@@ -1999,18 +2671,27 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn bundled_session_script_reports_the_complete_session_baseline() {
+    fn bundled_session_script_reports_identity_without_business_tool_probes() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("session fixture");
         let bin = temp.path().join("bin");
-        let probe_parent = temp.path().join("probe");
         std::fs::create_dir_all(&bin).expect("fixture bin");
-        std::fs::create_dir_all(&probe_parent).expect("probe parent");
-        let flock = bin.join("flock");
-        std::fs::write(&flock, "#!/bin/sh\nexit 99\n").expect("failing flock fixture");
-        std::fs::set_permissions(&flock, std::fs::Permissions::from_mode(0o755))
-            .expect("make flock executable");
+        for command in [
+            "git",
+            "timeout",
+            "xargs",
+            "sort",
+            "sha256sum",
+            "readlink",
+            "stat",
+        ] {
+            let command_path = bin.join(command);
+            std::fs::write(&command_path, "#!/bin/sh\nexit 99\n")
+                .expect("failing business tool fixture");
+            std::fs::set_permissions(&command_path, std::fs::Permissions::from_mode(0o755))
+                .expect("make business tool fixture executable");
+        }
         let path = format!(
             "{}:{}",
             bin.display(),
@@ -2023,8 +2704,7 @@ mod tests {
                 .arg("--")
                 .arg("session")
                 .env("GROK_HOME", "/opt/grok")
-                .env("PATH", path)
-                .env("TMPDIR", &probe_parent),
+                .env("PATH", path),
             std::time::Duration::from_secs(10),
         )
         .expect("session script");
@@ -2040,154 +2720,6 @@ mod tests {
         assert!(!session.user.is_empty());
         assert!(session.home.starts_with('/'));
         assert_eq!(session.environment["GROK_HOME"], "/opt/grok");
-        assert!(
-            std::fs::read_dir(probe_parent)
-                .expect("probe parent remains readable")
-                .next()
-                .is_none(),
-            "session capability probe must clean up its temporary directory"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn bundled_session_script_rejects_each_missing_baseline_tool() {
-        use std::os::unix::fs::PermissionsExt;
-
-        for command in [
-            "git",
-            "timeout",
-            "xargs",
-            "sort",
-            "sha256sum",
-            "readlink",
-            "stat",
-        ] {
-            let temp = tempfile::tempdir().expect("temporary command directory");
-            let command_path = temp.path().join(command);
-            std::fs::write(&command_path, "#!/bin/sh\nexit 1\n").expect("write failing command");
-            std::fs::set_permissions(&command_path, std::fs::Permissions::from_mode(0o755))
-                .expect("make failing command executable");
-            let path = format!(
-                "{}:{}",
-                temp.path().display(),
-                std::env::var("PATH").unwrap_or_default()
-            );
-
-            let output = command_output_with_timeout(
-                Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(include_str!("wsl/scripts/session.sh"))
-                    .arg("--")
-                    .arg("session")
-                    .env("PATH", path),
-                std::time::Duration::from_secs(10),
-            )
-            .expect("session script");
-
-            assert!(
-                !output.status.success(),
-                "unavailable {command} must reject the WSL session"
-            );
-            assert!(
-                String::from_utf8_lossy(&output.stderr)
-                    .to_ascii_lowercase()
-                    .contains(command),
-                "{command} failure returned stderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn bundled_session_script_rejects_incompatible_baseline_behavior() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let incompatible_commands = [
-            (
-                "timeout",
-                r#"#!/bin/sh
-for argument in "$@"; do
-  [ "$argument" = "--kill-after=1s" ] && exit 64
-done
-exit 0
-"#,
-            ),
-            (
-                "xargs",
-                r#"#!/bin/sh
-for argument in "$@"; do
-  [ "$argument" = "-r" ] && exit 64
-done
-printf 'a\nb\n'
-"#,
-            ),
-            (
-                "sort",
-                r#"#!/bin/sh
-printf 'a\0b\0'
-"#,
-            ),
-            (
-                "sha256sum",
-                r#"#!/bin/sh
-[ "$#" -eq 0 ] || exit 64
-printf '%s  -\n' 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-"#,
-            ),
-            (
-                "readlink",
-                r#"#!/bin/sh
-for argument in "$@"; do
-  [ "$argument" = "--" ] && exit 64
-done
-printf '/\n'
-"#,
-            ),
-        ];
-        let mut unexpected_successes = Vec::new();
-
-        for (command, script) in incompatible_commands {
-            let temp = tempfile::tempdir().expect("temporary command directory");
-            let command_path = temp.path().join(command);
-            std::fs::write(&command_path, script).expect("write incompatible command");
-            std::fs::set_permissions(&command_path, std::fs::Permissions::from_mode(0o755))
-                .expect("make incompatible command executable");
-            let path = format!(
-                "{}:{}",
-                temp.path().display(),
-                std::env::var("PATH").unwrap_or_default()
-            );
-
-            let output = command_output_with_timeout(
-                Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(include_str!("wsl/scripts/session.sh"))
-                    .arg("--")
-                    .arg("session")
-                    .env("PATH", path),
-                std::time::Duration::from_secs(10),
-            )
-            .expect("session script");
-
-            if output.status.success() {
-                unexpected_successes.push(command);
-                continue;
-            }
-            assert!(
-                String::from_utf8_lossy(&output.stderr)
-                    .to_ascii_lowercase()
-                    .contains(command),
-                "{command} incompatibility returned stderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        assert!(
-            unexpected_successes.is_empty(),
-            "incompatible commands passed the WSL session baseline: {unexpected_successes:?}"
-        );
     }
 
     #[test]
@@ -2196,5 +2728,34 @@ printf '/\n'
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.xdg_state_home, None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    #[ignore = "requires Windows with a WSL 2 distribution"]
+    async fn real_wsl2_worker_maps_a_windows_directory_round_trip() {
+        let distro =
+            std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+        let root = tempfile::tempdir().expect("Windows path fixture");
+        let directory = root.path().join("Skill Deck 项目");
+        std::fs::create_dir(&directory).expect("create Windows path fixture");
+        let runtime = WslRuntime::for_wsl_test();
+        let workspace = runtime.workspace(&distro).expect("WSL workspace");
+
+        let mapped = workspace
+            .map_host_path(directory.to_string_lossy().into_owned(), None)
+            .await
+            .expect("map Windows path into WSL");
+        assert!(mapped.starts_with('/'));
+        let round_trip = workspace
+            .map_path_to_windows(mapped)
+            .await
+            .expect("map WSL path into Windows")
+            .expect("Windows projection");
+
+        assert_eq!(
+            std::fs::canonicalize(round_trip).expect("canonical mapped path"),
+            std::fs::canonicalize(directory).expect("canonical fixture path")
+        );
     }
 }

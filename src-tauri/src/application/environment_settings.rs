@@ -83,7 +83,6 @@ where
             });
         }
         persist(false)?;
-        transition.flush_deferred_source_cleanups().await;
         transition.commit_disabled();
     } else {
         apply_wsl_integration_setting_with(enabled, environments, quiescence_timeout, persist)
