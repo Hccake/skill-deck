@@ -671,6 +671,7 @@ mod tests {
 
         fn save_application<'a>(
             &'a self,
+            _context: &'a SkillLocationRef,
             _record: &'a LibraryApplicationRecord,
         ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
             Box::pin(async { Ok(()) })
@@ -818,7 +819,6 @@ mod tests {
             record: LibraryApplicationRecord {
                 schema_version:
                     crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
-                target: context.clone(),
                 current: LibraryApplicationState {
                     ordered_library_ids: vec![first_id.clone(), second_id.clone()],
                     selected_agent_ids: vec![agent("cursor"), agent("codex")],
@@ -895,7 +895,6 @@ mod tests {
             record: LibraryApplicationRecord {
                 schema_version:
                     crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
-                target: context.clone(),
                 current: LibraryApplicationState {
                     ordered_library_ids: vec![library_id.clone()],
                     selected_agent_ids: Vec::new(),
@@ -963,7 +962,6 @@ mod tests {
             record: LibraryApplicationRecord {
                 schema_version:
                     crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
-                target: context.clone(),
                 current: LibraryApplicationState {
                     ordered_library_ids: vec![library_id.clone()],
                     selected_agent_ids: Vec::new(),
@@ -1009,7 +1007,6 @@ mod tests {
             record: LibraryApplicationRecord {
                 schema_version:
                     crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION,
-                target: context.clone(),
                 current: current.clone(),
                 pending_operation: Some(PendingLibraryApplication {
                     operation_id: "operation-pending".to_string(),

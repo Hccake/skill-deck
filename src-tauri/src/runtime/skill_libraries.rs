@@ -12,6 +12,9 @@ use crate::application::library_application::{
     library_usage_state, LibraryApplicationFuture, LibraryApplicationRecord,
     LibraryApplicationRepository, LibraryUsageAccumulator, LIBRARY_APPLICATION_SCHEMA_VERSION,
 };
+use crate::application::payload_session::{
+    PayloadLocalSource, PayloadSessionStorage, PayloadStorageKey,
+};
 use crate::application::skill_libraries::{
     validate_catalog, CommitLibraryMemberRequest, LibraryCatalog, LibraryFuture, LibraryId,
     LibraryMemberMutation, LibraryUsage, LibraryUsageProjection, LibraryUsageProvider,
@@ -22,16 +25,12 @@ use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::skill_payload::SkillPayload;
 use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
 use crate::environment::native::entry::{materialize_payload, verify_materialized_payload};
+use crate::environment::runtime::PhysicalParentIdentity;
 use crate::environment::types::{
     EnvironmentKey, EnvironmentRef, ProjectInfo, RegisteredProject, ResourceLocator,
 };
 use crate::environment::types::{SkillLocation, SkillLocationRef};
-use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::operations::library_content::{
-    ensure_library_roots, finalize_library_catalog, prepare_library_catalog,
-    recover_library_content, remove_library as remove_wsl_library, remove_library_application,
-    replace_library_skill, stage_library_skill_deletion,
-};
+use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::storage::atomic_document::AtomicDocumentIo;
@@ -207,15 +206,9 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                         })??
                 }
                 EnvironmentRef::Wsl { distro_name } => {
-                    let distro_name = distro_name.clone();
                     self.wsl
-                        .with_session_retry(&distro_name, |session| async move {
-                            recover_wsl_library_content(&session).await?;
-                            let target = wsl_catalog_locator(&session);
-                            WslAtomicDocumentIo::from_active_session(session.clone())
-                                .read_optional(&target)
-                                .await
-                        })
+                        .workspace(distro_name)?
+                        .read_library_catalog()
                         .await?
                 }
             };
@@ -235,7 +228,6 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
         Box::pin(async move {
             let _io = self.io.acquire(environment).await;
             let bytes = serde_json::to_vec_pretty(catalog)?;
-            let catalog_hash = bytes_sha256(&bytes);
             match environment {
                 EnvironmentRef::Native => {
                     let root = self.native_root.clone();
@@ -253,37 +245,27 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     })?
                 }
                 EnvironmentRef::Wsl { distro_name } => {
-                    let distro_name = distro_name.clone();
-                    self.wsl
-                        .with_session_retry(&distro_name, move |session| {
-                            let bytes = bytes.clone();
-                            let catalog_hash = catalog_hash.clone();
-                            let library_ids = catalog
-                                .libraries
-                                .iter()
-                                .map(|library| library.id.as_str().to_string())
-                                .collect::<Vec<_>>();
-                            async move {
-                                let result = async {
-                                    recover_wsl_library_content(&session).await?;
-                                    ensure_library_roots(&session, &library_ids).await?;
-                                    prepare_library_catalog(&session, &catalog_hash).await?;
-                                    let target = wsl_catalog_locator(&session);
-                                    WslAtomicDocumentIo::from_active_session(session.clone())
-                                        .write_atomic(&target, bytes)
-                                        .await?;
-                                    finalize_library_catalog(&session, &catalog_hash).await
-                                }
-                                .await;
-                                let result = if result.is_err() {
-                                    recover_wsl_library_content(&session).await.and(result)
-                                } else {
-                                    result
-                                };
-                                result
-                            }
-                        })
+                    let workspace = self.wsl.workspace(distro_name)?;
+                    let snapshot = workspace.read_library_catalog_once().await?;
+                    workspace
+                        .execute_library_operation(
+                            snapshot.generation,
+                            environment_protocol::LibraryOperationRequest {
+                                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                                expected_catalog_revision: snapshot.revision,
+                                catalog_bytes: bytes,
+                                action: environment_protocol::LibraryOperationAction::SaveCatalog {
+                                    library_ids: catalog
+                                        .libraries
+                                        .iter()
+                                        .map(|library| library.id.as_str().to_string())
+                                        .collect(),
+                                },
+                                deadline_millis: 60_000,
+                            },
+                        )
                         .await
+                        .map(|_| ())
                 }
             }
         })
@@ -307,10 +289,12 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                 return Err(AppError::StaleEnvironment);
             };
             let distro_name = distro_name.clone();
+            let workspace = self.wsl.workspace(&distro_name)?;
             self.wsl
-                .with_session_retry(&distro_name, move |session| {
+                .with_session(&distro_name, move |session| {
                     let request = request.clone();
-                    async move { commit_wsl_member(&session, request).await }
+                    let workspace = workspace.clone();
+                    async move { commit_wsl_member(&session, &workspace, request).await }
                 })
                 .await
         })
@@ -337,10 +321,14 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                 EnvironmentRef::Wsl { distro_name } => {
                     let distro_name = distro_name.clone();
                     let library_id = library_id.as_str().to_string();
+                    let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session(&distro_name, move |session| {
                             let library_id = library_id.clone();
-                            async move { delete_wsl_library(&session, &library_id).await }
+                            let workspace = workspace.clone();
+                            async move {
+                                delete_wsl_library(&session, &workspace, &library_id).await
+                            }
                         })
                         .await
                 }
@@ -373,22 +361,28 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     let distro_name = distro_name.clone();
                     let library_id = library_id.as_str().to_string();
                     let skill_name = install_dir_name;
-                    self.wsl
+                    let path = self
+                        .wsl
                         .with_session_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             let skill_name = skill_name.clone();
                             async move {
-                                let path = format!(
+                                Ok(format!(
                                     "{}/.skill-deck/skill-libraries/libraries/{}/skills/{}",
                                     session.home.trim_end_matches('/'),
                                     library_id,
                                     skill_name
-                                );
-                                let markdown = crate::environment::wsl::operations::skill_content::read_skill_markdown(&session, &path).await?;
-                                Ok(crate::core::skill::skill_content_from_markdown(&markdown))
+                                ))
                             }
                         })
-                        .await
+                        .await?;
+                    let workspace = self.wsl.workspace(&distro_name)?;
+                    let markdown =
+                        crate::environment::wsl::operations::skill_content::read_skill_markdown(
+                            &workspace, &path,
+                        )
+                        .await?;
+                    Ok(crate::core::skill::skill_content_from_markdown(&markdown))
                 }
             }
         })
@@ -483,13 +477,18 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
                 EnvironmentRef::Wsl { distro_name } => {
                     let distro_name = distro_name.clone();
                     let context = context.clone();
+                    let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
                         .with_session_retry(&distro_name, move |session| {
                             let context = context.clone();
+                            let workspace = workspace.clone();
                             async move {
                                 let target = wsl_application_locator(&session, &context.scope)?;
-                                WslAtomicDocumentIo::from_active_session(session)
-                                    .read_optional(&target)
+                                workspace
+                                    .read_optional_document(
+                                        target.native_path,
+                                        environment_protocol::MAX_DOCUMENT_BYTES,
+                                    )
                                     .await
                             }
                         })
@@ -498,10 +497,8 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
             };
             let record = bytes
                 .map(|bytes| serde_json::from_slice(&bytes).map_err(AppError::from))
-                .unwrap_or_else(|| Ok(LibraryApplicationRecord::empty(context.clone())))?;
-            if record.schema_version != LIBRARY_APPLICATION_SCHEMA_VERSION
-                || record.target != *context
-            {
+                .unwrap_or_else(|| Ok(LibraryApplicationRecord::empty()))?;
+            if record.schema_version != LIBRARY_APPLICATION_SCHEMA_VERSION {
                 return Err(AppError::ConfigurationCorrupted {
                     message: "invalid Skill Library application record".to_string(),
                 });
@@ -512,28 +509,43 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
 
     fn save_application<'a>(
         &'a self,
+        context: &'a SkillLocationRef,
         record: &'a LibraryApplicationRecord,
     ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
             let bytes = serde_json::to_vec_pretty(record)?;
-            match &record.target.environment {
+            match &context.environment {
                 EnvironmentRef::Native => {
                     NativeAtomicDocumentIo
-                        .write_atomic(&self.native_application(&record.target)?, bytes)
+                        .write_atomic(&self.native_application(context)?, bytes)
                         .await
                 }
                 EnvironmentRef::Wsl { distro_name } => {
                     let distro_name = distro_name.clone();
-                    let scope = record.target.scope.clone();
+                    let scope = context.scope.clone();
+                    let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session(&distro_name, move |session| {
                             let bytes = bytes.clone();
                             let scope = scope.clone();
+                            let workspace = workspace.clone();
                             async move {
                                 let target = wsl_application_locator(&session, &scope)?;
-                                WslAtomicDocumentIo::from_active_session(session)
-                                    .write_atomic(&target, bytes)
+                                let snapshot = workspace
+                                    .read_optional_document_snapshot_once(
+                                        target.native_path.clone(),
+                                        environment_protocol::MAX_DOCUMENT_BYTES,
+                                    )
+                                    .await?;
+                                workspace
+                                    .write_document_atomic(
+                                        snapshot.generation,
+                                        target.native_path,
+                                        snapshot.revision,
+                                        bytes,
+                                    )
                                     .await
+                                    .map(|_| ())
                             }
                         })
                         .await
@@ -621,11 +633,28 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
                 }
                 EnvironmentRef::Wsl { distro_name } => {
                     let distro_name = distro_name.clone();
-                    let project_id = project_id.clone();
+                    let scope = context.scope.clone();
+                    let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
-                            let project_id = project_id.clone();
-                            async move { remove_library_application(&session, &project_id).await }
+                        .with_session(&distro_name, move |session| {
+                            let scope = scope.clone();
+                            let workspace = workspace.clone();
+                            async move {
+                                let target = wsl_application_locator(&session, &scope)?;
+                                let snapshot = workspace
+                                    .read_optional_document_snapshot_once(
+                                        target.native_path.clone(),
+                                        environment_protocol::MAX_DOCUMENT_BYTES,
+                                    )
+                                    .await?;
+                                workspace
+                                    .remove_document_if_revision(
+                                        snapshot.generation,
+                                        target.native_path,
+                                        snapshot.revision,
+                                    )
+                                    .await
+                            }
                         })
                         .await
                 }
@@ -726,32 +755,59 @@ fn delete_native_library(root: &Path, library_id: &LibraryId) -> Result<LibraryC
 
 async fn delete_wsl_library(
     session: &crate::environment::wsl::WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     library_id: &str,
 ) -> Result<LibraryCatalog, AppError> {
-    recover_wsl_library_content(session).await?;
-    let target = wsl_catalog_locator(session);
-    let io = WslAtomicDocumentIo::from_active_session(session.clone());
-    let original_bytes =
-        io.read_optional(&target)
-            .await?
-            .ok_or_else(|| AppError::PathNotFound {
-                path: library_id.to_string(),
-            })?;
+    let snapshot = workspace.read_library_catalog_once().await?;
+    if snapshot.generation != session.runtime_generation {
+        return Err(AppError::StaleEnvironment);
+    }
+    let original_bytes = snapshot.bytes.ok_or_else(|| AppError::PathNotFound {
+        path: library_id.to_string(),
+    })?;
     let mut catalog: LibraryCatalog = serde_json::from_slice(&original_bytes)?;
     validate_catalog(&catalog)?;
     remove_catalog_library(&mut catalog, library_id)?;
     let updated_bytes = serde_json::to_vec_pretty(&catalog)?;
-    let updated_hash = bytes_sha256(&updated_bytes);
-    prepare_library_catalog(session, &updated_hash).await?;
-    io.write_atomic(&target, updated_bytes).await?;
-    finalize_library_catalog(session, &updated_hash).await?;
-    if let Err(error) = remove_wsl_library(session, library_id).await {
-        let original_hash = bytes_sha256(&original_bytes);
-        prepare_library_catalog(session, &original_hash).await?;
-        io.write_atomic(&target, original_bytes).await?;
-        finalize_library_catalog(session, &original_hash).await?;
-        return Err(error);
-    }
+    let destination = format!(
+        "{}/.skill-deck/skill-libraries/libraries/{library_id}",
+        session.home.trim_end_matches('/'),
+    );
+    let target = crate::environment::planning::resolve_wsl_targets(
+        session,
+        workspace,
+        std::slice::from_ref(&destination),
+        None,
+    )
+    .await?
+    .pop()
+    .ok_or(AppError::StaleTarget)?;
+    let (expected_anchor_device, expected_anchor_inode) = match &target.key.physical_parent {
+        PhysicalParentIdentity::Wsl {
+            distro_name,
+            device,
+            inode,
+        } if distro_name.eq_ignore_ascii_case(&session.distro_name) => (*device, *inode),
+        _ => return Err(AppError::StaleTarget),
+    };
+    workspace
+        .execute_library_operation(
+            snapshot.generation,
+            environment_protocol::LibraryOperationRequest {
+                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                expected_catalog_revision: snapshot.revision,
+                catalog_bytes: updated_bytes,
+                action: environment_protocol::LibraryOperationAction::DeleteLibrary {
+                    library_id: library_id.to_string(),
+                    expected_anchor_device,
+                    expected_anchor_inode,
+                    expected_fingerprint: target.fingerprint.0,
+                    expected_content_hash: None,
+                },
+                deadline_millis: 60_000,
+            },
+        )
+        .await?;
     Ok(catalog)
 }
 
@@ -770,9 +826,9 @@ fn remove_catalog_library(catalog: &mut LibraryCatalog, library_id: &str) -> Res
 
 async fn commit_wsl_member(
     session: &crate::environment::wsl::WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     request: CommitLibraryMemberRequest,
 ) -> Result<(), AppError> {
-    recover_wsl_library_content(session).await?;
     validate_storage_component(request.library_id.as_str())?;
     let install_dir_name = InstalledSkillResolver::install_dir_name(&request.skill_name)?;
     let destination = format!(
@@ -783,6 +839,7 @@ async fn commit_wsl_member(
     );
     let target = crate::environment::planning::resolve_wsl_targets(
         session,
+        workspace,
         std::slice::from_ref(&destination),
         None,
     )
@@ -793,7 +850,7 @@ async fn commit_wsl_member(
     {
         Some(
             crate::environment::wsl::operations::content_manifest::inspect(
-                session,
+                workspace,
                 &crate::environment::content_manifest::ContentManifestTarget {
                     key: target.key.clone(),
                     location: target.destination.clone(),
@@ -809,7 +866,8 @@ async fn commit_wsl_member(
     };
     let (target_revision, content_revision) =
         crate::application::skill_paths::SkillPathObserver::revisions_for_observation(
-            &target, manifest,
+            &target,
+            manifest.clone(),
         )?;
     if target_revision != request.expected.target_revision
         || content_revision != request.expected.content_revision
@@ -817,11 +875,24 @@ async fn commit_wsl_member(
         return Err(AppError::StaleTarget);
     }
 
-    let catalog_target = wsl_catalog_locator(session);
-    let bytes = WslAtomicDocumentIo::from_active_session(session.clone())
-        .read_optional(&catalog_target)
-        .await?;
-    let mut catalog = bytes
+    let (expected_anchor_device, expected_anchor_inode) = match &target.key.physical_parent {
+        PhysicalParentIdentity::Wsl {
+            distro_name,
+            device,
+            inode,
+        } if distro_name.eq_ignore_ascii_case(&session.distro_name) => (*device, *inode),
+        _ => return Err(AppError::StaleTarget),
+    };
+    let expected_fingerprint = target.fingerprint.0.clone();
+    let expected_content_hash = manifest
+        .as_ref()
+        .map(|manifest| manifest.as_str().to_string());
+    let catalog_snapshot = workspace.read_library_catalog_once().await?;
+    if catalog_snapshot.generation != session.runtime_generation {
+        return Err(AppError::StaleEnvironment);
+    }
+    let mut catalog = catalog_snapshot
+        .bytes
         .as_deref()
         .map(serde_json::from_slice)
         .transpose()?
@@ -884,58 +955,61 @@ async fn commit_wsl_member(
         }
     }
     let catalog_bytes = serde_json::to_vec_pretty(&catalog)?;
-    let catalog_hash = bytes_sha256(&catalog_bytes);
-    let commit = async {
-        match &request.mutation {
-            LibraryMemberMutation::Upsert { content, .. } => {
-                replace_library_skill(
-                    session,
-                    request.library_id.as_str(),
-                    &install_dir_name,
-                    payload_archive(content)?,
-                )
+    let payload_storage = WslPayloadSessionStorage::new(workspace.clone());
+    let payload_key = PayloadStorageKey::new(
+        format!("library-{}", uuid::Uuid::new_v4().simple()),
+        install_dir_name.clone(),
+    );
+    let mutation = match &request.mutation {
+        LibraryMemberMutation::Upsert { content, .. } => {
+            payload_storage
+                .store(&payload_key, (**content).clone())
                 .await?;
-            }
-            LibraryMemberMutation::Delete => {
-                stage_library_skill_deletion(
-                    session,
-                    request.library_id.as_str(),
-                    &install_dir_name,
-                )
-                .await?;
+            match payload_storage.local_source(&payload_key)? {
+                PayloadLocalSource::WslManaged {
+                    distro_name,
+                    worker_generation,
+                    worker_payload_id,
+                } if distro_name.eq_ignore_ascii_case(&session.distro_name)
+                    && worker_generation == catalog_snapshot.generation =>
+                {
+                    environment_protocol::LibraryMemberAction::Upsert {
+                        payload_id: worker_payload_id,
+                    }
+                }
+                _ => {
+                    let _ = payload_storage.remove(&payload_key).await;
+                    return Err(AppError::StalePayload);
+                }
             }
         }
-        prepare_library_catalog(session, &catalog_hash).await?;
-        WslAtomicDocumentIo::from_active_session(session.clone())
-            .write_atomic(&catalog_target, catalog_bytes)
-            .await?;
-        finalize_library_catalog(session, &catalog_hash).await
-    }
-    .await;
-    if let Err(error) = commit {
-        recover_wsl_library_content(session).await?;
-        let current = WslAtomicDocumentIo::from_active_session(session.clone())
-            .read_optional(&catalog_target)
-            .await?;
-        if current.as_deref().map(bytes_sha256).as_deref() == Some(&catalog_hash) {
-            return Ok(());
-        }
-        return Err(error);
-    }
-    Ok(())
-}
-
-async fn recover_wsl_library_content(
-    session: &crate::environment::wsl::WslSession,
-) -> Result<(), AppError> {
-    recover_library_content(session)
-        .await
-        .map_err(|error| AppError::LibraryRecoveryIncomplete {
-            environment: EnvironmentRef::Wsl {
-                distro_name: session.distro_name.clone(),
+        LibraryMemberMutation::Delete => environment_protocol::LibraryMemberAction::Delete,
+    };
+    let result = workspace
+        .execute_library_operation(
+            catalog_snapshot.generation,
+            environment_protocol::LibraryOperationRequest {
+                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                expected_catalog_revision: catalog_snapshot.revision,
+                catalog_bytes,
+                action: environment_protocol::LibraryOperationAction::CommitMember {
+                    library_id: request.library_id.as_str().to_string(),
+                    skill_name: install_dir_name,
+                    expected_anchor_device,
+                    expected_anchor_inode,
+                    expected_fingerprint,
+                    expected_content_hash,
+                    mutation,
+                },
+                deadline_millis: 60_000,
             },
-            message: error.to_string(),
-        })
+        )
+        .await
+        .map(|_| ());
+    if matches!(request.mutation, LibraryMemberMutation::Upsert { .. }) {
+        let _ = payload_storage.remove(&payload_key).await;
+    }
+    result
 }
 
 fn commit_native_member(root: &Path, request: CommitLibraryMemberRequest) -> Result<(), AppError> {
@@ -1356,35 +1430,6 @@ fn bytes_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn payload_archive(payload: &SkillPayload) -> Result<Vec<u8>, AppError> {
-    crate::core::skill_payload::verify_skill_payload_integrity(payload)?;
-    let mut builder = tar::Builder::new(Vec::new());
-    for entry in &payload.entries {
-        let mut header = tar::Header::new_gnu();
-        header.set_path(Path::new("stage").join(&entry.relative_path))?;
-        match entry.kind {
-            crate::core::skill_payload::PayloadEntryKind::Directory => {
-                header.set_entry_type(tar::EntryType::Directory);
-                header.set_mode(0o755);
-                header.set_size(0);
-                header.set_cksum();
-                builder.append(&header, std::io::empty())?;
-            }
-            crate::core::skill_payload::PayloadEntryKind::File => {
-                let blob_id = entry.blob_id.as_deref().ok_or(AppError::StalePayload)?;
-                let content = payload.blobs.get(blob_id).ok_or(AppError::StalePayload)?;
-                header.set_entry_type(tar::EntryType::Regular);
-                header.set_mode(if entry.executable { 0o755 } else { 0o644 });
-                header.set_size(content.len() as u64);
-                header.set_cksum();
-                builder.append(&header, content.as_slice())?;
-            }
-        }
-    }
-    builder.finish()?;
-    Ok(builder.into_inner()?)
-}
-
 fn validate_storage_component(value: &str) -> Result<(), AppError> {
     if value.is_empty() || matches!(value, "." | "..") || value.contains(['/', '\\', '\0']) {
         return Err(AppError::Validation {
@@ -1393,18 +1438,6 @@ fn validate_storage_component(value: &str) -> Result<(), AppError> {
         });
     }
     Ok(())
-}
-
-fn wsl_catalog_locator(session: &crate::environment::wsl::WslSession) -> ResourceLocator {
-    ResourceLocator {
-        environment: EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
-        },
-        native_path: format!(
-            "{}/.skill-deck/skill-libraries/catalog.json",
-            session.home.trim_end_matches('/')
-        ),
-    }
 }
 
 fn application_relative_path(scope: &SkillLocation) -> Result<PathBuf, AppError> {
@@ -1951,19 +1984,25 @@ mod tests {
                 project_id: "project-1".to_string(),
             },
         };
-        let mut global_record = LibraryApplicationRecord::empty(global.clone());
+        let mut global_record = LibraryApplicationRecord::empty();
         global_record.current = LibraryApplicationState {
             ordered_library_ids: vec![LibraryId::parse("global-library")],
             selected_agent_ids: Vec::new(),
         };
-        let mut project_record = LibraryApplicationRecord::empty(project.clone());
+        let mut project_record = LibraryApplicationRecord::empty();
         project_record.current = LibraryApplicationState {
             ordered_library_ids: vec![LibraryId::parse("project-library")],
             selected_agent_ids: Vec::new(),
         };
 
-        repository.save_application(&global_record).await.unwrap();
-        repository.save_application(&project_record).await.unwrap();
+        repository
+            .save_application(&global, &global_record)
+            .await
+            .unwrap();
+        repository
+            .save_application(&project, &project_record)
+            .await
+            .unwrap();
 
         assert_eq!(
             repository.load_application(&global).await.unwrap(),
@@ -1973,5 +2012,46 @@ mod tests {
             repository.load_application(&project).await.unwrap(),
             project_record
         );
+    }
+
+    #[tokio::test]
+    async fn application_record_storage_uses_its_repository_context() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let applications = root.join("applications");
+        fs::create_dir_all(&applications).unwrap();
+        fs::write(
+            applications.join("global.json"),
+            br#"{
+              "schemaVersion": 1,
+              "target": {
+                "environment": { "kind": "wsl", "distro_name": "Ubuntu" },
+                "scope": { "scope": "global" }
+              },
+              "current": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+              "pendingOperation": null
+            }"#,
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+
+        let record = repository.load_application(&context).await.unwrap();
+        assert_eq!(record.current, LibraryApplicationState::default());
+        repository
+            .save_application(&context, &record)
+            .await
+            .unwrap();
+
+        let stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(applications.join("global.json")).unwrap()).unwrap();
+        assert!(stored.get("target").is_none());
     }
 }

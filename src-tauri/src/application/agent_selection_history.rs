@@ -25,12 +25,18 @@ pub async fn get_last_selected_agents(
         }
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
+            let workspace = wsl.workspace(&distro_name)?;
             wsl.with_session_retry(&distro_name, move |session| {
                 let context = context.clone();
+                let workspace = workspace.clone();
                 async move {
-                    let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                    let resolved =
+                        ContextResolver::resolve_wsl(context, &session, &workspace).await?;
                     read_last_selected_agents_with_io(
-                        EnvironmentLockIo::ActiveWsl(session),
+                        EnvironmentLockIo::ActiveWsl {
+                            session: Box::new(session),
+                            workspace,
+                        },
                         &global_lock_target(resolved.lock),
                     )
                     .await
@@ -63,13 +69,19 @@ pub async fn set_last_selected_agents(
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
             let selected_agent_ids = selected_agent_ids.to_vec();
-            wsl.with_session_retry(&distro_name, move |session| {
+            let workspace = wsl.workspace(&distro_name)?;
+            wsl.with_session(&distro_name, move |session| {
                 let context = context.clone();
                 let selected_agent_ids = selected_agent_ids.clone();
+                let workspace = workspace.clone();
                 async move {
-                    let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                    let resolved =
+                        ContextResolver::resolve_wsl(context, &session, &workspace).await?;
                     write_last_selected_agents_with_io(
-                        EnvironmentLockIo::ActiveWsl(session),
+                        EnvironmentLockIo::ActiveWsl {
+                            session: Box::new(session),
+                            workspace,
+                        },
                         global_lock_target(resolved.lock),
                         &selected_agent_ids,
                     )
@@ -144,7 +156,7 @@ mod tests {
             "/tmp/skill-deck-agent-history-test-{}",
             uuid::Uuid::new_v4()
         );
-        let wsl = WslRuntime::new_with_support(true, true);
+        let wsl = WslRuntime::for_wsl_test();
         let outcome = wsl_history_round_trip(&wsl, &distro_name, &root).await;
         let cleanup = cleanup_wsl_history_test_root(&distro_name, &root).await;
 
@@ -168,22 +180,25 @@ mod tests {
         distro_name: &str,
         root: &str,
     ) -> Result<(Option<Vec<String>>, serde_json::Value), AppError> {
-        let mut session = wsl.connect(distro_name).await?;
-        session.home = root.to_string();
-        session.xdg_state_home = None;
-        session.config_home = format!("{root}/.config");
-        wsl.insert(session.clone());
+        let session = wsl.connect(distro_name).await?;
         let environment = EnvironmentRef::Wsl {
             distro_name: distro_name.to_string(),
         };
-        let context = SkillLocationRef {
-            environment: environment.clone(),
-            scope: SkillLocation::Global,
+        let target = LockTarget {
+            primary: ResourceLocator {
+                environment: environment.clone(),
+                native_path: format!("{root}/skills-lock.json"),
+            },
+            legacy: None,
+            schema: LockSchema::Global,
         };
-        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
-        let io = EnvironmentLockIo::ActiveWsl(session);
+        let workspace = wsl.workspace(distro_name)?;
+        let io = EnvironmentLockIo::ActiveWsl {
+            session: Box::new(session.clone()),
+            workspace: workspace.clone(),
+        };
         io.write_atomic(
-            &resolved.lock,
+            &target.primary,
             serde_json::to_vec(&serde_json::json!({
                 "version": 3,
                 "skills": {},
@@ -194,9 +209,21 @@ mod tests {
         )
         .await?;
 
-        let initial = get_last_selected_agents(&environment, wsl).await?;
-        set_last_selected_agents(&environment, wsl, &["claude-code".to_string()]).await?;
-        let value = serde_json::from_slice(&io.read(&resolved.lock).await?)?;
+        let initial = read_last_selected_agents_with_io(io, &target).await?;
+        let io = EnvironmentLockIo::ActiveWsl {
+            session: Box::new(session.clone()),
+            workspace: workspace.clone(),
+        };
+        write_last_selected_agents_with_io(io, target, &["claude-code".to_string()]).await?;
+        let io = EnvironmentLockIo::ActiveWsl {
+            session: Box::new(session),
+            workspace,
+        };
+        let locator = ResourceLocator {
+            environment,
+            native_path: format!("{root}/skills-lock.json"),
+        };
+        let value = serde_json::from_slice(&io.read(&locator).await?)?;
         Ok((initial, value))
     }
 

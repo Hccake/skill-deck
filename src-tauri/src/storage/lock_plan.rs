@@ -78,13 +78,6 @@ pub enum LockEntryMutation {
 }
 
 impl LockEntryMutation {
-    fn affected_keys(&self) -> Vec<&str> {
-        match self {
-            Self::Replace { key, .. } | Self::Remove { key } => vec![key],
-            Self::MoveAndReplace { from, to, .. } => vec![from, to],
-        }
-    }
-
     #[cfg(test)]
     pub fn target_key(&self) -> &str {
         match self {
@@ -142,95 +135,103 @@ where
         &self,
         prepared: PreparedLockMutation,
     ) -> Result<LockCommitReceipt, AppError> {
-        let mut latest = self.load_latest(&prepared).await?;
-        for key in prepared.entry.affected_keys() {
-            let expected = prepared.expected.entry_snapshots.get(key).ok_or_else(|| {
-                AppError::InvalidSource {
-                    value: format!("lock plan did not capture Skill '{key}'"),
-                }
-            })?;
-            latest.validate_entry_snapshot(key, expected)?;
-        }
-        match prepared.entry {
-            LockEntryMutation::Replace { key, replacement } => latest.replace_entry(
-                prepared.schema,
-                &key,
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&key)
-                    .expect("validated snapshot"),
-                replacement,
-            )?,
-            LockEntryMutation::Remove { key } => latest.remove_entry(
-                &key,
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&key)
-                    .expect("validated snapshot"),
-            )?,
+        let current = self.io.read_optional(&prepared.target).await?;
+        let legacy = match (&current, &prepared.legacy_target) {
+            (None, Some(target)) => self.io.read_optional(target).await?,
+            _ => None,
+        };
+        let applied = environment_engine::lock::apply(
+            current.as_deref(),
+            legacy.as_deref(),
+            &engine_mutation(&prepared),
+        )
+        .map_err(map_engine_error)?;
+        self.io
+            .write_atomic(&prepared.target, applied.bytes)
+            .await?;
+        Ok(LockCommitReceipt {
+            entry_snapshots: applied
+                .receipt
+                .entries
+                .into_iter()
+                .map(|(key, value)| (key, LockEntrySnapshot::from_value(value)))
+                .collect(),
+            root_snapshots: applied
+                .receipt
+                .roots
+                .into_iter()
+                .map(|(field, value)| (field, LockRootSnapshot::from_value(value)))
+                .collect(),
+        })
+    }
+}
+
+fn engine_mutation(prepared: &PreparedLockMutation) -> environment_engine::lock::LockMutation {
+    use environment_engine::lock::{EntryMutation, LockMutation, LockSchema as EngineSchema};
+
+    LockMutation {
+        schema: match prepared.schema {
+            LockSchema::Global => EngineSchema::Global,
+            LockSchema::Project => EngineSchema::Project,
+        },
+        entry: match &prepared.entry {
+            LockEntryMutation::Replace { key, replacement } => EntryMutation::Replace {
+                key: key.clone(),
+                replacement: replacement.clone(),
+            },
+            LockEntryMutation::Remove { key } => EntryMutation::Remove { key: key.clone() },
             LockEntryMutation::MoveAndReplace {
                 from,
                 to,
                 replacement,
-            } => latest.move_and_replace_entry(
-                prepared.schema,
-                &from,
-                &to,
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&from)
-                    .expect("validated snapshot"),
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&to)
-                    .expect("validated snapshot"),
-                replacement,
-            )?,
-        }
-        for (field, replacement) in &prepared.root_replacements {
-            let expected = prepared.expected.root_snapshots.get(field).ok_or_else(|| {
-                AppError::InvalidSource {
-                    value: format!("lock plan did not capture root field '{field}'"),
-                }
-            })?;
-            latest.replace_root(field, expected, replacement.clone())?;
-        }
-
-        let receipt = LockCommitReceipt {
-            entry_snapshots: prepared
-                .expected
-                .entry_snapshots
-                .keys()
-                .map(|name| (name.clone(), latest.entry_snapshot(name)))
-                .collect(),
-            root_snapshots: prepared
-                .expected
-                .root_snapshots
-                .keys()
-                .map(|field| (field.clone(), latest.root_snapshot(field)))
-                .collect(),
-        };
-        self.io
-            .write_atomic(&prepared.target, latest.to_pretty_bytes()?)
-            .await?;
-        Ok(receipt)
+            } => EntryMutation::MoveAndReplace {
+                from: from.clone(),
+                to: to.clone(),
+                replacement: replacement.clone(),
+            },
+        },
+        root_replacements: prepared.root_replacements.clone(),
+        expected_entries: prepared
+            .expected
+            .entry_snapshots
+            .iter()
+            .map(|(key, snapshot)| (key.clone(), snapshot.value().cloned()))
+            .collect(),
+        expected_roots: prepared
+            .expected
+            .root_snapshots
+            .iter()
+            .map(|(field, snapshot)| (field.clone(), snapshot.value().cloned()))
+            .collect(),
     }
+}
 
-    async fn load_latest(
-        &self,
-        prepared: &PreparedLockMutation,
-    ) -> Result<LosslessLockDocument, AppError> {
-        load_lock_document(
-            self.io.as_ref(),
-            &prepared.target,
-            prepared.legacy_target.as_ref(),
-            prepared.schema,
-        )
-        .await
+fn map_engine_error(error: environment_engine::lock::LockError) -> AppError {
+    match error {
+        environment_engine::lock::LockError::EntryConflict { key } => AppError::LockConflict {
+            target: crate::error::LockConflictTarget::Skill { skill_name: key },
+        },
+        environment_engine::lock::LockError::RootConflict { field } => AppError::LockConflict {
+            target: crate::error::LockConflictTarget::RootField { field },
+        },
+        environment_engine::lock::LockError::MissingExpectedEntry { key } => {
+            AppError::InvalidSource {
+                value: format!("lock plan did not capture Skill '{key}'"),
+            }
+        }
+        environment_engine::lock::LockError::MissingExpectedRoot { field } => {
+            AppError::InvalidSource {
+                value: format!("lock plan did not capture root field '{field}'"),
+            }
+        }
+        environment_engine::lock::LockError::UnsupportedSchema { version, supported } => {
+            AppError::ConfigurationCorrupted {
+                message: format!("lock schema version {version} is newer than {supported}"),
+            }
+        }
+        environment_engine::lock::LockError::InvalidDocument { message } => {
+            AppError::Json { message }
+        }
     }
 }
 

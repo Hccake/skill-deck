@@ -146,6 +146,7 @@ impl LibraryApplicationRepository for MemoryLibraryApplicationRepository {
 
     fn save_application<'a>(
         &'a self,
+        _context: &'a SkillLocationRef,
         record: &'a LibraryApplicationRecord,
     ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
@@ -188,11 +189,10 @@ impl LibraryApplicationRepository for MemoryLibraryApplicationRepository {
 
     fn remove_application<'a>(
         &'a self,
-        context: &'a SkillLocationRef,
+        _context: &'a SkillLocationRef,
     ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
-            *self.record.lock().expect("library record lock") =
-                LibraryApplicationRecord::empty(context.clone());
+            *self.record.lock().expect("library record lock") = LibraryApplicationRecord::empty();
             Ok(())
         })
     }
@@ -314,13 +314,11 @@ impl PreparedEntryExecutor for VerifyFailureEntryExecutor {
 }
 
 struct VerifyFailurePlanExecutor {
-    environments: Arc<WslRuntime>,
     facts: RuntimePlanningFactSource,
     recovery_root: PathBuf,
 }
 
 struct SelectiveVerifyFailurePlanExecutor {
-    environments: Arc<WslRuntime>,
     facts: RuntimePlanningFactSource,
     recovery_root: PathBuf,
     failing_skill: String,
@@ -371,7 +369,7 @@ impl MutationPlanExecutor for LockFailurePlanExecutor {
                 plan.operation_id.clone(),
                 recovery,
             );
-            MutationCoordinator::new(
+            MutationCoordinator::from_phases(
                 entries,
                 RejectingLockCommitter {
                     attempted: Arc::clone(&self.attempted),
@@ -406,9 +404,9 @@ impl MutationPlanExecutor for VerifyFailurePlanExecutor {
                     recovery,
                 ),
             };
-            MutationCoordinator::new(
+            MutationCoordinator::from_phases(
                 entries,
-                crate::runtime::plan_runner::RuntimeLockCommitter::new(self.environments.clone()),
+                crate::runtime::plan_runner::RuntimeLockCommitter::new(),
                 self.facts.clone(),
             )
             .execute(plan, cancellation)
@@ -440,9 +438,9 @@ impl MutationPlanExecutor for SelectiveVerifyFailurePlanExecutor {
                 ),
                 failing_skill: self.failing_skill.clone(),
             };
-            MutationCoordinator::new(
+            MutationCoordinator::from_phases(
                 entries,
-                crate::runtime::plan_runner::RuntimeLockCommitter::new(self.environments.clone()),
+                crate::runtime::plan_runner::RuntimeLockCommitter::new(),
                 self.facts.clone(),
             )
             .execute(plan, cancellation)
@@ -827,7 +825,6 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         payloads.clone(),
         InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
         VerifyFailurePlanExecutor {
-            environments: environments.clone(),
             facts: facts.clone(),
             recovery_root: recovery_root.clone(),
         },
@@ -1429,7 +1426,7 @@ async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<()
     let second_id = LibraryId::parse("library-two");
     let repository: Arc<dyn LibraryApplicationRepository> =
         Arc::new(MemoryLibraryApplicationRepository {
-            record: Mutex::new(LibraryApplicationRecord::empty(context.clone())),
+            record: Mutex::new(LibraryApplicationRecord::empty()),
             catalog: LibraryCatalog {
                 schema_version: LIBRARY_SCHEMA_VERSION,
                 libraries: vec![
@@ -2049,7 +2046,6 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
             Arc::new(EmptyLibraryCandidateSource),
         ),
         SelectiveVerifyFailurePlanExecutor {
-            environments: environments.clone(),
             facts: facts.clone(),
             recovery_root: recovery_root.clone(),
             failing_skill: "beta".to_string(),
@@ -2256,7 +2252,6 @@ mod update_lifecycle {
     }
 
     struct StageFailurePlanExecutor {
-        environments: Arc<WslRuntime>,
         facts: RuntimePlanningFactSource,
         recovery_root: PathBuf,
         private_root: PathBuf,
@@ -2286,9 +2281,9 @@ mod update_lifecycle {
                     failing_skill: "beta".to_string(),
                     private_root: self.private_root.clone(),
                 };
-                MutationCoordinator::new(
+                MutationCoordinator::from_phases(
                     entries,
-                    RuntimeLockCommitter::new(self.environments.clone()),
+                    RuntimeLockCommitter::new(),
                     self.facts.clone(),
                 )
                 .execute(plan, cancellation)
@@ -2750,7 +2745,6 @@ mod update_lifecycle {
                     self.git_transport.clone(),
                 ),
                 StageFailurePlanExecutor {
-                    environments: self.environments.clone(),
                     facts: self.facts.clone(),
                     recovery_root: self.recovery_root.clone(),
                     private_root: self.project_path.join(".custom/skills"),

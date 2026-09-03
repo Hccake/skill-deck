@@ -5,7 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
-use crate::application::mutation::coordinator::{BoxFuture, PreparedEntryExecutor};
+use crate::application::mutation::coordinator::{
+    BoxFuture, PreparedEntryExecutor, PreparedLockCommitter, PreparedUnitExecutor,
+    UnitTransactionReceipt,
+};
 use crate::application::mutation::plan::{
     ExecutionUnit, PreparedEntryAction, PreparedEntryMutation,
 };
@@ -26,6 +29,7 @@ use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
 use crate::error::{AppError, RecoveryResourceId};
 use crate::models::InstallMode;
+use crate::storage::lock_plan::PreparedLockMutation;
 
 pub struct NativePreparedEntrySet {
     entries: NativeEntrySet,
@@ -43,6 +47,160 @@ pub struct NativePreparedEntryExecutor {
     operation_id: String,
     operation_kind: crate::core::mutation::MutationKind,
     recovery_store: Arc<dyn RecoveryMarkerStore>,
+}
+
+pub struct NativePreparedUnitExecutor<L> {
+    entries: NativePreparedEntryExecutor,
+    locks: L,
+}
+
+pub struct PreparedNativeUnit {
+    unit: ExecutionUnit,
+    intents: Vec<NativeEntryIntent>,
+}
+
+impl<L> NativePreparedUnitExecutor<L> {
+    pub fn new(entries: NativePreparedEntryExecutor, locks: L) -> Self {
+        Self { entries, locks }
+    }
+}
+
+impl<L> PreparedUnitExecutor for NativePreparedUnitExecutor<L>
+where
+    L: PreparedLockCommitter,
+{
+    type Prepared = PreparedNativeUnit;
+
+    fn prepare<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Prepared, AppError>> {
+        Box::pin(async move {
+            let mut loaded = BTreeMap::new();
+            for entry in unit
+                .primary_entry
+                .iter()
+                .chain(unit.additional_entries.iter())
+            {
+                let PreparedEntryAction::Replace {
+                    payload_id,
+                    requested_mode: InstallMode::Copy,
+                } = &entry.action
+                else {
+                    continue;
+                };
+                if loaded.contains_key(payload_id) {
+                    continue;
+                }
+                if cancellation.is_cancelled() {
+                    return Err(AppError::MutationCancelled);
+                }
+                let lease = payloads.get(payload_id).ok_or(AppError::StalePayload)?;
+                match lease.local_source()? {
+                    PayloadLocalSource::InProcess | PayloadLocalSource::NativeManaged { .. } => {}
+                    PayloadLocalSource::WslManaged { .. } => {
+                        return Err(AppError::CapabilityUnavailable {
+                            capability: "backendLocalPayload".to_string(),
+                            path: None,
+                        });
+                    }
+                }
+                loaded.insert(payload_id.clone(), Arc::new(lease.load_payload().await?));
+            }
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            Ok(PreparedNativeUnit {
+                unit: unit.clone(),
+                intents: prepare_native_mutations(unit, &loaded, self.entries.backend.clone())?,
+            })
+        })
+    }
+
+    fn execute<'a>(
+        &'a self,
+        prepared: Self::Prepared,
+        lock: Option<&'a PreparedLockMutation>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>> {
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            let entries = tokio::task::spawn_blocking(move || stage_entry_set(&prepared.intents))
+                .await
+                .map_err(native_task_error)??;
+            let recovery = if planned_recovery_paths(&entries).is_empty() {
+                None
+            } else {
+                let marker = native_recovery_marker(
+                    &self.entries.operation_id,
+                    &prepared.unit.id,
+                    RecoverySubject {
+                        operation_kind: self.entries.operation_kind,
+                        skill_name: prepared.unit.skill_name.clone(),
+                        context: prepared.unit.target.clone(),
+                    },
+                    &entries,
+                    now_epoch_ms(),
+                )?;
+                let recovery_ref = match self.entries.recovery_store.create(&marker).await {
+                    Ok(marker_ref) => marker_ref,
+                    Err(error) => {
+                        let cleanup = cleanup_entry_set(entries)?;
+                        if cleanup.is_empty() {
+                            return Err(error);
+                        }
+                        return Err(AppError::ExecutionFailed {
+                            message: format!(
+                                "{error}; native staging cleanup failed: {}",
+                                cleanup.join("; ")
+                            ),
+                        });
+                    }
+                };
+                Some(NativePreparedRecovery {
+                    recovery_store: Arc::clone(&self.entries.recovery_store),
+                    recovery_marker: Mutex::new(marker),
+                    recovery_ref,
+                })
+            };
+            let mut staged = NativePreparedEntrySet { entries, recovery };
+            let transaction = async {
+                if cancellation.is_cancelled() {
+                    return Err(AppError::MutationCancelled);
+                }
+                self.entries.recheck_entries(&staged).await?;
+                self.entries.swap(&mut staged).await?;
+                self.entries.verify(&staged).await?;
+                match lock {
+                    Some(lock) => self.locks.commit(lock).await.map(Some),
+                    None => Ok(None),
+                }
+            }
+            .await;
+            match transaction {
+                Ok(lock) => match self.entries.cleanup(staged).await {
+                    Ok(warnings) => Ok(UnitTransactionReceipt { lock, warnings }),
+                    Err(error) => Ok(UnitTransactionReceipt {
+                        lock,
+                        warnings: vec![MutationWarning {
+                            code: MutationWarningCode::BackupCleanupFailed,
+                            parameters: BTreeMap::new(),
+                            technical_details: Some(error.to_string().chars().take(4096).collect()),
+                        }],
+                    }),
+                },
+                Err(primary) => {
+                    let restore = self.entries.restore(&mut staged).await;
+                    let _ = self.entries.cleanup(staged).await;
+                    Err(restore.err().unwrap_or(primary))
+                }
+            }
+        })
+    }
 }
 
 impl NativePreparedEntryExecutor {
@@ -78,6 +236,7 @@ impl NativePreparedEntryExecutor {
 impl PreparedEntryExecutor for NativePreparedEntryExecutor {
     type Staged = NativePreparedEntrySet;
 
+    #[cfg(test)]
     fn stage<'a>(
         &'a self,
         unit: &'a ExecutionUnit,

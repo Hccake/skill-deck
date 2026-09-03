@@ -4,8 +4,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::mutation::plan::{ExecutionUnit, MutationPlan, RuntimeRevisions};
+#[cfg(test)]
+use crate::application::mutation::result::MutationWarningCode;
 use crate::application::mutation::result::{
-    ErrorReport, MutationUnitResult, MutationUnitStatus, MutationWarning, MutationWarningCode,
+    ErrorReport, MutationUnitResult, MutationUnitStatus, MutationWarning,
 };
 use crate::application::payload_session::PinnedPayloadLease;
 use crate::core::mutation::CancellationSignal;
@@ -28,6 +30,7 @@ pub type MutationUnitObserver<'a> = Arc<dyn Fn(MutationUnitProgress) + Send + Sy
 pub trait PreparedEntryExecutor: Send + Sync {
     type Staged: Send;
 
+    #[cfg(test)]
     fn stage<'a>(
         &'a self,
         unit: &'a ExecutionUnit,
@@ -57,6 +60,99 @@ pub trait PreparedLockCommitter: Send + Sync {
         &'a self,
         mutation: &'a PreparedLockMutation,
     ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct UnitTransactionReceipt {
+    pub lock: Option<LockCommitReceipt>,
+    pub warnings: Vec<MutationWarning>,
+}
+
+pub trait PreparedUnitExecutor: Send + Sync {
+    type Prepared: Send;
+
+    fn prepare<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Prepared, AppError>>;
+
+    fn execute<'a>(
+        &'a self,
+        prepared: Self::Prepared,
+        lock: Option<&'a PreparedLockMutation>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>>;
+}
+
+#[cfg(test)]
+pub struct PhasedUnitExecutor<E, L> {
+    entries: E,
+    locks: L,
+}
+
+#[cfg(test)]
+impl<E, L> PhasedUnitExecutor<E, L> {
+    pub fn new(entries: E, locks: L) -> Self {
+        Self { entries, locks }
+    }
+}
+
+#[cfg(test)]
+impl<E, L> PreparedUnitExecutor for PhasedUnitExecutor<E, L>
+where
+    E: PreparedEntryExecutor,
+    L: PreparedLockCommitter,
+{
+    type Prepared = E::Staged;
+
+    fn prepare<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Prepared, AppError>> {
+        self.entries.stage(unit, payloads, cancellation)
+    }
+
+    fn execute<'a>(
+        &'a self,
+        mut prepared: Self::Prepared,
+        lock: Option<&'a PreparedLockMutation>,
+        _cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>> {
+        Box::pin(async move {
+            let result = async {
+                self.entries.recheck_entries(&prepared).await?;
+                self.entries.swap(&mut prepared).await?;
+                self.entries.verify(&prepared).await?;
+                match lock {
+                    Some(lock) => self.locks.commit(lock).await.map(Some),
+                    None => Ok(None),
+                }
+            }
+            .await;
+            match result {
+                Ok(lock) => match self.entries.cleanup(prepared).await {
+                    Ok(warnings) => Ok(UnitTransactionReceipt { lock, warnings }),
+                    Err(error) => Ok(UnitTransactionReceipt {
+                        lock,
+                        warnings: vec![MutationWarning {
+                            code: MutationWarningCode::BackupCleanupFailed,
+                            parameters: BTreeMap::new(),
+                            technical_details: Some(error.to_string().chars().take(4096).collect()),
+                        }],
+                    }),
+                },
+                Err(primary) => {
+                    let restore = self.entries.restore(&mut prepared).await;
+                    let _ = self.entries.cleanup(prepared).await;
+                    Err(restore.err().unwrap_or(primary))
+                }
+            }
+        })
+    }
 }
 
 pub trait RuntimeRevisionSource: Send + Sync {
@@ -101,24 +197,18 @@ pub struct RuntimeRevisionSnapshot {
     pub authority: RuntimeAuthorityRevisions,
 }
 
-pub struct MutationCoordinator<E, L, R> {
-    entries: E,
-    locks: L,
+pub struct MutationCoordinator<E, R> {
+    units: E,
     revisions: R,
 }
 
-impl<E, L, R> MutationCoordinator<E, L, R>
+impl<E, R> MutationCoordinator<E, R>
 where
-    E: PreparedEntryExecutor,
-    L: PreparedLockCommitter,
+    E: PreparedUnitExecutor,
     R: RuntimeRevisionSource,
 {
-    pub fn new(entries: E, locks: L, revisions: R) -> Self {
-        Self {
-            entries,
-            locks,
-            revisions,
-        }
+    pub fn new(units: E, revisions: R) -> Self {
+        Self { units, revisions }
     }
 
     #[cfg(test)]
@@ -147,11 +237,11 @@ where
                 }
                 let runtime = self.revisions.snapshot(&unit.target).await?;
                 validate_runtime_revisions(&runtime.revisions, &unit.expected_revisions)?;
-                let staged = self
-                    .entries
-                    .stage(&unit, &plan.payloads, cancellation.clone())
+                let prepared = self
+                    .units
+                    .prepare(&unit, &plan.payloads, cancellation.clone())
                     .await?;
-                Ok((staged, runtime.authority))
+                Ok((prepared, runtime.authority))
             }
             .await;
             staged_units.insert(index, preflight);
@@ -164,8 +254,7 @@ where
                     .remove(&index)
                     .expect("every unit has a preflight result")
                 {
-                    Ok((staged, _)) => {
-                        let _ = self.entries.cleanup(staged).await;
+                    Ok((_prepared, _)) => {
                         results.push(failed_result(unit, AppError::MutationCancelled, false));
                     }
                     Err(error) => {
@@ -188,8 +277,8 @@ where
             let staged = staged_units
                 .remove(&index)
                 .expect("every unit has a preflight result");
-            let (mut staged, expected_authority) = match staged {
-                Ok(staged) => staged,
+            let (prepared, expected_authority) = match staged {
+                Ok(prepared) => prepared,
                 Err(error) => {
                     results.push(failed_result(&unit, error_for_preflight(&error), false));
                     continue;
@@ -200,36 +289,26 @@ where
                 .iter()
                 .any(|target| blocked_targets.contains(&target.key))
             {
-                let _ = self.entries.cleanup(staged).await;
                 results.push(not_run(&unit, AppError::StaleTarget));
                 continue;
             }
             if cancellation.is_cancelled() {
-                let _ = self.entries.cleanup(staged).await;
                 results.push(failed_result(&unit, AppError::MutationCancelled, false));
                 continue;
             }
 
-            let phase_result = async {
+            let transaction = async {
                 self.recheck_runtime_authority(&unit, &expected_authority)
                     .await?;
-                self.entries.recheck_entries(&staged).await?;
-                self.entries.swap(&mut staged).await?;
-                self.entries.verify(&staged).await?;
-                let receipt = match &unit.lock_mutation {
-                    Some(mutation) => Some(self.locks.commit(mutation).await?),
-                    None => None,
-                };
-                Ok::<_, AppError>(receipt)
+                self.units
+                    .execute(prepared, unit.lock_mutation.as_ref(), cancellation.clone())
+                    .await
             }
             .await;
 
-            let receipt = match phase_result {
-                Ok(receipt) => receipt,
-                Err(primary) => {
-                    let restore = self.entries.restore(&mut staged).await;
-                    let _ = self.entries.cleanup(staged).await;
-                    let error = restore.err().unwrap_or(primary);
+            let transaction = match transaction {
+                Ok(transaction) => transaction,
+                Err(error) => {
                     if matches!(error, AppError::RecoveryRequired { .. }) {
                         blocked_targets.extend(
                             unit.expected_targets
@@ -242,24 +321,11 @@ where
                 }
             };
 
-            if let Some(receipt) = &receipt {
+            if let Some(receipt) = &transaction.lock {
                 advance_future_lock_expectations(&mut plan.units[index + 1..], &unit, receipt);
             }
             let lock_committed = unit.lock_mutation.is_some();
-            match self.entries.cleanup(staged).await {
-                Ok(warnings) => results.push(success_result(&unit, lock_committed, warnings)),
-                Err(error) => {
-                    results.push(success_result(
-                        &unit,
-                        lock_committed,
-                        vec![MutationWarning {
-                            code: MutationWarningCode::BackupCleanupFailed,
-                            parameters: BTreeMap::new(),
-                            technical_details: Some(error.to_string().chars().take(4096).collect()),
-                        }],
-                    ));
-                }
-            }
+            results.push(success_result(&unit, lock_committed, transaction.warnings));
         }
         results
     }
@@ -279,6 +345,18 @@ where
             expected_environment_revision: expected.environment.clone(),
             actual_environment_revision: actual.environment,
         })
+    }
+}
+
+#[cfg(test)]
+impl<E, L, R> MutationCoordinator<PhasedUnitExecutor<E, L>, R>
+where
+    E: PreparedEntryExecutor,
+    L: PreparedLockCommitter,
+    R: RuntimeRevisionSource,
+{
+    pub fn from_phases(entries: E, locks: L, revisions: R) -> Self {
+        Self::new(PhasedUnitExecutor::new(entries, locks), revisions)
     }
 }
 
@@ -420,177 +498,125 @@ mod tests {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Failure {
         None,
-        StageSecond,
+        PrepareSecond,
         CancelAfterSecond,
-        Recheck,
-        Lock,
+        Execute,
         Cleanup,
-        LockAndRestoreRequired,
+        RecoveryRequired,
     }
 
-    struct FakeEntryExecutor {
+    struct FakeUnitExecutor {
         log: Arc<Mutex<Vec<String>>>,
         failure: Failure,
     }
 
-    struct FakeStaged {
+    struct FakePrepared {
         unit_id: String,
     }
 
-    impl PreparedEntryExecutor for FakeEntryExecutor {
-        type Staged = FakeStaged;
+    impl PreparedUnitExecutor for FakeUnitExecutor {
+        type Prepared = FakePrepared;
 
-        fn stage<'a>(
+        fn prepare<'a>(
             &'a self,
             unit: &'a ExecutionUnit,
             _payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
             cancellation: CancellationSignal,
-        ) -> BoxFuture<'a, Result<Self::Staged, AppError>> {
+        ) -> BoxFuture<'a, Result<Self::Prepared, AppError>> {
             Box::pin(async move {
-                if self.failure == Failure::StageSecond && unit.id == "second" {
+                if self.failure == Failure::PrepareSecond && unit.id == "second" {
                     return Err(AppError::ExecutionFailed {
-                        message: "second target cannot be staged".to_string(),
+                        message: "second target cannot be prepared".to_string(),
                     });
                 }
-                self.log.lock().unwrap().push(format!("stage:{}", unit.id));
-                self.log.lock().unwrap().push(format!("marker:{}", unit.id));
+                self.log
+                    .lock()
+                    .unwrap()
+                    .push(format!("prepare:{}", unit.id));
                 if self.failure == Failure::CancelAfterSecond && unit.id == "second" {
                     cancellation.cancel();
                 }
-                Ok(FakeStaged {
+                Ok(FakePrepared {
                     unit_id: unit.id.clone(),
                 })
             })
         }
 
-        fn recheck_entries<'a>(
+        fn execute<'a>(
             &'a self,
-            staged: &'a Self::Staged,
-        ) -> BoxFuture<'a, Result<(), AppError>> {
+            prepared: Self::Prepared,
+            lock: Option<&'a PreparedLockMutation>,
+            _cancellation: CancellationSignal,
+        ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>> {
             Box::pin(async move {
                 self.log
                     .lock()
                     .unwrap()
-                    .push(format!("recheck:{}", staged.unit_id));
-                if self.failure == Failure::Recheck {
-                    return Err(AppError::StaleTarget);
-                }
-                Ok(())
-            })
-        }
-
-        fn swap<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
-            Box::pin(async move {
-                self.log
-                    .lock()
-                    .unwrap()
-                    .push(format!("swap:{}", staged.unit_id));
-                Ok(())
-            })
-        }
-
-        fn verify<'a>(&'a self, staged: &'a Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
-            Box::pin(async move {
-                self.log
-                    .lock()
-                    .unwrap()
-                    .push(format!("verify:{}", staged.unit_id));
-                Ok(())
-            })
-        }
-
-        fn restore<'a>(
-            &'a self,
-            staged: &'a mut Self::Staged,
-        ) -> BoxFuture<'a, Result<(), AppError>> {
-            Box::pin(async move {
-                self.log
-                    .lock()
-                    .unwrap()
-                    .push(format!("restore:{}", staged.unit_id));
-                if self.failure == Failure::LockAndRestoreRequired {
+                    .push(format!("execute:{}", prepared.unit_id));
+                if self.failure == Failure::RecoveryRequired && prepared.unit_id == "first" {
                     return Err(AppError::RecoveryRequired {
                         recovery_resource_id: RecoveryResourceId::parse(format!(
                             "recovery-{}",
-                            staged.unit_id
+                            prepared.unit_id
                         ))
                         .unwrap(),
-                        message: "restore failed".to_string(),
+                        message: "transaction result is unknown".to_string(),
                     });
                 }
-                Ok(())
-            })
-        }
-
-        fn cleanup<'a>(
-            &'a self,
-            staged: Self::Staged,
-        ) -> BoxFuture<'a, Result<Vec<MutationWarning>, AppError>> {
-            Box::pin(async move {
-                self.log
-                    .lock()
-                    .unwrap()
-                    .push(format!("cleanup:{}", staged.unit_id));
-                if self.failure == Failure::Cleanup {
-                    Err(AppError::ExecutionFailed {
-                        message: "backup remains".to_string(),
-                    })
-                } else {
-                    Ok(Vec::new())
+                if self.failure == Failure::Execute {
+                    return Err(AppError::StaleTarget);
                 }
+                let lock = lock.map(|mutation| LockCommitReceipt {
+                    entry_snapshots: mutation.expected.entry_snapshots.clone(),
+                    root_snapshots: mutation.expected.root_snapshots.clone(),
+                });
+                let warnings = (self.failure == Failure::Cleanup)
+                    .then(|| MutationWarning {
+                        code: MutationWarningCode::BackupCleanupFailed,
+                        parameters: BTreeMap::new(),
+                        technical_details: Some("backup remains".to_string()),
+                    })
+                    .into_iter()
+                    .collect();
+                Ok(UnitTransactionReceipt { lock, warnings })
             })
         }
     }
 
-    struct FakeLockCommitter {
-        log: Arc<Mutex<Vec<String>>>,
-        failure: Failure,
-    }
-
-    struct RecordingLockCommitter {
+    struct RecordingUnitExecutor {
         expected_entries: Arc<Mutex<Vec<Vec<String>>>>,
     }
 
-    impl PreparedLockCommitter for FakeLockCommitter {
-        fn commit<'a>(
-            &'a self,
-            mutation: &'a PreparedLockMutation,
-        ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
-            Box::pin(async move {
-                self.log
-                    .lock()
-                    .unwrap()
-                    .push(format!("lock:{}", mutation.skill_name()));
-                if self.failure == Failure::Lock
-                    || (self.failure == Failure::LockAndRestoreRequired
-                        && mutation.skill_name() == "first")
-                {
-                    Err(AppError::ExecutionFailed {
-                        message: "lock failed".to_string(),
-                    })
-                } else {
-                    Ok(LockCommitReceipt {
-                        entry_snapshots: mutation.expected.entry_snapshots.clone(),
-                        root_snapshots: mutation.expected.root_snapshots.clone(),
-                    })
-                }
-            })
-        }
-    }
+    impl PreparedUnitExecutor for RecordingUnitExecutor {
+        type Prepared = ();
 
-    impl PreparedLockCommitter for RecordingLockCommitter {
-        fn commit<'a>(
+        fn prepare<'a>(
             &'a self,
-            mutation: &'a PreparedLockMutation,
-        ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
+            _unit: &'a ExecutionUnit,
+            _payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+            _cancellation: CancellationSignal,
+        ) -> BoxFuture<'a, Result<Self::Prepared, AppError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _prepared: Self::Prepared,
+            mutation: Option<&'a PreparedLockMutation>,
+            _cancellation: CancellationSignal,
+        ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>> {
             Box::pin(async move {
+                let mutation = mutation.expect("fixture unit has a lock mutation");
                 self.expected_entries
                     .lock()
                     .unwrap()
                     .push(mutation.expected.entry_snapshots.keys().cloned().collect());
-                Ok(LockCommitReceipt {
-                    entry_snapshots: mutation.expected.entry_snapshots.clone(),
-                    root_snapshots: mutation.expected.root_snapshots.clone(),
+                Ok(UnitTransactionReceipt {
+                    lock: Some(LockCommitReceipt {
+                        entry_snapshots: mutation.expected.entry_snapshots.clone(),
+                        root_snapshots: mutation.expected.root_snapshots.clone(),
+                    }),
+                    warnings: Vec::new(),
                 })
             })
         }
@@ -728,13 +754,9 @@ mod tests {
     fn coordinator(
         failure: Failure,
         log: Arc<Mutex<Vec<String>>>,
-    ) -> MutationCoordinator<FakeEntryExecutor, FakeLockCommitter, FakeRevisions> {
+    ) -> MutationCoordinator<FakeUnitExecutor, FakeRevisions> {
         MutationCoordinator::new(
-            FakeEntryExecutor {
-                log: log.clone(),
-                failure,
-            },
-            FakeLockCommitter {
+            FakeUnitExecutor {
                 log: log.clone(),
                 failure,
             },
@@ -755,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_unit_uses_the_exact_transaction_order() {
+    async fn successful_unit_uses_the_backend_transaction_seam() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let results = coordinator(Failure::None, log.clone())
             .execute(
@@ -769,22 +791,17 @@ mod tests {
             *log.lock().unwrap(),
             vec![
                 "runtime:global",
-                "stage:one",
-                "marker:one",
+                "prepare:one",
                 "runtime:global",
-                "recheck:one",
-                "swap:one",
-                "verify:one",
-                "lock:one",
-                "cleanup:one",
+                "execute:one",
             ]
         );
     }
 
     #[tokio::test]
-    async fn stale_entry_recheck_stops_before_swap_verify_and_lock() {
+    async fn backend_transaction_failure_is_returned_without_coordinator_phases() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let results = coordinator(Failure::Recheck, log.clone())
+        let results = coordinator(Failure::Execute, log.clone())
             .execute(
                 plan(vec![unit("one", key("one"))]),
                 CancellationSignal::default(),
@@ -796,12 +813,9 @@ mod tests {
             *log.lock().unwrap(),
             vec![
                 "runtime:global",
-                "stage:one",
-                "marker:one",
+                "prepare:one",
                 "runtime:global",
-                "recheck:one",
-                "restore:one",
-                "cleanup:one",
+                "execute:one",
             ]
         );
     }
@@ -837,19 +851,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lock_failure_restores_before_cleanup() {
+    async fn backend_transaction_failure_remains_a_failed_unit() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let results = coordinator(Failure::Lock, log.clone())
+        let results = coordinator(Failure::Execute, log.clone())
             .execute(
                 plan(vec![unit("one", key("one"))]),
                 CancellationSignal::default(),
             )
             .await;
         assert_eq!(results[0].status, MutationUnitStatus::Failed);
-        let log = log.lock().unwrap();
-        assert!(log
-            .windows(3)
-            .any(|window| { window == ["lock:one", "restore:one", "cleanup:one"] }));
+        assert!(log.lock().unwrap().iter().any(|item| item == "execute:one"));
     }
 
     #[tokio::test]
@@ -873,7 +884,7 @@ mod tests {
     async fn recovery_required_blocks_only_later_overlapping_units() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let shared = key("shared");
-        let results = coordinator(Failure::LockAndRestoreRequired, log)
+        let results = coordinator(Failure::RecoveryRequired, log)
             .execute(
                 plan(vec![
                     unit("first", shared.clone()),
@@ -889,9 +900,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_staging_failure_does_not_abort_independent_units() {
+    async fn one_prepare_failure_does_not_abort_independent_units() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let results = coordinator(Failure::StageSecond, log.clone())
+        let results = coordinator(Failure::PrepareSecond, log.clone())
             .execute(
                 plan(vec![
                     unit("first", key("first")),
@@ -906,13 +917,19 @@ mod tests {
         assert_eq!(results[1].status, MutationUnitStatus::Failed);
         assert_eq!(results[2].status, MutationUnitStatus::Succeeded);
         let log = log.lock().unwrap();
-        let stage_third = log.iter().position(|entry| entry == "stage:third").unwrap();
-        let swap_first = log.iter().position(|entry| entry == "swap:first").unwrap();
-        assert!(stage_third < swap_first);
+        let prepare_third = log
+            .iter()
+            .position(|entry| entry == "prepare:third")
+            .unwrap();
+        let execute_first = log
+            .iter()
+            .position(|entry| entry == "execute:first")
+            .unwrap();
+        assert!(prepare_third < execute_first);
     }
 
     #[tokio::test]
-    async fn cancellation_before_commit_cleans_every_staged_unit() {
+    async fn cancellation_after_prepare_stops_before_every_transaction() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let results = coordinator(Failure::CancelAfterSecond, log.clone())
             .execute(
@@ -928,10 +945,11 @@ mod tests {
         assert!(results
             .iter()
             .all(|result| result.status != MutationUnitStatus::Succeeded));
-        let log = log.lock().unwrap();
-        assert!(log.iter().any(|entry| entry == "cleanup:first"));
-        assert!(log.iter().any(|entry| entry == "cleanup:second"));
-        assert!(!log.iter().any(|entry| entry.starts_with("swap:")));
+        assert!(!log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.starts_with("execute:")));
     }
 
     #[tokio::test]
@@ -939,11 +957,7 @@ mod tests {
         let log = Arc::new(Mutex::new(Vec::new()));
         let expected_entries = Arc::new(Mutex::new(Vec::new()));
         let coordinator = MutationCoordinator::new(
-            FakeEntryExecutor {
-                log: log.clone(),
-                failure: Failure::None,
-            },
-            RecordingLockCommitter {
+            RecordingUnitExecutor {
                 expected_entries: Arc::clone(&expected_entries),
             },
             FakeRevisions {
@@ -979,11 +993,7 @@ mod tests {
         let log = Arc::new(Mutex::new(Vec::new()));
         let calls = Arc::new(AtomicUsize::new(0));
         let coordinator = MutationCoordinator::new(
-            FakeEntryExecutor {
-                log: log.clone(),
-                failure: Failure::None,
-            },
-            FakeLockCommitter {
+            FakeUnitExecutor {
                 log,
                 failure: Failure::None,
             },
@@ -1005,15 +1015,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn selected_binding_change_is_rejected_after_staging_before_swap() {
+    async fn selected_binding_change_is_rejected_after_prepare_before_execute() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let calls = Arc::new(AtomicUsize::new(0));
         let coordinator = MutationCoordinator::new(
-            FakeEntryExecutor {
-                log: log.clone(),
-                failure: Failure::None,
-            },
-            FakeLockCommitter {
+            FakeUnitExecutor {
                 log: log.clone(),
                 failure: Failure::None,
             },
@@ -1031,6 +1037,10 @@ mod tests {
             .await;
 
         assert_eq!(results[0].status, MutationUnitStatus::Failed);
-        assert!(!log.lock().unwrap().iter().any(|entry| entry == "swap:one"));
+        assert!(!log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "execute:one"));
     }
 }

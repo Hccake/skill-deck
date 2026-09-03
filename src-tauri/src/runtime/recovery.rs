@@ -12,7 +12,7 @@ use crate::environment::recovery::{
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::operations::entry::{inspect_entries, PosixEntryKind};
 use crate::environment::wsl::operations::recovery::WslRecoveryMarkerStore;
-use crate::environment::wsl::{WslRuntime, WslSession, WslWorkspace};
+use crate::environment::wsl::{WslRuntime, WslWorkspace};
 use crate::error::AppError;
 use crate::storage::recovery_repository::{
     RecoveryConsistency, RecoveryConsistencyChecker, RecoveryRepository,
@@ -44,14 +44,8 @@ impl RuntimeRecoveryConsistencyChecker {
             }
             EnvironmentRef::Wsl { distro_name } => {
                 let marker = marker.clone();
-                match self
-                    .environments
-                    .with_session(distro_name, move |session| {
-                        let marker = marker.clone();
-                        async move { check_wsl_marker(&session, &marker).await }
-                    })
-                    .await
-                {
+                let workspace = self.environments.workspace(distro_name)?;
+                match check_wsl_marker(&workspace, &marker).await {
                     Ok(consistency) => Ok(consistency),
                     Err(error) if environment_unavailable(&error) => {
                         Ok(RecoveryConsistency::EnvironmentUnavailable)
@@ -92,7 +86,7 @@ fn check_native_marker(marker: &RecoveryMarker) -> Result<RecoveryConsistency, A
 }
 
 async fn check_wsl_marker(
-    session: &WslSession,
+    workspace: &WslWorkspace,
     marker: &RecoveryMarker,
 ) -> Result<RecoveryConsistency, AppError> {
     for entry in &marker.entries {
@@ -100,7 +94,7 @@ async fn check_wsl_marker(
         if let Some(backup) = &entry.backup {
             paths.push(backup.native_path.clone());
         }
-        let states = inspect_entries(session, &paths, None).await?;
+        let states = inspect_entries(workspace, &paths, None).await?;
         let destination = &states[0].fingerprint.0;
         let backup_exists = states
             .get(1)
@@ -197,13 +191,13 @@ impl RuntimeRecoveryGraph {
 
     pub(crate) fn active_wsl_store(
         &self,
-        session: WslSession,
+        workspace: WslWorkspace,
     ) -> Result<Arc<dyn RecoveryMarkerStore>, AppError> {
         let environment = EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
+            distro_name: workspace.distro_name().to_string(),
         };
         let underlying: Arc<dyn RecoveryMarkerStore> =
-            Arc::new(WslRecoveryMarkerStore::from_active_session(session));
+            Arc::new(WslRecoveryMarkerStore::new(workspace));
         self.repository.register_store(underlying)?;
         Ok(Arc::new(RepositoryRecoveryMarkerStore::new(
             environment,

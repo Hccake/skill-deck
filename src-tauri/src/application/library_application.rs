@@ -68,16 +68,14 @@ pub struct PendingLibraryApplication {
 #[serde(rename_all = "camelCase")]
 pub struct LibraryApplicationRecord {
     pub schema_version: u32,
-    pub target: SkillLocationRef,
     pub current: LibraryApplicationState,
     pub pending_operation: Option<PendingLibraryApplication>,
 }
 
 impl LibraryApplicationRecord {
-    pub fn empty(target: SkillLocationRef) -> Self {
+    pub fn empty() -> Self {
         Self {
             schema_version: LIBRARY_APPLICATION_SCHEMA_VERSION,
-            target,
             current: LibraryApplicationState::default(),
             pending_operation: None,
         }
@@ -267,6 +265,7 @@ pub trait LibraryApplicationRepository: Send + Sync {
 
     fn save_application<'a>(
         &'a self,
+        context: &'a SkillLocationRef,
         record: &'a LibraryApplicationRecord,
     ) -> LibraryApplicationFuture<'a, Result<(), AppError>>;
 
@@ -429,7 +428,9 @@ where
             target_application: built.preview.target.clone(),
             preview_fingerprint: built.preview.token.generation.clone(),
         });
-        self.repository.save_application(&pending_record).await?;
+        self.repository
+            .save_application(&built.context, &pending_record)
+            .await?;
         self.execute(built, pending_record, cancellation).await
     }
 
@@ -482,7 +483,7 @@ where
         pending_record: LibraryApplicationRecord,
         cancellation: CancellationSignal,
     ) -> Result<LibraryApplicationResponse, AppError> {
-        let context = built.record.target.clone();
+        let context = built.context.clone();
         let expected_unit_count = built.plan.units.len();
         let units = self.executor.execute(built.plan, cancellation).await;
         let completed = library_execution_completed(expected_unit_count, &units);
@@ -495,7 +496,9 @@ where
         } else {
             pending_record
         };
-        self.repository.save_application(&final_record).await?;
+        self.repository
+            .save_application(&context, &final_record)
+            .await?;
         let catalog = self.repository.load_catalog(&context).await?;
         Ok(LibraryApplicationResponse {
             application: summary(&final_record, &catalog)?,
@@ -770,6 +773,7 @@ where
             units: if include_plan { units } else { Vec::new() },
         });
         Ok(BuiltLibraryApplication {
+            context: draft.context.clone(),
             preview: LibraryApplicationPreview {
                 token,
                 current: record.current.clone(),
@@ -1076,6 +1080,7 @@ fn ensure_library_link_targets_supported<'a>(
 }
 
 struct BuiltLibraryApplication {
+    context: SkillLocationRef,
     preview: LibraryApplicationPreview,
     record: LibraryApplicationRecord,
     plan: crate::application::mutation::plan::MutationPlan,
@@ -1237,6 +1242,7 @@ mod tests {
 
         fn save_application<'a>(
             &'a self,
+            _context: &'a SkillLocationRef,
             record: &'a LibraryApplicationRecord,
         ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
             Box::pin(async move {
@@ -1508,7 +1514,7 @@ mod tests {
                     ordered_library_ids: current_library_ids,
                     selected_agent_ids: current_agent_ids.into_iter().collect(),
                 },
-                ..LibraryApplicationRecord::empty(context.clone())
+                ..LibraryApplicationRecord::empty()
             }),
             catalog: Mutex::new(LibraryCatalog {
                 schema_version: LIBRARY_SCHEMA_VERSION,
@@ -1561,14 +1567,9 @@ mod tests {
         current: &[&str],
         pending: Option<(&[&str], &[&str])>,
     ) -> LibraryApplicationRecord {
-        let context = SkillLocationRef {
-            environment: EnvironmentRef::Native,
-            scope: crate::environment::types::SkillLocation::Global,
-        };
         let ids = |values: &[&str]| values.iter().map(|id| LibraryId::parse(*id)).collect();
         LibraryApplicationRecord {
             schema_version: LIBRARY_APPLICATION_SCHEMA_VERSION,
-            target: context,
             current: LibraryApplicationState {
                 ordered_library_ids: ids(current),
                 selected_agent_ids: Vec::new(),
@@ -1833,11 +1834,7 @@ mod tests {
 
     #[test]
     fn library_application_preview_evidence_changes_with_the_catalog() {
-        let context = SkillLocationRef {
-            environment: EnvironmentRef::Native,
-            scope: SkillLocation::Global,
-        };
-        let record = LibraryApplicationRecord::empty(context);
+        let record = LibraryApplicationRecord::empty();
         let target = LibraryApplicationState::default();
         let catalog = LibraryCatalog {
             schema_version: LIBRARY_SCHEMA_VERSION,

@@ -1,181 +1,36 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
-use crate::application::mutation::coordinator::{BoxFuture, PreparedEntryExecutor};
+use crate::application::mutation::coordinator::{
+    BoxFuture, PreparedUnitExecutor, UnitTransactionReceipt,
+};
 use crate::application::mutation::plan::{
     ExecutionUnit, PreparedEntryAction, PreparedEntryMutation,
 };
-use crate::application::mutation::result::MutationWarning;
+use crate::application::mutation::result::{MutationWarning, MutationWarningCode};
 use crate::application::payload_session::{PayloadLocalSource, PinnedPayloadLease};
 use crate::core::mutation::CancellationSignal;
-use crate::core::skill_payload::{PayloadEntryKind, PayloadId, SkillPayloadManifest};
+use crate::core::skill_payload::{PayloadId, SkillPayloadManifest};
 use crate::environment::content_manifest::ContentManifestHash;
 use crate::environment::recovery::{
     RecoveryEntryPhase, RecoveryExpectedEntryState, RecoveryMarker, RecoveryMarkerEntry,
-    RecoveryMarkerKind, RecoveryMarkerRef, RecoveryMarkerStore, RecoverySubject,
-    RECOVERY_MARKER_SCHEMA_VERSION,
+    RecoveryMarkerKind, RecoverySubject, RECOVERY_MARKER_SCHEMA_VERSION,
 };
 use crate::environment::runtime::posix_relative_target;
-use crate::environment::runtime::{EntryFingerprint, ExecutionBackend};
+use crate::environment::runtime::{EntryFingerprint, ExecutionBackend, PhysicalParentIdentity};
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
-use crate::environment::wsl::operations::content_manifest::inspect_path as inspect_content_manifest;
-use crate::environment::wsl::operations::entry::inspect_entries;
-use crate::environment::wsl::operations::recovery::WslRecoveryMarkerStore;
-use crate::environment::wsl::protocol::{
-    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
-    DEFAULT_WSL_STDERR_LIMIT,
-};
 use crate::environment::wsl::WslSession;
 use crate::error::{AppError, RecoveryResourceId};
-
-const MATERIALIZE_SCRIPT: &str = include_str!("../scripts/materialize.sh");
-const STAGE_OPERATION: WslOperationDescriptor =
-    wsl_operation("materialize", "stage", MATERIALIZE_SCRIPT);
-const SWAP_OPERATION: WslOperationDescriptor =
-    wsl_operation("materialize", "swap", MATERIALIZE_SCRIPT);
-const VERIFY_OPERATION: WslOperationDescriptor =
-    wsl_operation("materialize", "verify", MATERIALIZE_SCRIPT);
-const RESTORE_OPERATION: WslOperationDescriptor =
-    wsl_operation("materialize", "restore", MATERIALIZE_SCRIPT);
-const CLEANUP_OPERATION: WslOperationDescriptor =
-    wsl_operation("materialize", "cleanup", MATERIALIZE_SCRIPT);
-const MAX_MATERIALIZE_ENTRY_COUNT: usize = 100_000;
-const MAX_MATERIALIZE_RECORD_COUNT: usize = 1_000_000;
-const MAX_MATERIALIZE_STAGE_REQUEST_BYTES: usize = 16 * 1024 * 1024;
-
-fn materialize_request_size_error() -> AppError {
-    AppError::CapabilityUnavailable {
-        capability: "wslMaterializeRequestSize".to_string(),
-        path: None,
-    }
-}
-
-fn append_stage_record(request: &mut Vec<u8>, fields: [&str; 7]) -> Result<(), AppError> {
-    if fields.iter().any(|field| field.as_bytes().contains(&0)) {
-        return Err(AppError::Validation {
-            field: Some("materializeStageRequest".to_string()),
-            message: "WSL materialize stage fields must not contain NUL".to_string(),
-        });
-    }
-    let record_bytes = fields.iter().try_fold(0usize, |total, field| {
-        total.checked_add(field.len())?.checked_add(1)
-    });
-    if record_bytes
-        .and_then(|record_bytes| request.len().checked_add(record_bytes))
-        .is_none_or(|total| total > MAX_MATERIALIZE_STAGE_REQUEST_BYTES)
-    {
-        return Err(materialize_request_size_error());
-    }
-    for field in fields {
-        request.extend_from_slice(field.as_bytes());
-        request.push(0);
-    }
-    Ok(())
-}
-
-fn materialize_stage_request(entries: &[WslEntryMutation]) -> Result<Vec<u8>, AppError> {
-    if entries.len() > MAX_MATERIALIZE_ENTRY_COUNT {
-        return Err(materialize_request_size_error());
-    }
-    let manifest_records = entries
-        .iter()
-        .try_fold(0usize, |count, entry| {
-            count.checked_add(match &entry.action {
-                WslEntryAction::Materialize { manifest, .. } => manifest.entries.len(),
-                _ => 0,
-            })
-        })
-        .ok_or_else(materialize_request_size_error)?;
-    let total_records = 1usize
-        .checked_add(entries.len())
-        .and_then(|count| count.checked_add(manifest_records))
-        .ok_or_else(materialize_request_size_error)?;
-    if total_records > MAX_MATERIALIZE_RECORD_COUNT {
-        return Err(materialize_request_size_error());
-    }
-    let total_records = total_records.to_string();
-    let entry_count = entries.len().to_string();
-    let mut request = Vec::new();
-    append_stage_record(
-        &mut request,
-        ["H", "1", &total_records, &entry_count, "", "", ""],
-    )?;
-    for (index, entry) in entries.iter().enumerate() {
-        let index = format!("{index:06}");
-        let (action, source, manifest) = match &entry.action {
-            WslEntryAction::Keep => ("keep", "", None),
-            WslEntryAction::Materialize {
-                payload_root,
-                manifest,
-            } => ("materialize", payload_root.as_str(), Some(manifest)),
-            WslEntryAction::Symlink { target } => ("symlink", target.as_str(), None),
-            WslEntryAction::Remove => ("remove", "", None),
-        };
-        let manifest_count = manifest
-            .map_or(0, |manifest| manifest.entries.len())
-            .to_string();
-        append_stage_record(
-            &mut request,
-            [
-                "E",
-                &index,
-                &entry.destination,
-                action,
-                source,
-                &entry.expected_fingerprint.0,
-                &manifest_count,
-            ],
-        )?;
-        if let Some(manifest) = manifest {
-            for manifest_entry in &manifest.entries {
-                let (kind, blob_id) = match manifest_entry.kind {
-                    PayloadEntryKind::Directory => ("directory", ""),
-                    PayloadEntryKind::File => {
-                        ("file", manifest_entry.blob_id.as_deref().unwrap_or(""))
-                    }
-                };
-                let executable = if manifest_entry.executable { "1" } else { "0" };
-                let expected_size = manifest_entry.size.to_string();
-                append_stage_record(
-                    &mut request,
-                    [
-                        "M",
-                        &index,
-                        kind,
-                        &manifest_entry.relative_path,
-                        blob_id,
-                        executable,
-                        &expected_size,
-                    ],
-                )?;
-            }
-        }
-    }
-    Ok(request)
-}
-
-fn parse_unit_response(bytes: &[u8]) -> Result<(), AppError> {
-    (bytes == b"1\0")
-        .then_some(())
-        .ok_or_else(|| AppError::ConfigurationCorrupted {
-            message: "invalid WSL entry-set protocol response".to_string(),
-        })
-}
+use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WslEntryAction {
     Keep,
-    Materialize {
-        payload_root: String,
-        manifest: SkillPayloadManifest,
-    },
-    Symlink {
-        target: String,
-    },
+    Materialize,
+    Symlink { target: String },
     Remove,
 }
 
@@ -188,21 +43,6 @@ pub struct WslEntryMutation {
     pub action: WslEntryAction,
 }
 
-struct PartitionedWslEntrySet {
-    observations: Vec<WslEntryMutation>,
-    mutations: Vec<WslEntryMutation>,
-}
-
-fn partition_entry_set(entries: Vec<WslEntryMutation>) -> PartitionedWslEntrySet {
-    let (observations, mutations) = entries
-        .into_iter()
-        .partition(|entry| matches!(entry.action, WslEntryAction::Keep));
-    PartitionedWslEntrySet {
-        observations,
-        mutations,
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WslPayloadBinding {
     pub source: PayloadLocalSource,
@@ -213,6 +53,7 @@ pub fn prepare_wsl_mutations(
     unit: &ExecutionUnit,
     payloads: &BTreeMap<PayloadId, WslPayloadBinding>,
     distro_name: &str,
+    worker_generation: u64,
 ) -> Result<Vec<WslEntryMutation>, AppError> {
     let environment_matches = matches!(
         &unit.target.environment,
@@ -265,22 +106,27 @@ pub fn prepare_wsl_mutations(
                 if binding.manifest.payload_id() != payload_id {
                     return Err(AppError::StalePayload);
                 }
-                let payload_root = match &binding.source {
+                match &binding.source {
                     PayloadLocalSource::WslManaged {
                         distro_name: source_distro,
-                        payload_root,
-                    } if source_distro.eq_ignore_ascii_case(distro_name) => payload_root.clone(),
+                        worker_generation: source_generation,
+                        ..
+                    } if source_distro.eq_ignore_ascii_case(distro_name)
+                        && *source_generation == worker_generation => {}
+                    PayloadLocalSource::WslManaged {
+                        distro_name: source_distro,
+                        ..
+                    } if source_distro.eq_ignore_ascii_case(distro_name) => {
+                        return Err(AppError::StalePayload);
+                    }
                     _ => {
                         return Err(AppError::CapabilityUnavailable {
                             capability: "backendLocalPayload".to_string(),
                             path: None,
                         })
                     }
-                };
-                WslEntryAction::Materialize {
-                    payload_root,
-                    manifest: binding.manifest.clone(),
                 }
+                WslEntryAction::Materialize
             }
             PreparedEntryAction::Replace {
                 requested_mode: crate::models::InstallMode::Symlink,
@@ -389,7 +235,7 @@ pub fn recovery_marker_for_entry_set(
                 }),
                 expected_state: match entry.action {
                     WslEntryAction::Remove => RecoveryExpectedEntryState::Missing,
-                    WslEntryAction::Materialize { .. } | WslEntryAction::Symlink { .. } => {
+                    WslEntryAction::Materialize | WslEntryAction::Symlink { .. } => {
                         RecoveryExpectedEntryState::Present
                     }
                     WslEntryAction::Keep => unreachable!("Keep entries are filtered"),
@@ -398,7 +244,7 @@ pub fn recovery_marker_for_entry_set(
                 phase: RecoveryEntryPhase::Staged,
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
     Ok(RecoveryMarker {
         schema_version: RECOVERY_MARKER_SCHEMA_VERSION,
         resource_id,
@@ -410,6 +256,36 @@ pub fn recovery_marker_for_entry_set(
         created_at_epoch_ms,
         entries: marker_entries,
     })
+}
+
+fn add_lock_recovery_evidence(
+    marker: &mut RecoveryMarker,
+    entries: &[WslEntryMutation],
+    environment: &EnvironmentRef,
+) -> Result<(), AppError> {
+    if !marker.entries.is_empty() {
+        return Ok(());
+    }
+    let evidence = entries.first().ok_or_else(|| AppError::Validation {
+        field: Some("entrySet".to_string()),
+        message: "WSL lock mutation requires target evidence".to_string(),
+    })?;
+    marker.entries.push(RecoveryMarkerEntry {
+        physical_target_digest: evidence.physical_target_digest.clone(),
+        destination: ResourceLocator {
+            environment: environment.clone(),
+            native_path: evidence.destination.clone(),
+        },
+        backup: None,
+        expected_state: if evidence.expected_fingerprint.0 == "entry-v1-missing" {
+            RecoveryExpectedEntryState::Missing
+        } else {
+            RecoveryExpectedEntryState::Present
+        },
+        original_fingerprint: evidence.expected_fingerprint.0.clone(),
+        phase: RecoveryEntryPhase::Staged,
+    });
+    Ok(())
 }
 
 fn validate_wsl_entry(entry: &PreparedEntryMutation, distro_name: &str) -> Result<(), AppError> {
@@ -429,63 +305,48 @@ fn validate_wsl_entry(entry: &PreparedEntryMutation, distro_name: &str) -> Resul
     Ok(())
 }
 
-pub struct WslPreparedEntrySet {
+pub struct WslPreparedUnitExecutor {
     session: WslSession,
-    owner_id: String,
-    operation_root: String,
-    entries: Vec<WslEntryMutation>,
-    recovery_store: Arc<dyn RecoveryMarkerStore>,
-    recovery_marker: Mutex<Option<RecoveryMarker>>,
-    recovery_ref: Option<RecoveryMarkerRef>,
-}
-
-pub struct WslPreparedEntryExecutor {
-    session: WslSession,
+    workspace: crate::environment::wsl::WslWorkspace,
     operation_id: String,
     operation_kind: crate::core::mutation::MutationKind,
-    recovery_store: Arc<dyn RecoveryMarkerStore>,
 }
 
-impl WslPreparedEntryExecutor {
+pub struct PreparedWslUnit {
+    generation: u64,
+    resource_id: String,
+    request: environment_protocol::MutationUnitRequest,
+}
+
+impl WslPreparedUnitExecutor {
     pub fn for_operation(
         session: WslSession,
+        workspace: crate::environment::wsl::WslWorkspace,
         operation_id: impl Into<String>,
         operation_kind: crate::core::mutation::MutationKind,
-    ) -> Self {
-        let recovery_store = Arc::new(WslRecoveryMarkerStore::from_active_session(session.clone()));
-        Self::with_recovery_store_for_operation(
-            session,
-            operation_id,
-            operation_kind,
-            recovery_store,
-        )
-    }
-
-    pub fn with_recovery_store_for_operation(
-        session: WslSession,
-        operation_id: impl Into<String>,
-        operation_kind: crate::core::mutation::MutationKind,
-        recovery_store: Arc<dyn RecoveryMarkerStore>,
     ) -> Self {
         Self {
             session,
+            workspace,
             operation_id: operation_id.into(),
             operation_kind,
-            recovery_store,
         }
     }
 }
 
-impl PreparedEntryExecutor for WslPreparedEntryExecutor {
-    type Staged = WslPreparedEntrySet;
+impl PreparedUnitExecutor for WslPreparedUnitExecutor {
+    type Prepared = PreparedWslUnit;
 
-    fn stage<'a>(
+    fn prepare<'a>(
         &'a self,
         unit: &'a ExecutionUnit,
         payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
         cancellation: CancellationSignal,
-    ) -> BoxFuture<'a, Result<Self::Staged, AppError>> {
+    ) -> BoxFuture<'a, Result<Self::Prepared, AppError>> {
         Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
             let bindings = payloads
                 .iter()
                 .map(|(id, lease)| {
@@ -498,354 +359,340 @@ impl PreparedEntryExecutor for WslPreparedEntryExecutor {
                     ))
                 })
                 .collect::<Result<BTreeMap<_, _>, AppError>>()?;
-            let mutations = prepare_wsl_mutations(unit, &bindings, &self.session.distro_name)?;
-            stage_entry_set(
-                &self.session,
+            let mutations = prepare_wsl_mutations(
+                unit,
+                &bindings,
+                &self.session.distro_name,
+                self.session.runtime_generation,
+            )?;
+            let resource_id = operation_owner_id(&self.operation_id, &unit.id);
+            let mut marker = recovery_marker_for_entry_set(
                 &self.operation_id,
                 &unit.id,
+                &resource_id,
+                &unit.target.environment,
                 RecoverySubject {
                     operation_kind: self.operation_kind,
                     skill_name: unit.skill_name.clone(),
                     context: unit.target.clone(),
                 },
-                mutations,
-                cancellation,
-                Arc::clone(&self.recovery_store),
-            )
-            .await
-        })
-    }
-
-    fn recheck_entries<'a>(
-        &'a self,
-        staged: &'a Self::Staged,
-    ) -> BoxFuture<'a, Result<(), AppError>> {
-        Box::pin(async move { staged.recheck().await })
-    }
-
-    fn swap<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
-        Box::pin(async move { staged.swap().await })
-    }
-
-    fn verify<'a>(&'a self, staged: &'a Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
-        Box::pin(async move { staged.verify().await })
-    }
-
-    fn restore<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
-        Box::pin(async move { staged.restore().await })
-    }
-
-    fn cleanup<'a>(
-        &'a self,
-        staged: Self::Staged,
-    ) -> BoxFuture<'a, Result<Vec<MutationWarning>, AppError>> {
-        Box::pin(async move {
-            staged.cleanup().await?;
-            Ok(Vec::new())
-        })
-    }
-}
-
-pub async fn stage_entry_set(
-    session: &WslSession,
-    operation_id: &str,
-    unit_id: &str,
-    subject: RecoverySubject,
-    entries: Vec<WslEntryMutation>,
-    cancellation: CancellationSignal,
-    recovery_store: Arc<dyn RecoveryMarkerStore>,
-) -> Result<WslPreparedEntrySet, AppError> {
-    if entries.is_empty() {
-        return Err(AppError::Validation {
-            field: Some("entrySet".to_string()),
-            message: "WSL entry set must not be empty".to_string(),
-        });
-    }
-    if let Some(entry) = entries
-        .iter()
-        .find(|entry| !entry.destination.starts_with('/'))
-    {
-        return Err(AppError::UnsafePath {
-            path: entry.destination.clone(),
-            reason: "WSL destination must be an absolute POSIX path".to_string(),
-        });
-    }
-    let partitioned = partition_entry_set(entries);
-    recheck_observed_entries(
-        session,
-        &partitioned.observations,
-        Some(cancellation.clone()),
-    )
-    .await?;
-    let owner_id = operation_owner_id(operation_id, unit_id);
-    let operation_root = format!("/tmp/skill-deck-operation-{owner_id}");
-    if partitioned.mutations.is_empty() {
-        return Ok(WslPreparedEntrySet {
-            session: session.clone(),
-            owner_id,
-            operation_root,
-            entries: partitioned.observations,
-            recovery_store,
-            recovery_marker: Mutex::new(None),
-            recovery_ref: None,
-        });
-    }
-    recheck_content_manifests(session, &partitioned.mutations, Some(cancellation.clone())).await?;
-    let request = materialize_stage_request(&partitioned.mutations)?;
-    let marker = recovery_marker_for_entry_set(
-        operation_id,
-        unit_id,
-        &owner_id,
-        &EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
-        },
-        subject,
-        &partitioned.mutations,
-        now_epoch_ms(),
-    )?;
-    let marker_ref = recovery_store.create(&marker).await?;
-    let entries = partitioned
-        .observations
-        .into_iter()
-        .chain(partitioned.mutations)
-        .collect();
-    let prepared = WslPreparedEntrySet {
-        session: session.clone(),
-        owner_id,
-        operation_root,
-        entries,
-        recovery_store,
-        recovery_marker: Mutex::new(Some(marker)),
-        recovery_ref: Some(marker_ref),
-    };
-    if let Err(error) = run(
-        &prepared.session,
-        &STAGE_OPERATION,
-        vec![prepared.operation_root.clone(), prepared.owner_id.clone()],
-        request,
-        Duration::from_secs(60),
-        Some(cancellation),
-    )
-    .await
-    {
-        let _ = prepared.cleanup().await;
-        return Err(error);
-    }
-    Ok(prepared)
-}
-
-impl WslPreparedEntrySet {
-    pub async fn recheck(&self) -> Result<(), AppError> {
-        recheck_observed_entries(&self.session, &self.entries, None).await
-    }
-
-    pub async fn swap(&mut self) -> Result<(), AppError> {
-        self.run_static(&SWAP_OPERATION).await?;
-        self.update_recovery(
-            RecoveryMarkerKind::InProgress,
-            Some(RecoveryEntryPhase::Swapped),
-        )
-        .await
-    }
-
-    pub async fn verify(&self) -> Result<(), AppError> {
-        self.run_static(&VERIFY_OPERATION).await?;
-        let keep = self
-            .entries
-            .iter()
-            .filter(|entry| matches!(entry.action, WslEntryAction::Keep))
-            .cloned()
-            .collect::<Vec<_>>();
-        recheck_observed_entries(&self.session, &keep, None).await?;
-        self.update_recovery(
-            RecoveryMarkerKind::InProgress,
-            Some(RecoveryEntryPhase::Verified),
-        )
-        .await
-    }
-
-    pub async fn restore(&mut self) -> Result<(), AppError> {
-        match self.run_static(&RESTORE_OPERATION).await {
-            Ok(()) => {
-                self.update_recovery(RecoveryMarkerKind::CleanupOnly, None)
-                    .await
+                &mutations,
+                now_epoch_ms(),
+            )?;
+            if marker.entries.is_empty() && unit.lock_mutation.is_some() {
+                add_lock_recovery_evidence(&mut marker, &mutations, &unit.target.environment)?;
             }
-            Err(primary) => {
-                if self
-                    .update_recovery(
-                        RecoveryMarkerKind::RecoveryRequired,
-                        Some(RecoveryEntryPhase::RestoreFailed),
-                    )
-                    .await
-                    .is_ok()
-                {
-                    let resource_id = RecoveryResourceId::parse(self.owner_id.clone())
-                        .expect("operation owner is a SHA-256 recovery ID");
-                    Err(AppError::RecoveryRequired {
-                        recovery_resource_id: resource_id,
-                        message: primary.to_string(),
+            let initial_marker_json = if marker.entries.is_empty() {
+                Vec::new()
+            } else {
+                serde_json::to_vec_pretty(&marker)?
+            };
+            let entries = mutations
+                .iter()
+                .map(|mutation| {
+                    let planned = unit
+                        .primary_entry
+                        .iter()
+                        .chain(&unit.additional_entries)
+                        .find(|entry| entry.destination.native_path == mutation.destination)
+                        .ok_or(AppError::StaleTarget)?;
+                    let (expected_anchor_device, expected_anchor_inode) =
+                        match &planned.key.physical_parent {
+                            PhysicalParentIdentity::Wsl {
+                                distro_name,
+                                device,
+                                inode,
+                            } if distro_name.eq_ignore_ascii_case(&self.session.distro_name) => {
+                                (*device, *inode)
+                            }
+                            _ => return Err(AppError::StaleTarget),
+                        };
+                    let action = match &mutation.action {
+                        WslEntryAction::Keep => environment_protocol::MutationEntryAction::Keep,
+                        WslEntryAction::Remove => environment_protocol::MutationEntryAction::Remove,
+                        WslEntryAction::Symlink { target } => {
+                            environment_protocol::MutationEntryAction::Symlink {
+                                target: target.clone(),
+                            }
+                        }
+                        WslEntryAction::Materialize => {
+                            let PreparedEntryAction::Replace { payload_id, .. } = &planned.action
+                            else {
+                                return Err(AppError::StalePayload);
+                            };
+                            let binding = bindings.get(payload_id).ok_or(AppError::StalePayload)?;
+                            let payload_id = match &binding.source {
+                                PayloadLocalSource::WslManaged {
+                                    worker_generation,
+                                    worker_payload_id,
+                                    ..
+                                } if *worker_generation == self.session.runtime_generation => {
+                                    *worker_payload_id
+                                }
+                                _ => return Err(AppError::StalePayload),
+                            };
+                            environment_protocol::MutationEntryAction::Materialize { payload_id }
+                        }
+                    };
+                    Ok(environment_protocol::MutationEntry {
+                        destination: mutation.destination.clone(),
+                        expected_anchor_device,
+                        expected_anchor_inode,
+                        expected_fingerprint: mutation.expected_fingerprint.0.clone(),
+                        expected_content_hash: mutation
+                            .expected_content_manifest_hash
+                            .as_ref()
+                            .map(|hash| hash.as_str().to_string()),
+                        action,
                     })
-                } else {
-                    Err(AppError::RestoreFailed {
-                        message: primary.to_string(),
+                })
+                .collect::<Result<Vec<_>, AppError>>()?;
+            Ok(PreparedWslUnit {
+                generation: self.session.runtime_generation,
+                resource_id: resource_id.clone(),
+                request: environment_protocol::MutationUnitRequest {
+                    resource_id,
+                    operation_id: self.operation_id.clone(),
+                    unit_id: unit.id.clone(),
+                    initial_marker_json,
+                    entries,
+                    lock: None,
+                    deadline_millis: 120_000,
+                },
+            })
+        })
+    }
+
+    fn execute<'a>(
+        &'a self,
+        mut prepared: Self::Prepared,
+        lock: Option<&'a PreparedLockMutation>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>> {
+        Box::pin(async move {
+            prepared.request.lock = lock
+                .map(|lock| wire_lock(lock, &self.session.distro_name))
+                .transpose()?;
+            let outcome = self
+                .workspace
+                .execute_worker_mutation(
+                    prepared.generation,
+                    &prepared.resource_id,
+                    &prepared.request,
+                    cancellation,
+                )
+                .await?;
+            match outcome {
+                environment_protocol::MutationUnitOutcome::Succeeded { lock, cleanup } => {
+                    let mut warnings = Vec::new();
+                    if let Some(cleanup) = cleanup {
+                        let acknowledged = self
+                            .workspace
+                            .request_worker_control_for_generation(
+                                prepared.generation,
+                                environment_protocol::Message::AcknowledgeMutationUnit {
+                                    cleanup: cleanup.clone(),
+                                },
+                                None,
+                                Duration::from_secs(30),
+                            )
+                            .await;
+                        if !matches!(
+                            acknowledged,
+                            Ok(environment_protocol::Message::MutationAcknowledged {
+                                ref resource_id
+                            }) if resource_id == &cleanup.resource_id
+                        ) {
+                            warnings.push(MutationWarning {
+                                code: MutationWarningCode::BackupCleanupFailed,
+                                parameters: BTreeMap::new(),
+                                technical_details: acknowledged
+                                    .as_ref()
+                                    .err()
+                                    .map(ToString::to_string),
+                            });
+                            warnings.push(MutationWarning {
+                                code: MutationWarningCode::CleanupMarkerRetained,
+                                parameters: BTreeMap::new(),
+                                technical_details: None,
+                            });
+                        }
+                    }
+                    Ok(UnitTransactionReceipt {
+                        lock: lock.map(host_lock_receipt).transpose()?,
+                        warnings,
                     })
                 }
+                environment_protocol::MutationUnitOutcome::Failed {
+                    code,
+                    phase,
+                    parameters,
+                    message,
+                } => Err(match code.as_str() {
+                    "staleTarget" => AppError::StaleTarget,
+                    "stalePayload" => AppError::StalePayload,
+                    "deadlineExceeded" => AppError::WslCommandTimedOut,
+                    "lockConflictSkill" => mutation_parameter(&parameters, "skillName")
+                        .map(|skill_name| AppError::LockConflict {
+                            target: crate::error::LockConflictTarget::Skill {
+                                skill_name: skill_name.to_string(),
+                            },
+                        })
+                        .unwrap_or_else(invalid_mutation_response),
+                    "lockConflictRoot" => mutation_parameter(&parameters, "field")
+                        .map(|field| AppError::LockConflict {
+                            target: crate::error::LockConflictTarget::RootField {
+                                field: field.to_string(),
+                            },
+                        })
+                        .unwrap_or_else(invalid_mutation_response),
+                    _ => AppError::ExecutionFailed {
+                        message: format!("WSL mutation failed during {phase}: {message}"),
+                    },
+                }),
+                environment_protocol::MutationUnitOutcome::Cancelled => {
+                    Err(AppError::MutationCancelled)
+                }
+                environment_protocol::MutationUnitOutcome::RecoveryRequired {
+                    resource_id,
+                    message,
+                } => Err(AppError::RecoveryRequired {
+                    recovery_resource_id: RecoveryResourceId::parse(resource_id).map_err(
+                        |error| AppError::ConfigurationCorrupted {
+                            message: error.to_string(),
+                        },
+                    )?,
+                    message,
+                }),
             }
-        }
-    }
-
-    pub async fn cleanup(self) -> Result<(), AppError> {
-        self.update_recovery(RecoveryMarkerKind::CleanupOnly, None)
-            .await?;
-        self.cleanup_files().await?;
-        if let Some(marker_ref) = &self.recovery_ref {
-            self.recovery_store.remove(marker_ref).await?;
-        }
-        Ok(())
-    }
-
-    async fn run_static(&self, operation: &WslOperationDescriptor) -> Result<(), AppError> {
-        if self.recovery_ref.is_none() {
-            return Ok(());
-        }
-        run(
-            &self.session,
-            operation,
-            vec![self.operation_root.clone(), self.owner_id.clone()],
-            Vec::new(),
-            Duration::from_secs(30),
-            None,
-        )
-        .await
-    }
-
-    async fn cleanup_files(&self) -> Result<(), AppError> {
-        self.run_static(&CLEANUP_OPERATION).await
-    }
-
-    async fn update_recovery(
-        &self,
-        kind: RecoveryMarkerKind,
-        phase: Option<RecoveryEntryPhase>,
-    ) -> Result<(), AppError> {
-        let Some(marker_ref) = &self.recovery_ref else {
-            return Ok(());
-        };
-        let marker = self
-            .recovery_marker
-            .lock()
-            .map_err(|_| AppError::Io {
-                message: "WSL recovery marker state is unavailable".to_string(),
-            })?
-            .clone();
-        let Some(marker) = marker else {
-            return Ok(());
-        };
-        let updated = next_recovery_marker(&marker, kind, phase);
-        self.recovery_store.update(marker_ref, &updated).await?;
-        *self.recovery_marker.lock().map_err(|_| AppError::Io {
-            message: "WSL recovery marker state is unavailable".to_string(),
-        })? = Some(updated);
-        Ok(())
+        })
     }
 }
 
-fn validate_observed_entries(
-    expected: &[WslEntryMutation],
-    actual: &[crate::environment::wsl::operations::entry::PosixEntryState],
-) -> Result<(), AppError> {
-    if expected.len() != actual.len()
-        || actual.iter().enumerate().any(|(index, actual)| {
-            usize::try_from(actual.index).ok() != Some(index)
-                || actual.fingerprint != expected[index].expected_fingerprint
+fn wire_lock(
+    lock: &PreparedLockMutation,
+    distro_name: &str,
+) -> Result<environment_protocol::MutationLock, AppError> {
+    if !matches!(
+        &lock.target.environment,
+        EnvironmentRef::Wsl { distro_name: target }
+            if target.eq_ignore_ascii_case(distro_name)
+    ) || !lock.target.native_path.starts_with('/')
+        || lock.legacy_target.as_ref().is_some_and(|target| {
+            !matches!(
+                &target.environment,
+                EnvironmentRef::Wsl { distro_name: legacy }
+                    if legacy.eq_ignore_ascii_case(distro_name)
+            ) || !target.native_path.starts_with('/')
         })
     {
-        return Err(AppError::StaleTarget);
+        return Err(AppError::StaleEnvironment);
     }
-    Ok(())
-}
-
-async fn recheck_observed_entries(
-    session: &WslSession,
-    entries: &[WslEntryMutation],
-    cancellation: Option<CancellationSignal>,
-) -> Result<(), AppError> {
-    if entries.is_empty() {
-        return Ok(());
-    }
-    let paths = entries
-        .iter()
-        .map(|entry| entry.destination.clone())
-        .collect::<Vec<_>>();
-    let actual = inspect_entries(session, &paths, cancellation.clone()).await?;
-    validate_observed_entries(entries, &actual)?;
-    recheck_content_manifests(session, entries, cancellation).await
-}
-
-async fn recheck_content_manifests(
-    session: &WslSession,
-    entries: &[WslEntryMutation],
-    cancellation: Option<CancellationSignal>,
-) -> Result<(), AppError> {
-    for entry in entries {
-        let Some(expected) = &entry.expected_content_manifest_hash else {
-            continue;
-        };
-        let actual = inspect_content_manifest(session, &entry.destination, cancellation.clone())
-            .await
-            .map_err(|_| AppError::StaleTarget)?;
-        validate_content_manifest_hash(expected, actual.hash())?;
-    }
-    Ok(())
-}
-
-fn validate_content_manifest_hash(
-    expected: &ContentManifestHash,
-    actual: &ContentManifestHash,
-) -> Result<(), AppError> {
-    if actual != expected {
-        return Err(AppError::StaleTarget);
-    }
-    Ok(())
-}
-
-fn next_recovery_marker(
-    marker: &RecoveryMarker,
-    kind: RecoveryMarkerKind,
-    phase: Option<RecoveryEntryPhase>,
-) -> RecoveryMarker {
-    let mut updated = marker.clone();
-    updated.kind = kind;
-    if let Some(phase) = phase {
-        for entry in &mut updated.entries {
-            entry.phase = phase;
+    let entry = match &lock.entry {
+        crate::storage::lock_plan::LockEntryMutation::Replace { key, replacement } => {
+            environment_protocol::MutationLockEntry::Replace {
+                key: key.clone(),
+                replacement_json: serde_json::to_vec(replacement)?,
+            }
         }
-    }
-    updated
+        crate::storage::lock_plan::LockEntryMutation::Remove { key } => {
+            environment_protocol::MutationLockEntry::Remove { key: key.clone() }
+        }
+        crate::storage::lock_plan::LockEntryMutation::MoveAndReplace {
+            from,
+            to,
+            replacement,
+        } => environment_protocol::MutationLockEntry::MoveAndReplace {
+            from: from.clone(),
+            to: to.clone(),
+            replacement_json: serde_json::to_vec(replacement)?,
+        },
+    };
+    Ok(environment_protocol::MutationLock {
+        target: lock.target.native_path.clone(),
+        legacy_target: lock
+            .legacy_target
+            .as_ref()
+            .map(|target| target.native_path.clone()),
+        schema: match lock.schema {
+            crate::core::lossless_lock::LockSchema::Global => {
+                environment_protocol::MutationLockSchema::Global
+            }
+            crate::core::lossless_lock::LockSchema::Project => {
+                environment_protocol::MutationLockSchema::Project
+            }
+        },
+        entry,
+        root_replacements_json: lock
+            .root_replacements
+            .iter()
+            .map(|(field, value)| Ok((field.clone(), serde_json::to_vec(value)?)))
+            .collect::<Result<_, AppError>>()?,
+        expected_entries_json: lock
+            .expected
+            .entry_snapshots
+            .iter()
+            .map(|(key, snapshot)| {
+                Ok((
+                    key.clone(),
+                    snapshot.value().map(serde_json::to_vec).transpose()?,
+                ))
+            })
+            .collect::<Result<_, AppError>>()?,
+        expected_roots_json: lock
+            .expected
+            .root_snapshots
+            .iter()
+            .map(|(field, snapshot)| {
+                Ok((
+                    field.clone(),
+                    snapshot.value().map(serde_json::to_vec).transpose()?,
+                ))
+            })
+            .collect::<Result<_, AppError>>()?,
+    })
 }
 
-async fn run(
-    session: &WslSession,
-    operation: &WslOperationDescriptor,
-    args: Vec<String>,
-    stdin: Vec<u8>,
-    timeout: Duration,
-    cancellation: Option<CancellationSignal>,
-) -> Result<(), AppError> {
-    let output = WslOperationExecutor::execute(
-        operation,
-        WslOperationRequest {
-            session: session.clone(),
-            args,
-            stdin,
-            timeout,
-            stdout_limit: 32,
-            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-            cancellation,
-        },
-    )
-    .await?;
-    parse_unit_response(&output.stdout)
+fn host_lock_receipt(
+    receipt: environment_protocol::MutationLockReceipt,
+) -> Result<LockCommitReceipt, AppError> {
+    Ok(LockCommitReceipt {
+        entry_snapshots: receipt
+            .entries_json
+            .into_iter()
+            .map(|(key, value)| {
+                value
+                    .map(|bytes| serde_json::from_slice(&bytes))
+                    .transpose()
+                    .map(crate::core::lossless_lock::LockEntrySnapshot::from_value)
+                    .map(|snapshot| (key, snapshot))
+            })
+            .collect::<Result<_, _>>()?,
+        root_snapshots: receipt
+            .roots_json
+            .into_iter()
+            .map(|(field, value)| {
+                value
+                    .map(|bytes| serde_json::from_slice(&bytes))
+                    .transpose()
+                    .map(crate::core::lossless_lock::LockRootSnapshot::from_value)
+                    .map(|snapshot| (field, snapshot))
+            })
+            .collect::<Result<_, _>>()?,
+    })
+}
+
+fn mutation_parameter<'a>(parameters: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    parameters
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.as_str())
+}
+
+fn invalid_mutation_response() -> AppError {
+    AppError::ConfigurationCorrupted {
+        message: "WSL Worker mutation response is missing an error parameter".to_string(),
+    }
 }
 
 fn operation_owner_id(operation_id: &str, unit_id: &str) -> String {
@@ -865,1001 +712,223 @@ fn now_epoch_ms() -> u64 {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::mutation::MutationKind;
+    use crate::environment::types::{SkillLocation, SkillLocationRef};
+
+    #[test]
+    fn lock_only_unit_uses_one_keep_entry_as_recovery_evidence() {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+        let subject = RecoverySubject {
+            operation_kind: MutationKind::Install,
+            skill_name: "demo".to_string(),
+            context: SkillLocationRef {
+                environment: environment.clone(),
+                scope: SkillLocation::Global,
+            },
+        };
+        let entries = vec![WslEntryMutation {
+            physical_target_digest: "target-1".to_string(),
+            destination: "/home/alice/.agents/skills/demo".to_string(),
+            expected_fingerprint: EntryFingerprint("entry-v1-current".to_string()),
+            expected_content_manifest_hash: None,
+            action: WslEntryAction::Keep,
+        }];
+
+        let mut marker = recovery_marker_for_entry_set(
+            "operation-1",
+            "unit-1",
+            &"f".repeat(64),
+            &environment,
+            subject,
+            &entries,
+            1,
+        )
+        .unwrap();
+
+        assert!(marker.entries.is_empty());
+        add_lock_recovery_evidence(&mut marker, &entries, &environment).unwrap();
+        assert_eq!(marker.entries.len(), 1);
+        assert!(marker.entries[0].backup.is_none());
+        assert_eq!(
+            marker.entries[0].expected_state,
+            RecoveryExpectedEntryState::Present
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
 #[allow(
     clippy::disallowed_methods,
-    reason = "内容落盘协议测试需要直接运行待验证的 shell 测试脚本"
+    reason = "真实 WSL 2 Mutation 门禁需要同步启动 wsl.exe 清理测试 fixture"
 )]
-mod tests {
+mod windows_worker_mutation_tests {
     use std::collections::BTreeMap;
-    use std::fs;
-    #[cfg(target_os = "linux")]
-    use std::io::Write;
-    #[cfg(target_os = "linux")]
-    use std::process::{Command, Output, Stdio};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::process::Stdio;
 
-    use tempfile::tempdir;
-
-    use super::*;
+    use crate::application::mutation::coordinator::PreparedUnitExecutor;
     use crate::application::mutation::plan::{
         ExecutionUnit, ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation,
         RuntimeRevisions,
     };
-    use crate::application::payload_session::PayloadLocalSource;
-    use crate::core::agent_definition::AgentId;
-    use crate::core::skill_payload::{build_skill_payload, SkillPayload};
-    use crate::environment::recovery::RecoveryMarkerKind;
-    use crate::environment::recovery::{RecoveryFuture, RecoveryMarkerLoad};
+    use crate::core::mutation::{CancellationSignal, MutationKind};
     use crate::environment::runtime::{
         ContextSnapshotRevision, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
     use crate::environment::types::{
-        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+        normalized_wsl_distro_name, EnvironmentRef, ResourceLocator, SkillLocation,
+        SkillLocationRef,
     };
-    #[cfg(target_os = "linux")]
-    use crate::environment::wsl::operations::entry::{parse_entry_states, ENTRY_STATE_SCRIPT};
-    use crate::models::InstallMode;
-
-    fn recovery_subject(environment: EnvironmentRef) -> RecoverySubject {
-        RecoverySubject {
-            operation_kind: crate::core::mutation::MutationKind::Install,
-            skill_name: "demo".to_string(),
-            context: SkillLocationRef {
-                environment,
-                scope: SkillLocation::Global,
-            },
-        }
-    }
-
-    fn payload_fixture(root: &std::path::Path) -> (SkillPayload, std::path::PathBuf) {
-        let source = root.join("source");
-        fs::create_dir_all(source.join("scripts")).unwrap();
-        fs::write(source.join("SKILL.md"), b"new").unwrap();
-        fs::write(source.join("scripts/run.sh"), b"#!/bin/sh\n").unwrap();
-        let payload = build_skill_payload(&source).unwrap();
-        let managed = root.join("payload");
-        fs::create_dir_all(managed.join("blobs")).unwrap();
-        for (id, blob) in &payload.blobs {
-            fs::write(managed.join("blobs").join(id), blob).unwrap();
-        }
-        (payload, managed)
-    }
-
-    #[cfg(target_os = "linux")]
-    fn fingerprint(path: &std::path::Path) -> String {
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(ENTRY_STATE_SCRIPT)
-            .arg("--")
-            .arg("inspect")
-            .arg(path)
-            .output()
-            .unwrap();
-        parse_entry_states(&output.stdout, 1).unwrap()[0]
-            .fingerprint
-            .0
-            .clone()
-    }
-
-    #[cfg(target_os = "linux")]
-    fn run(script: &str, args: &[String], stdin: &[u8]) -> Output {
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(script)
-            .arg("--")
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(stdin).unwrap();
-        child.wait_with_output().unwrap()
-    }
-
-    #[test]
-    fn materialize_stage_request_uses_fixed_width_tagged_records() {
-        let temp = tempdir().unwrap();
-        let (payload, managed) = payload_fixture(temp.path());
-        let request = materialize_stage_request(&[WslEntryMutation {
-            physical_target_digest: "target-v1-demo".to_string(),
-            destination: "/home/alice/.agents/skills/demo".to_string(),
-            expected_fingerprint: EntryFingerprint("entry-v1-missing".to_string()),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Materialize {
-                payload_root: managed.to_string_lossy().into_owned(),
-                manifest: payload.manifest(),
-            },
-        }])
-        .expect("encode stage request");
-        let mut fields = request
-            .split(|byte| *byte == 0)
-            .map(|field| String::from_utf8(field.to_vec()).unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(fields.pop().as_deref(), Some(""));
-
-        assert_eq!(fields[0], "H");
-        assert_eq!(fields[1], "1");
-        assert_eq!(fields[3], "1");
-        assert_eq!(fields.len() % 7, 0);
-        assert_eq!(fields[7], "E");
-        assert_eq!(fields[8], "000000");
-        let (records, remainder) = fields.as_chunks::<7>();
-        assert!(remainder.is_empty());
-        assert!(records.iter().skip(2).all(|record| record[0] == "M"));
-    }
-
-    #[test]
-    fn materialize_stage_request_rejects_oversized_stdin_before_transport() {
-        let destination = format!("/{}", "a".repeat(16 * 1024 * 1024));
-
-        let result = materialize_stage_request(&[WslEntryMutation {
-            physical_target_digest: "target-v1-oversized".to_string(),
-            destination,
-            expected_fingerprint: EntryFingerprint("entry-v1-missing".to_string()),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Remove,
-        }]);
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => panic!("oversized stage request was accepted"),
-        };
-
-        assert!(matches!(
-            error,
-            AppError::CapabilityUnavailable { capability, path: None }
-                if capability == "wslMaterializeRequestSize"
-        ));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn materialize_stage_rejects_a_truncated_fixed_width_header() {
-        let temp = tempdir().unwrap();
-        let operation_root = temp.path().join("skill-deck-operation-truncated");
-        initialize_operation_root(&operation_root, "truncated");
-
-        let output = run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "truncated"),
-            b"H\0\x31\0\x31\0\x30\0",
-        );
-
-        assert!(
-            !output.status.success(),
-            "truncated fixed-width header was accepted"
-        );
-    }
+    use crate::environment::wsl::operations::entry::inspect_entries;
+    use crate::environment::wsl::operations::projection::project_targets;
+    use crate::environment::wsl::WslRuntime;
 
     #[tokio::test]
-    async fn oversized_stage_request_does_not_create_a_recovery_marker() {
-        let store = Arc::new(CountingRecoveryStore::default());
-        let recovery_store: Arc<dyn RecoveryMarkerStore> = store.clone();
-        let destination = format!("/{}", "a".repeat(16 * 1024 * 1024));
-
-        let result = stage_entry_set(
-            &test_session(),
-            "oversized-operation",
-            "oversized-unit",
-            recovery_subject(EnvironmentRef::Wsl {
-                distro_name: "Ubuntu".to_string(),
-            }),
-            vec![WslEntryMutation {
-                physical_target_digest: "target-v1-oversized".to_string(),
-                destination,
-                expected_fingerprint: EntryFingerprint("entry-v1-missing".to_string()),
-                expected_content_manifest_hash: None,
-                action: WslEntryAction::Remove,
-            }],
-            CancellationSignal::default(),
-            recovery_store,
+    #[ignore = "requires Windows with a WSL 2 distribution"]
+    async fn real_wsl2_worker_executes_and_acknowledges_one_remove_transaction() {
+        let distro =
+            std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+        let fixture = format!(
+            "/tmp/skill-deck-mutation-gate-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        run_fixture(
+            &distro,
+            "set -eu; mkdir -p \"$1/demo\"; printf old > \"$1/demo/SKILL.md\"",
+            &fixture,
         )
         .await;
-        let error = match result {
-            Err(error) => error,
-            Ok(_) => panic!("oversized stage request was accepted"),
+        let _cleanup = FixtureCleanup {
+            distro: distro.clone(),
+            path: fixture.clone(),
         };
-
-        assert!(matches!(
-            error,
-            AppError::CapabilityUnavailable { capability, path: None }
-                if capability == "wslMaterializeRequestSize"
-        ));
-        assert_eq!(store.create_count.load(Ordering::SeqCst), 0);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn entry_set_stages_swaps_verifies_restores_and_cleans_full_payload() {
-        let temp = tempdir().unwrap();
-        let (payload, managed) = payload_fixture(temp.path());
-        let destination = temp.path().join("targets/demo");
-        fs::create_dir_all(&destination).unwrap();
-        fs::write(destination.join("SKILL.md"), b"old").unwrap();
-        let operation_root = temp.path().join("skill-deck-operation-op-1");
-        initialize_operation_root(&operation_root, "op-1");
-        let entries = vec![WslEntryMutation {
-            physical_target_digest: "target-v1-demo".to_string(),
-            destination: destination.to_string_lossy().into_owned(),
-            expected_fingerprint: EntryFingerprint(fingerprint(&destination)),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Materialize {
-                payload_root: managed.to_string_lossy().into_owned(),
-                manifest: payload.manifest(),
-            },
-        }];
-
-        let output = run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "op-1"),
-            &materialize_stage_request(&entries).unwrap(),
-        );
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), b"old");
-
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("swap", &operation_root, "op-1"),
-            &[]
-        )
-        .status
-        .success());
-        let verify_output = run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("verify", &operation_root, "op-1"),
-            &[],
-        );
-        assert!(
-            verify_output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&verify_output.stderr)
-        );
-        assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), b"new");
-        assert_eq!(
-            fs::read(destination.join("scripts/run.sh")).unwrap(),
-            b"#!/bin/sh\n"
-        );
-
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("restore", &operation_root, "op-1"),
-            &[]
-        )
-        .status
-        .success());
-        assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), b"old");
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("cleanup", &operation_root, "op-1"),
-            &[]
-        )
-        .status
-        .success());
-        assert!(!operation_root.exists());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn stale_entry_recheck_prevents_every_final_write_in_the_set() {
-        let temp = tempdir().unwrap();
-        let (payload, managed) = payload_fixture(temp.path());
-        let operation_root = temp.path().join("skill-deck-operation-op-2");
-        let destinations = [
-            temp.path().join("targets/first"),
-            temp.path().join("targets/second"),
-        ];
-        for destination in &destinations {
-            fs::create_dir_all(destination).unwrap();
-            fs::write(destination.join("SKILL.md"), b"old").unwrap();
-        }
-        initialize_operation_root(&operation_root, "op-2");
-        let entries = destinations
-            .iter()
-            .enumerate()
-            .map(|(index, destination)| WslEntryMutation {
-                physical_target_digest: format!("target-v1-{index}"),
-                destination: destination.to_string_lossy().into_owned(),
-                expected_fingerprint: EntryFingerprint(fingerprint(destination)),
-                expected_content_manifest_hash: None,
-                action: WslEntryAction::Materialize {
-                    payload_root: managed.to_string_lossy().into_owned(),
-                    manifest: payload.manifest(),
-                },
-            })
-            .collect::<Vec<_>>();
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "op-2"),
-            &materialize_stage_request(&entries).unwrap()
-        )
-        .status
-        .success());
-        fs::write(destinations[1].join("external"), b"changed").unwrap();
-
-        let output = run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("swap", &operation_root, "op-2"),
-            &[],
-        );
-
-        assert!(!output.status.success());
-        for destination in &destinations {
-            assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), b"old");
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn existing_child_content_change_is_detected_before_wsl_swap() {
-        let temp = tempdir().unwrap();
-        let (payload, managed) = payload_fixture(temp.path());
-        let destination = temp.path().join("targets/demo");
-        fs::create_dir_all(&destination).unwrap();
-        fs::write(destination.join("SKILL.md"), b"old").unwrap();
-        let operation_root = temp.path().join("skill-deck-operation-op-content");
-        initialize_operation_root(&operation_root, "op-content");
-        let entries = vec![WslEntryMutation {
-            physical_target_digest: "target-v1-content".to_string(),
-            destination: destination.to_string_lossy().into_owned(),
-            expected_fingerprint: EntryFingerprint(fingerprint(&destination)),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Materialize {
-                payload_root: managed.to_string_lossy().into_owned(),
-                manifest: payload.manifest(),
-            },
-        }];
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "op-content"),
-            &materialize_stage_request(&entries).unwrap()
-        )
-        .status
-        .success());
-        fs::write(destination.join("SKILL.md"), b"locally changed").unwrap();
-
-        assert!(!run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("swap", &operation_root, "op-content"),
-            &[]
-        )
-        .status
-        .success());
-        assert_eq!(
-            fs::read(destination.join("SKILL.md")).unwrap(),
-            b"locally changed"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn tampered_stage_is_rejected_before_any_wsl_final_write() {
-        let temp = tempdir().unwrap();
-        let (payload, managed) = payload_fixture(temp.path());
-        let operation_root = temp.path().join("skill-deck-operation-op-tampered");
-        let destination = temp.path().join("targets/demo");
-        fs::create_dir_all(&destination).unwrap();
-        fs::write(destination.join("SKILL.md"), b"old").unwrap();
-        initialize_operation_root(&operation_root, "op-tampered");
-        let entries = vec![WslEntryMutation {
-            physical_target_digest: "target-v1-demo".to_string(),
-            destination: destination.to_string_lossy().into_owned(),
-            expected_fingerprint: EntryFingerprint(fingerprint(&destination)),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Materialize {
-                payload_root: managed.to_string_lossy().into_owned(),
-                manifest: payload.manifest(),
-            },
-        }];
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "op-tampered"),
-            &materialize_stage_request(&entries).unwrap()
-        )
-        .status
-        .success());
-        let stage = destination
-            .parent()
+        let runtime = WslRuntime::for_wsl_test();
+        let workspace = runtime.workspace(&distro).unwrap();
+        let session = runtime.connect(&distro).await.unwrap();
+        let destination = format!("{fixture}/demo");
+        let projection = project_targets(&workspace, std::slice::from_ref(&destination), None)
+            .await
             .unwrap()
-            .join(".skill-deck-stage-op-tampered-000000");
-        fs::write(stage.join("unexpected.txt"), b"tampered").unwrap();
-
-        assert!(!run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("swap", &operation_root, "op-tampered"),
-            &[]
-        )
-        .status
-        .success());
-        assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), b"old");
-        assert!(!destination
-            .parent()
+            .remove(0);
+        let fingerprint = inspect_entries(&workspace, std::slice::from_ref(&destination), None)
+            .await
             .unwrap()
-            .join(".skill-deck-backup-op-tampered-000000")
-            .exists());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn symlink_and_remove_share_the_same_swap_and_restore_boundary() {
-        let temp = tempdir().unwrap();
-        let operation_root = temp.path().join("skill-deck-operation-op-3");
-        let canonical = temp.path().join("canonical/demo");
-        let link = temp.path().join("agents/demo");
-        let removed = temp.path().join("duplicates/demo");
-        fs::create_dir_all(&canonical).unwrap();
-        fs::create_dir_all(link.parent().unwrap()).unwrap();
-        fs::create_dir_all(&removed).unwrap();
-        fs::write(canonical.join("SKILL.md"), b"canonical").unwrap();
-        fs::write(removed.join("SKILL.md"), b"private").unwrap();
-        initialize_operation_root(&operation_root, "op-3");
-        let entries = vec![
-            WslEntryMutation {
-                physical_target_digest: "target-v1-link".to_string(),
-                destination: link.to_string_lossy().into_owned(),
-                expected_fingerprint: EntryFingerprint(fingerprint(&link)),
-                expected_content_manifest_hash: None,
-                action: WslEntryAction::Symlink {
-                    target: "../canonical/demo".to_string(),
-                },
+            .remove(0)
+            .fingerprint;
+        let key = PhysicalTargetKey {
+            backend: ExecutionBackend::WslPosix {
+                distro_name: normalized_wsl_distro_name(&distro),
             },
-            WslEntryMutation {
-                physical_target_digest: "target-v1-remove".to_string(),
-                destination: removed.to_string_lossy().into_owned(),
-                expected_fingerprint: EntryFingerprint(fingerprint(&removed)),
-                expected_content_manifest_hash: None,
-                action: WslEntryAction::Remove,
+            physical_parent: PhysicalParentIdentity::Wsl {
+                distro_name: normalized_wsl_distro_name(&distro),
+                device: projection.anchor_device,
+                inode: projection.anchor_inode,
             },
-        ];
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "op-3"),
-            &materialize_stage_request(&entries).unwrap()
-        )
-        .status
-        .success());
-
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("swap", &operation_root, "op-3"),
-            &[]
-        )
-        .status
-        .success());
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("verify", &operation_root, "op-3"),
-            &[]
-        )
-        .status
-        .success());
-        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        assert_eq!(fs::read(link.join("SKILL.md")).unwrap(), b"canonical");
-        assert!(!removed.exists());
-
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("restore", &operation_root, "op-3"),
-            &[]
-        )
-        .status
-        .success());
-        assert!(link.symlink_metadata().is_err());
-        assert_eq!(fs::read(removed.join("SKILL.md")).unwrap(), b"private");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn stage_creates_a_missing_configured_root_before_staging_the_skill_child() {
-        let temp = tempdir().unwrap();
-        let (payload, managed) = payload_fixture(temp.path());
-        let destination = temp.path().join(".custom/skills/demo");
-        let operation_root = temp.path().join("skill-deck-operation-op-missing-root");
-        initialize_operation_root(&operation_root, "op-missing-root");
-        let entries = vec![WslEntryMutation {
-            physical_target_digest: "target-v1-missing-root".to_string(),
-            destination: destination.to_string_lossy().into_owned(),
-            expected_fingerprint: EntryFingerprint("entry-v1-missing".to_string()),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Materialize {
-                payload_root: managed.to_string_lossy().into_owned(),
-                manifest: payload.manifest(),
-            },
-        }];
-
-        let output = run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("stage", &operation_root, "op-missing-root"),
-            &materialize_stage_request(&entries).unwrap(),
-        );
-
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(destination.parent().unwrap().is_dir());
-        assert!(!destination.exists());
-        assert!(run(
-            MATERIALIZE_SCRIPT,
-            &operation_args("swap", &operation_root, "op-missing-root"),
-            &[]
-        )
-        .status
-        .success());
-        assert!(destination.join("SKILL.md").is_file());
-    }
-
-    #[test]
-    fn generic_unit_maps_to_one_wsl_entry_set_without_backend_branches_in_services() {
-        let temp = tempdir().unwrap();
-        let (payload, _) = payload_fixture(temp.path());
+            normalized_final_child_name: "demo".to_string(),
+        };
         let environment = EnvironmentRef::Wsl {
-            distro_name: "Ubuntu".to_string(),
+            distro_name: distro.clone(),
         };
-        let canonical = mutation(
-            "canonical",
-            "/home/alice/.agents/skills/demo",
-            PreparedEntryAction::Keep,
-            &environment,
-        );
-        let agent = mutation(
-            "agent",
-            "/home/alice/.claude/skills/demo",
-            PreparedEntryAction::Replace {
-                payload_id: payload.payload_id.clone(),
-                requested_mode: InstallMode::Symlink,
-            },
-            &environment,
-        );
-        let expected_targets = [&canonical, &agent]
-            .into_iter()
-            .map(|entry| ExpectedTargetEntry {
-                key: entry.key.clone(),
-                fingerprint: EntryFingerprint(format!(
-                    "entry-v1-{}",
-                    entry.key.normalized_final_child_name
-                )),
-                expected_content_manifest_hash: None,
-            })
-            .collect();
-        let unit = ExecutionUnit {
-            id: "unit-1".to_string(),
-            skill_name: "demo".to_string(),
-            source: None,
-            target: SkillLocationRef {
-                environment: environment.clone(),
-                scope: SkillLocation::Global,
-            },
-            expected_revisions: RuntimeRevisions {
-                registry: "registry-1".to_string(),
-                environment: "environment-1".to_string(),
-                context: ContextSnapshotRevision::parse("context-v1-wsl-test").unwrap(),
-            },
-            primary_entry: Some(canonical),
-            additional_entries: vec![agent],
-            lock_mutation: None,
-            expected_targets,
-        };
-        let bindings = BTreeMap::from([(
-            payload.payload_id.clone(),
-            WslPayloadBinding {
-                source: PayloadLocalSource::WslManaged {
-                    distro_name: "Ubuntu".to_string(),
-                    payload_root: "/tmp/skill-deck-source-session/payload-demo".to_string(),
-                },
-                manifest: payload.manifest(),
-            },
-        )]);
-
-        let mapped = prepare_wsl_mutations(&unit, &bindings, "Ubuntu").unwrap();
-
-        assert_eq!(mapped.len(), 2);
-        assert!(matches!(mapped[0].action, WslEntryAction::Keep));
-        assert_eq!(
-            mapped[1].action,
-            WslEntryAction::Symlink {
-                target: "../../.agents/skills/demo".to_string(),
-            }
-        );
-        let recovery = recovery_marker_for_entry_set(
-            "operation-1",
-            "unit-1",
-            "recovery-id",
-            &environment,
-            recovery_subject(environment.clone()),
-            &mapped,
-            123,
-        )
-        .unwrap();
-        assert_eq!(recovery.kind, RecoveryMarkerKind::InProgress);
-        assert_eq!(recovery.entries.len(), 1);
-        assert!(recovery.entries.iter().all(|entry| {
-            entry.backup.as_ref().is_some_and(|backup| {
-                backup
-                    .native_path
-                    .contains(".skill-deck-backup-recovery-id-")
-            })
-        }));
-        let verified = next_recovery_marker(
-            &recovery,
-            RecoveryMarkerKind::InProgress,
-            Some(RecoveryEntryPhase::Verified),
-        );
-        let cleanup = next_recovery_marker(&verified, RecoveryMarkerKind::CleanupOnly, None);
-        assert_eq!(cleanup.kind, RecoveryMarkerKind::CleanupOnly);
-        assert!(cleanup
-            .entries
-            .iter()
-            .all(|entry| entry.phase == RecoveryEntryPhase::Verified));
-    }
-
-    #[test]
-    fn keep_entries_are_observed_without_entering_the_materialize_stage() {
-        let keep = WslEntryMutation {
-            physical_target_digest: "target-v1-keep".to_string(),
-            destination: "/home/alice/.agents/skills/demo".to_string(),
-            expected_fingerprint: EntryFingerprint("entry-v1-keep".to_string()),
-            expected_content_manifest_hash: Some(
-                crate::environment::content_manifest::ContentManifest::from_records(Vec::new())
-                    .unwrap()
-                    .hash()
-                    .clone(),
-            ),
-            action: WslEntryAction::Keep,
-        };
-        let remove = WslEntryMutation {
-            physical_target_digest: "target-v1-remove".to_string(),
-            destination: "/home/alice/.claude/skills/demo".to_string(),
-            expected_fingerprint: EntryFingerprint("entry-v1-remove".to_string()),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Remove,
-        };
-
-        let prepared = partition_entry_set(vec![keep.clone(), remove.clone()]);
-
-        assert_eq!(prepared.observations, vec![keep]);
-        assert_eq!(prepared.mutations, vec![remove]);
-        let keep_only = partition_entry_set(prepared.observations.clone());
-        assert!(keep_only.mutations.is_empty());
-    }
-
-    #[test]
-    fn replaced_keep_entry_is_rejected_as_stale() {
-        let expected = WslEntryMutation {
-            physical_target_digest: "target-v1-keep".to_string(),
-            destination: "/home/alice/.agents/skills/demo".to_string(),
-            expected_fingerprint: EntryFingerprint("entry-v1-before".to_string()),
-            expected_content_manifest_hash: None,
-            action: WslEntryAction::Keep,
-        };
-        let actual = crate::environment::wsl::operations::entry::PosixEntryState {
-            index: 0,
-            kind: crate::environment::wsl::operations::entry::PosixEntryKind::Directory,
-            fingerprint: EntryFingerprint("entry-v1-after".to_string()),
-            link_target: None,
-        };
-
-        assert_eq!(
-            validate_observed_entries(std::slice::from_ref(&expected), &[actual]),
-            Err(AppError::StaleTarget)
-        );
-    }
-
-    #[test]
-    fn changed_keep_content_manifest_is_rejected_as_stale() {
-        let expected =
-            crate::environment::content_manifest::ContentManifest::from_records(Vec::new())
-                .unwrap();
-        let actual = crate::environment::content_manifest::ContentManifest::from_records(vec![
-            crate::environment::content_manifest::ContentManifestRecord::directory("scripts")
-                .unwrap(),
-        ])
-        .unwrap();
-
-        assert_eq!(
-            validate_content_manifest_hash(expected.hash(), actual.hash()),
-            Err(AppError::StaleTarget)
-        );
-    }
-
-    #[test]
-    fn generic_unit_maps_an_explicit_managed_directory_link() {
-        let environment = EnvironmentRef::Wsl {
-            distro_name: "Ubuntu".to_string(),
-        };
-        let canonical = mutation(
-            "canonical",
-            "/home/alice/.agents/skills/demo",
-            PreparedEntryAction::Link {
-                target: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: "/home/alice/.local/share/skill-deck/libraries/lib-1/skills/demo"
-                        .to_string(),
-                },
-            },
-            &environment,
-        );
-        let agent = mutation(
-            "agent",
-            "/home/alice/.claude/skills/demo",
-            PreparedEntryAction::Keep,
-            &environment,
-        );
-        let expected_targets = [&canonical, &agent]
-            .into_iter()
-            .map(|entry| ExpectedTargetEntry {
-                key: entry.key.clone(),
-                fingerprint: EntryFingerprint(format!(
-                    "entry-v1-{}",
-                    entry.key.normalized_final_child_name
-                )),
-                expected_content_manifest_hash: None,
-            })
-            .collect();
-        let unit = ExecutionUnit {
-            id: "unit-explicit-link".to_string(),
-            skill_name: "demo".to_string(),
-            source: None,
-            target: SkillLocationRef {
-                environment: environment.clone(),
-                scope: SkillLocation::Global,
-            },
-            expected_revisions: RuntimeRevisions {
-                registry: "registry-1".to_string(),
-                environment: "environment-1".to_string(),
-                context: ContextSnapshotRevision::parse("context-v1-wsl-explicit-link").unwrap(),
-            },
-            primary_entry: Some(canonical),
-            additional_entries: vec![agent],
-            lock_mutation: None,
-            expected_targets,
-        };
-
-        let mapped = prepare_wsl_mutations(&unit, &BTreeMap::new(), "Ubuntu").unwrap();
-
-        assert_eq!(
-            mapped[0].action,
-            WslEntryAction::Symlink {
-                target: "../../.local/share/skill-deck/libraries/lib-1/skills/demo".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn explicit_managed_directory_link_rejects_another_wsl_environment() {
-        let environment = EnvironmentRef::Wsl {
-            distro_name: "Ubuntu".to_string(),
-        };
-        let canonical = mutation(
-            "canonical",
-            "/home/alice/.agents/skills/demo",
-            PreparedEntryAction::Link {
-                target: ResourceLocator {
-                    environment: EnvironmentRef::Wsl {
-                        distro_name: "Debian".to_string(),
-                    },
-                    native_path: "/home/alice/.local/share/skill-deck/libraries/lib-1/skills/demo"
-                        .to_string(),
-                },
-            },
-            &environment,
-        );
-        let agent = mutation(
-            "agent",
-            "/home/alice/.claude/skills/demo",
-            PreparedEntryAction::Keep,
-            &environment,
-        );
-        let expected_targets = [&canonical, &agent]
-            .into_iter()
-            .map(|entry| ExpectedTargetEntry {
-                key: entry.key.clone(),
-                fingerprint: EntryFingerprint(format!(
-                    "entry-v1-{}",
-                    entry.key.normalized_final_child_name
-                )),
-                expected_content_manifest_hash: None,
-            })
-            .collect();
-        let unit = ExecutionUnit {
-            id: "unit-cross-environment-link".to_string(),
-            skill_name: "demo".to_string(),
-            source: None,
-            target: SkillLocationRef {
-                environment,
-                scope: SkillLocation::Global,
-            },
-            expected_revisions: RuntimeRevisions {
-                registry: "registry-1".to_string(),
-                environment: "environment-1".to_string(),
-                context: ContextSnapshotRevision::parse("context-v1-wsl-cross-environment")
-                    .unwrap(),
-            },
-            primary_entry: Some(canonical),
-            additional_entries: vec![agent],
-            lock_mutation: None,
-            expected_targets,
-        };
-
-        assert!(matches!(
-            prepare_wsl_mutations(&unit, &BTreeMap::new(), "Ubuntu"),
-            Err(AppError::StaleEnvironment)
-        ));
-    }
-
-    #[test]
-    fn remove_unit_stages_agent_entry_before_primary_entry() {
-        let environment = EnvironmentRef::Wsl {
-            distro_name: "Ubuntu".to_string(),
-        };
-        let canonical = mutation(
-            "canonical",
-            "/home/alice/.agents/skills/demo",
-            PreparedEntryAction::Remove,
-            &environment,
-        );
-        let agent = mutation(
-            "agent",
-            "/home/alice/.claude/skills/demo",
-            PreparedEntryAction::Remove,
-            &environment,
-        );
-        let expected_targets = [&canonical, &agent]
-            .into_iter()
-            .map(|entry| ExpectedTargetEntry {
-                key: entry.key.clone(),
-                fingerprint: EntryFingerprint(format!(
-                    "entry-v1-{}",
-                    entry.key.normalized_final_child_name
-                )),
-                expected_content_manifest_hash: None,
-            })
-            .collect();
         let unit = ExecutionUnit {
             id: "remove-demo".to_string(),
             skill_name: "demo".to_string(),
             source: None,
             target: SkillLocationRef {
-                environment,
+                environment: environment.clone(),
                 scope: SkillLocation::Global,
             },
             expected_revisions: RuntimeRevisions {
-                registry: "registry-1".to_string(),
-                environment: "environment-1".to_string(),
-                context: ContextSnapshotRevision::parse("context-v1-wsl-remove").unwrap(),
+                registry: "test".to_string(),
+                environment: "test".to_string(),
+                context: ContextSnapshotRevision::parse("context-v1-test").unwrap(),
             },
-            primary_entry: Some(canonical),
-            additional_entries: vec![agent],
+            primary_entry: Some(PreparedEntryMutation {
+                key: key.clone(),
+                destination: ResourceLocator {
+                    environment,
+                    native_path: destination.clone(),
+                },
+                action: PreparedEntryAction::Remove,
+                reader_agent_ids: Vec::new(),
+            }),
+            additional_entries: Vec::new(),
             lock_mutation: None,
-            expected_targets,
+            expected_targets: vec![ExpectedTargetEntry {
+                key,
+                fingerprint,
+                expected_content_manifest_hash: None,
+            }],
         };
+        let executor = super::WslPreparedUnitExecutor::for_operation(
+            session,
+            workspace.clone(),
+            "mutation-gate",
+            MutationKind::Remove,
+        );
 
-        let mapped = prepare_wsl_mutations(&unit, &BTreeMap::new(), "Ubuntu").unwrap();
+        let prepared = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let receipt = executor
+            .execute(prepared, None, CancellationSignal::default())
+            .await
+            .unwrap();
 
-        assert_eq!(mapped.len(), 2);
-        assert_eq!(mapped[0].destination, "/home/alice/.claude/skills/demo");
-        assert_eq!(mapped[1].destination, "/home/alice/.agents/skills/demo");
+        assert!(receipt.warnings.is_empty());
+        assert!(matches!(
+            inspect_entries(&workspace, &[destination], None)
+                .await
+                .unwrap()[0]
+                .kind,
+            crate::environment::wsl::operations::entry::PosixEntryKind::Missing
+        ));
     }
 
-    fn mutation(
-        name: &str,
-        path: &str,
-        action: PreparedEntryAction,
-        environment: &EnvironmentRef,
-    ) -> PreparedEntryMutation {
-        PreparedEntryMutation {
-            key: PhysicalTargetKey {
-                backend: ExecutionBackend::WslPosix {
-                    distro_name: "Ubuntu".to_string(),
-                },
-                physical_parent: PhysicalParentIdentity::Wsl {
-                    distro_name: "Ubuntu".to_string(),
-                    device: 1,
-                    inode: if name == "canonical" { 1 } else { 2 },
-                },
-                normalized_final_child_name: name.to_string(),
-            },
-            destination: ResourceLocator {
-                environment: environment.clone(),
-                native_path: path.to_string(),
-            },
-            action,
-            reader_agent_ids: vec![AgentId::parse("claude-code").unwrap()],
-        }
+    async fn run_fixture(distro: &str, script: &str, path: &str) {
+        let status = crate::environment::wsl::wsl_command()
+            .args([
+                "--distribution",
+                distro,
+                "--exec",
+                "/bin/sh",
+                "-c",
+                script,
+                "--",
+                path,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success());
     }
 
-    #[cfg(target_os = "linux")]
-    fn initialize_operation_root(root: &std::path::Path, id: &str) {
-        fs::create_dir_all(root).unwrap();
-        fs::write(root.join(".skill-deck-owner"), format!("1\n{id}\n")).unwrap();
-        fs::write(root.join("recovery.json"), b"{}").unwrap();
+    struct FixtureCleanup {
+        distro: String,
+        path: String,
     }
 
-    #[cfg(target_os = "linux")]
-    fn operation_args(subcommand: &str, root: &std::path::Path, id: &str) -> Vec<String> {
-        vec![
-            subcommand.to_string(),
-            root.to_string_lossy().into_owned(),
-            id.to_string(),
-        ]
-    }
-
-    fn test_session() -> WslSession {
-        WslSession {
-            distro_name: "Ubuntu".to_string(),
-            user: "alice".to_string(),
-            uid: 1000,
-            home: "/home/alice".to_string(),
-            xdg_state_home: None,
-            config_home: "/home/alice/.config".to_string(),
-            environment: BTreeMap::new(),
-            runtime_generation: 0,
-        }
-    }
-
-    #[derive(Default)]
-    struct CountingRecoveryStore {
-        create_count: AtomicUsize,
-    }
-
-    impl RecoveryMarkerStore for CountingRecoveryStore {
-        fn environment(&self) -> EnvironmentRef {
-            EnvironmentRef::Wsl {
-                distro_name: "Ubuntu".to_string(),
-            }
-        }
-
-        fn create<'a>(
-            &'a self,
-            marker: &'a RecoveryMarker,
-        ) -> RecoveryFuture<'a, Result<RecoveryMarkerRef, AppError>> {
-            self.create_count.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async move {
-                Ok(RecoveryMarkerRef {
-                    resource_id: marker.resource_id.clone(),
-                    environment: marker.environment.clone(),
-                    managed_root: ResourceLocator {
-                        environment: marker.environment.clone(),
-                        native_path: format!(
-                            "/tmp/skill-deck-operation-{}",
-                            marker.resource_id.as_str()
-                        ),
-                    },
-                })
-            })
-        }
-
-        fn update<'a>(
-            &'a self,
-            _marker_ref: &'a RecoveryMarkerRef,
-            _marker: &'a RecoveryMarker,
-        ) -> RecoveryFuture<'a, Result<(), AppError>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn enumerate<'a>(
-            &'a self,
-        ) -> RecoveryFuture<'a, Result<Vec<RecoveryMarkerLoad>, AppError>> {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-
-        fn remove<'a>(
-            &'a self,
-            _marker_ref: &'a RecoveryMarkerRef,
-        ) -> RecoveryFuture<'a, Result<(), AppError>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn cleanup<'a>(
-            &'a self,
-            _marker_ref: &'a RecoveryMarkerRef,
-            _marker: &'a RecoveryMarker,
-        ) -> RecoveryFuture<'a, Result<(), AppError>> {
-            Box::pin(async { Ok(()) })
+    impl Drop for FixtureCleanup {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("wsl.exe")
+                .args([
+                    "--distribution",
+                    &self.distro,
+                    "--exec",
+                    "/bin/rm",
+                    "-rf",
+                    "--",
+                    &self.path,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
     }
 }

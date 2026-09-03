@@ -9,27 +9,27 @@ use crate::application::mutation::plan::{MutationPlan, RuntimeRevisions};
 use crate::application::mutation::result::{ErrorReport, MutationUnitResult, MutationUnitStatus};
 use crate::core::mutation::CancellationSignal;
 use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
-use crate::environment::native::materialize::NativePreparedEntryExecutor;
+use crate::environment::native::materialize::{
+    NativePreparedEntryExecutor, NativePreparedUnitExecutor,
+};
 use crate::environment::recovery::RecoveryMarkerStore;
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{
     normalized_wsl_distro_name, same_environment_identity, EnvironmentKey, EnvironmentRef,
     SkillLocationRef,
 };
-use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::operations::materialize::WslPreparedEntryExecutor;
+use crate::environment::wsl::operations::materialize::WslPreparedUnitExecutor;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::runtime::recovery::{RuntimeRecoveryGraph, RuntimeRecoveryService};
 use crate::storage::lock_plan::{LockCommitReceipt, LockPlanCommitter, PreparedLockMutation};
 
-pub struct RuntimeLockCommitter {
-    environments: Arc<WslRuntime>,
-}
+#[derive(Default)]
+pub struct RuntimeLockCommitter;
 
 impl RuntimeLockCommitter {
-    pub fn new(environments: Arc<WslRuntime>) -> Self {
-        Self { environments }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -39,20 +39,12 @@ impl PreparedLockCommitter for RuntimeLockCommitter {
         mutation: &'a PreparedLockMutation,
     ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
         Box::pin(async move {
-            match &mutation.target.environment {
-                EnvironmentRef::Native => {
-                    LockPlanCommitter::new(Arc::new(NativeAtomicDocumentIo))
-                        .commit(mutation.clone())
-                        .await
-                }
-                EnvironmentRef::Wsl { distro_name } => {
-                    let mutation = mutation.clone();
-                    let workspace = self.environments.workspace(distro_name)?;
-                    LockPlanCommitter::new(Arc::new(WslAtomicDocumentIo::new(workspace)))
-                        .commit(mutation)
-                        .await
-                }
+            if mutation.target.environment != EnvironmentRef::Native {
+                return Err(AppError::StaleEnvironment);
             }
+            LockPlanCommitter::new(Arc::new(NativeAtomicDocumentIo))
+                .commit(mutation.clone())
+                .await
         })
     }
 }
@@ -81,7 +73,7 @@ impl RuntimeExecutionDependencies {
                 environments.clone(),
                 recovery_root,
             )?),
-            locks: Arc::new(RuntimeLockCommitter::new(environments)),
+            locks: Arc::new(RuntimeLockCommitter::new()),
         })
     }
 
@@ -162,8 +154,7 @@ impl RuntimePlanExecutor {
                     Arc::clone(&self.native_recovery),
                 );
                 MutationCoordinator::new(
-                    entries,
-                    SharedLocks(Arc::clone(&self.locks)),
+                    NativePreparedUnitExecutor::new(entries, SharedLocks(Arc::clone(&self.locks))),
                     SharedRevisions(Arc::clone(&self.revisions)),
                 )
                 .execute_with_observer(plan, cancellation, observer)
@@ -182,7 +173,6 @@ impl RuntimePlanExecutor {
                 }
                 let failure_units = failure_units(&plan);
                 let plan = Arc::new(Mutex::new(Some(plan)));
-                let locks = Arc::clone(&self.locks);
                 let revisions = Arc::clone(&self.revisions);
                 let recovery_graph = self.recovery_graph.clone();
                 let cancellation_for_run = cancellation.clone();
@@ -192,7 +182,6 @@ impl RuntimePlanExecutor {
                     .with_session(&distro_name, move |session| {
                         let workspace = workspace.clone();
                         let plan = plan.lock().expect("WSL plan handoff lock poisoned").take();
-                        let locks = Arc::clone(&locks);
                         let revisions = Arc::clone(&revisions);
                         let recovery_graph = recovery_graph.clone();
                         let cancellation = cancellation_for_run.clone();
@@ -202,29 +191,19 @@ impl RuntimePlanExecutor {
                                 message: "WSL mutation plan was consumed more than once"
                                     .to_string(),
                             })?;
-                            let entries = match &recovery_graph {
-                                Some(graph) => {
-                                    let store = graph.active_wsl_store(session.clone())?;
-                                    WslPreparedEntryExecutor::with_recovery_store_for_operation(
-                                        session,
-                                        plan.operation_id.clone(),
-                                        plan.kind,
-                                        store,
-                                    )
-                                }
-                                None => WslPreparedEntryExecutor::for_operation(
-                                    session,
-                                    plan.operation_id.clone(),
-                                    plan.kind,
-                                ),
-                            };
-                            let results = MutationCoordinator::new(
-                                entries,
-                                SharedLocks(locks),
-                                SharedRevisions(revisions),
-                            )
-                            .execute_with_observer(plan, cancellation, observer)
-                            .await;
+                            if let Some(graph) = &recovery_graph {
+                                let _ = graph.active_wsl_store(workspace.clone())?;
+                            }
+                            let units = WslPreparedUnitExecutor::for_operation(
+                                session,
+                                workspace.clone(),
+                                plan.operation_id.clone(),
+                                plan.kind,
+                            );
+                            let results =
+                                MutationCoordinator::new(units, SharedRevisions(revisions))
+                                    .execute_with_observer(plan, cancellation, observer)
+                                    .await;
                             if let Some(graph) = recovery_graph {
                                 graph.wsl_store(workspace)?;
                             }
@@ -580,7 +559,7 @@ mod tests {
             root_replacements: BTreeMap::new(),
             expected: LockExpectedState::capture(&document, ["demo"], std::iter::empty::<&str>()),
         };
-        let committer = RuntimeLockCommitter::new(Arc::new(WslRuntime::default()));
+        let committer = RuntimeLockCommitter::new();
 
         committer.commit(&mutation).await.unwrap();
 

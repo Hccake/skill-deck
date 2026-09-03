@@ -236,11 +236,15 @@ impl TargetFactResolver for RuntimeTargetFactResolver {
                         .map(|target| target.native_path.clone())
                         .collect::<Vec<_>>();
                     let cancellation_for_retry = cancellation.clone();
+                    let workspace = self.environments.workspace(distro_name)?;
                     self.environments
                         .with_session_retry(distro_name, move |session| {
                             let destinations = destinations.clone();
                             let cancellation = cancellation_for_retry.clone();
-                            async move { resolve_wsl(&session, &destinations, cancellation).await }
+                            let workspace = workspace.clone();
+                            async move {
+                                resolve_wsl(&session, &workspace, &destinations, cancellation).await
+                            }
                         })
                         .await
                 }
@@ -258,15 +262,8 @@ impl ContentManifestReader for RuntimeTargetFactResolver {
             match &target.location.environment {
                 EnvironmentRef::Native => NativeContentManifestReader.read(target).await,
                 EnvironmentRef::Wsl { distro_name } => {
-                    let target = target.clone();
-                    self.environments
-                        .with_session_retry(distro_name, move |session| {
-                            let target = target.clone();
-                            async move {
-                                wsl_content_manifest::inspect(&session, &target, None).await
-                            }
-                        })
-                        .await
+                    let workspace = self.environments.workspace(distro_name)?;
+                    wsl_content_manifest::inspect(&workspace, target, None).await
                 }
             }
         })
@@ -320,15 +317,16 @@ pub(crate) fn resolve_native_targets(
 
 async fn resolve_wsl(
     session: &WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     logical_destinations: &[String],
     cancellation: Option<CancellationSignal>,
 ) -> Result<Vec<ResolvedTargetFact>, AppError> {
-    let projected = project_targets(session, logical_destinations, cancellation.clone()).await?;
+    let projected = project_targets(workspace, logical_destinations, cancellation.clone()).await?;
     let physical_paths = projected
         .iter()
         .map(|target| target.physical_destination.clone())
         .collect::<Vec<_>>();
-    let entries = inspect_entries(session, &physical_paths, cancellation).await?;
+    let entries = inspect_entries(workspace, &physical_paths, cancellation).await?;
     if entries.len() != projected.len() {
         return Err(protocol_mismatch());
     }
@@ -368,10 +366,11 @@ async fn resolve_wsl(
 
 pub(crate) async fn resolve_wsl_targets(
     session: &WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     logical_destinations: &[String],
     cancellation: Option<CancellationSignal>,
 ) -> Result<Vec<ResolvedTargetFact>, AppError> {
-    resolve_wsl(session, logical_destinations, cancellation).await
+    resolve_wsl(session, workspace, logical_destinations, cancellation).await
 }
 
 fn wsl_fact(
