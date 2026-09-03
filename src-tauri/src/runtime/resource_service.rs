@@ -77,19 +77,13 @@ impl AuthorizedResourceReader for RuntimeResourceReader {
                 }
                 EnvironmentRef::Wsl { distro_name } => {
                     let path = target.native_path;
-                    self.environments
-                        .with_session_retry(distro_name, move |session| {
-                            let path = path.clone();
-                            async move {
-                                let markdown = crate::environment::wsl::operations::skill_content::read_skill_markdown(
-                                    &session,
-                                    &path,
-                                )
-                                .await?;
-                                Ok(crate::core::skill::skill_content_from_markdown(&markdown))
-                            }
-                        })
-                        .await
+                    let workspace = self.environments.workspace(distro_name)?;
+                    let markdown =
+                        crate::environment::wsl::operations::skill_content::read_skill_markdown(
+                            &workspace, &path,
+                        )
+                        .await?;
+                    Ok(crate::core::skill::skill_content_from_markdown(&markdown))
                 }
             }
         })

@@ -1,11 +1,17 @@
-use std::fs;
-use std::io::Read;
-use std::path::Path;
+#[cfg(not(target_os = "linux"))]
+use std::{fs, io::Read, path::Path};
+
+#[cfg(target_os = "linux")]
+use environment_engine::inspection::{
+    self as engine_inspection, EntryKind as EngineEntryKind, ErrorCode as EngineErrorCode,
+    InspectionRequest, InspectionRoot,
+};
 
 use crate::environment::inspection::{
     FilesystemEntryKind, FilesystemInspector, InspectionFuture, RawFilesystemSnapshot, RawPathFact,
     ReadPlan, ReadRootPurpose,
 };
+#[cfg(not(target_os = "linux"))]
 use crate::environment::native::tree::{inspect_entry_no_follow, NativeEntryKind};
 use crate::environment::types::EnvironmentRef;
 use crate::error::AppError;
@@ -48,6 +54,57 @@ impl FilesystemInspector for NativeInspector {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
+    let snapshot = engine_inspection::inspect(&InspectionRequest {
+        roots: plan
+            .roots
+            .iter()
+            .map(|root| InspectionRoot {
+                path: root.locator.native_path.clone().into(),
+                stat_only: root.purposes.len() == 1
+                    && root.purposes.contains(&ReadRootPurpose::Context),
+            })
+            .collect(),
+        per_file_limit: plan.per_file_limit,
+        aggregate_limit: plan.aggregate_limit,
+    })
+    .map_err(|error| AppError::ExecutionFailed {
+        message: format!("native inspection failed: {error}"),
+    })?;
+
+    Ok(RawFilesystemSnapshot {
+        environment: EnvironmentRef::Native,
+        facts: snapshot
+            .facts
+            .into_iter()
+            .map(|fact| RawPathFact {
+                root_index: fact.root_index,
+                relative_path: fact.relative_path.to_string_lossy().into_owned(),
+                kind: match fact.kind {
+                    EngineEntryKind::Missing => FilesystemEntryKind::Missing,
+                    EngineEntryKind::File => FilesystemEntryKind::File,
+                    EngineEntryKind::Directory => FilesystemEntryKind::Directory,
+                    EngineEntryKind::Symlink => FilesystemEntryKind::Symlink,
+                    EngineEntryKind::Other => FilesystemEntryKind::Other,
+                },
+                resolved_target: fact
+                    .resolved_target
+                    .map(|target| target.to_string_lossy().into_owned()),
+                frontmatter_bytes: fact.content_bytes,
+                truncated: fact.truncated,
+                error_code: fact.error_code.map(|code| match code {
+                    EngineErrorCode::PathUnavailable => "pathUnavailable".to_string(),
+                    EngineErrorCode::ReadFailed => "readFailed".to_string(),
+                    EngineErrorCode::ReadLinkFailed => "readLinkFailed".to_string(),
+                }),
+            })
+            .collect(),
+        total_content_bytes: snapshot.total_content_bytes,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
 fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
     let mut facts = Vec::new();
     let mut total = 0usize;
@@ -119,6 +176,7 @@ fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
     })
 }
 
+#[cfg(not(target_os = "linux"))]
 fn inspect_path(
     path: &Path,
     root_index: u32,

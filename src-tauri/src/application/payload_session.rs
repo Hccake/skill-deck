@@ -236,7 +236,8 @@ pub enum PayloadLocalSource {
     },
     WslManaged {
         distro_name: String,
-        payload_root: String,
+        worker_generation: u64,
+        worker_payload_id: u64,
     },
 }
 
@@ -319,6 +320,20 @@ pub trait PayloadSessionStorage: Send + Sync {
         Box::pin(async {
             Err(AppError::CapabilityUnavailable {
                 capability: "backendPayloadAcquisition".to_string(),
+                path: None,
+            })
+        })
+    }
+
+    fn acquire_from_path<'a>(
+        &'a self,
+        _key: &'a PayloadStorageKey,
+        _source_root: &'a str,
+        _cancellation: Option<CancellationSignal>,
+    ) -> PayloadStorageFuture<'a, Result<BackendAcquiredPayload, AppError>> {
+        Box::pin(async {
+            Err(AppError::CapabilityUnavailable {
+                capability: "backendPathPayloadAcquisition".to_string(),
                 path: None,
             })
         })

@@ -7,7 +7,7 @@ use crate::environment::types::{
     SkillLocationRef,
 };
 use crate::environment::wsl::operations::projects;
-use crate::environment::wsl::WslSession;
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 
 pub struct ContextResolver;
@@ -46,9 +46,10 @@ impl ContextResolver {
     pub async fn resolve_wsl(
         context: SkillLocationRef,
         session: &WslSession,
+        workspace: &WslWorkspace,
     ) -> Result<ResolvedContext, AppError> {
         let projects = if matches!(context.scope, SkillLocation::Project { .. }) {
-            projects::read_projects(session).await?
+            projects::read_projects(session, workspace).await?
         } else {
             Vec::new()
         };

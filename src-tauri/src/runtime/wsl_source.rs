@@ -353,7 +353,8 @@ async fn prepare_native_wsl_source(
         stat_only_root_indexes.insert(1);
     }
     let mut response = scan(
-        &session,
+        &workspace,
+        &native,
         ScanRequest {
             roots,
             stat_only_root_indexes,
@@ -370,7 +371,8 @@ async fn prepare_native_wsl_source(
     );
     if !plugin_search_dirs.is_empty() {
         let priority = scan_priority_directories(
-            &session,
+            &workspace,
+            &native,
             ScanRequest {
                 roots: plugin_search_dirs
                     .iter()
@@ -398,16 +400,15 @@ async fn prepare_native_wsl_source(
         &policy.internal_skill_visibility,
         policy.full_depth,
     )?;
-    let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+    let storage = Arc::new(WslPayloadSessionStorage::for_source(workspace, &native));
     for skill in catalog.values_mut() {
         let source_root = format!(
             "{}/{}",
             native.native_root().trim_end_matches('/'),
             normalize_skill_folder_path(&skill.relative_path)
         );
-        skill.source_metadata_fingerprint = storage
-            .source_metadata_fingerprint_in_active_session(&session, &source_root)
-            .await?;
+        skill.source_metadata_fingerprint =
+            storage.source_metadata_fingerprint(&source_root).await?;
     }
     let descriptor = DiscoverySourceDescriptor {
         source: source_identifier(&parsed, &requested_source),

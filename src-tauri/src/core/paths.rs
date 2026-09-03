@@ -1,12 +1,12 @@
 // 路径工具函数
 // 对应 CLI: agents.ts 顶层常量 (home, configHome)
 
-use once_cell::sync::Lazy;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 /// 路径上下文（与 CLI 顶层常量对应）
-/// 使用 Lazy 单例，只初始化一次
-pub static PATHS: Lazy<PathContext> = Lazy::new(PathContext::new);
+/// 使用 LazyLock 单例，只初始化一次
+pub static PATHS: LazyLock<PathContext> = LazyLock::new(PathContext::new);
 
 /// 路径上下文
 /// 对应 CLI: agents.ts 第 7-11 行

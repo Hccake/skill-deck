@@ -10,6 +10,7 @@ use crate::core::agent_availability::{
 };
 use crate::core::agent_definition::{AgentAdapter, AgentId};
 use crate::core::skill::{InstalledSkill, InstalledSkillLocation, SkillFrontmatter};
+use crate::environment::agent_environment::inspect_eve_project;
 use crate::environment::agent_environment::{AgentRuntimeSnapshot, DetectionState, ResolvedAgent};
 use crate::environment::context_resolver::ResolvedContext;
 use crate::environment::inspection::{
@@ -19,8 +20,7 @@ use crate::environment::runtime::ContextSnapshotRevision;
 use crate::environment::types::{
     same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocation,
 };
-use crate::environment::wsl::operations::eve::inspect_eve_project;
-use crate::environment::wsl::WslSession;
+use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
 use crate::models::{AgentSkillPresence, SkillInstallTargetInfo};
 
@@ -65,7 +65,7 @@ struct SkillCandidate {
 pub async fn discover_eve_skill_targets(
     context: &ResolvedContext,
     runtime: &AgentRuntimeSnapshot,
-    wsl_session: Option<&WslSession>,
+    wsl_workspace: Option<&WslWorkspace>,
 ) -> Result<Vec<SkillInstallTargetInfo>, AppError> {
     let Some(project) = context.project.as_ref() else {
         return Ok(Vec::new());
@@ -77,7 +77,7 @@ pub async fn discover_eve_skill_targets(
     else {
         return Ok(Vec::new());
     };
-    match (&context.context.environment, wsl_session) {
+    match (&context.context.environment, wsl_workspace) {
         (EnvironmentRef::Native, None) => Ok(crate::core::eve::eve_install_targets_for_project(
             &project.native_path,
         )
@@ -90,8 +90,8 @@ pub async fn discover_eve_skill_targets(
             path: target.path,
         })
         .collect()),
-        (EnvironmentRef::Wsl { .. }, Some(session)) => {
-            let inspected = inspect_eve_project(session, &project.native_path).await?;
+        (EnvironmentRef::Wsl { .. }, Some(workspace)) => {
+            let inspected = inspect_eve_project(workspace, &project.native_path).await?;
             if !inspected.has_eve {
                 return Ok(Vec::new());
             }
@@ -252,6 +252,11 @@ pub fn project_skill_snapshot(
         let Some(relative_dir) = fact.relative_path.strip_suffix("/SKILL.md") else {
             continue;
         };
+        if relative_dir.starts_with(".skill-deck-stage-")
+            || relative_dir.starts_with(".skill-deck-backup-")
+        {
+            continue;
+        }
         if fact.truncated || fact.error_code.is_some() {
             continue;
         }
@@ -758,6 +763,63 @@ mod tests {
 
         assert_eq!(result.agents.len(), 1);
         assert_eq!(result.agents[0].definition.id.as_str(), "custom-both");
+    }
+
+    #[test]
+    fn skill_snapshot_ignores_managed_stage_and_backup_directories() {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+        let context = context(environment.clone());
+        let runtime = runtime(environment.clone());
+        let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
+        let canonical_index = root_index(&plan, "/work/app/.agents/skills");
+        let mut facts = vec![root_fact(canonical_index)];
+        for (directory, name) in [
+            ("toolkit", "toolkit"),
+            (".skill-deck-stage-operation-000000", "staged"),
+            (".skill-deck-backup-operation-000000", "backup"),
+        ] {
+            facts.push(RawPathFact {
+                root_index: canonical_index,
+                relative_path: directory.to_string(),
+                kind: FilesystemEntryKind::Directory,
+                resolved_target: None,
+                frontmatter_bytes: Vec::new(),
+                truncated: false,
+                error_code: None,
+            });
+            facts.push(RawPathFact {
+                root_index: canonical_index,
+                relative_path: format!("{directory}/SKILL.md"),
+                kind: FilesystemEntryKind::File,
+                resolved_target: None,
+                frontmatter_bytes: format!("---\nname: {name}\ndescription: Test\n---\n")
+                    .into_bytes(),
+                truncated: false,
+                error_code: None,
+            });
+        }
+
+        let result = project_skill_snapshot(
+            &plan,
+            RawFilesystemSnapshot {
+                environment,
+                facts,
+                total_content_bytes: 0,
+            },
+            &runtime,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["toolkit"]
+        );
     }
 
     #[cfg(unix)]

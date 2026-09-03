@@ -5,12 +5,10 @@ use crate::application::installed_skill_resolver::InstalledSkillResolver;
 use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySourceDescriptor, DiscoverySourceLocation,
-    PayloadPlanningMetadata, PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey,
-    RetainedDiscoverySource,
+    PayloadPlanningMetadata, PayloadSessionManager, PayloadStorageKey, RetainedDiscoverySource,
 };
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
-use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
@@ -59,7 +57,7 @@ impl InstalledSkillPayloadAcquirer {
                 let workspace = self.environments.workspace(distro_name)?;
                 let standard_path = standard.destination.native_path.clone();
                 let skill_name = skill_name.to_string();
-                let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                let storage = workspace.payload_storage();
                 let retained = RetainedDiscoverySource::new(
                     DiscoverySourceLocation::WslNative {
                         distro_name: distro_name.clone(),
@@ -117,7 +115,7 @@ impl InstalledSkillPayloadAcquirer {
             .payload_root_hash),
             EnvironmentRef::Wsl { distro_name } => {
                 let workspace = self.environments.workspace(distro_name)?;
-                let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                let storage = workspace.payload_storage();
                 let session_id = format!("copy-source-check-{}", uuid::Uuid::new_v4().simple());
                 let key = PayloadStorageKey::new(&session_id, skill_name);
                 let acquired = storage

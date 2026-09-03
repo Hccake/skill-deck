@@ -15,7 +15,6 @@ use crate::environment::planning::{
     resolve_native_targets, ResolvedTargetFact, RuntimeTargetFactResolver,
 };
 use crate::environment::types::{EnvironmentRef, ResourceLocator, StorageAccess};
-use crate::environment::wsl::operations::path::map_storage_path_to_host;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::runtime::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
@@ -82,13 +81,16 @@ impl RuntimeCopyProjectComparator {
         distro_name: &str,
         native_path: &str,
     ) -> Result<String, AppError> {
-        let native_path = native_path.to_string();
-        self.environments
-            .with_session_retry(distro_name, move |session| {
-                let native_path = native_path.clone();
-                async move { map_storage_path_to_host(&session, &native_path, None).await }
+        let workspace = self.environments.workspace(distro_name)?;
+        workspace
+            .map_path_to_windows(native_path.to_string())
+            .await?
+            .ok_or_else(|| AppError::StorageMappingUnsupported {
+                path: native_path.to_string(),
+                environment: EnvironmentRef::Wsl {
+                    distro_name: distro_name.to_string(),
+                },
             })
-            .await
     }
 
     async fn storage_access(&self, environment: &EnvironmentRef, path: &str) -> StorageAccess {

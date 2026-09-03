@@ -16,7 +16,6 @@ use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::native::inspection::NativeInspector;
 use crate::environment::read_service::ReadService;
 use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocationRef};
-use crate::environment::wsl::operations::inspection::WslInspector;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
@@ -356,37 +355,63 @@ pub async fn list_skills(
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
             let retry_context = context.clone();
-            environment_registry
+            let retry_runtime = runtime.clone();
+            let workspace = environment_registry.workspace(&distro_name)?;
+            let (resolved, plan) = environment_registry
                 .with_session_retry(&distro_name, move |session| {
                     let context = retry_context.clone();
-                    let runtime = runtime.clone();
+                    let runtime = retry_runtime.clone();
+                    let workspace = workspace.clone();
                     async move {
-                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        let resolved =
+                            ContextResolver::resolve_wsl(context, &session, &workspace).await?;
                         let eve_targets =
-                            discover_eve_skill_targets(&resolved, &runtime, Some(&session)).await?;
+                            discover_eve_skill_targets(&resolved, &runtime, Some(&workspace))
+                                .await?;
                         let plan = build_skill_read_plan(&resolved, &runtime, &eve_targets)?;
-                        let read_service =
-                            ReadService::new(vec![Arc::new(WslInspector::new(session.clone()))]);
-                        let snapshot = read_service.execute(&plan.read_plan).await?;
-                        let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
-                        enrich_from_context_lock(
-                            result,
+                        Ok((resolved, plan))
+                    }
+                })
+                .await?;
+            let workspace = environment_registry.workspace(&distro_name)?;
+            let read_service = ReadService::new(vec![workspace.filesystem_inspector()]);
+            let snapshot = read_service.execute(&plan.read_plan).await?;
+            let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
+            let retry_resolved = resolved.clone();
+            let (lock_bytes, lock_kind) = environment_registry
+                .with_session_retry(&distro_name, move |session| {
+                    let resolved = retry_resolved.clone();
+                    let workspace = workspace.clone();
+                    async move {
+                        read_context_lock(
                             &resolved,
-                            EnvironmentLockIo::ActiveWsl(session),
+                            EnvironmentLockIo::ActiveWsl {
+                                session: Box::new(session),
+                                workspace,
+                            },
                         )
                         .await
                     }
                 })
-                .await
+                .await?;
+            enrich_from_lock_bytes(result, &resolved, lock_bytes, lock_kind)
         }
     }
 }
 
 async fn enrich_from_context_lock(
-    mut result: ListSkillsResult,
+    result: ListSkillsResult,
     context: &ResolvedContext,
     lock_io: EnvironmentLockIo,
 ) -> Result<ListSkillsResult, AppError> {
+    let (lock_bytes, lock_kind) = read_context_lock(context, lock_io).await?;
+    enrich_from_lock_bytes(result, context, lock_bytes, lock_kind)
+}
+
+async fn read_context_lock(
+    context: &ResolvedContext,
+    lock_io: EnvironmentLockIo,
+) -> Result<(Option<Vec<u8>>, LockKind), AppError> {
     let mut lock_bytes = lock_io.read_optional(&context.lock).await.ok().flatten();
     let mut lock_kind = if context.project.is_some() {
         LockKind::Project
@@ -408,6 +433,15 @@ async fn enrich_from_context_lock(
             }
         }
     }
+    Ok((lock_bytes, lock_kind))
+}
+
+fn enrich_from_lock_bytes(
+    mut result: ListSkillsResult,
+    context: &ResolvedContext,
+    lock_bytes: Option<Vec<u8>>,
+    lock_kind: LockKind,
+) -> Result<ListSkillsResult, AppError> {
     result.skills = enrich_environment_skills_from_lock_at(
         result.skills,
         lock_bytes.as_deref(),

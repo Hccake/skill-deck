@@ -17,6 +17,7 @@ use crate::core::agent_registry::AgentRegistrySnapshot;
 use crate::core::projects::{ProjectPathSemantics, ProjectsFile};
 use crate::core::skill_lock;
 use crate::core::{get_config_path, paths::PATHS};
+use crate::environment::agent_environment::inspect_eve_project;
 use crate::environment::agent_environment::{AgentEnvironmentResolver, EnvironmentContext};
 use crate::environment::context_resolver::ContextResolver;
 use crate::environment::context_resolver::ResolvedContext;
@@ -30,7 +31,6 @@ use crate::environment::types::{
     EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::operations::eve::inspect_eve_project;
 use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
 use crate::models::InstallTargetInfo;
@@ -251,12 +251,13 @@ async fn capture_wsl_base(
     session: WslSession,
     workspace: crate::environment::wsl::WslWorkspace,
 ) -> Result<CapturedBase, AppError> {
-    let io = WslAtomicDocumentIo::from_active_session(session.clone());
+    let io = WslAtomicDocumentIo::from_active_session(session.clone(), workspace.clone());
     let (resolved, project_schema_version) =
         resolve_wsl_context_from_io(&io, context, &session).await?;
-    let environment = wsl_environment_context(&resolved, session.clone(), workspace);
+    let environment = wsl_environment_context(&resolved, session.clone(), workspace.clone());
     let targets = resolve_wsl_targets(
         &session,
+        &workspace,
         &[
             resolved.skill_root.native_path.clone(),
             resolved.lock.native_path.clone(),
@@ -266,7 +267,7 @@ async fn capture_wsl_base(
     .await?;
     let eve_targets = match resolved.project.as_ref() {
         Some(project) => {
-            let snapshot = inspect_eve_project(&session, &project.native_path).await?;
+            let snapshot = inspect_eve_project(&workspace, &project.native_path).await?;
             if snapshot.has_eve {
                 crate::core::eve::eve_install_targets(&project.native_path, snapshot.subagents)
             } else {

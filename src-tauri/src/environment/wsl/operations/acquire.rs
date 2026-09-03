@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use tokio::time::Duration;
 
 use crate::application::payload_session::{
     BackendAcquiredPayload, PayloadCleanupReport, PayloadCleanupWarning, PayloadCleanupWarningCode,
@@ -10,73 +11,34 @@ use crate::application::payload_session::{
 };
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{
-    verify_skill_payload_integrity, verify_skill_payload_manifest, PayloadEntry, PayloadEntryKind,
-    SkillPayload, SkillPayloadManifest,
+    verify_skill_payload_integrity, PayloadEntry, PayloadEntryKind, SkillPayload,
+    SkillPayloadManifest,
 };
-use crate::environment::wsl::protocol::{
-    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
-    DEFAULT_WSL_STDERR_LIMIT,
+use crate::environment::wsl::operations::source_acquisition::{
+    WorkerSourceHandle, WslNativeSource,
 };
-use crate::environment::wsl::{WslSession, WslWorkspace};
+use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
 
-const PROTOCOL_VERSION: &str = "1";
-#[cfg(all(test, target_os = "linux"))]
-const OWNER_FILE: &str = ".skill-deck-owner";
-#[cfg(all(test, target_os = "linux"))]
-const MANIFEST_FILE: &str = "manifest.json";
-#[cfg(all(test, target_os = "linux"))]
-const BLOB_LIST_FILE: &str = "blob-list";
 const MAX_MANIFEST_BYTES: usize = 8 * 1024 * 1024;
-const MAX_BRIDGE_BLOB_BYTES: usize = 256 * 1024 * 1024;
+const MAX_BLOB_BYTES: usize = 256 * 1024 * 1024;
 
-const ACQUIRE_SCRIPT: &str = include_str!("../scripts/acquire.sh");
+#[derive(Debug, Clone)]
+struct SourceBinding {
+    handle: WorkerSourceHandle,
+    root: String,
+}
 
-const STORE_BEGIN_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const STORE_BLOB_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const STORE_FINALIZE_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const FINALIZE_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const VERIFY_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const READ_BLOB_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const REMOVE_PAYLOAD_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const REMOVE_SESSION_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-
-const SWEEP_ORPHANS_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-const SOURCE_FINGERPRINT_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-const SOURCE_REVISION_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-const ACQUIRE_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "acquire", ACQUIRE_SCRIPT);
-const STORE_BEGIN_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "store-begin", STORE_BEGIN_SCRIPT);
-const STORE_BLOB_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "store-blob", STORE_BLOB_SCRIPT);
-const STORE_FINALIZE_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "store-finalize", STORE_FINALIZE_SCRIPT);
-const FINALIZE_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "finalize", FINALIZE_SCRIPT);
-const VERIFY_OPERATION: WslOperationDescriptor = wsl_operation("payload", "verify", VERIFY_SCRIPT);
-const READ_BLOB_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "read-blob", READ_BLOB_SCRIPT);
-const REMOVE_PAYLOAD_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "remove-payload", REMOVE_PAYLOAD_SCRIPT);
-const REMOVE_SESSION_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "remove-session", REMOVE_SESSION_SCRIPT);
-const SWEEP_ORPHANS_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "sweep-orphans", SWEEP_ORPHANS_SCRIPT);
-const SOURCE_FINGERPRINT_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "fingerprint", SOURCE_FINGERPRINT_SCRIPT);
-const SOURCE_REVISION_OPERATION: WslOperationDescriptor =
-    wsl_operation("payload", "source-revision", SOURCE_REVISION_SCRIPT);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WorkerPayloadHandle {
+    generation: u64,
+    id: u64,
+}
 
 pub struct WslPayloadSessionStorage {
     workspace: WslWorkspace,
+    source: Option<SourceBinding>,
+    handles: Mutex<HashMap<PayloadStorageKey, WorkerPayloadHandle>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,64 +50,194 @@ pub struct WslAcquiredPayload {
 
 impl WslPayloadSessionStorage {
     pub fn new(workspace: WslWorkspace) -> Self {
-        Self { workspace }
+        Self {
+            workspace,
+            source: None,
+            handles: Mutex::new(HashMap::new()),
+        }
     }
 
-    fn managed_paths(&self, key: &PayloadStorageKey) -> Result<(String, String), AppError> {
-        let session_root = managed_session_root(key.session_id())?;
-        let payload_root = format!("{session_root}/payload-{}", digest(key.skill_path()));
-        Ok((session_root, payload_root))
+    pub(crate) fn for_source(workspace: WslWorkspace, source: &WslNativeSource) -> Self {
+        Self {
+            workspace,
+            source: Some(SourceBinding {
+                handle: source.handle(),
+                root: source.native_root().to_string(),
+            }),
+            handles: Mutex::new(HashMap::new()),
+        }
     }
 
-    async fn run(
+    fn payload_name(&self, key: &PayloadStorageKey) -> String {
+        format!("payload-{}", digest(key.skill_path()))
+    }
+
+    fn remember_handle(&self, key: &PayloadStorageKey, generation: u64, id: u64) {
+        self.handles
+            .lock()
+            .expect("WSL payload handle map lock poisoned")
+            .insert(key.clone(), WorkerPayloadHandle { generation, id });
+    }
+
+    fn forget_key(&self, key: &PayloadStorageKey) {
+        self.handles
+            .lock()
+            .expect("WSL payload handle map lock poisoned")
+            .remove(key);
+    }
+
+    fn handle(&self, key: &PayloadStorageKey) -> Result<WorkerPayloadHandle, AppError> {
+        self.handles
+            .lock()
+            .expect("WSL payload handle map lock poisoned")
+            .get(key)
+            .copied()
+            .ok_or(AppError::StalePayload)
+    }
+
+    async fn remove_key_best_effort(&self, key: &PayloadStorageKey) {
+        let _ = self
+            .workspace
+            .request_worker_control_once(
+                environment_protocol::Message::RemovePayload {
+                    session_id: key.session_id().to_string(),
+                    payload_name: self.payload_name(key),
+                },
+                None,
+                Duration::from_secs(10),
+            )
+            .await;
+        self.forget_key(key);
+    }
+
+    async fn store_in_worker(
         &self,
-        operation: &WslOperationDescriptor,
-        args: Vec<String>,
-        stdout_limit: usize,
-    ) -> Result<Vec<u8>, AppError> {
-        self.run_with(
-            operation,
-            args,
-            Vec::new(),
-            Duration::from_secs(30),
-            stdout_limit,
-            None,
-        )
-        .await
-    }
-
-    async fn run_with(
-        &self,
-        operation: &WslOperationDescriptor,
-        args: Vec<String>,
-        stdin: Vec<u8>,
-        timeout: Duration,
-        stdout_limit: usize,
-        cancellation: Option<CancellationSignal>,
-    ) -> Result<Vec<u8>, AppError> {
-        self.workspace
-            .with_session_retry(move |session| {
-                let args = args.clone();
-                let stdin = stdin.clone();
-                let cancellation = cancellation.clone();
-                async move {
-                    WslOperationExecutor::execute(
-                        operation,
-                        WslOperationRequest {
-                            session,
-                            args,
-                            stdin,
-                            timeout,
-                            stdout_limit,
-                            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                            cancellation,
-                        },
-                    )
-                    .await
-                    .map(|output| output.stdout)
+        key: &PayloadStorageKey,
+        payload: SkillPayload,
+    ) -> Result<u64, AppError> {
+        verify_skill_payload_integrity(&payload)?;
+        let manifest = payload.manifest();
+        let payload_name = self.payload_name(key);
+        let (generation, response) = self
+            .workspace
+            .request_worker_control_once(
+                environment_protocol::Message::BeginPayloadUpload {
+                    session_id: key.session_id().to_string(),
+                    payload_name: payload_name.clone(),
+                },
+                None,
+                Duration::from_secs(10),
+            )
+            .await?;
+        let upload_id = match response {
+            environment_protocol::Message::PayloadUploadBegun { upload_id } => upload_id,
+            message => return Err(worker_response_error(message, "PayloadUploadBegun")),
+        };
+        let result = async {
+            for (blob_id, blob) in &payload.blobs {
+                if blob.len() > MAX_BLOB_BYTES {
+                    return Err(AppError::CapabilityUnavailable {
+                        capability: "wslPayloadBlobSize".to_string(),
+                        path: None,
+                    });
                 }
+                let digest = format!("sha256:{blob_id}");
+                let response = self
+                    .workspace
+                    .request_worker_control_for_generation(
+                        generation,
+                        environment_protocol::Message::UploadPayloadBlob {
+                            upload_id,
+                            blob_id: blob_id.clone(),
+                            total_bytes: blob.len() as u64,
+                            sha256: digest,
+                        },
+                        None,
+                        Duration::from_secs(10),
+                    )
+                    .await?;
+                let transfer_id = match response {
+                    environment_protocol::Message::TransferReady { transfer_id } => transfer_id,
+                    message => return Err(worker_response_error(message, "TransferReady")),
+                };
+                let response = self
+                    .workspace
+                    .send_worker_transfer_for_generation(
+                        generation,
+                        transfer_id,
+                        blob,
+                        MAX_BLOB_BYTES,
+                        Duration::from_secs(60),
+                    )
+                    .await?;
+                match response {
+                    environment_protocol::Message::PayloadBlobUploaded {
+                        upload_id: actual_upload,
+                        blob_id: actual_blob,
+                    } if actual_upload == upload_id && actual_blob == *blob_id => {}
+                    message => {
+                        return Err(worker_response_error(message, "PayloadBlobUploaded"));
+                    }
+                }
+            }
+            let manifest_bytes = serde_json::to_vec(&manifest)?;
+            if manifest_bytes.is_empty() || manifest_bytes.len() > MAX_MANIFEST_BYTES {
+                return Err(AppError::CapabilityUnavailable {
+                    capability: "wslPayloadManifestSize".to_string(),
+                    path: None,
+                });
+            }
+            let manifest_sha = format!("sha256:{:x}", Sha256::digest(&manifest_bytes));
+            let response = self
+                .workspace
+                .request_worker_control_for_generation(
+                    generation,
+                    environment_protocol::Message::FinalizePayloadUpload {
+                        upload_id,
+                        total_bytes: manifest_bytes.len() as u64,
+                        sha256: manifest_sha,
+                    },
+                    None,
+                    Duration::from_secs(10),
+                )
+                .await?;
+            let transfer_id = match response {
+                environment_protocol::Message::TransferReady { transfer_id } => transfer_id,
+                message => return Err(worker_response_error(message, "TransferReady")),
+            };
+            let response = self
+                .workspace
+                .send_worker_transfer_for_generation(
+                    generation,
+                    transfer_id,
+                    &manifest_bytes,
+                    MAX_MANIFEST_BYTES,
+                    Duration::from_secs(30),
+                )
+                .await?;
+            let payload_id = match response {
+                environment_protocol::Message::PayloadUploadFinalized { payload_id, .. } => {
+                    payload_id
+                }
+                message => return Err(worker_response_error(message, "PayloadUploadFinalized")),
+            };
+            self.remember_handle(key, generation, payload_id);
+            Ok(payload.blobs.values().map(|blob| blob.len() as u64).sum())
+        }
+        .await;
+        if result.is_err() {
+            self.remove_key_best_effort(key).await;
+        }
+        result
+    }
+
+    fn source_binding(&self) -> Result<&SourceBinding, AppError> {
+        self.source
+            .as_ref()
+            .ok_or_else(|| AppError::CapabilityUnavailable {
+                capability: "wslSourceHandle".to_string(),
+                path: None,
             })
-            .await
     }
 
     pub async fn acquire_from_path(
@@ -154,105 +246,103 @@ impl WslPayloadSessionStorage {
         source_root: &str,
         cancellation: Option<CancellationSignal>,
     ) -> Result<WslAcquiredPayload, AppError> {
+        if let Some(source) = &self.source {
+            return self
+                .acquire_from_bound_source(key, source, source_root, cancellation)
+                .await;
+        }
         if !source_root.starts_with('/') {
             return Err(AppError::UnsafePath {
                 path: source_root.to_string(),
                 reason: "WSL payload source must be an absolute POSIX path".to_string(),
             });
         }
-        let (session_root, payload_root) = self.managed_paths(key)?;
-        let base_args = vec![
-            source_root.to_string(),
-            session_root.clone(),
-            payload_root.clone(),
-            key.session_id().to_string(),
-        ];
-        let response = self
-            .run_with(
-                &ACQUIRE_OPERATION,
-                base_args,
-                Vec::new(),
-                Duration::from_secs(60),
-                MAX_MANIFEST_BYTES,
+        let (generation, response) = self
+            .workspace
+            .request_worker_control_once(
+                environment_protocol::Message::OpenLocalSource {
+                    request: environment_protocol::OpenLocalSourceRequest {
+                        path: source_root.to_string(),
+                    },
+                },
                 cancellation.clone(),
+                Duration::from_secs(10),
             )
             .await?;
-        let acquired = match parse_acquire_response(&response) {
-            Ok(acquired) => acquired,
-            Err(error) => {
-                let _ = self
-                    .run(
-                        &REMOVE_PAYLOAD_OPERATION,
-                        vec![session_root, payload_root, key.session_id().to_string()],
-                        0,
-                    )
-                    .await;
-                return Err(error);
-            }
+        let (source_id, root) = match response {
+            environment_protocol::Message::SourceOpened {
+                source_id, root, ..
+            } => (source_id, root),
+            message => return Err(worker_response_error(message, "SourceOpened")),
         };
-        let finalize_args = vec![
-            session_root.clone(),
-            payload_root.clone(),
-            key.session_id().to_string(),
-        ];
-        let finalize = self
-            .run_with(
-                &FINALIZE_OPERATION,
-                finalize_args,
-                finalize_request(&acquired.manifest)?,
-                Duration::from_secs(30),
-                32,
-                cancellation,
+        let source = SourceBinding {
+            handle: WorkerSourceHandle {
+                generation,
+                id: source_id,
+            },
+            root,
+        };
+        let result = self
+            .acquire_from_bound_source(key, &source, source_root, cancellation)
+            .await;
+        let _ = self
+            .workspace
+            .request_worker_control_for_generation(
+                generation,
+                environment_protocol::Message::ReleaseSource { source_id },
+                None,
+                Duration::from_secs(10),
             )
-            .await
-            .and_then(|response| parse_finalize_response(&response));
-        if let Err(error) = finalize {
-            let _ = self
-                .run(
-                    &REMOVE_PAYLOAD_OPERATION,
-                    vec![session_root, payload_root, key.session_id().to_string()],
-                    0,
-                )
-                .await;
-            return Err(error);
-        }
-        Ok(acquired)
+            .await;
+        result
     }
 
-    pub(crate) async fn source_metadata_fingerprint_in_active_session(
+    async fn acquire_from_bound_source(
         &self,
-        session: &WslSession,
+        key: &PayloadStorageKey,
+        source: &SourceBinding,
         source_root: &str,
-    ) -> Result<String, AppError> {
-        if !source_root.starts_with('/') {
-            return Err(AppError::UnsafePath {
-                path: source_root.to_string(),
-                reason: "WSL payload source must be an absolute POSIX path".to_string(),
-            });
-        }
-        let output = WslOperationExecutor::execute(
-            &SOURCE_FINGERPRINT_OPERATION,
-            WslOperationRequest {
-                session: session.clone(),
-                args: vec![source_root.to_string()],
-                stdin: Vec::new(),
-                timeout: Duration::from_secs(30),
-                stdout_limit: 128,
-                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                cancellation: None,
-            },
-        )
-        .await?;
-        parse_source_fingerprint(&output.stdout)
+        cancellation: Option<CancellationSignal>,
+    ) -> Result<WslAcquiredPayload, AppError> {
+        let relative_path = relative_source_path(&source.root, source_root)?;
+        let response: environment_protocol::PayloadReadyResponse = self
+            .workspace
+            .request_worker_payload_for_generation(
+                source.handle.generation,
+                environment_protocol::Message::AcquirePayloadFromSource {
+                    request: environment_protocol::AcquirePayloadFromSourceRequest {
+                        source_id: source.handle.id,
+                        relative_path: relative_path.into_bytes(),
+                        session_id: key.session_id().to_string(),
+                        payload_name: self.payload_name(key),
+                        deadline_millis: 60_000,
+                    },
+                },
+                MAX_MANIFEST_BYTES,
+                cancellation,
+                Duration::from_secs(65),
+            )
+            .await?;
+        self.remember_handle(key, source.handle.generation, response.payload_id);
+        Ok(WslAcquiredPayload {
+            manifest: map_manifest(response.manifest)?,
+            total_bytes: response.total_bytes,
+            computed_hash: response.computed_hash.ok_or_else(|| {
+                AppError::ConfigurationCorrupted {
+                    message: "WSL Worker source payload omitted its CLI hash".to_string(),
+                }
+            })?,
+        })
     }
 }
 
 impl PayloadSessionStorage for WslPayloadSessionStorage {
     fn local_source(&self, key: &PayloadStorageKey) -> Result<PayloadLocalSource, AppError> {
-        let (_, payload_root) = self.managed_paths(key)?;
+        let handle = self.handle(key)?;
         Ok(PayloadLocalSource::WslManaged {
             distro_name: self.workspace.distro_name().to_string(),
-            payload_root,
+            worker_generation: handle.generation,
+            worker_payload_id: handle.id,
         })
     }
 
@@ -261,129 +351,7 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
         key: &'a PayloadStorageKey,
         payload: SkillPayload,
     ) -> PayloadStorageFuture<'a, Result<u64, AppError>> {
-        Box::pin(async move {
-            verify_skill_payload_integrity(&payload)?;
-            let manifest = payload.manifest();
-            let total_bytes = payload.blobs.values().map(|blob| blob.len() as u64).sum();
-            let (session_root, payload_root) = self.managed_paths(key)?;
-            let session_id = key.session_id().to_string();
-            let stage_root = format!("{payload_root}.upload");
-            let store_result = async {
-                let response = self
-                    .run_with(
-                        &STORE_BEGIN_OPERATION,
-                        vec![
-                            session_root.clone(),
-                            payload_root.clone(),
-                            session_id.clone(),
-                        ],
-                        Vec::new(),
-                        Duration::from_secs(10),
-                        32,
-                        None,
-                    )
-                    .await?;
-                parse_finalize_response(&response)?;
-                for (blob_id, blob) in &payload.blobs {
-                    let response = self
-                        .run_with(
-                            &STORE_BLOB_OPERATION,
-                            vec![
-                                session_root.clone(),
-                                payload_root.clone(),
-                                session_id.clone(),
-                                blob_id.clone(),
-                            ],
-                            blob.clone(),
-                            Duration::from_secs(60),
-                            32,
-                            None,
-                        )
-                        .await?;
-                    parse_finalize_response(&response)?;
-                }
-                let request = finalize_request(&manifest)?;
-                if request.len() > MAX_MANIFEST_BYTES {
-                    return Err(AppError::CapabilityUnavailable {
-                        capability: "wslPayloadManifestSize".to_string(),
-                        path: None,
-                    });
-                }
-                let response = self
-                    .run_with(
-                        &STORE_FINALIZE_OPERATION,
-                        vec![
-                            session_root.clone(),
-                            payload_root.clone(),
-                            session_id.clone(),
-                        ],
-                        request,
-                        Duration::from_secs(30),
-                        32,
-                        None,
-                    )
-                    .await?;
-                parse_finalize_response(&response)?;
-                Ok(total_bytes)
-            }
-            .await;
-            if store_result.is_err() {
-                let _ = self
-                    .run(
-                        &REMOVE_PAYLOAD_OPERATION,
-                        vec![session_root, stage_root, session_id],
-                        0,
-                    )
-                    .await;
-            }
-            store_result
-        })
-    }
-
-    fn source_metadata_fingerprint<'a>(
-        &'a self,
-        source_root: &'a str,
-    ) -> PayloadStorageFuture<'a, Result<String, AppError>> {
-        Box::pin(async move {
-            if !source_root.starts_with('/') {
-                return Err(AppError::UnsafePath {
-                    path: source_root.to_string(),
-                    reason: "WSL payload source must be an absolute POSIX path".to_string(),
-                });
-            }
-            let response = self
-                .run(
-                    &SOURCE_FINGERPRINT_OPERATION,
-                    vec![source_root.to_string()],
-                    128,
-                )
-                .await?;
-            parse_source_fingerprint(&response)
-        })
-    }
-
-    fn source_upstream_revision<'a>(
-        &'a self,
-        repository_root: &'a str,
-        skill_path: &'a str,
-    ) -> PayloadStorageFuture<'a, Result<Option<String>, AppError>> {
-        Box::pin(async move {
-            if !repository_root.starts_with('/') {
-                return Err(AppError::UnsafePath {
-                    path: repository_root.to_string(),
-                    reason: "WSL Git source root must be an absolute POSIX path".to_string(),
-                });
-            }
-            let skill_directory = crate::core::skill_paths::normalize_skill_folder_path(skill_path);
-            let response = self
-                .run(
-                    &SOURCE_REVISION_OPERATION,
-                    vec![repository_root.to_string(), skill_directory],
-                    128,
-                )
-                .await?;
-            parse_source_revision(&response).map(Some)
-        })
+        Box::pin(async move { self.store_in_worker(key, payload).await })
     }
 
     fn acquire_from_source_path<'a>(
@@ -393,14 +361,94 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
         cancellation: Option<CancellationSignal>,
     ) -> PayloadStorageFuture<'a, Result<BackendAcquiredPayload, AppError>> {
         Box::pin(async move {
-            let acquired = self
-                .acquire_from_path(key, source_root, cancellation)
+            let source = self.source_binding()?;
+            let response = self
+                .acquire_from_bound_source(key, source, source_root, cancellation)
                 .await?;
             Ok(BackendAcquiredPayload {
-                manifest: acquired.manifest,
-                total_bytes: acquired.total_bytes,
-                computed_hash: acquired.computed_hash,
+                manifest: response.manifest,
+                total_bytes: response.total_bytes,
+                computed_hash: response.computed_hash,
             })
+        })
+    }
+
+    fn acquire_from_path<'a>(
+        &'a self,
+        key: &'a PayloadStorageKey,
+        source_root: &'a str,
+        cancellation: Option<CancellationSignal>,
+    ) -> PayloadStorageFuture<'a, Result<BackendAcquiredPayload, AppError>> {
+        Box::pin(async move {
+            let response =
+                WslPayloadSessionStorage::acquire_from_path(self, key, source_root, cancellation)
+                    .await?;
+            Ok(BackendAcquiredPayload {
+                manifest: response.manifest,
+                total_bytes: response.total_bytes,
+                computed_hash: response.computed_hash,
+            })
+        })
+    }
+
+    fn source_metadata_fingerprint<'a>(
+        &'a self,
+        source_root: &'a str,
+    ) -> PayloadStorageFuture<'a, Result<String, AppError>> {
+        Box::pin(async move {
+            let source = self.source_binding()?;
+            let relative_path = relative_source_path(&source.root, source_root)?;
+            let response = self
+                .workspace
+                .request_worker_control_for_generation(
+                    source.handle.generation,
+                    environment_protocol::Message::SourceFingerprint {
+                        source_id: source.handle.id,
+                        relative_path: relative_path.into_bytes(),
+                        deadline_millis: 30_000,
+                    },
+                    None,
+                    Duration::from_secs(35),
+                )
+                .await?;
+            match response {
+                environment_protocol::Message::SourceFingerprintResult { fingerprint } => {
+                    Ok(fingerprint)
+                }
+                message => Err(worker_response_error(message, "SourceFingerprintResult")),
+            }
+        })
+    }
+
+    fn source_upstream_revision<'a>(
+        &'a self,
+        repository_root: &'a str,
+        skill_path: &'a str,
+    ) -> PayloadStorageFuture<'a, Result<Option<String>, AppError>> {
+        Box::pin(async move {
+            let source = self.source_binding()?;
+            if repository_root != source.root {
+                return Err(AppError::StalePayload);
+            }
+            let response = self
+                .workspace
+                .request_worker_control_for_generation(
+                    source.handle.generation,
+                    environment_protocol::Message::SourceRevision {
+                        source_id: source.handle.id,
+                        relative_path: normalize_skill_revision_path(skill_path)?.into_bytes(),
+                        deadline_millis: 30_000,
+                    },
+                    None,
+                    Duration::from_secs(35),
+                )
+                .await?;
+            match response {
+                environment_protocol::Message::SourceRevisionResult { revision } => {
+                    Ok(Some(revision))
+                }
+                message => Err(worker_response_error(message, "SourceRevisionResult")),
+            }
         })
     }
 
@@ -409,40 +457,27 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
         key: &'a PayloadStorageKey,
     ) -> PayloadStorageFuture<'a, Result<Option<SkillPayloadManifest>, AppError>> {
         Box::pin(async move {
-            let (session_root, payload_root) = self.managed_paths(key)?;
-            let base_args = vec![
-                session_root.clone(),
-                payload_root.clone(),
-                key.session_id().to_string(),
-            ];
-            let response = self
-                .run(&VERIFY_OPERATION, base_args.clone(), MAX_MANIFEST_BYTES)
-                .await;
-            let manifest = match response {
-                Ok(response) => parse_manifest_response(&response)?,
-                Err(AppError::WslCommandFailed {
-                    exit_code: Some(69..=72),
-                    ..
-                }) => return Ok(None),
-                Err(error) => return Err(error),
+            let (generation, response): (u64, Option<environment_protocol::PayloadReadyResponse>) =
+                self.workspace
+                    .request_worker_payload_once(
+                        environment_protocol::Message::VerifyPayload {
+                            request: environment_protocol::VerifyPayloadRequest {
+                                session_id: key.session_id().to_string(),
+                                payload_name: self.payload_name(key),
+                                deadline_millis: 30_000,
+                            },
+                        },
+                        MAX_MANIFEST_BYTES,
+                        None,
+                        Duration::from_secs(35),
+                    )
+                    .await?;
+            let Some(response) = response else {
+                self.forget_key(key);
+                return Ok(None);
             };
-            let mut exact_args = base_args;
-            exact_args.push("--expected".to_string());
-            let exact_response = self
-                .run_with(
-                    &VERIFY_OPERATION,
-                    exact_args,
-                    expected_blob_list(&manifest),
-                    Duration::from_secs(30),
-                    MAX_MANIFEST_BYTES,
-                    None,
-                )
-                .await?;
-            let exact_manifest = parse_manifest_response(&exact_response)?;
-            if exact_manifest != manifest {
-                return Err(AppError::StalePayload);
-            }
-            Ok(Some(manifest))
+            self.remember_handle(key, generation, response.payload_id);
+            map_manifest(response.manifest).map(Some)
         })
     }
 
@@ -455,25 +490,27 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
             if !valid_blob_id(blob_id) {
                 return Err(AppError::StalePayload);
             }
-            let (session_root, payload_root) = self.managed_paths(key)?;
-            let response = self
-                .run(
-                    &READ_BLOB_OPERATION,
-                    vec![
-                        session_root,
-                        payload_root,
-                        key.session_id().to_string(),
-                        blob_id.to_string(),
-                    ],
-                    MAX_BRIDGE_BLOB_BYTES,
+            let handle = self.handle(key)?;
+            let result = self
+                .workspace
+                .request_worker_bytes_for_generation(
+                    handle.generation,
+                    environment_protocol::Message::ReadPayloadBlob {
+                        payload_id: handle.id,
+                        blob_id: blob_id.to_string(),
+                        deadline_millis: 60_000,
+                    },
+                    MAX_BLOB_BYTES,
+                    Duration::from_secs(65),
                 )
                 .await;
-            match response {
-                Ok(response) => Ok(Some(parse_blob_response(&response)?)),
-                Err(AppError::WslCommandFailed {
-                    exit_code: Some(63 | 71 | 72),
-                    ..
-                }) => Ok(None),
+            match result {
+                Ok(blob) => Ok(Some(blob)),
+                Err(AppError::ExecutionFailed { message })
+                    if message.contains("missingPayload") =>
+                {
+                    Ok(None)
+                }
                 Err(error) => Err(error),
             }
         })
@@ -484,14 +521,24 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
         key: &'a PayloadStorageKey,
     ) -> PayloadStorageFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
-            let (session_root, payload_root) = self.managed_paths(key)?;
-            self.run(
-                &REMOVE_PAYLOAD_OPERATION,
-                vec![session_root, payload_root, key.session_id().to_string()],
-                0,
-            )
-            .await?;
-            Ok(())
+            let (_, response) = self
+                .workspace
+                .request_worker_control_once(
+                    environment_protocol::Message::RemovePayload {
+                        session_id: key.session_id().to_string(),
+                        payload_name: self.payload_name(key),
+                    },
+                    None,
+                    Duration::from_secs(10),
+                )
+                .await?;
+            match response {
+                environment_protocol::Message::PayloadRemoved { .. } => {
+                    self.forget_key(key);
+                    Ok(())
+                }
+                message => Err(worker_response_error(message, "PayloadRemoved")),
+            }
         })
     }
 
@@ -500,14 +547,26 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
         session_id: &'a str,
     ) -> PayloadStorageFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
-            let session_root = managed_session_root(session_id)?;
-            self.run(
-                &REMOVE_SESSION_OPERATION,
-                vec![session_root, session_id.to_string()],
-                0,
-            )
-            .await?;
-            Ok(())
+            let (_, response) = self
+                .workspace
+                .request_worker_control_once(
+                    environment_protocol::Message::RemovePayloadSession {
+                        session_id: session_id.to_string(),
+                    },
+                    None,
+                    Duration::from_secs(10),
+                )
+                .await?;
+            match response {
+                environment_protocol::Message::PayloadSessionRemoved { .. } => {
+                    self.handles
+                        .lock()
+                        .expect("WSL payload handle map lock poisoned")
+                        .retain(|key, _| key.session_id() != session_id);
+                    Ok(())
+                }
+                message => Err(worker_response_error(message, "PayloadSessionRemoved")),
+            }
         })
     }
 }
@@ -520,27 +579,122 @@ impl PayloadSessionMaintenance for WslPayloadSessionStorage {
         Box::pin(async move {
             let mut protected = protected_session_ids.iter().cloned().collect::<Vec<_>>();
             protected.sort();
-            let mut args = Vec::with_capacity(protected.len() + 1);
-            args.push("/tmp".to_string());
-            args.extend(protected);
-            let response = self
-                .run(&SWEEP_ORPHANS_OPERATION, args, 1024 * 1024)
+            let (_, response): (u64, environment_protocol::PayloadCleanupResponse) = self
+                .workspace
+                .request_worker_payload_once(
+                    environment_protocol::Message::SweepPayloadOrphans {
+                        protected_session_ids: protected,
+                    },
+                    1024 * 1024,
+                    None,
+                    Duration::from_secs(35),
+                )
                 .await?;
-            parse_cleanup_report(&response)
+            Ok(PayloadCleanupReport {
+                removed_sessions: response.removed_sessions as usize,
+                protected_sessions: response.protected_sessions as usize,
+                external_retained_bytes: response.retained_external_bytes,
+                capacity_blocked: response.cleanup_blocked,
+                warnings: response
+                    .warnings
+                    .into_iter()
+                    .map(|warning| {
+                        Ok::<_, AppError>(PayloadCleanupWarning {
+                            code: cleanup_warning_code(&warning.code)?,
+                            candidate_name: warning.candidate_name,
+                            technical_details: warning.technical_details,
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
         })
     }
 }
 
-fn managed_session_root(session_id: &str) -> Result<String, AppError> {
-    if session_id.is_empty()
-        || session_id.len() > 128
-        || !session_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+fn map_manifest(
+    manifest: environment_protocol::PayloadManifest,
+) -> Result<SkillPayloadManifest, AppError> {
+    let expected_root_hash = manifest.payload_root_hash.clone();
+    let expected_payload_id = manifest.payload_id.clone();
+    let entries = manifest
+        .entries
+        .into_iter()
+        .map(|entry| PayloadEntry {
+            relative_path: entry.relative_path,
+            kind: match entry.kind {
+                environment_protocol::PayloadEntryKind::File => PayloadEntryKind::File,
+                environment_protocol::PayloadEntryKind::Directory => PayloadEntryKind::Directory,
+            },
+            blob_id: entry.blob_id,
+            content_hash: entry.content_hash,
+            size: entry.size,
+            executable: entry.executable,
+        })
+        .collect();
+    let mapped = SkillPayloadManifest::from_entries(entries)?;
+    if mapped.payload_id().as_str() != expected_payload_id
+        || mapped.payload_root_hash != expected_root_hash
     {
         return Err(AppError::StalePayload);
     }
-    Ok(format!("/tmp/skill-deck-source-{session_id}"))
+    Ok(mapped)
+}
+
+fn relative_source_path(source_root: &str, requested: &str) -> Result<String, AppError> {
+    if requested == source_root {
+        return Ok(String::new());
+    }
+    requested
+        .strip_prefix(source_root)
+        .and_then(|relative| relative.strip_prefix('/'))
+        .map(normalize_relative_path)
+        .transpose()?
+        .ok_or(AppError::StalePayload)
+}
+
+fn normalize_skill_revision_path(path: &str) -> Result<String, AppError> {
+    let path = crate::core::skill_paths::normalize_skill_folder_path(path);
+    normalize_relative_path(&path)
+}
+
+fn normalize_relative_path(path: &str) -> Result<String, AppError> {
+    if path.is_empty() {
+        return Ok(String::new());
+    }
+    if path.starts_with('/')
+        || path.contains('\\')
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+        return Err(AppError::StalePayload);
+    }
+    Ok(path.to_string())
+}
+
+fn worker_response_error(message: environment_protocol::Message, expected: &str) -> AppError {
+    match message {
+        environment_protocol::Message::Error { code, phase, .. } => AppError::ExecutionFailed {
+            message: format!("WSL Worker request failed during {phase}: {code}"),
+        },
+        _ => AppError::ConfigurationCorrupted {
+            message: format!("WSL Worker returned an invalid {expected} response"),
+        },
+    }
+}
+
+fn cleanup_warning_code(code: &str) -> Result<PayloadCleanupWarningCode, AppError> {
+    match code {
+        "unknownEntry" => Ok(PayloadCleanupWarningCode::UnknownEntry),
+        "invalidMarker" => Ok(PayloadCleanupWarningCode::InvalidMarker),
+        "futureMarkerVersion" => Ok(PayloadCleanupWarningCode::FutureMarkerVersion),
+        "boundaryRejected" => Ok(PayloadCleanupWarningCode::BoundaryRejected),
+        "deleteFailed" => Ok(PayloadCleanupWarningCode::DeleteFailed),
+        "sizeUnavailable" => Ok(PayloadCleanupWarningCode::SizeUnavailable),
+        _ => Err(AppError::ConfigurationCorrupted {
+            message: format!("unknown WSL payload cleanup warning code: {code}"),
+        }),
+    }
 }
 
 fn digest(value: &str) -> String {
@@ -554,862 +708,31 @@ fn valid_blob_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-fn parse_manifest_response(bytes: &[u8]) -> Result<SkillPayloadManifest, AppError> {
-    let manifest = serde_json::from_slice(bytes)?;
-    verify_skill_payload_manifest(&manifest)?;
-    Ok(manifest)
-}
-
-fn parse_acquire_response(bytes: &[u8]) -> Result<WslAcquiredPayload, AppError> {
-    let mut cursor = 0;
-    if take_text_field(bytes, &mut cursor)? != PROTOCOL_VERSION {
-        return Err(protocol_error("unsupported WSL acquire protocol version"));
-    }
-    if take_text_field(bytes, &mut cursor)? != "H" {
-        return Err(protocol_error("missing WSL acquire CLI hash record"));
-    }
-    let computed_hash = take_text_field(bytes, &mut cursor)?.to_string();
-    if !valid_blob_id(&computed_hash) {
-        return Err(protocol_error("invalid WSL acquire CLI hash"));
-    }
-    let mut entries = Vec::new();
-    let mut blob_sizes = BTreeMap::new();
-    while cursor < bytes.len() {
-        if take_text_field(bytes, &mut cursor)? != "E" {
-            return Err(protocol_error("invalid WSL acquire record tag"));
-        }
-        let kind = take_text_field(bytes, &mut cursor)?;
-        let relative_path = take_text_field(bytes, &mut cursor)?.to_string();
-        let blob_id = take_text_field(bytes, &mut cursor)?;
-        let size = parse_text_field::<u64>(bytes, &mut cursor, "entry size")?;
-        let executable = match take_text_field(bytes, &mut cursor)? {
-            "0" => false,
-            "1" => true,
-            _ => return Err(protocol_error("invalid WSL executable flag")),
-        };
-        let entry = match kind {
-            "directory" if blob_id.is_empty() && size == 0 && !executable => PayloadEntry {
-                relative_path,
-                kind: PayloadEntryKind::Directory,
-                blob_id: None,
-                content_hash: None,
-                size: 0,
-                executable: false,
-            },
-            "file" if valid_blob_id(blob_id) => {
-                match blob_sizes.insert(blob_id.to_string(), size) {
-                    Some(previous) if previous != size => {
-                        return Err(protocol_error("conflicting WSL blob sizes"));
-                    }
-                    _ => {}
-                }
-                PayloadEntry {
-                    relative_path,
-                    kind: PayloadEntryKind::File,
-                    blob_id: Some(blob_id.to_string()),
-                    content_hash: Some(blob_id.to_string()),
-                    size,
-                    executable,
-                }
-            }
-            _ => return Err(protocol_error("invalid WSL acquire entry")),
-        };
-        entries.push(entry);
-    }
-    let manifest = SkillPayloadManifest::from_entries(entries)?;
-    Ok(WslAcquiredPayload {
-        manifest,
-        total_bytes: blob_sizes.values().copied().sum(),
-        computed_hash,
-    })
-}
-
-fn parse_source_fingerprint(bytes: &[u8]) -> Result<String, AppError> {
-    let mut cursor = 0;
-    if take_text_field(bytes, &mut cursor)? != PROTOCOL_VERSION {
-        return Err(protocol_error(
-            "unsupported WSL source fingerprint protocol version",
-        ));
-    }
-    let fingerprint = take_text_field(bytes, &mut cursor)?.to_string();
-    if cursor != bytes.len() || !valid_blob_id(&fingerprint) {
-        return Err(protocol_error("invalid WSL source metadata fingerprint"));
-    }
-    Ok(fingerprint)
-}
-
-fn parse_source_revision(bytes: &[u8]) -> Result<String, AppError> {
-    let mut cursor = 0;
-    if take_text_field(bytes, &mut cursor)? != PROTOCOL_VERSION {
-        return Err(protocol_error(
-            "unsupported WSL source revision protocol version",
-        ));
-    }
-    let revision = take_text_field(bytes, &mut cursor)?.to_string();
-    if cursor != bytes.len()
-        || !matches!(revision.len(), 40 | 64)
-        || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(protocol_error("invalid WSL source revision"));
-    }
-    Ok(revision.to_ascii_lowercase())
-}
-
-fn parse_finalize_response(bytes: &[u8]) -> Result<(), AppError> {
-    (bytes == b"1\0")
-        .then_some(())
-        .ok_or_else(|| protocol_error("invalid WSL acquire finalize response"))
-}
-
-fn expected_blob_ids(manifest: &SkillPayloadManifest) -> BTreeSet<&str> {
-    manifest
-        .entries
-        .iter()
-        .filter_map(|entry| entry.blob_id.as_deref())
-        .collect()
-}
-
-fn expected_blob_list(manifest: &SkillPayloadManifest) -> Vec<u8> {
-    let mut list = expected_blob_ids(manifest)
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join("\n")
-        .into_bytes();
-    if !list.is_empty() {
-        list.push(b'\n');
-    }
-    list
-}
-
-fn finalize_request(manifest: &SkillPayloadManifest) -> Result<Vec<u8>, AppError> {
-    let ids = expected_blob_ids(manifest);
-    let mut request = format!("{}\n", ids.len()).into_bytes();
-    for id in ids {
-        request.extend_from_slice(id.as_bytes());
-        request.push(b'\n');
-    }
-    request.extend(serde_json::to_vec(manifest)?);
-    Ok(request)
-}
-
-fn take_text_field<'a>(bytes: &'a [u8], cursor: &mut usize) -> Result<&'a str, AppError> {
-    let remaining = bytes
-        .get(*cursor..)
-        .ok_or_else(|| protocol_error("WSL acquire cursor is out of range"))?;
-    let length = remaining
-        .iter()
-        .position(|byte| *byte == 0)
-        .ok_or_else(|| protocol_error("WSL acquire field terminator is missing"))?;
-    let field = std::str::from_utf8(&remaining[..length])
-        .map_err(|_| protocol_error("WSL acquire field is not UTF-8"))?;
-    *cursor += length + 1;
-    Ok(field)
-}
-
-fn parse_text_field<T>(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<T, AppError>
-where
-    T: std::str::FromStr,
-{
-    take_text_field(bytes, cursor)?
-        .parse()
-        .map_err(|_| protocol_error(&format!("invalid WSL acquire {field}")))
-}
-
-fn protocol_error(message: &str) -> AppError {
-    AppError::ConfigurationCorrupted {
-        message: message.to_string(),
-    }
-}
-
-fn parse_blob_response(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
-    Ok(bytes.to_vec())
-}
-
-fn parse_cleanup_report(bytes: &[u8]) -> Result<PayloadCleanupReport, AppError> {
-    let records = bytes
-        .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-        .map(|record| String::from_utf8_lossy(record).into_owned())
-        .collect::<Vec<_>>();
-    if records.first().map(String::as_str) != Some(PROTOCOL_VERSION) {
-        return Err(protocol_error("invalid payload cleanup protocol version"));
-    }
-    let mut cursor = 1;
-    let mut report = PayloadCleanupReport::default();
-    while cursor < records.len() {
-        match records[cursor].as_str() {
-            "W" if cursor + 3 < records.len() => {
-                let code = match records[cursor + 1].as_str() {
-                    "unknownEntry" => PayloadCleanupWarningCode::UnknownEntry,
-                    "invalidMarker" => PayloadCleanupWarningCode::InvalidMarker,
-                    "futureMarkerVersion" => PayloadCleanupWarningCode::FutureMarkerVersion,
-                    "boundaryRejected" => PayloadCleanupWarningCode::BoundaryRejected,
-                    "deleteFailed" => PayloadCleanupWarningCode::DeleteFailed,
-                    "sizeUnavailable" => PayloadCleanupWarningCode::SizeUnavailable,
-                    _ => return Err(protocol_error("unknown payload cleanup warning code")),
-                };
-                report.warnings.push(PayloadCleanupWarning {
-                    code,
-                    candidate_name: Some(records[cursor + 2].clone()),
-                    technical_details: (records[cursor + 3] != "-")
-                        .then(|| records[cursor + 3].clone()),
-                });
-                cursor += 4;
-            }
-            "S" if cursor + 4 < records.len() => {
-                report.removed_sessions = records[cursor + 1]
-                    .parse()
-                    .map_err(|_| protocol_error("invalid removed session count"))?;
-                report.protected_sessions = records[cursor + 2]
-                    .parse()
-                    .map_err(|_| protocol_error("invalid protected session count"))?;
-                report.external_retained_bytes = records[cursor + 3]
-                    .parse()
-                    .map_err(|_| protocol_error("invalid external retained bytes"))?;
-                report.capacity_blocked = match records[cursor + 4].as_str() {
-                    "0" => false,
-                    "1" => true,
-                    _ => return Err(protocol_error("invalid payload capacity state")),
-                };
-                cursor += 5;
-            }
-            _ => return Err(protocol_error("malformed payload cleanup response")),
-        }
-    }
-    Ok(report)
-}
-
-#[cfg(all(test, target_os = "linux"))]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "获取协议测试需要直接调用真实 Git 并运行 shell 测试脚本"
-)]
-mod tests {
-    use std::collections::BTreeMap;
-    use std::collections::BTreeSet;
-    use std::fs;
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::{Path, PathBuf};
-    use std::process::{Command, Stdio};
-
-    use tempfile::tempdir;
-
-    use super::*;
-    use crate::application::payload_session::PayloadLocalSource;
-    use crate::core::skill_payload::{
-        build_skill_payload, compute_cli_project_hash_from_payload, SkillPayloadManifest,
-    };
-
-    fn session() -> WslSession {
-        WslSession {
-            distro_name: "Ubuntu".to_string(),
-            user: "alice".to_string(),
-            uid: 1000,
-            home: "/home/alice".to_string(),
-            xdg_state_home: None,
-            config_home: "/home/alice/.config".to_string(),
-            environment: BTreeMap::new(),
-            runtime_generation: 0,
-        }
-    }
-
-    fn storage() -> WslPayloadSessionStorage {
-        let runtime = crate::environment::wsl::WslRuntime::default();
-        runtime.insert(session());
-        WslPayloadSessionStorage::new(runtime.workspace("Ubuntu").expect("enabled workspace"))
-    }
-
-    #[test]
-    fn local_source_is_an_opaque_backend_owned_wsl_path() {
-        let storage = storage();
-        let key = PayloadStorageKey::new("session-1", "skills/demo");
-        assert_eq!(
-            storage.local_source(&key).expect("local source"),
-            PayloadLocalSource::WslManaged {
-                distro_name: "Ubuntu".to_string(),
-                payload_root: format!(
-                    "/tmp/skill-deck-source-session-1/payload-{}",
-                    digest("skills/demo")
-                ),
-            }
-        );
-    }
-
-    #[test]
-    fn source_revision_script_returns_selected_git_tree_object_id() {
-        let repo = tempdir().expect("repo");
-        let skill = repo.path().join("skills/demo");
-        fs::create_dir_all(&skill).expect("skill");
-        fs::write(skill.join("SKILL.md"), b"demo").expect("document");
-        for args in [
-            vec!["init"],
-            vec!["config", "user.email", "test@example.com"],
-            vec!["config", "user.name", "Skill Deck Test"],
-            vec!["add", "."],
-            vec!["commit", "-m", "fixture"],
-        ] {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(repo.path())
-                .args(args)
-                .output()
-                .expect("git command");
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        let expected = Command::new("git")
-            .arg("-C")
-            .arg(repo.path())
-            .args(["rev-parse", "HEAD:skills/demo"])
-            .output()
-            .expect("expected revision");
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(ACQUIRE_SCRIPT)
-            .arg("--")
-            .arg("source-revision")
-            .arg(repo.path())
-            .arg("skills/demo")
-            .output()
-            .expect("source revision script");
-
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(
-            output.stdout,
-            format!("1\0{}\0", String::from_utf8_lossy(&expected.stdout).trim()).into_bytes()
-        );
-    }
-
-    #[test]
-    fn source_revision_parser_rejects_non_git_hashes() {
-        assert_eq!(
-            parse_source_revision(format!("1\0{}\0", "A".repeat(40)).as_bytes()).unwrap(),
-            "a".repeat(40)
-        );
-        assert!(parse_source_revision(format!("1\0{}\0", "a".repeat(39)).as_bytes()).is_err());
-        assert!(parse_source_revision(format!("1\0{}z\0", "a".repeat(39)).as_bytes()).is_err());
-    }
-
-    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, SkillPayloadManifest) {
-        let temp = tempdir().expect("temp");
-        let source = temp.path().join("source");
-        fs::create_dir(&source).unwrap();
-        fs::write(source.join("SKILL.md"), [0, 1, 2, 255]).unwrap();
-        let payload = build_skill_payload(&source).unwrap();
-        let manifest = payload.manifest();
-        let session_root = temp.path().join("skill-deck-source-session-1");
-        let payload_root = session_root.join("payload-demo");
-        fs::create_dir_all(payload_root.join("blobs")).unwrap();
-        fs::write(session_root.join(OWNER_FILE), b"1\nsession-1\n").unwrap();
-        fs::write(
-            payload_root.join(MANIFEST_FILE),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-        let ids = payload.blobs.keys().cloned().collect::<BTreeSet<_>>();
-        fs::write(
-            payload_root.join(BLOB_LIST_FILE),
-            ids.iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n",
-        )
-        .unwrap();
-        for (id, blob) in payload.blobs {
-            fs::write(payload_root.join("blobs").join(id), blob).unwrap();
-        }
-        (temp, session_root, payload_root, manifest)
-    }
-
-    #[test]
-    fn verify_script_returns_only_manifest_after_local_blob_hash_validation() {
-        let (_temp, session_root, payload_root, expected) = fixture();
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(VERIFY_SCRIPT)
-            .arg("--")
-            .arg("verify")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-1")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(parse_manifest_response(&output.stdout).unwrap(), expected);
-
-        let blob = fs::read_dir(payload_root.join("blobs"))
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        fs::write(blob, b"tampered").unwrap();
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(VERIFY_SCRIPT)
-            .arg("--")
-            .arg("verify")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-1")
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-    }
-
-    #[test]
-    fn acquire_script_builds_backend_local_full_tree_snapshot() {
-        let temp = tempdir().expect("temp");
-        let source = temp.path().join("source");
-        fs::create_dir_all(source.join("scripts")).unwrap();
-        fs::create_dir_all(source.join("assets")).unwrap();
-        fs::create_dir_all(source.join(".git")).unwrap();
-        fs::write(source.join("SKILL.md"), b"skill").unwrap();
-        fs::write(source.join("scripts/run.sh"), b"#!/bin/sh\n").unwrap();
-        fs::write(source.join("assets/data.bin"), [0, 1, 255]).unwrap();
-        fs::write(source.join("metadata.json"), b"excluded").unwrap();
-        fs::write(source.join(".git/config"), b"excluded").unwrap();
-        fs::set_permissions(
-            source.join("scripts/run.sh"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-        let expected_payload = build_skill_payload(&source).unwrap();
-        let expected_hash = compute_cli_project_hash_from_payload(&expected_payload).unwrap();
-        let expected = expected_payload.manifest();
-        let session_root = temp.path().join("skill-deck-source-session-2");
-        let payload_root = session_root.join("payload-demo");
-
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(ACQUIRE_SCRIPT)
-            .arg("--")
-            .arg("acquire")
-            .arg(&source)
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-2")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let acquired = parse_acquire_response(&output.stdout).unwrap();
-        assert_eq!(acquired.manifest, expected);
-        assert_eq!(acquired.total_bytes, 5 + 10 + 3);
-        assert_eq!(acquired.computed_hash, expected_hash);
-        assert!(!payload_root.join(MANIFEST_FILE).exists());
-
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(FINALIZE_SCRIPT)
-            .arg("--")
-            .arg("finalize")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-2")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&finalize_request(&acquired.manifest).unwrap())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(output.stdout, b"1\0");
-
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(VERIFY_SCRIPT)
-            .arg("--")
-            .arg("verify")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-2")
-            .arg("--expected")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&expected_blob_list(&expected))
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(output.status.success());
-        assert_eq!(parse_manifest_response(&output.stdout).unwrap(), expected);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn source_fingerprint_tracks_mode_content_and_safe_link_targets() {
-        let temp = tempdir().expect("temp");
-        let source = temp.path().join("source");
-        fs::create_dir_all(source.join("scripts")).expect("scripts");
-        fs::write(source.join("SKILL.md"), b"skill").expect("Skill");
-        fs::write(source.join("scripts/run.sh"), b"#!/bin/sh\n").expect("script");
-        std::os::unix::fs::symlink("scripts/run.sh", source.join("run")).expect("internal link");
-
-        let fingerprint = || {
-            let output = Command::new("/bin/sh")
-                .arg("-c")
-                .arg(ACQUIRE_SCRIPT)
-                .arg("--")
-                .arg("fingerprint")
-                .arg(&source)
-                .output()
-                .expect("fingerprint script");
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            parse_source_fingerprint(&output.stdout).expect("fingerprint response")
-        };
-
-        let initial = fingerprint();
-        fs::set_permissions(
-            source.join("scripts/run.sh"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .expect("mode");
-        let mode_changed = fingerprint();
-        fs::write(source.join("scripts/run.sh"), b"#!/bin/sh\necho changed\n").expect("content");
-        let content_changed = fingerprint();
-
-        assert_ne!(initial, mode_changed);
-        assert_ne!(mode_changed, content_changed);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn source_fingerprint_rejects_external_links() {
-        let temp = tempdir().expect("temp");
-        let source = temp.path().join("source");
-        fs::create_dir(&source).expect("source");
-        fs::write(temp.path().join("outside"), b"outside").expect("outside");
-        std::os::unix::fs::symlink(temp.path().join("outside"), source.join("external"))
-            .expect("external link");
-
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(ACQUIRE_SCRIPT)
-            .arg("--")
-            .arg("fingerprint")
-            .arg(&source)
-            .output()
-            .expect("fingerprint script");
-
-        assert!(!output.status.success());
-    }
-
-    #[test]
-    fn store_scripts_write_an_in_memory_payload_into_backend_local_storage() {
-        let temp = tempdir().expect("temp");
-        let source = temp.path().join("source");
-        fs::create_dir_all(source.join("assets")).unwrap();
-        fs::write(source.join("SKILL.md"), b"skill").unwrap();
-        fs::write(source.join("assets/data.bin"), [0, 1, 2, 255]).unwrap();
-        let payload = build_skill_payload(&source).unwrap();
-        let session_root = temp.path().join("skill-deck-source-session-3");
-        let payload_root = session_root.join("payload-demo");
-
-        let begin = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(STORE_BEGIN_SCRIPT)
-            .arg("--")
-            .arg("store-begin")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-3")
-            .output()
-            .unwrap();
-        assert!(
-            begin.status.success(),
-            "{}",
-            String::from_utf8_lossy(&begin.stderr)
-        );
-
-        for (blob_id, blob) in &payload.blobs {
-            let mut child = Command::new("/bin/sh")
-                .arg("-c")
-                .arg(STORE_BLOB_SCRIPT)
-                .arg("--")
-                .arg("store-blob")
-                .arg(&session_root)
-                .arg(&payload_root)
-                .arg("session-3")
-                .arg(blob_id)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            child.stdin.take().unwrap().write_all(blob).unwrap();
-            let output = child.wait_with_output().unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(STORE_FINALIZE_SCRIPT)
-            .arg("--")
-            .arg("store-finalize")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-3")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&finalize_request(&payload.manifest()).unwrap())
-            .unwrap();
-        let finalized = child.wait_with_output().unwrap();
-        assert!(
-            finalized.status.success(),
-            "{}",
-            String::from_utf8_lossy(&finalized.stderr)
-        );
-
-        let verified = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(VERIFY_SCRIPT)
-            .arg("--")
-            .arg("verify")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-3")
-            .output()
-            .unwrap();
-        assert!(verified.status.success());
-        assert_eq!(
-            parse_manifest_response(&verified.stdout).unwrap(),
-            payload.manifest()
-        );
-        for (blob_id, blob) in &payload.blobs {
-            assert_eq!(
-                fs::read(payload_root.join("blobs").join(blob_id)).unwrap(),
-                *blob
-            );
-        }
-    }
-
-    #[test]
-    fn blob_protocol_preserves_binary_content() {
-        let (_temp, session_root, payload_root, manifest) = fixture();
-        let blob_id = manifest.entries[0].blob_id.as_deref().unwrap();
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(READ_BLOB_SCRIPT)
-            .arg("--")
-            .arg("read-blob")
-            .arg(&session_root)
-            .arg(&payload_root)
-            .arg("session-1")
-            .arg(blob_id)
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        assert_eq!(parse_blob_response(&output.stdout).unwrap(), [0, 1, 2, 255]);
-    }
-
-    #[test]
-    fn removal_script_requires_matching_owner_and_managed_child() {
-        let (temp, session_root, payload_root, _manifest) = fixture();
-        let forged = temp.path().join("outside");
-        fs::create_dir(&forged).unwrap();
-        assert!(!run_remove(&session_root, &forged, "session-1"));
-        assert!(forged.is_dir());
-        assert!(run_remove(&session_root, &payload_root, "session-1"));
-        assert!(!payload_root.exists());
-    }
-
-    #[test]
-    fn reconnect_sweep_preserves_protected_sessions_and_reports_invalid_roots() {
-        let temp = tempdir().expect("temp");
-        let protected = temp.path().join("skill-deck-source-protected");
-        let orphan = temp.path().join("skill-deck-source-orphan");
-        let invalid = temp.path().join("skill-deck-source-invalid");
-        for (root, id) in [(&protected, "protected"), (&orphan, "orphan")] {
-            fs::create_dir(root).expect("session root");
-            fs::write(root.join(OWNER_FILE), format!("1\n{id}\n")).expect("owner");
-            fs::write(root.join("payload.bin"), b"payload").expect("payload");
-        }
-        fs::create_dir(&invalid).expect("invalid root");
-        fs::write(invalid.join("payload.bin"), b"retained").expect("invalid payload");
-
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(SWEEP_ORPHANS_SCRIPT)
-            .arg("--")
-            .arg("sweep-orphans")
-            .arg(temp.path())
-            .arg("protected")
-            .output()
-            .expect("sweep script");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let report = parse_cleanup_report(&output.stdout).expect("cleanup report");
-
-        assert_eq!(report.removed_sessions, 1);
-        assert_eq!(report.protected_sessions, 1);
-        assert!(report.capacity_blocked);
-        assert!(report.external_retained_bytes >= b"retained".len() as u64);
-        assert!(protected.is_dir());
-        assert!(!orphan.exists());
-        assert!(invalid.is_dir());
-    }
-
-    fn run_remove(session_root: &Path, payload_root: &Path, session_id: &str) -> bool {
-        Command::new("/bin/sh")
-            .arg("-c")
-            .arg(REMOVE_PAYLOAD_SCRIPT)
-            .arg("--")
-            .arg("remove-payload")
-            .arg(session_root)
-            .arg(payload_root)
-            .arg(session_id)
-            .status()
-            .unwrap()
-            .success()
-    }
-}
-
-#[cfg(all(test, not(target_os = "linux")))]
-mod portable_tests {
-    use std::collections::BTreeMap;
-
-    use super::*;
-    use crate::application::payload_session::PayloadLocalSource;
-
-    fn session() -> WslSession {
-        WslSession {
-            distro_name: "Ubuntu".to_string(),
-            user: "alice".to_string(),
-            uid: 1000,
-            home: "/home/alice".to_string(),
-            xdg_state_home: None,
-            config_home: "/home/alice/.config".to_string(),
-            environment: BTreeMap::new(),
-            runtime_generation: 0,
-        }
-    }
-
-    fn storage() -> WslPayloadSessionStorage {
-        let runtime = crate::environment::wsl::WslRuntime::default();
-        runtime.insert(session());
-        WslPayloadSessionStorage::new(runtime.workspace("Ubuntu").expect("enabled workspace"))
-    }
-
-    #[test]
-    fn local_source_is_an_opaque_backend_owned_wsl_path() {
-        let storage = storage();
-        let key = PayloadStorageKey::new("session-1", "skills/demo");
-        assert_eq!(
-            storage.local_source(&key).expect("local source"),
-            PayloadLocalSource::WslManaged {
-                distro_name: "Ubuntu".to_string(),
-                payload_root: format!(
-                    "/tmp/skill-deck-source-session-1/payload-{}",
-                    digest("skills/demo")
-                ),
-            }
-        );
-    }
-
-    #[test]
-    fn source_revision_parser_rejects_non_git_hashes() {
-        assert_eq!(
-            parse_source_revision(format!("1\0{}\0", "A".repeat(40)).as_bytes()).unwrap(),
-            "a".repeat(40)
-        );
-        assert!(parse_source_revision(format!("1\0{}\0", "a".repeat(39)).as_bytes()).is_err());
-        assert!(parse_source_revision(format!("1\0{}z\0", "a".repeat(39)).as_bytes()).is_err());
-    }
-}
-
 #[cfg(test)]
-mod capability_tests {
-    use std::collections::BTreeMap;
-
-    use super::*;
-    use crate::environment::wsl::{WslRuntime, WslSession};
-
-    fn session() -> WslSession {
-        WslSession {
-            distro_name: "Ubuntu".to_string(),
-            user: "alice".to_string(),
-            uid: 1000,
-            home: "/home/alice".to_string(),
-            xdg_state_home: None,
-            config_home: "/home/alice/.config".to_string(),
-            environment: BTreeMap::new(),
-            runtime_generation: 0,
-        }
+mod tests {
+    #[test]
+    fn source_paths_are_relative_to_the_bound_worker_source() {
+        assert_eq!(
+            super::relative_source_path("/home/alice/repo", "/home/alice/repo/skills/demo")
+                .unwrap(),
+            "skills/demo"
+        );
+        assert!(super::relative_source_path("/home/alice/repo", "/home/alice/other").is_err());
     }
 
-    #[tokio::test]
-    async fn payload_storage_from_an_old_cycle_cannot_start_an_operation_after_reenable() {
-        let runtime = WslRuntime::default();
-        runtime.insert(session());
-        let storage =
-            WslPayloadSessionStorage::new(runtime.workspace("Ubuntu").expect("enabled workspace"));
-
-        let disable = runtime.begin_disable().expect("begin disable");
-        disable
-            .wait_for_quiescence(Duration::from_secs(1))
-            .await
-            .expect("quiescent runtime");
-        disable.commit_disabled();
-        runtime
-            .begin_enable()
-            .expect("begin enable")
-            .commit_enabled();
-
-        let error = storage
-            .source_metadata_fingerprint("/tmp/source")
-            .await
-            .expect_err("stale payload storage");
-
-        assert!(matches!(error, AppError::EnvironmentUnavailable { .. }));
+    #[test]
+    fn source_revision_uses_the_skill_directory_instead_of_the_skill_md_blob() {
+        assert_eq!(
+            super::normalize_skill_revision_path("quick-brainstorm/SKILL.md").unwrap(),
+            "quick-brainstorm"
+        );
+        assert_eq!(
+            super::normalize_skill_revision_path("skills/demo/skill.md").unwrap(),
+            "skills/demo"
+        );
+        assert_eq!(
+            super::normalize_skill_revision_path("SKILL.md").unwrap(),
+            ""
+        );
     }
 }

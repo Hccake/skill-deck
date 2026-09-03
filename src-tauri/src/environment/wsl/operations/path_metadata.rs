@@ -1,16 +1,9 @@
-use tokio::time::Duration;
-
-use crate::core::mutation::CancellationSignal;
-use crate::environment::wsl::protocol::{
-    decode_nul_records, wsl_operation, WslOperationDescriptor, WslOperationExecutor,
-    WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
-};
-use crate::environment::wsl::{WslSession, WslWorkspace};
+use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
 
-pub(crate) const PATH_METADATA_SCRIPT: &str = include_str!("../scripts/path-metadata.sh");
-const PATH_METADATA_OPERATION: WslOperationDescriptor =
-    wsl_operation("path-metadata", "inspect", PATH_METADATA_SCRIPT);
+const PATH_METADATA_DEADLINE_MILLIS: u64 = 20_000;
+const EVE_PACKAGE_LIMIT: u32 = 1024 * 1024;
+const PATH_METADATA_AGGREGATE_LIMIT: u32 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathMetadataQuery {
@@ -44,102 +37,88 @@ pub struct PathMetadataFact {
     pub content: PathMetadataContent,
 }
 
-pub async fn inspect(
-    session: &WslSession,
-    queries: &[PathMetadataQuery],
-    cancellation: Option<CancellationSignal>,
-) -> Result<Vec<PathMetadataFact>, AppError> {
-    if queries.is_empty() || queries.iter().any(|query| !query.path.starts_with('/')) {
-        return Err(AppError::Validation {
-            field: Some("pathMetadata.queries".to_string()),
-            message: "WSL path metadata requires absolute paths".to_string(),
-        });
-    }
-    let mut args = Vec::with_capacity(queries.len() * 2);
-    for query in queries {
-        args.push(query.path.clone());
-        args.push(if query.inspect_content { "1" } else { "0" }.to_string());
-    }
-    let output = WslOperationExecutor::execute(
-        &PATH_METADATA_OPERATION,
-        WslOperationRequest {
-            session: session.clone(),
-            args,
-            stdin: Vec::new(),
-            timeout: Duration::from_secs(20),
-            stdout_limit: queries.len().saturating_mul(1024 * 1024 + 1024),
-            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-            cancellation,
-        },
-    )
-    .await?;
-    let facts = parse_path_metadata(&output.stdout)?;
-    if facts.len() != queries.len()
-        || facts
-            .iter()
-            .zip(queries)
-            .any(|(fact, query)| fact.path != query.path)
-    {
-        return Err(protocol_error());
-    }
-    Ok(facts)
-}
-
 impl WslWorkspace {
     pub(crate) async fn inspect_path_metadata(
         &self,
         queries: Vec<PathMetadataQuery>,
-        cancellation: Option<CancellationSignal>,
     ) -> Result<Vec<PathMetadataFact>, AppError> {
-        self.with_session_retry(move |session| {
-            let queries = queries.clone();
-            let cancellation = cancellation.clone();
-            async move { inspect(&session, &queries, cancellation).await }
-        })
-        .await
-    }
-}
-
-pub fn parse_path_metadata(bytes: &[u8]) -> Result<Vec<PathMetadataFact>, AppError> {
-    let records = decode_nul_records(bytes);
-    if records.first().map(String::as_str) != Some("1") {
-        return Err(protocol_error());
-    }
-    let mut facts = Vec::new();
-    let mut index = 1;
-    while index < records.len() {
-        if records.get(index).map(String::as_str) != Some("path") || index + 4 >= records.len() {
+        if queries.is_empty() || queries.iter().any(|query| !query.path.starts_with('/')) {
+            return Err(AppError::Validation {
+                field: Some("pathMetadata.queries".to_string()),
+                message: "WSL path metadata requires absolute paths".to_string(),
+            });
+        }
+        let expected_paths = queries
+            .iter()
+            .map(|query| query.path.clone())
+            .collect::<Vec<_>>();
+        let response: environment_protocol::PathMetadataResponse = self
+            .request_worker_payload(environment_protocol::Message::InspectPaths {
+                request: environment_protocol::PathMetadataRequest {
+                    queries: queries
+                        .into_iter()
+                        .map(|query| environment_protocol::PathMetadataQuery {
+                            path: query.path,
+                            content_limit: query.inspect_content.then_some(EVE_PACKAGE_LIMIT),
+                        })
+                        .collect(),
+                    aggregate_content_limit: PATH_METADATA_AGGREGATE_LIMIT,
+                    deadline_millis: PATH_METADATA_DEADLINE_MILLIS,
+                },
+            })
+            .await?;
+        if response.facts.len() != expected_paths.len()
+            || response
+                .facts
+                .iter()
+                .zip(&expected_paths)
+                .any(|(fact, path)| fact.path != *path)
+        {
             return Err(protocol_error());
         }
-        let kind = match records[index + 2].as_str() {
-            "missing" => PathMetadataKind::Missing,
-            "directory" => PathMetadataKind::Directory,
-            "symlink-directory" => PathMetadataKind::SymlinkDirectory,
-            "symlink-other" => PathMetadataKind::SymlinkOther,
-            "other" => PathMetadataKind::Other,
-            "broken-link" => PathMetadataKind::BrokenLink,
-            "inaccessible" => PathMetadataKind::Inaccessible,
-            _ => return Err(protocol_error()),
-        };
-        let content = match records[index + 3].as_str() {
-            "none" => PathMetadataContent::NotRequested,
-            "eve-unreadable" => PathMetadataContent::Unreadable,
-            "eve-empty" => PathMetadataContent::Empty,
-            "eve" => PathMetadataContent::Bytes(records[index + 4].as_bytes().to_vec()),
-            _ => return Err(protocol_error()),
-        };
-        facts.push(PathMetadataFact {
-            path: records[index + 1].clone(),
-            kind,
-            content,
-        });
-        index += 5;
+        Ok(response
+            .facts
+            .into_iter()
+            .map(|fact| PathMetadataFact {
+                path: fact.path,
+                kind: match fact.kind {
+                    environment_protocol::PathMetadataKind::Missing => PathMetadataKind::Missing,
+                    environment_protocol::PathMetadataKind::Directory => {
+                        PathMetadataKind::Directory
+                    }
+                    environment_protocol::PathMetadataKind::SymlinkDirectory => {
+                        PathMetadataKind::SymlinkDirectory
+                    }
+                    environment_protocol::PathMetadataKind::SymlinkOther => {
+                        PathMetadataKind::SymlinkOther
+                    }
+                    environment_protocol::PathMetadataKind::Other => PathMetadataKind::Other,
+                    environment_protocol::PathMetadataKind::BrokenLink => {
+                        PathMetadataKind::BrokenLink
+                    }
+                    environment_protocol::PathMetadataKind::Inaccessible => {
+                        PathMetadataKind::Inaccessible
+                    }
+                },
+                content: match fact.content {
+                    environment_protocol::PathMetadataContent::NotRequested => {
+                        PathMetadataContent::NotRequested
+                    }
+                    environment_protocol::PathMetadataContent::Empty => PathMetadataContent::Empty,
+                    environment_protocol::PathMetadataContent::Unreadable => {
+                        PathMetadataContent::Unreadable
+                    }
+                    environment_protocol::PathMetadataContent::Bytes(bytes) => {
+                        PathMetadataContent::Bytes(bytes)
+                    }
+                },
+            })
+            .collect())
     }
-    Ok(facts)
 }
 
 fn protocol_error() -> AppError {
     AppError::ConfigurationCorrupted {
-        message: "invalid WSL path metadata protocol response".to_string(),
+        message: "invalid WSL Worker path metadata response".to_string(),
     }
 }

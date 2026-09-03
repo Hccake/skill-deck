@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use specta::Type;
 
 use crate::core::agent_definition::{
@@ -14,15 +15,14 @@ use crate::core::agent_definition::{
     ScopeDefinition,
 };
 use crate::core::agent_registry::AgentRegistrySnapshot;
+use crate::core::paths::PATHS;
+use crate::environment::context_resolver::ResolvedContext;
 use crate::environment::types::{same_environment_identity, EnvironmentRef, EnvironmentStatus};
 use crate::environment::wsl::operations::path_metadata::{
-    self, PathMetadataContent, PathMetadataKind, PathMetadataQuery,
+    PathMetadataContent, PathMetadataFact, PathMetadataKind, PathMetadataQuery,
 };
 use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
-
-#[cfg(all(test, unix))]
-use crate::environment::wsl::operations::path_metadata::PATH_METADATA_SCRIPT as WSL_PATH_METADATA_SCRIPT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentContext {
@@ -33,6 +33,118 @@ pub struct EnvironmentContext {
     pub availability: EnvironmentStatus,
     pub revision: String,
     pub wsl_workspace: Option<WslWorkspace>,
+}
+
+pub(crate) fn native_environment_context(resolved: &ResolvedContext) -> EnvironmentContext {
+    let environment_variables = std::env::vars().collect::<BTreeMap<_, _>>();
+    let home = resolved.home.native_path.clone();
+    let config_home = PATHS.config_home.to_string_lossy().to_string();
+    let revision = environment_revision(
+        "native",
+        &(home.clone(), config_home.clone(), &environment_variables),
+    );
+    EnvironmentContext {
+        environment: EnvironmentRef::Native,
+        home,
+        config_home,
+        environment_variables,
+        availability: EnvironmentStatus::Available,
+        revision,
+        wsl_workspace: None,
+    }
+}
+
+pub(crate) fn wsl_environment_context(
+    resolved: &ResolvedContext,
+    session: WslSession,
+    workspace: WslWorkspace,
+) -> EnvironmentContext {
+    let revision = environment_revision("wsl", &session);
+    EnvironmentContext {
+        environment: resolved.context.environment.clone(),
+        home: session.home.clone(),
+        config_home: session.config_home.clone(),
+        environment_variables: session.environment.clone(),
+        availability: EnvironmentStatus::Available,
+        revision,
+        wsl_workspace: Some(workspace),
+    }
+}
+
+fn environment_revision(value_kind: &str, value: &impl Serialize) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value_kind.as_bytes());
+    hasher.update(
+        serde_json::to_vec(value)
+            .expect("environment revision inputs must serialize deterministically"),
+    );
+    format!("{:x}", hasher.finalize())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EveProjectTargets {
+    pub has_eve: bool,
+    pub subagents: Vec<String>,
+}
+
+pub async fn inspect_eve_project(
+    workspace: &WslWorkspace,
+    project_path: &str,
+) -> Result<EveProjectTargets, AppError> {
+    let project_path = project_path.trim_end_matches('/');
+    let agent_path = format!("{project_path}/agent");
+    let package_path = format!("{project_path}/package.json");
+    let mut facts = workspace
+        .inspect_path_metadata(vec![
+            PathMetadataQuery {
+                path: agent_path.clone(),
+                inspect_content: false,
+            },
+            PathMetadataQuery {
+                path: package_path.clone(),
+                inspect_content: true,
+            },
+        ])
+        .await?;
+    let package = facts.pop().expect("two path queries return two facts");
+    let agent = facts.pop().expect("two path queries return two facts");
+    if !matches!(
+        agent.kind,
+        PathMetadataKind::Directory | PathMetadataKind::SymlinkDirectory
+    ) {
+        return Ok(EveProjectTargets {
+            has_eve: false,
+            subagents: Vec::new(),
+        });
+    }
+    let bytes = match package.content {
+        PathMetadataContent::Bytes(bytes) => bytes,
+        PathMetadataContent::Empty => Vec::new(),
+        PathMetadataContent::NotRequested => {
+            return Ok(EveProjectTargets {
+                has_eve: false,
+                subagents: Vec::new(),
+            });
+        }
+        PathMetadataContent::Unreadable => {
+            return Err(AppError::Path {
+                message: format!("Eve package is not readable: {package_path}"),
+            });
+        }
+    };
+    let package: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let has_eve = ["dependencies", "devDependencies"]
+        .into_iter()
+        .any(|section| {
+            package
+                .get(section)
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|dependencies| dependencies.contains_key("eve"))
+        });
+    let subagents = workspace
+        .list_child_directories(format!("{agent_path}/subagents"), 10_000)
+        .await?;
+    Ok(EveProjectTargets { has_eve, subagents })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -169,7 +281,6 @@ type MetadataQuery =
 enum MetadataBackend {
     Native,
     Wsl(WslWorkspace),
-    ActiveWsl(WslSession),
     Unavailable,
     #[cfg(test)]
     Custom(MetadataQuery),
@@ -198,13 +309,13 @@ impl AgentEnvironmentResolver {
         }
     }
 
-    pub(crate) fn from_active_wsl_session(
+    pub(crate) fn from_active_wsl_workspace(
         context: EnvironmentContext,
-        session: WslSession,
+        workspace: WslWorkspace,
     ) -> Self {
         Self {
             environment_context: context,
-            metadata_backend: MetadataBackend::ActiveWsl(session),
+            metadata_backend: MetadataBackend::Wsl(workspace),
             cache: Mutex::new(BTreeMap::new()),
         }
     }
@@ -470,9 +581,6 @@ impl AgentEnvironmentResolver {
         let metadata = match &self.metadata_backend {
             MetadataBackend::Native => query_native_metadata(queries),
             MetadataBackend::Wsl(workspace) => query_wsl_metadata(workspace, queries).await,
-            MetadataBackend::ActiveWsl(session) => {
-                query_active_wsl_metadata(session, queries).await
-            }
             #[cfg(test)]
             MetadataBackend::Custom(query) => query(queries),
             MetadataBackend::Unavailable => Ok(BTreeMap::new()),
@@ -962,33 +1070,13 @@ async fn query_wsl_metadata(
                     inspect_content: query.inspect_eve_package,
                 })
                 .collect::<Vec<_>>(),
-            None,
         )
         .await?;
     metadata_from_typed_facts(facts)
 }
 
-async fn query_active_wsl_metadata(
-    session: &WslSession,
-    queries: &[PathQuery],
-) -> Result<BTreeMap<String, PathMetadata>, AppError> {
-    let queries = queries
-        .iter()
-        .map(|query| PathMetadataQuery {
-            path: query.path.clone(),
-            inspect_content: query.inspect_eve_package,
-        })
-        .collect::<Vec<_>>();
-    metadata_from_typed_facts(path_metadata::inspect(session, &queries, None).await?)
-}
-
-#[cfg(test)]
-fn parse_wsl_path_metadata(bytes: &[u8]) -> Result<BTreeMap<String, PathMetadata>, AppError> {
-    metadata_from_typed_facts(path_metadata::parse_path_metadata(bytes)?)
-}
-
 fn metadata_from_typed_facts(
-    facts: Vec<path_metadata::PathMetadataFact>,
+    facts: Vec<PathMetadataFact>,
 ) -> Result<BTreeMap<String, PathMetadata>, AppError> {
     let mut metadata = BTreeMap::new();
     for fact in facts {
@@ -1134,10 +1222,6 @@ fn join_posix(base: &str, child: &str) -> String {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "Agent Environment 测试需要直接运行待验证的 shell 脚本"
-)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
@@ -1145,10 +1229,8 @@ mod tests {
 
     use tempfile::tempdir;
 
-    #[cfg(unix)]
-    use super::WSL_PATH_METADATA_SCRIPT;
     use super::{
-        parse_wsl_path_metadata, AgentEnvironmentResolver, DirectoryPresenceState,
+        metadata_from_typed_facts, AgentEnvironmentResolver, DirectoryPresenceState,
         EnvironmentContext, PathEntryKind, PathMetadata,
     };
     use crate::core::agent_definition::{
@@ -1159,6 +1241,9 @@ mod tests {
     use crate::core::agent_registry::AgentRegistrySnapshot;
     use crate::core::custom_agent_repository::CustomAgentRepository;
     use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
+    use crate::environment::wsl::operations::path_metadata::{
+        PathMetadataContent, PathMetadataFact, PathMetadataKind,
+    };
 
     fn scope(
         enabled: bool,
@@ -2764,46 +2849,28 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn wsl_metadata_script_keeps_empty_eve_payload_aligned_with_later_agent() {
-        let temp = tempfile::tempdir().unwrap();
-        let package_path = temp.path().join("package.json");
-        let other_agent_path = temp.path().join("other-agent");
-        std::fs::write(&package_path, []).unwrap();
-        std::fs::create_dir(&other_agent_path).unwrap();
-        let package_path = package_path.to_string_lossy().into_owned();
-        let other_agent_path = other_agent_path.to_string_lossy().into_owned();
-        let output = std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                WSL_PATH_METADATA_SCRIPT,
-                "--",
-                "inspect",
-                package_path.as_str(),
-                "1",
-                other_agent_path.as_str(),
-                "0",
-            ])
-            .output()
-            .unwrap();
+    fn worker_metadata_facts_keep_content_and_path_states_distinct() {
+        let metadata = metadata_from_typed_facts(vec![
+            PathMetadataFact {
+                path: "/work/package.json".to_string(),
+                kind: PathMetadataKind::Other,
+                content: PathMetadataContent::Empty,
+            },
+            PathMetadataFact {
+                path: "/home/alice/.other-agent".to_string(),
+                kind: PathMetadataKind::Directory,
+                content: PathMetadataContent::NotRequested,
+            },
+            PathMetadataFact {
+                path: "/home/alice/.blocked".to_string(),
+                kind: PathMetadataKind::Inaccessible,
+                content: PathMetadataContent::Unreadable,
+            },
+        ])
+        .expect("project Worker facts");
 
-        let metadata = parse_wsl_path_metadata(&output.stdout).expect("parse metadata frame");
-
-        assert_eq!(metadata[&package_path].eve_package, Some(false));
-        assert_eq!(
-            metadata[&other_agent_path].entry_kind,
-            PathEntryKind::Directory
-        );
-    }
-
-    #[test]
-    fn wsl_metadata_parser_keeps_unreadable_eve_and_inaccessible_path_records_distinct() {
-        let bytes = b"1\0path\0/work/package.json\0other\0eve-unreadable\0-\0path\0/home/alice/.other-agent\0directory\0none\0-\0path\0/home/alice/.blocked\0inaccessible\0none\0-\0";
-
-        let metadata = parse_wsl_path_metadata(bytes).expect("parse metadata frame");
-
-        assert_eq!(metadata["/work/package.json"].eve_package, None);
+        assert_eq!(metadata["/work/package.json"].eve_package, Some(false));
         assert_eq!(
             metadata["/home/alice/.other-agent"].entry_kind,
             PathEntryKind::Directory
@@ -2812,31 +2879,6 @@ mod tests {
             metadata["/home/alice/.blocked"].entry_kind,
             PathEntryKind::Inaccessible
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn wsl_metadata_script_preserves_the_no_payload_record() {
-        let missing_path = tempfile::tempdir()
-            .unwrap()
-            .path()
-            .join("missing")
-            .to_string_lossy()
-            .into_owned();
-        let output = std::process::Command::new("/bin/sh")
-            .args([
-                "-c",
-                WSL_PATH_METADATA_SCRIPT,
-                "--",
-                "inspect",
-                missing_path.as_str(),
-                "0",
-            ])
-            .output()
-            .unwrap();
-
-        let metadata = parse_wsl_path_metadata(&output.stdout).expect("parse metadata frame");
-
-        assert_eq!(metadata[&missing_path].entry_kind, PathEntryKind::Missing);
+        assert_eq!(metadata["/home/alice/.blocked"].eve_package, None);
     }
 }

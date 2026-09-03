@@ -14,19 +14,18 @@ use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
 use crate::core::agent_settings::{AgentSettingsSnapshot, AgentStorageIssue, CustomAgentRecord};
 use crate::core::custom_agent_repository::CustomAgentRepository;
 use crate::core::mutation::MutationKind;
-use crate::core::paths::PATHS;
 use crate::environment::agent_environment::{
-    AgentEnvironmentResolver, AgentRuntimeSnapshot, DetectionReason, DirectoryPresenceState,
-    EnvironmentContext, ResolvedAgent, ResolvedAgentScope,
+    native_environment_context, wsl_environment_context, AgentEnvironmentResolver,
+    AgentRuntimeSnapshot, DetectionReason, DirectoryPresenceState, EnvironmentContext,
+    ResolvedAgent, ResolvedAgentScope,
 };
-use crate::environment::context_resolver::{ContextResolver, ResolvedContext};
+use crate::environment::context_resolver::ContextResolver;
 use crate::environment::directory_inspection::{inspect_native, inspect_wsl, DirectoryInspection};
-use crate::environment::types::{EnvironmentRef, EnvironmentStatus, SkillLocationRef};
-use crate::environment::wsl::{WslRuntime, WslSession};
+use crate::environment::types::{EnvironmentRef, SkillLocationRef};
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::models::Scope;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use specta::Type;
 
 const CUSTOM_AGENT_STORAGE_UNAVAILABLE_CODE: &str = "customAgentStorageUnavailable";
@@ -471,17 +470,22 @@ pub async fn list_agents(
                     let context = retry_context.clone();
                     async move {
                         let resolved =
-                            ContextResolver::resolve_wsl(context.clone(), &session).await?;
+                            ContextResolver::resolve_wsl(context.clone(), &session, &workspace)
+                                .await?;
                         let project_path = resolved
                             .project
                             .as_ref()
                             .map(|project| project.native_path.clone());
+                        let metadata_workspace = workspace.clone();
                         let environment =
                             wsl_environment_context(&resolved, session.clone(), workspace);
                         let snapshot = service.registry_snapshot(true);
-                        AgentEnvironmentResolver::from_active_wsl_session(environment, session)
-                            .resolve_registry(&snapshot, project_path.as_deref())
-                            .await
+                        AgentEnvironmentResolver::from_active_wsl_workspace(
+                            environment,
+                            metadata_workspace,
+                        )
+                        .resolve_registry(&snapshot, project_path.as_deref())
+                        .await
                     }
                 })
                 .await
@@ -563,17 +567,19 @@ pub async fn validate_custom_agent_draft(
                     let preview_snapshot = preview_snapshot.clone();
                     let draft_id = draft_id.clone();
                     async move {
-                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        let resolved =
+                            ContextResolver::resolve_wsl(context, &session, &workspace).await?;
                         let project_path = resolved
                             .project
                             .as_ref()
                             .map(|project| project.native_path.clone());
+                        let metadata_workspace = workspace.clone();
                         resolve_custom_agent_preview_with_resolver(
                             &preview_snapshot,
                             &draft_id,
-                            AgentEnvironmentResolver::from_active_wsl_session(
+                            AgentEnvironmentResolver::from_active_wsl_workspace(
                                 wsl_environment_context(&resolved, session.clone(), workspace),
-                                session,
+                                metadata_workspace,
                             ),
                             project_path.as_deref(),
                         )
@@ -698,19 +704,21 @@ pub async fn preview_custom_agent_delete(
                     async move {
                         let agent_id = definition.id.clone();
                         let display_name = definition.display_name.clone();
-                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        let resolved =
+                            ContextResolver::resolve_wsl(context, &session, &workspace).await?;
                         let project_path = resolved
                             .project
                             .as_ref()
                             .map(|project| project.native_path.clone());
-                        let runtime = AgentEnvironmentResolver::from_active_wsl_session(
-                            wsl_environment_context(&resolved, session.clone(), workspace),
-                            session.clone(),
+                        let metadata_workspace = workspace.clone();
+                        let runtime = AgentEnvironmentResolver::from_active_wsl_workspace(
+                            wsl_environment_context(&resolved, session.clone(), workspace.clone()),
+                            metadata_workspace,
                         )
                         .resolve_registry(&snapshot, project_path.as_deref())
                         .await?;
                         let paths = delete_impact_resolved_paths(&runtime, &agent_id);
-                        let inspections = inspect_wsl(&session, &paths).await?;
+                        let inspections = inspect_wsl(&workspace, &paths).await?;
                         Ok(build_delete_impact(
                             &runtime,
                             agent_id,
@@ -1077,52 +1085,6 @@ fn delete_preview_snapshot(
     })
 }
 
-fn native_environment_context(resolved: &ResolvedContext) -> EnvironmentContext {
-    let environment_variables = std::env::vars().collect::<BTreeMap<_, _>>();
-    let home = resolved.home.native_path.clone();
-    let config_home = PATHS.config_home.to_string_lossy().to_string();
-    let revision = environment_revision(
-        "native",
-        &(home.clone(), config_home.clone(), &environment_variables),
-    );
-    EnvironmentContext {
-        environment: EnvironmentRef::Native,
-        home,
-        config_home,
-        environment_variables,
-        availability: EnvironmentStatus::Available,
-        revision,
-        wsl_workspace: None,
-    }
-}
-
-fn wsl_environment_context(
-    resolved: &ResolvedContext,
-    session: WslSession,
-    workspace: crate::environment::wsl::WslWorkspace,
-) -> EnvironmentContext {
-    let revision = environment_revision("wsl", &session);
-    EnvironmentContext {
-        environment: resolved.context.environment.clone(),
-        home: session.home.clone(),
-        config_home: session.config_home.clone(),
-        environment_variables: session.environment.clone(),
-        availability: EnvironmentStatus::Available,
-        revision,
-        wsl_workspace: Some(workspace),
-    }
-}
-
-fn environment_revision(value_kind: &str, value: &impl Serialize) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value_kind.as_bytes());
-    hasher.update(
-        serde_json::to_vec(value)
-            .expect("environment revision inputs must serialize deterministically"),
-    );
-    format!("{:x}", hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1140,7 +1102,9 @@ mod tests {
     use crate::environment::agent_environment::{
         AgentEnvironmentResolver, DetectionState, EnvironmentContext,
     };
+    use crate::environment::context_resolver::ResolvedContext;
     use crate::environment::types::{EnvironmentStatus, ResourceLocator, SkillLocation};
+    use crate::environment::wsl::WslSession;
     use serde_json::json;
 
     #[test]
