@@ -19,6 +19,10 @@ const qualityWorkflowUrl = new URL(
   "../../.github/workflows/quality.yml",
   import.meta.url,
 );
+const windowsTauriConfigUrl = new URL(
+  "../../src-tauri/tauri.windows.conf.json",
+  import.meta.url,
+);
 const releaseVerifierUrl = new URL("../verify-release-assets.mjs", import.meta.url);
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -71,6 +75,7 @@ test("CI and Release run the same quality workflow for an exact commit", async (
     "validate",
     "quality",
     "prepare-release",
+    "build-wsl-worker",
   ]);
 
   for (const [jobName, job] of Object.entries(quality.jobs)) {
@@ -109,19 +114,27 @@ test("quality workflow separates portable formatting, static checks, and tests",
   assert.equal(workflow.jobs["rust-static"].strategy["fail-fast"], false);
   assert.equal(workflow.jobs["rust-test"].strategy["fail-fast"], false);
 
+  const msrvCommands = workflow.jobs.msrv.steps
+    .map((step) => step.run ?? "")
+    .join("\n");
+  const formatCommands = workflow.jobs["rust-format"].steps
+    .map((step) => step.run ?? "")
+    .join("\n");
   const staticCommands = workflow.jobs["rust-static"].steps
     .map((step) => step.run ?? "")
     .join("\n");
   const testCommands = workflow.jobs["rust-test"].steps
     .map((step) => step.run ?? "")
     .join("\n");
-  assert.match(staticCommands, /cargo check[^\n]*--locked[^\n]*--all-targets/);
+  assert.match(msrvCommands, /cargo check[^\n]*--locked[^\n]*--workspace[^\n]*--all-targets/);
+  assert.match(formatCommands, /cargo fmt[^\n]*--all[^\n]*-- --check/);
+  assert.match(staticCommands, /cargo check[^\n]*--locked[^\n]*--workspace[^\n]*--all-targets/);
   assert.match(
     staticCommands,
-    /cargo clippy[^\n]*--locked[^\n]*--all-targets[^\n]*-- -D warnings/,
+    /cargo clippy[^\n]*--locked[^\n]*--workspace[^\n]*--all-targets[^\n]*-- -D warnings/,
   );
   assert.doesNotMatch(staticCommands, /cargo test/);
-  assert.match(testCommands, /cargo test[^\n]*--locked/);
+  assert.match(testCommands, /cargo test[^\n]*--locked[^\n]*--workspace/);
   assert.doesNotMatch(testCommands, /cargo (?:check|clippy)/);
 
   const clippyStep = workflow.jobs["rust-static"].steps.find((step) =>
@@ -183,7 +196,12 @@ test("release workflow prepares one draft and lets tauri-action upload each plat
   assert.ok(workflow.jobs["prepare-release"]);
   assert.ok(workflow.jobs["verify-release"]);
   assert.equal(workflow.jobs["verify-release"].permissions.contents, "write");
-  assert.deepEqual(build.needs, ["validate", "quality", "prepare-release"]);
+  assert.deepEqual(build.needs, [
+    "validate",
+    "quality",
+    "prepare-release",
+    "build-wsl-worker",
+  ]);
   assert.equal(build.permissions.contents, "write");
   assert.doesNotMatch(
     commands,
@@ -212,6 +230,67 @@ test("release workflow prepares one draft and lets tauri-action upload each plat
   );
   assert.doesNotMatch(commands, /package-updater-artifact\.mjs/);
   assert.equal(workflow.jobs.aggregate, undefined);
+});
+
+test("Windows bundles the exact Linux Worker artifact as Tauri resources", async () => {
+  const [workflow, windowsConfig] = await Promise.all([
+    readWorkflow(workflowUrl),
+    readFile(windowsTauriConfigUrl, "utf8").then(JSON.parse),
+  ]);
+  assert.deepEqual(windowsConfig.bundle.resources, {
+    "target/wsl-worker/current/worker": "wsl-worker/current/worker",
+    "target/wsl-worker/current/manifest.json": "wsl-worker/current/manifest.json",
+  });
+  assert.equal(windowsConfig.bundle.externalBin, undefined);
+
+  const worker = workflow.jobs["build-wsl-worker"];
+  assert.deepEqual(worker.needs, ["validate", "quality"]);
+  assert.equal(worker["runs-on"], "ubuntu-22.04");
+  const checkout = worker.steps.find((step) =>
+    step.uses?.startsWith("actions/checkout@")
+  );
+  assert.equal(checkout.with.ref, "${{ needs.validate.outputs.commit_sha }}");
+  const upload = worker.steps.find(
+    (step) => step.uses === "actions/upload-artifact@v4",
+  );
+  assert.equal(
+    upload.with.name,
+    "wsl-worker-${{ needs.validate.outputs.commit_sha }}",
+  );
+  assert.equal(upload.with.path, "src-tauri/target/wsl-worker/current");
+
+  const build = workflow.jobs["build-release"];
+  const download = build.steps.find(
+    (step) => step.uses === "actions/download-artifact@v4",
+  );
+  assert.equal(download.if, "${{ runner.os == 'Windows' }}");
+  assert.equal(
+    download.with.name,
+    "wsl-worker-${{ needs.validate.outputs.commit_sha }}",
+  );
+  assert.equal(download.with.path, "src-tauri/target/wsl-worker/current");
+  const verify = build.steps.find((step) => step.run === "pnpm verify:wsl-worker");
+  assert.equal(verify.if, "${{ runner.os == 'Windows' }}");
+
+  const actionIndex = build.steps.findIndex((step) =>
+    step.uses?.startsWith("tauri-apps/tauri-action@")
+  );
+  const nsisIndex = build.steps.findIndex(
+    (step) => step.run === "pwsh -NoProfile -File scripts/verify-windows-worker-bundle.ps1 -BundleKind nsis",
+  );
+  const msiIndex = build.steps.findIndex(
+    (step) => step.run === "pwsh -NoProfile -File scripts/verify-windows-worker-bundle.ps1 -BundleKind msi",
+  );
+  assert.ok(nsisIndex > actionIndex);
+  assert.ok(msiIndex > actionIndex);
+  assert.equal(
+    build.steps[nsisIndex].if,
+    "${{ runner.os == 'Windows' }}",
+  );
+  assert.equal(
+    build.steps[msiIndex].if,
+    "${{ runner.os == 'Windows' && needs.validate.outputs.prerelease != 'true' }}",
+  );
 });
 
 test("release workflow omits MSI for prereleases and retains it for stable releases", async () => {

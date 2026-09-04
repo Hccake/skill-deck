@@ -23,7 +23,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@1.88.0
-      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - run: cargo check --locked --workspace --manifest-path src-tauri/Cargo.toml --all-targets
 
   frontend:
     runs-on: ubuntu-22.04
@@ -63,13 +63,13 @@ jobs:
         uses: docker://rhysd/actionlint:1.7.12
 
   shellcheck:
-    name: ShellCheck bundled WSL assets
+    name: ShellCheck WSL bootstrap
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.target_sha }}
-      - name: Check bundled WSL operation scripts
+      - name: Check WSL bootstrap script
         run: >-
           docker run --rm
           --volume "$PWD:/work"
@@ -92,7 +92,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ci-diagnostics
-          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>&1 | tee ci-diagnostics/fmt.log
+          cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check 2>&1 | tee ci-diagnostics/fmt.log
       - name: Upload Rust formatting diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -143,11 +143,11 @@ jobs:
           } | tee ci-diagnostics/toolchain.txt
       - name: Check all Rust targets
         shell: bash
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets 2>&1 | tee ci-diagnostics/check.log
+        run: cargo check --locked --workspace --manifest-path src-tauri/Cargo.toml --all-targets 2>&1 | tee ci-diagnostics/check.log
       - name: Lint all Rust targets
         if: ${{ always() }}
         shell: bash
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings 2>&1 | tee ci-diagnostics/clippy.log
+        run: cargo clippy --locked --workspace --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings 2>&1 | tee ci-diagnostics/clippy.log
       - name: Upload Rust static diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -196,7 +196,7 @@ jobs:
           } | tee ci-diagnostics/toolchain.txt
       - name: Run Rust tests
         shell: bash
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml 2>&1 | tee ci-diagnostics/test.log
+        run: cargo test --locked --workspace --manifest-path src-tauri/Cargo.toml 2>&1 | tee ci-diagnostics/test.log
       - name: Upload Rust test diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

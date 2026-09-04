@@ -111,11 +111,17 @@ pub fn run() {
             let payload_cache_root = app.path().app_cache_dir()?.join("payload-sessions");
             let recovery_root = app.path().app_local_data_dir()?.join("recovery");
             let library_root = crate::core::get_skill_library_root()?;
+            #[cfg(target_os = "windows")]
+            let worker_artifact_directory =
+                Some(app.path().resource_dir()?.join("wsl-worker/current"));
+            #[cfg(not(target_os = "windows"))]
+            let worker_artifact_directory = None;
             let runtime = RuntimeServiceGraph::new(
                 &payload_cache_root,
                 recovery_root,
                 library_root,
                 agent_registry.clone(),
+                worker_artifact_directory,
             )?;
             let environments = runtime.wsl_arc();
             let maintenance = runtime.maintenance().clone();

@@ -13,6 +13,8 @@
     "test:scripts": "node --test scripts/__tests__/*.test.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
+    "prepare:wsl-worker": "node scripts/prepare-wsl-worker.mjs",
+    "verify:wsl-worker": "node scripts/prepare-wsl-worker.mjs --verify src-tauri/target/wsl-worker/current",
     "sync-version": "node scripts/sync-version.mjs",
     "prepare": "husky"
   },

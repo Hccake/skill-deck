@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { EOL, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
@@ -216,7 +216,7 @@ test("replays Eve placement when updating from an offline Git source", async (t)
   for (const target of [undefined, "builder"]) {
     assert.equal(
       await readFile(join(eveSkillPath(fixture.project, target), "payload.txt"), "utf8"),
-      "version two\n",
+      `version two${EOL}`,
     );
   }
 });
