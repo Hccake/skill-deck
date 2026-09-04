@@ -21,6 +21,22 @@ pnpm tauri dev
 
 `pnpm dev` 只启动前端开发服务器，适合调试不依赖 Tauri 运行时的界面；`pnpm tauri dev` 启动完整桌面应用。只有复现或验收真实 WSL 行为时，才需要在 Windows 开发机上准备 WSL2 和目标发行版。
 
+在 Windows 上调试 WSL 2 连接前，先使用目标发行版准备本次源码对应的 Worker：
+
+```bash
+pnpm prepare:wsl-worker -- --distro Ubuntu
+```
+
+该命令在指定的 WSL 2 发行版中构建固定的 musl target，并将 Worker 和摘要 manifest 写入本地 Cargo `target` 目录。源码、构建输出和测试制品不得混用其他工作区生成的 Worker。
+
+已有 Worker artifact 可以单独校验：
+
+```bash
+pnpm verify:wsl-worker
+```
+
+Windows Tauri 构建从该目录复制 resource。macOS 和 Linux 桌面构建不要求也不携带 Worker。
+
 通过 Agent 参与开发时，还需要遵循根目录 [`AGENTS.md`](./AGENTS.md) 中的协作规则。
 
 ## 修改流程
@@ -67,7 +83,7 @@ Rust 命令接口是进程间通信（IPC）的权威。修改命令或公开 DT
 1. 更新 Rust 命令、类型和正式注册；
 2. 更新 `src-tauri/app_commands.rs`，保持命令排序和去重；
 3. 将命令加入正确的 Tauri `permission` 和窗口 `capability`；
-4. 重新生成 `src/bindings.ts`；
+4. 启动一次 debug Tauri 应用，由 `tauri-specta` 重新生成 `src/bindings.ts`；
 5. 更新 `useTauriApi` 封装及其调用方；
 6. 增加命令接口、窗口权限和行为测试。
 
@@ -95,19 +111,19 @@ Rust 命令接口是进程间通信（IPC）的权威。修改命令或公开 DT
 | 仓库脚本、CI 或发布策略 | `pnpm test:scripts`；涉及 Markdown 时增加 `pnpm docs:check` |
 | 前端组件、状态或工作流 | 相关 Vitest；完成前运行 `pnpm lint`、`pnpm test` 和 `pnpm build` |
 | Rust 规则或业务用例 | 相关 Rust 测试；完成前运行格式检查、静态检查和受影响的 Rust 测试 |
-| Tauri 命令、公开 DTO 或窗口权限 | `pnpm bindings:generate`、`pnpm bindings:check`，以及命令、权限和相关前端测试 |
+| Tauri 命令、公开 DTO 或窗口权限 | 使用 `pnpm tauri dev` 刷新 bindings，运行 `pnpm bindings:check`，以及命令、权限和相关前端测试 |
 | WSL shell 脚本或传输协议 | 相关 Rust 测试和下述 ShellCheck；涉及真实发行版时增加 Windows 与 WSL 联合检查 |
 
 Rust 的完整检查命令为：
 
 ```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
-cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --locked --manifest-path src-tauri/Cargo.toml
+cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+cargo check --locked --workspace --manifest-path src-tauri/Cargo.toml --all-targets
+cargo clippy --locked --workspace --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --workspace --manifest-path src-tauri/Cargo.toml
 ```
 
-修改随应用发布的 WSL shell 脚本或传输契约时，运行与 CI 相同的 ShellCheck：
+修改随应用发布的 WSL bootstrap 脚本或传输契约时，运行与 CI 相同的 ShellCheck：
 
 ```bash
 docker run --rm \
@@ -135,7 +151,7 @@ docker run --rm \
 
 发布流程由 `v*` 标签或人工输入已有标签触发。流程先核对标签、`package.json` 版本、`CHANGELOG.md` 条目和目标提交，再对同一提交运行共享质量检查。
 
-质量检查通过后，工作流会创建或复用草稿 Release，并由官方 `tauri-action` 构建和上传各平台安装包、更新签名与 `latest.json`。自动校验完成后，由维护者检查版本、Release 正文、安装包和更新信息，再通过 GitHub 界面公开发布。
+质量检查通过后，发布流程在 Linux 构建并校验固定的 Worker artifact，Windows 构建下载同一提交的 artifact 并装入安装包。官方 `tauri-action` 构建和上传各平台安装包、更新签名与 `latest.json`；Windows job 随后检查 NSIS 和 MSI 中的 Worker resource。自动校验完成后，由维护者检查版本、Release 正文、安装包和更新信息，再通过 GitHub 界面公开发布。
 
 预发布版本在 Windows 上提供 NSIS 安装包；稳定版本同时提供 NSIS 和 MSI。MSI 的数值版本不能表达 SemVer 预发布标识，发布工作流和资产验证器根据版本类型使用对应的安装包契约。
 

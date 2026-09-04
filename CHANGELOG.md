@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **新增 Skill 库** — 可以在每个 Environment 中创建和独立维护 Skill 集合，并将多个有序库应用到全局或项目位置。
+
+### Changed
+
+- **统一同名 Skill 优先级** — 直接安装版本固定优先于库版本；移除直接安装版本时，会在同一次受保护操作中恢复当前胜出的库版本。
+- **改善 WSL 操作可靠性** — Windows 应用会为每个 WSL 2 发行版部署并复用匹配版本的 Environment Worker，统一处理 Skill 读取、来源、写入和恢复；现有 Environment、代理和数据格式保持不变。
+
 ## [1.7.1] - 2026-08-20
 
 ### Added

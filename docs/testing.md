@@ -26,6 +26,17 @@ Rust 单元测试使用 `MockRuntime` 构建 Tauri 应用时，测试夹具只�
 4. 平台无关的规则在 Windows、macOS 和 Linux 上运行；使用平台 API 或平台特有文件语义的代码在对应操作系统上测试。
 5. 测试主动控制时间、并发、网络和环境变量。外部进程、监听端口和临时目录都要设置超时，并在测试结束后完成清理。
 
+### 长期测试的保留标准
+
+长期测试保护稳定的产品行为、公共契约、兼容格式、安全限制或已知缺陷。测试应在这些行为被错误修改时失败，并允许实现结构、组件拆分和视觉细节在行为不变时正常调整。
+
+- 前端行为测试通过可访问名称、可见状态和用户操作观察结果。除设计系统本身的测试外，不断言 Tailwind class、具体 Lucide 图标类名、内部 `data-slot`、固定 grid tracks 或其他组件实现细节；需要检查视觉层级、间距和响应式布局时，使用目标视口下的桌面验收或视觉回归。
+- 已完成迁移后，不长期保留“旧字段、旧文案键或旧函数名不得存在”的反向断言。仍需持续禁止的安全字段、敏感信息和领域禁用语应由明确的长期规则、类型约束或专用静态检查维护。
+- 薄传输包装器只测试自身增加的行为，例如错误解包、默认参数、参数形态转换和事件 Channel 适配。不为每个类型安全的原样转发函数重复验证调用参数。
+- 同一展示 Module 的名称、数量、顺序和状态由该 Module 的 Interface 测试覆盖。父级页面只验证是否正确使用该 Module 以及自身负责的工作流，不重复检查子级图标和布局结构。
+- `tauri-specta` 在 debug 应用启动时根据正式命令注册生成 bindings；生成文件进入版本控制。CI 使用普通契约测试在临时目录生成同一内容并与正式文件比较，测试只承担自动判定职责。
+- 临时实施约束只在开发过程的 spec 或 ticket 中跟踪。迭代完成时删除仅用于限制迁移步骤、源码组织或中间命名的测试，保留最终行为对应的覆盖。
+
 ## 跨平台测试
 
 ### 本机路径与 POSIX 路径
@@ -56,11 +67,14 @@ WSL、远端 Unix、Git 协议和脚本参数中的 POSIX 路径是协议数据�
 
 WSL 测试分工如下：
 
-- 跨平台 Rust 测试检查请求、响应、状态转换和协议版本；
-- ShellCheck 和 Linux 脚本测试检查脚本语法、所需工具、输入输出和退出状态；
-- Windows 上连接真实 WSL 发行版，检查发行版发现、`wsl.exe` 数据传输和用户环境。
+- 跨平台 Rust 测试检查请求、响应、状态转换、协议版本、乱序响应、binary transfer 边界和超时后的迟到响应；
+- Linux Engine 测试使用真实临时目录检查 POSIX 大小写、符号链接、权限、执行位、非 UTF-8 路径、读取上限、目录项 identity、物理投影、内容 manifest、单文档条件写入、Library 成员事务与旧事务恢复、目录事务和 lossless lock；
+- Linux 测试启动真实 Worker 二进制，检查 handshake、Home 观察、自身摘要、Windows 与 WSL 路径的双向转换、读取调度、control 公平性、Source/Payload handle、双向 binary transfer、单文档写入与冲突保护、Library catalog 与成员提交、Mutation accepted/terminal/ack 顺序、取消清理和关闭；
+- ShellCheck 和 Linux 脚本测试检查最小身份 probe 的语法、字段顺序、输入输出和退出状态；测试使用受控 `PATH` 确认 Git 等业务工具不参与 Environment 连接；
+- Windows 上连接真实 WSL 2 发行版，检查版本筛选、Worker 准备与部署、`wsl.exe` 数据传输和用户环境。`real_wsl_worker_executes_a_skill_read_plan` 验证读取能力；`wsl_history_round_trip_preserves_unowned_global_fields` 验证单文档条件写入和 lossless lock；`real_wsl2_worker_completes_git_scan_payload_and_release` 使用发行版内的本地 Git fixture 验证 Git、来源扫描、Payload 构建、校验、读取、删除和 Source release；`real_wsl2_worker_executes_and_acknowledges_one_remove_transaction` 验证受保护写入、恢复标记和 acknowledgement 清理。联合门禁默认使用 Ubuntu，也可以通过 `SKILL_DECK_TEST_WSL_DISTRO` 指定发行版，并在成功或失败后清理 WSL 临时目录。
+- Worker artifact 测试核对 musl target、manifest、build ID 和实际 SHA-256。Windows debug 构建检查 Tauri resource 目录；NSIS 在一次性 Windows CI runner 中完成静默安装、资源校验和卸载，MSI 通过管理提取检查相同资源。部署测试覆盖首次写入、相同摘要复用、损坏替换、A/B/A 版本切换、非普通目标拒绝和临时文件清理。
 
-前两类测试覆盖协议和脚本本身，无法确认 Windows 与真实 WSL 发行版之间的完整流程。Shell 测试需要捕获标准输出、标准错误和退出状态，设置超时，并在结束后清理子进程与临时目录。用户输入通过位置参数或结构化标准输入传递。ShellCheck 警告作为失败处理；确需忽略时，在代码附近说明原因。
+跨平台和 Linux 测试无法确认 Windows 与真实 WSL 发行版之间的完整流程。首个业务纵向切片通过联合门禁后，才能批量迁移依赖同一底层能力的调用方。Shell 测试需要捕获标准输出、标准错误和退出状态，设置超时，并在结束后清理子进程与临时目录。用户输入通过位置参数或结构化标准输入传递。ShellCheck 警告作为失败处理；确需忽略时，在代码附近说明原因。
 
 ## 测试夹具与外部依赖
 
@@ -82,6 +96,8 @@ Git Adapter 测试验证各 Environment 的代理通过单次命令的 `http.pro
 
 时间、随机数、端口和并发完成时机应由测试控制。等待异步结果时，使用通道、带截止时间的等待或测试库提供的同步能力，不通过增加固定等待时间来掩盖竞争问题。
 
+Skill 库条件事务测试需要覆盖同一 Environment 的 I/O 串行化、不同 Environment 的独立执行、当前成员来源记录变化、目录或内容在协调器检查后发生变化、添加与更新的原子替换、移除的原子删除，以及恢复失败后保留证据并阻止后续库读写。进程内 I/O coordinator 测试使用通道和显式通知控制竞争时序；Native Adapter 通过真实临时目录验证 catalog、成员目录和失败回退；WSL 协议测试在 Linux 上执行随应用发布的脚本，并在 Windows 联合验证中覆盖完整提交和恢复。
+
 外部进程测试同时检查退出状态、输出上限、取消、超时和清理。Git 子进程夹具还应分别在标准输出和标准错误中产生超过管道容量的数据，确认进程运行期间持续排空两条管道，并且保留内容不超过诊断上限。超时与取消测试使用可控子进程，检查子进程在截止时间或取消信号到达后被终止并回收。需要检查真实 Git 行为时，使用本地仓库或 `file://` 传输；只检查应用层决策时，使用结果可控的传输实现。
 
 ## 后端测试
@@ -92,6 +108,14 @@ Git Adapter 测试验证各 Environment 的代理通过单次命令的 `http.pro
 - Adapter 测试检查自身负责的协议版本、序列化、错误代码和平台语义，不重复测试上层业务流程。Tauri Updater Adapter 只验证代理映射和一次官方签名或安装委托；取消窗口由 `ApplicationUpdater` Interface 上的应用工作流测试覆盖，不重复测试 endpoint 回退、重定向、下载停滞或官方插件内部状态；
 - Rust 命令测试检查命令注册、输入输出和窗口命令权限；生成的前后端类型绑定（bindings）检查用于确认类型已经同步；
 - 被忽略的测试应说明运行条件、执行方式和检查内容；其覆盖的风险应通过其他自动化测试或人工验收继续检查；
+- Skill 库测试分别覆盖库更新协调器、库内容事务与应用链接事务。协调器接口测试检查来源合并、风险确认、逐项状态变化、取消和部分成功；Skill 目录规划规则测试按物理目录组合直接版本、多个同名库版本、直接 Agent 关联、库 Agent 关联、共享目录、失效链接和无法处理的条目；平台测试检查显式链接、库内容替换与成员删除；工作流测试检查未完成应用、直接安装切换以及 Agent 和项目生命周期保护；
+- Environment 本地文档测试确认 JSON 不保存 `EnvironmentRef` 等运行时路由身份，Repository 通过显式 Context 选择 Adapter 和路径；旧开发记录包含多余路由字段时继续读取，后续保存输出最终 schema；
+- Scope 版本选举的工作流测试需要连续执行应用库、安装同名直接 Skill、增删直接关联 Agent、保持其他 Agent 使用库版本、调整库顺序、移除直接 Skill 和取消应用库。每一步都检查通用 Skill 目录和全部受影响的 Agent 专用 Skill 目录，确认直接版本只在实际关联的物理目录中优先，并确认重复规划已符合目标的目录时不产生写入；
+- 库候选 Source 的合同测试确认它只读取库应用记录、catalog 和真实成员定位信息，不读取 Agent facts 或目标目录；计数型规划夹具确认单个 Scope 在一次业务规划中只构建一份 Agent 目录表；
+- `Keep` 执行测试确认无变化目录仍在提交前复核 fingerprint 和可选内容摘要，状态变化时返回过期错误，并且 Native 与 WSL 都不会为纯观察目录创建父目录、替换探针或恢复记录；
+- Skill 库删除测试固定点击时的 Environment 和 LibraryId，覆盖删除未选中库后保持当前详情、删除选中库后的 next/previous/empty 选择、权威 snapshot 提交、command failure 就地反馈、详情降级和 committed selection 驱动 URL；
+- 共享来源测试覆盖普通来源、`skills add`、Pack、wildcard、显式 Skill 与 Agent 意图，验证安装与库添加使用相同的选择结果、operationId 进度隔离和重试语义；统一来源命令测试覆盖主窗口与安装向导权限、Native 与 WSL 行为、原 operationId 事件和发现会话后续使用；
+- Skill 库添加测试固定打开时的 Environment 和 LibraryId，覆盖已有成员不可选、跨主机显式确认、预览过期、执行期间关闭保护、部分失败结果合并和失败项重试。桌面布局使用 `1000 x 760`、`800 x 600` 和最小 `720 x 520` 内容尺寸检查固定 Header、可滚动列表、固定 Footer、长路径和横向溢出；
 - 共享测试辅助代码默认相互隔离，每项测试显式控制会影响结果的当前目录、环境变量、时间和外部资源。
 
 ## 前端与 Tauri 测试

@@ -39,6 +39,7 @@
 - **发现与安装**：从在线目录发现 Skill，查看来源、说明和安全信息，或者从 GitHub、Git、本地目录、约定地址（Well-known 地址）、原始 `SKILL.md` 文件和 ZIP、tar 归档安装
 - **浏览与维护**：阅读已安装 Skill 的完整内容，检查并执行更新，在来源失效时重新选择来源；私有 GitHub 来源可以复用本机 Git 凭据检查更新
 - **项目与 Agent 管理**：统一查看全局与项目 Skill，按 Agent 筛选，调整 Skill 可供哪些 Agent 使用，并在项目之间复制 Skill；既可以使用随应用提供的 Agent 信息，也可以添加自己的 Agent 信息
+- **Skill 库**：创建可复用且独立维护的 Skill 集合，并将多组有序的库快速应用到全局或项目位置
 - **跨平台管理**：在 Windows、macOS 和 Linux 上管理 Skill；Windows 用户还可以切换到已安装的 WSL 发行版
 
 ---

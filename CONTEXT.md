@@ -1,6 +1,6 @@
 # Skill Deck 领域词汇
 
-Skill Deck 管理 AI Agent 使用的 Skill，以及这些 Skill 在不同 Environment 和 Project 中的安装关系。
+Skill Deck 管理 AI Agent 使用的 Skill，以及这些 Skill 在不同 Environment 和 Scope 中的安装关系。
 
 ## AI Agent 与 Skill
 
@@ -33,9 +33,15 @@ Skill 内容的提供位置，例如 Git 仓库、本地目录或 Well-known 地
 _Avoid_: 直接 URL 来源、制品来源
 
 **已安装 Skill**：
-已经安装到某个 Skill 位置并由 Skill Deck 管理的一份 Skill。Agent 能否读取它，取决于 Agent 的读取位置和该 Skill 的实际安装目录。
+已经直接安装到某个 Scope 并由 Skill Deck 管理的一份 Skill。Agent 能否读取它，取决于 Agent 的读取位置和该 Skill 在相应目录中使用的版本。
 
-## Skill 位置与目录
+**Skill 库（Skill Library）**：
+用户在一个 Environment 中创建并独立维护的 Skill 集合。同一个 Skill 可以分别加入多个库，各库保存自己的内容和来源记录。
+
+**Skill 库应用关系**：
+某个 Scope 选择的一组有序 Skill 库，以及为读取 Agent 专用 Skill 目录的 Agent 保存的统一选择。应用关系让库内 Skill 参与该 Scope 的版本选举，但不把它们转为直接安装 Skill。
+
+## Scope 与 Skill 目录
 
 **全局 Skill（Global Skill）**：
 安装在某个 Environment 的全局位置、不属于任何具体 Project 的 Skill。  
@@ -44,13 +50,16 @@ _Avoid_: 用户级 Skill、系统级 Skill
 **项目 Skill（Project Skill）**：
 安装在某个 Project 中、属于该 Project 的 Skill。
 
-**Skill 位置（Skill Location）**：
-Skill Deck 管理已安装 Skill 的逻辑位置，分为某个 Environment 的全局位置和具体 Project。  
-_Avoid_: Context、Scope、Context Scope、Skill 范围
+**Scope**：
+当前 Environment 中的全局管理范围或某个项目管理范围。一个 Scope 包含通用 Skill 目录，以及该范围内各 Agent 的 Agent 专用 Skill 目录。
+_Avoid_: Context、Context Scope、Skill 范围
 
 **操作位置**：
-一次 Skill 操作所属的 Environment 与 Skill 位置的组合。  
+一次 Skill 操作固定使用的 Scope。
 _Avoid_: 系统位置
+
+**Skill 目录**：
+Scope 内实际保存或链接 Skill 的目录，分为通用 Skill 目录和 Agent 专用 Skill 目录。不同路径可能指向同一个物理目录。
 
 **通用 Skill 目录**：
 Agent Skills 生态为跨 Agent 共享 Skill 而广泛采用的 `.agents/skills` 目录。它可以位于当前用户的主目录中，也可以位于具体 Project 中。  
@@ -62,6 +71,9 @@ _Avoid_: 共享 Skill 目录、共用 Skill 目录
 **Agent 专用安装项**：
 Skill Deck 在领域规则中用这个词统称 Agent 专用 Skill 目录中指向某个已安装 Skill 的链接或内容副本。  
 _Avoid_: Agent Skill 安装项、Agent 目录项
+
+**版本选举**：
+针对一个 Scope 中的同名 Skill，分别确定每个物理目录应使用直接安装版本、应用库中的某个版本，还是不保留该 Skill。直接安装版本只在它实际关联的目录中优先。
 
 ## Environment 与 Project
 
@@ -75,6 +87,9 @@ _Avoid_: Host Environment、本机 Host
 
 **WSL Environment**：
 Windows 中某个具名 WSL 发行版提供的 Linux 环境。每个发行版构成一个独立的 Environment。
+
+**Environment 本地存储**：
+由一个 Environment 的用户空间直接拥有的持久化位置。文档归属由对应 Store 和存储路径确定，不保存 Native 或 WSL 等运行时访问方式。
 
 **Project**：
 AI Agent 开展工作的目录，通常也是代码仓库的根目录。
