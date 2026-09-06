@@ -242,7 +242,7 @@ impl RuntimeWslSourceAccess {
         let proxy_distro = distro_name.to_string();
         let git_timeout = Duration::from_secs(resolve_clone_timeout_secs());
         self.environments
-            .with_session_retry(distro_name, move |session| {
+            .with_session(distro_name, move |session| {
                 let workspace = workspace.clone();
                 let parsed = parsed.clone();
                 let requested_source = requested_source.clone();

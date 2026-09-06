@@ -9,7 +9,7 @@ use crate::core::lossless_lock::{
 };
 use crate::environment::types::ResourceLocator;
 use crate::error::AppError;
-use crate::storage::atomic_document::AtomicDocumentIo;
+use crate::storage::atomic_document::{AtomicDocumentIo, DocumentWriteFailure};
 
 #[derive(Debug, Clone)]
 pub struct LockCommitReceipt {
@@ -134,20 +134,34 @@ where
     pub async fn commit(
         &self,
         prepared: PreparedLockMutation,
-    ) -> Result<LockCommitReceipt, AppError> {
-        let current = self.io.read_optional(&prepared.target).await?;
-        let legacy = match (&current, &prepared.legacy_target) {
-            (None, Some(target)) => self.io.read_optional(target).await?,
+    ) -> Result<LockCommitReceipt, DocumentWriteFailure> {
+        let current = self
+            .io
+            .observe(
+                &prepared.target,
+                u64::from(environment_protocol::MAX_DOCUMENT_BYTES),
+            )
+            .await
+            .map_err(DocumentWriteFailure::not_published)?;
+        let legacy = match (&current.bytes, &prepared.legacy_target) {
+            (None, Some(target)) => {
+                self.io
+                    .observe(target, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                    .await
+                    .map_err(DocumentWriteFailure::not_published)?
+                    .bytes
+            }
             _ => None,
         };
         let applied = environment_engine::lock::apply(
-            current.as_deref(),
+            current.bytes.as_deref(),
             legacy.as_deref(),
             &engine_mutation(&prepared),
         )
-        .map_err(map_engine_error)?;
+        .map_err(map_engine_error)
+        .map_err(DocumentWriteFailure::not_published)?;
         self.io
-            .write_atomic(&prepared.target, applied.bytes)
+            .replace(&prepared.target, current, applied.bytes)
             .await?;
         Ok(LockCommitReceipt {
             entry_snapshots: applied
@@ -244,14 +258,22 @@ pub async fn load_lock_document<I>(
 where
     I: AtomicDocumentIo + ?Sized,
 {
-    if let Some(bytes) = io.read_optional(target).await? {
+    if let Some(bytes) = io
+        .observe(target, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+        .await?
+        .bytes
+    {
         ensure_supported_schema(&bytes, schema)?;
         return LosslessLockDocument::parse(&bytes);
     }
     let Some(legacy) = legacy_target else {
         return Ok(LosslessLockDocument::empty(schema));
     };
-    let Some(bytes) = io.read_optional(legacy).await? else {
+    let Some(bytes) = io
+        .observe(legacy, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+        .await?
+        .bytes
+    else {
         return Ok(LosslessLockDocument::empty(schema));
     };
     let document = LosslessLockDocument::parse(&bytes)?;
@@ -290,7 +312,9 @@ mod tests {
 
     use super::*;
     use crate::environment::types::EnvironmentRef;
-    use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
+    use crate::storage::atomic_document::{
+        AtomicDocumentIo, DocumentCommitReceipt, DocumentSnapshot, DocumentWriteFailure, IoFuture,
+    };
 
     #[derive(Default)]
     struct FakeIo {
@@ -298,25 +322,49 @@ mod tests {
     }
 
     impl AtomicDocumentIo for FakeIo {
-        fn read_optional<'a>(
+        fn observe<'a>(
             &'a self,
             target: &'a ResourceLocator,
-        ) -> IoFuture<'a, Result<Option<Vec<u8>>, AppError>> {
-            Box::pin(
-                async move { Ok(self.files.lock().unwrap().get(&target.native_path).cloned()) },
-            )
+            _max_bytes: u64,
+        ) -> IoFuture<'a, Result<DocumentSnapshot, AppError>> {
+            Box::pin(async move {
+                Ok(DocumentSnapshot {
+                    bytes: self.files.lock().unwrap().get(&target.native_path).cloned(),
+                    generation: None,
+                })
+            })
         }
 
-        fn write_atomic<'a>(
+        fn replace<'a>(
             &'a self,
             target: &'a ResourceLocator,
+            expected: DocumentSnapshot,
             bytes: Vec<u8>,
-        ) -> IoFuture<'a, Result<(), AppError>> {
+        ) -> IoFuture<'a, Result<DocumentCommitReceipt, DocumentWriteFailure>> {
             Box::pin(async move {
-                self.files
-                    .lock()
-                    .unwrap()
-                    .insert(target.native_path.clone(), bytes);
+                let mut files = self.files.lock().unwrap();
+                if files.get(&target.native_path) != expected.bytes.as_ref() {
+                    return Err(DocumentWriteFailure::not_published(AppError::StaleTarget));
+                }
+                files.insert(target.native_path.clone(), bytes.clone());
+                Ok(DocumentSnapshot {
+                    bytes: Some(bytes),
+                    generation: None,
+                })
+            })
+        }
+
+        fn remove<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            expected: DocumentSnapshot,
+        ) -> IoFuture<'a, Result<(), DocumentWriteFailure>> {
+            Box::pin(async move {
+                let mut files = self.files.lock().unwrap();
+                if files.get(&target.native_path) != expected.bytes.as_ref() {
+                    return Err(DocumentWriteFailure::not_published(AppError::StaleTarget));
+                }
+                files.remove(&target.native_path);
                 Ok(())
             })
         }
@@ -403,7 +451,11 @@ mod tests {
         );
         assert!(matches!(
             committer.commit(mutation(expected)).await,
-            Err(AppError::LockConflict { .. })
+            Err(DocumentWriteFailure {
+                error: AppError::LockConflict { .. },
+                publication: crate::storage::atomic_document::PublicationState::NotPublished,
+                ..
+            })
         ));
     }
 
@@ -432,7 +484,11 @@ mod tests {
 
         assert!(matches!(
             committer.commit(prepared).await,
-            Err(AppError::LockConflict { .. })
+            Err(DocumentWriteFailure {
+                error: AppError::LockConflict { .. },
+                publication: crate::storage::atomic_document::PublicationState::NotPublished,
+                ..
+            })
         ));
     }
 
@@ -532,7 +588,14 @@ mod tests {
                 })
                 .await;
 
-            assert!(matches!(result, Err(AppError::LockConflict { .. })));
+            assert!(matches!(
+                result,
+                Err(DocumentWriteFailure {
+                    error: AppError::LockConflict { .. },
+                    publication: crate::storage::atomic_document::PublicationState::NotPublished,
+                    ..
+                })
+            ));
             assert_eq!(
                 io.files.lock().unwrap()[&locator().native_path],
                 external_bytes

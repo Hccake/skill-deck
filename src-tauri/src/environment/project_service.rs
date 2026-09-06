@@ -317,7 +317,7 @@ pub async fn list_environment_projects(
         EnvironmentRef::Wsl { distro_name } => {
             let workspace = registry.workspace(&distro_name)?;
             registry
-                .with_session_retry(&distro_name, move |session| {
+                .with_session_read_retry(&distro_name, move |session| {
                     let workspace = workspace.clone();
                     async move {
                         let projects = read_wsl_projects(&session, &workspace).await?;

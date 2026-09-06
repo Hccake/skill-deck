@@ -58,12 +58,14 @@ impl LibraryManager {
             || request.deadline_millis > MAX_REQUEST_DEADLINE_MILLIS
             || !valid_component(&request.operation_id)
             || request.catalog_bytes.is_empty()
+            || request.catalog_bytes.len() > environment_protocol::MAX_DOCUMENT_BYTES as usize
         {
             return Err(LibraryError::InvalidRequest);
         }
         let catalog = CatalogWrite {
             expected_revision: request.expected_catalog_revision,
             bytes: request.catalog_bytes,
+            max_current_bytes: environment_protocol::MAX_DOCUMENT_BYTES as usize,
         };
         match request.action {
             LibraryOperationAction::SaveCatalog { library_ids } => {

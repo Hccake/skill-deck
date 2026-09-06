@@ -26,7 +26,7 @@ pub async fn get_last_selected_agents(
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
             let workspace = wsl.workspace(&distro_name)?;
-            wsl.with_session_retry(&distro_name, move |session| {
+            wsl.with_session_read_retry(&distro_name, move |session| {
                 let context = context.clone();
                 let workspace = workspace.clone();
                 async move {

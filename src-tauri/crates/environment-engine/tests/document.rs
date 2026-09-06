@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+use environment_engine::atomic_document::PublicationState;
 use environment_engine::document::{
     read_documents, remove_document_if_revision, write_document_atomic, DocumentQuery,
     DocumentRequest, DocumentState, DocumentWriteError,
@@ -12,13 +13,14 @@ fn conditional_document_write_replaces_a_file_and_returns_its_revision() {
     let path = temp.path().join("state/projects.json");
 
     let bytes = br#"{"projects":[]}"#;
-    let revision = write_document_atomic(&path, None, bytes).unwrap();
+    let revision = write_document_atomic(&path, None, bytes, 1024).unwrap();
     let expected = format!("sha256:{:x}", sha2::Sha256::digest(bytes));
     assert_eq!(revision, expected);
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
 
     let replacement = br#"{"projects":["demo"]}"#;
-    let replacement_revision = write_document_atomic(&path, Some(&revision), replacement).unwrap();
+    let replacement_revision =
+        write_document_atomic(&path, Some(&revision), replacement, 1024).unwrap();
     assert_eq!(
         replacement_revision,
         format!("sha256:{:x}", sha2::Sha256::digest(replacement))
@@ -30,15 +32,15 @@ fn conditional_document_write_replaces_a_file_and_returns_its_revision() {
 fn conditional_document_remove_preserves_a_changed_target() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("applications/project.json");
-    let revision = write_document_atomic(&path, None, b"current").unwrap();
+    let revision = write_document_atomic(&path, None, b"current", 1024).unwrap();
 
     assert_eq!(
-        remove_document_if_revision(&path, Some("sha256:wrong")).unwrap_err(),
+        remove_document_if_revision(&path, Some("sha256:wrong"), 1024).unwrap_err(),
         DocumentWriteError::Conflict
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"current");
 
-    remove_document_if_revision(&path, Some(&revision)).unwrap();
+    remove_document_if_revision(&path, Some(&revision), 1024).unwrap();
     assert!(!path.exists());
 }
 
@@ -50,7 +52,7 @@ fn conditional_document_write_rejects_a_changed_file_without_overwriting_it() {
     std::fs::write(&path, b"old").unwrap();
 
     assert_eq!(
-        write_document_atomic(&path, Some("sha256:wrong"), b"new").unwrap_err(),
+        write_document_atomic(&path, Some("sha256:wrong"), b"new", 1024).unwrap_err(),
         DocumentWriteError::Conflict
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"old");
@@ -66,7 +68,7 @@ fn conditional_document_write_rejects_directory_and_symlink_targets() {
     let directory = temp.path().join("state");
     std::fs::create_dir(&directory).unwrap();
     assert_eq!(
-        write_document_atomic(&directory, None, b"new").unwrap_err(),
+        write_document_atomic(&directory, None, b"new", 1024).unwrap_err(),
         DocumentWriteError::InvalidTarget
     );
     let target = temp.path().join("target");
@@ -74,7 +76,7 @@ fn conditional_document_write_rejects_directory_and_symlink_targets() {
     let link = temp.path().join("link");
     std::os::unix::fs::symlink(&target, &link).unwrap();
     assert_eq!(
-        write_document_atomic(&link, None, b"new").unwrap_err(),
+        write_document_atomic(&link, None, b"new", 1024).unwrap_err(),
         DocumentWriteError::InvalidTarget
     );
 }
@@ -114,4 +116,28 @@ fn optional_documents_are_bounded_and_isolated() {
     assert_eq!(response.facts[1].state, DocumentState::Missing);
     assert_eq!(response.facts[2].state, DocumentState::NotFile);
     assert_eq!(response.total_content_bytes, 4);
+}
+
+#[test]
+fn conditional_writes_and_removals_reject_an_oversized_current_document() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("state.json");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(32).unwrap();
+
+    assert_eq!(
+        write_document_atomic(&path, None, b"new", 16).unwrap_err(),
+        DocumentWriteError::Io {
+            phase: environment_engine::atomic_document::WritePhase::BeforePublish,
+            publication: PublicationState::NotPublished,
+        }
+    );
+    assert_eq!(
+        remove_document_if_revision(&path, None, 16).unwrap_err(),
+        DocumentWriteError::Io {
+            phase: environment_engine::atomic_document::WritePhase::BeforePublish,
+            publication: PublicationState::NotPublished,
+        }
+    );
+    assert_eq!(std::fs::metadata(path).unwrap().len(), 32);
 }

@@ -8,6 +8,7 @@ use crate::core::lossless_lock::{
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::types::ResourceLocator;
 use crate::error::AppError;
+use crate::storage::atomic_document::{DocumentSnapshot, DocumentWriteFailure};
 
 pub struct LockTarget {
     pub primary: ResourceLocator,
@@ -32,8 +33,7 @@ pub struct LockTransaction<'a> {
 
 struct ParsedLockSnapshot {
     document: LosslessLockDocument,
-    primary_revision: Option<String>,
-    primary_generation: Option<u64>,
+    primary: DocumentSnapshot,
 }
 
 impl LockRepository {
@@ -52,26 +52,23 @@ impl LockRepository {
         &self,
         target: &LockTarget,
     ) -> Result<ParsedLockSnapshot, AppError> {
-        let primary = self.io.read_optional_snapshot(&target.primary).await?;
-        if let Some(bytes) = primary.bytes {
+        let primary = self.io.observe(&target.primary).await?;
+        if let Some(bytes) = primary.bytes.as_deref() {
             return Ok(ParsedLockSnapshot {
-                document: LosslessLockDocument::parse(&bytes)?,
-                primary_revision: primary.revision,
-                primary_generation: primary.generation,
+                document: LosslessLockDocument::parse(bytes)?,
+                primary,
             });
         }
         let Some(legacy) = target.legacy.as_ref() else {
             return Ok(ParsedLockSnapshot {
                 document: LosslessLockDocument::empty(target.schema),
-                primary_revision: None,
-                primary_generation: primary.generation,
+                primary,
             });
         };
         let Some(bytes) = self.io.read_optional(legacy).await? else {
             return Ok(ParsedLockSnapshot {
                 document: LosslessLockDocument::empty(target.schema),
-                primary_revision: None,
-                primary_generation: primary.generation,
+                primary,
             });
         };
         let document = LosslessLockDocument::parse(&bytes)?;
@@ -80,8 +77,7 @@ impl LockRepository {
                 LockSchema::Global => document,
                 LockSchema::Project => convert_legacy_project_document(document)?,
             },
-            primary_revision: None,
-            primary_generation: primary.generation,
+            primary,
         })
     }
 
@@ -140,13 +136,14 @@ impl LockTransaction<'_> {
         }
         repository
             .io
-            .write_if_revision(
+            .replace(
                 &target.primary,
-                latest_snapshot.primary_generation,
-                latest_snapshot.primary_revision,
+                latest_snapshot.primary,
                 latest.to_pretty_bytes()?,
             )
             .await
+            .map(|_| ())
+            .map_err(DocumentWriteFailure::into_error)
     }
 
     fn require_root_snapshot(&self, field: &str) -> Result<&LockRootSnapshot, AppError> {

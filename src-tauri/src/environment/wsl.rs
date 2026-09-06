@@ -21,6 +21,34 @@ use crate::environment::types::{
 };
 use crate::error::AppError;
 
+#[derive(Clone, Copy)]
+struct RequestDeadline {
+    deadline: tokio::time::Instant,
+}
+
+impl RequestDeadline {
+    fn from_start(started: tokio::time::Instant, limit: std::time::Duration) -> Self {
+        Self {
+            deadline: started + limit,
+        }
+    }
+
+    fn new(limit: std::time::Duration) -> Self {
+        Self::from_start(tokio::time::Instant::now(), limit)
+    }
+
+    fn remaining_at(self, now: tokio::time::Instant) -> Result<std::time::Duration, AppError> {
+        self.deadline
+            .checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or(AppError::WslCommandTimedOut)
+    }
+
+    fn remaining(self) -> Result<std::time::Duration, AppError> {
+        self.remaining_at(tokio::time::Instant::now())
+    }
+}
+
 pub mod operations;
 pub(crate) mod protocol;
 mod worker;
@@ -805,7 +833,7 @@ impl WslRuntime {
         }
     }
 
-    pub async fn with_session_retry<T, O, OFut>(
+    pub async fn with_session_read_retry<T, O, OFut>(
         &self,
         distro_name: &str,
         operation: O,
@@ -1054,9 +1082,10 @@ impl WslWorkspace {
         cancellation: Option<crate::core::mutation::CancellationSignal>,
         limit: std::time::Duration,
     ) -> Result<(u64, environment_protocol::Message), AppError> {
-        let (worker, generation, _access) = self.worker_for_cycle().await?;
+        let deadline = RequestDeadline::new(limit);
+        let (worker, generation, _access) = self.worker_for_deadline(deadline).await?;
         let result = worker
-            .request_control_with_cancellation(message, limit, cancellation)
+            .request_control_with_cancellation(message, deadline.remaining()?, cancellation)
             .await;
         if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
             self.registry.publish_unavailable_if_current(
@@ -1075,10 +1104,11 @@ impl WslWorkspace {
         cancellation: Option<crate::core::mutation::CancellationSignal>,
         limit: std::time::Duration,
     ) -> Result<environment_protocol::Message, AppError> {
-        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        let deadline = RequestDeadline::new(limit);
+        let (worker, current_generation, _access) = self.worker_for_deadline(deadline).await?;
         self.require_worker_generation(generation, current_generation)?;
         let result = worker
-            .request_control_with_cancellation(message, limit, cancellation)
+            .request_control_with_cancellation(message, deadline.remaining()?, cancellation)
             .await;
         if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
             self.registry.publish_unavailable_if_current(
@@ -1101,10 +1131,16 @@ impl WslWorkspace {
     where
         T: serde::de::DeserializeOwned,
     {
-        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        let deadline = RequestDeadline::new(limit);
+        let (worker, current_generation, _access) = self.worker_for_deadline(deadline).await?;
         self.require_worker_generation(generation, current_generation)?;
         let result = worker
-            .request_payload_with_limit(message, limit, max_payload_bytes, cancellation)
+            .request_payload_with_limit(
+                message,
+                deadline.remaining()?,
+                max_payload_bytes,
+                cancellation,
+            )
             .await;
         if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
             self.registry.publish_unavailable_if_current(
@@ -1131,9 +1167,15 @@ impl WslWorkspace {
     where
         T: serde::de::DeserializeOwned,
     {
-        let (worker, generation, _access) = self.worker_for_cycle().await?;
+        let deadline = RequestDeadline::new(limit);
+        let (worker, generation, _access) = self.worker_for_deadline(deadline).await?;
         let result = worker
-            .request_payload_with_limit(message, limit, max_payload_bytes, cancellation)
+            .request_payload_with_limit(
+                message,
+                deadline.remaining()?,
+                max_payload_bytes,
+                cancellation,
+            )
             .await;
         if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
             self.registry.publish_unavailable_if_current(
@@ -1158,10 +1200,11 @@ impl WslWorkspace {
         max_payload_bytes: usize,
         limit: std::time::Duration,
     ) -> Result<Vec<u8>, AppError> {
-        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        let deadline = RequestDeadline::new(limit);
+        let (worker, current_generation, _access) = self.worker_for_deadline(deadline).await?;
         self.require_worker_generation(generation, current_generation)?;
         worker
-            .request_payload_with_limit(message, limit, max_payload_bytes, None)
+            .request_payload_with_limit(message, deadline.remaining()?, max_payload_bytes, None)
             .await
     }
 
@@ -1173,10 +1216,16 @@ impl WslWorkspace {
         max_payload_bytes: usize,
         limit: std::time::Duration,
     ) -> Result<environment_protocol::Message, AppError> {
-        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
+        let deadline = RequestDeadline::new(limit);
+        let (worker, current_generation, _access) = self.worker_for_deadline(deadline).await?;
         self.require_worker_generation(generation, current_generation)?;
         worker
-            .send_prepared_transfer(transfer_id, payload, max_payload_bytes, limit)
+            .send_prepared_transfer(
+                transfer_id,
+                payload,
+                max_payload_bytes,
+                deadline.remaining()?,
+            )
             .await
     }
 
@@ -1187,6 +1236,16 @@ impl WslWorkspace {
         request: &environment_protocol::MutationUnitRequest,
         cancellation: crate::core::mutation::CancellationSignal,
     ) -> Result<environment_protocol::MutationUnitOutcome, AppError> {
+        if request.deadline_millis == 0
+            || request.deadline_millis > environment_protocol::MAX_REQUEST_DEADLINE_MILLIS
+        {
+            return Err(AppError::Validation {
+                field: Some("wslMutationDeadline".to_string()),
+                message: "invalid WSL mutation deadline".to_string(),
+            });
+        }
+        let deadline =
+            RequestDeadline::new(std::time::Duration::from_millis(request.deadline_millis));
         let payload = environment_protocol::encode_payload(request).map_err(|error| {
             AppError::ConfigurationCorrupted {
                 message: format!("failed to encode WSL Worker mutation request: {error}"),
@@ -1199,18 +1258,30 @@ impl WslWorkspace {
             });
         }
         let digest = format!("sha256:{:x}", sha2::Sha256::digest(&payload));
-        let prepared = self
-            .request_worker_control_for_generation(
-                generation,
+        let (worker, current_generation, _access) = self.worker_for_deadline(deadline).await?;
+        self.require_worker_generation(generation, current_generation)?;
+        let prepare_limit = deadline
+            .remaining()?
+            .min(std::time::Duration::from_secs(10));
+        let prepared = worker
+            .request_control_with_cancellation(
                 environment_protocol::Message::PrepareMutationUnit {
                     resource_id: resource_id.to_string(),
                     total_bytes: payload.len() as u64,
                     sha256: digest,
                 },
+                prepare_limit,
                 Some(cancellation.clone()),
-                std::time::Duration::from_secs(10),
             )
-            .await?;
+            .await;
+        if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &prepared {
+            self.registry.publish_unavailable_if_current(
+                &self.distro_name,
+                current_generation,
+                error.clone(),
+            );
+        }
+        let prepared = prepared?;
         let transfer_id = match prepared {
             environment_protocol::Message::TransferReady { transfer_id } => transfer_id,
             environment_protocol::Message::Error { code, phase, .. } => {
@@ -1226,20 +1297,20 @@ impl WslWorkspace {
                 });
             }
         };
-        let (worker, current_generation, _access) = self.worker_for_cycle().await?;
-        self.require_worker_generation(generation, current_generation)?;
+        let mutation_limit = deadline.remaining()?;
         match worker
             .send_prepared_mutation(
                 transfer_id,
+                resource_id,
                 &payload,
                 cancellation,
-                std::time::Duration::from_secs(125),
+                mutation_limit,
             )
             .await
         {
             Ok(outcome) => Ok(outcome),
             Err(worker::MutationSessionError {
-                accepted_resource_id: Some(accepted),
+                recovery_resource_id: Some(accepted),
                 error,
             }) => Err(AppError::RecoveryRequired {
                 recovery_resource_id: crate::error::RecoveryResourceId::parse(accepted)
@@ -1271,23 +1342,21 @@ impl WslWorkspace {
         message: environment_protocol::Message,
         cancellation: Option<crate::core::mutation::CancellationSignal>,
     ) -> Result<Vec<u8>, AppError> {
+        let deadline = RequestDeadline::new(std::time::Duration::from_secs(35));
         for attempt in 0..=1 {
-            let (worker, generation, _access) = self.worker_for_cycle().await?;
+            let (worker, generation, _access) = self.worker_for_deadline(deadline).await?;
+            let remaining = deadline.remaining()?;
             let result = match &cancellation {
                 Some(cancellation) => {
                     worker
                         .request_payload_with_cancellation(
                             message.clone(),
-                            std::time::Duration::from_secs(35),
+                            remaining,
                             cancellation.clone(),
                         )
                         .await
                 }
-                None => {
-                    worker
-                        .request_payload(message.clone(), std::time::Duration::from_secs(35))
-                        .await
-                }
+                None => worker.request_payload(message.clone(), remaining).await,
             };
             match result {
                 Ok(payload) => return Ok(payload),
@@ -1302,6 +1371,15 @@ impl WslWorkspace {
             }
         }
         unreachable!("WSL Worker read retry has a fixed attempt count")
+    }
+
+    async fn worker_for_deadline(
+        &self,
+        deadline: RequestDeadline,
+    ) -> Result<(worker::WorkerSession, u64, WslAccessPermit), AppError> {
+        tokio::time::timeout_at(deadline.deadline, self.worker_for_cycle())
+            .await
+            .map_err(|_| AppError::WslCommandTimedOut)?
     }
 
     async fn worker_for_cycle(
@@ -1822,10 +1900,27 @@ mod tests {
 
     use super::{
         interpret_wsl_discovery_outcome, parse_wsl_list_output, parse_wsl_session_output,
-        WslDiscoveryCommandOutcome, WslRuntime, WslSession,
+        RequestDeadline, WslDiscoveryCommandOutcome, WslRuntime, WslSession,
     };
     use crate::environment::types::{EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus};
     use crate::error::{AppError, LockConflictTarget};
+
+    #[test]
+    fn request_deadline_budget_is_shared_across_phases() {
+        let started = tokio::time::Instant::now();
+        let deadline = RequestDeadline::from_start(started, std::time::Duration::from_secs(120));
+
+        assert_eq!(
+            deadline
+                .remaining_at(started + std::time::Duration::from_secs(10))
+                .unwrap(),
+            std::time::Duration::from_secs(110)
+        );
+        assert!(matches!(
+            deadline.remaining_at(started + std::time::Duration::from_secs(121)),
+            Err(AppError::WslCommandTimedOut)
+        ));
+    }
 
     #[cfg(target_os = "linux")]
     fn command_output_with_timeout(

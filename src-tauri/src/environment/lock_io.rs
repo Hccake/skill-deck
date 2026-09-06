@@ -1,15 +1,9 @@
 use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
 use crate::environment::types::ResourceLocator;
+use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
 use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
-use crate::storage::atomic_document::AtomicDocumentIo;
-use sha2::{Digest, Sha256};
-
-pub struct LockDocumentSnapshot {
-    pub bytes: Option<Vec<u8>>,
-    pub revision: Option<String>,
-    pub generation: Option<u64>,
-}
+use crate::storage::atomic_document::{AtomicDocumentIo, DocumentSnapshot, DocumentWriteFailure};
 
 pub enum EnvironmentLockIo {
     Native,
@@ -24,36 +18,43 @@ impl EnvironmentLockIo {
         &self,
         locator: &ResourceLocator,
     ) -> Result<Option<Vec<u8>>, AppError> {
-        Ok(self.read_optional_snapshot(locator).await?.bytes)
+        Ok(self.observe(locator).await?.bytes)
     }
 
-    pub async fn read_optional_snapshot(
-        &self,
-        locator: &ResourceLocator,
-    ) -> Result<LockDocumentSnapshot, AppError> {
+    pub async fn observe(&self, locator: &ResourceLocator) -> Result<DocumentSnapshot, AppError> {
         match self {
             Self::Native => {
-                let bytes = NativeAtomicDocumentIo.read_optional(locator).await?;
-                let revision = bytes.as_deref().map(document_revision);
-                Ok(LockDocumentSnapshot {
-                    bytes,
-                    revision,
-                    generation: None,
-                })
+                NativeAtomicDocumentIo
+                    .observe(locator, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                    .await
             }
             Self::ActiveWsl { session, workspace } => {
                 require_active_wsl_target(session, locator)?;
-                let snapshot = workspace
-                    .read_optional_document_snapshot_once(
-                        locator.native_path.clone(),
-                        environment_protocol::MAX_DOCUMENT_BYTES,
-                    )
-                    .await?;
-                Ok(LockDocumentSnapshot {
-                    bytes: snapshot.bytes,
-                    revision: snapshot.revision,
-                    generation: Some(snapshot.generation),
-                })
+                WslAtomicDocumentIo::from_active_session((**session).clone(), workspace.clone())
+                    .observe(locator, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                    .await
+            }
+        }
+    }
+
+    pub async fn replace(
+        &self,
+        locator: &ResourceLocator,
+        expected: DocumentSnapshot,
+        bytes: Vec<u8>,
+    ) -> Result<DocumentSnapshot, DocumentWriteFailure> {
+        match self {
+            Self::Native => {
+                NativeAtomicDocumentIo
+                    .replace(locator, expected, bytes)
+                    .await
+            }
+            Self::ActiveWsl { session, workspace } => {
+                require_active_wsl_target(session, locator)
+                    .map_err(DocumentWriteFailure::not_published)?;
+                WslAtomicDocumentIo::from_active_session((**session).clone(), workspace.clone())
+                    .replace(locator, expected, bytes)
+                    .await
             }
         }
     }
@@ -73,57 +74,12 @@ impl EnvironmentLockIo {
         locator: &ResourceLocator,
         bytes: Vec<u8>,
     ) -> Result<(), AppError> {
-        match self {
-            Self::Native => NativeAtomicDocumentIo.write_atomic(locator, bytes).await,
-            Self::ActiveWsl { session, workspace } => {
-                let snapshot = self.read_optional_snapshot(locator).await?;
-                require_active_wsl_target(session, locator)?;
-                workspace
-                    .write_document_atomic(
-                        snapshot.generation.ok_or(AppError::StaleEnvironment)?,
-                        locator.native_path.clone(),
-                        snapshot.revision,
-                        bytes,
-                    )
-                    .await
-                    .map(|_| ())
-            }
-        }
+        let snapshot = self.observe(locator).await?;
+        self.replace(locator, snapshot, bytes)
+            .await
+            .map(|_| ())
+            .map_err(DocumentWriteFailure::into_error)
     }
-
-    pub async fn write_if_revision(
-        &self,
-        locator: &ResourceLocator,
-        expected_generation: Option<u64>,
-        expected_revision: Option<String>,
-        bytes: Vec<u8>,
-    ) -> Result<(), AppError> {
-        match self {
-            Self::Native => {
-                let current = NativeAtomicDocumentIo.read_optional(locator).await?;
-                if current.as_deref().map(document_revision) != expected_revision {
-                    return Err(AppError::StaleTarget);
-                }
-                NativeAtomicDocumentIo.write_atomic(locator, bytes).await
-            }
-            Self::ActiveWsl { session, workspace } => {
-                require_active_wsl_target(session, locator)?;
-                workspace
-                    .write_document_atomic(
-                        expected_generation.ok_or(AppError::StaleEnvironment)?,
-                        locator.native_path.clone(),
-                        expected_revision,
-                        bytes,
-                    )
-                    .await
-                    .map(|_| ())
-            }
-        }
-    }
-}
-
-fn document_revision(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 fn require_active_wsl_target(

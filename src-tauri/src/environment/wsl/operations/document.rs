@@ -1,5 +1,6 @@
 use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
+use crate::storage::atomic_document::{DocumentWriteFailure, PublicationState};
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
@@ -108,16 +109,28 @@ impl WslWorkspace {
         expected_revision: Option<String>,
         bytes: Vec<u8>,
     ) -> Result<String, AppError> {
-        if !path.starts_with('/')
-            || bytes.is_empty()
-            || bytes.len() > environment_protocol::MAX_DOCUMENT_BYTES as usize
+        self.commit_document_atomic(generation, path, expected_revision, bytes)
+            .await
+            .map_err(DocumentWriteFailure::into_error)
+    }
+
+    pub(crate) async fn commit_document_atomic(
+        &self,
+        generation: u64,
+        path: String,
+        expected_revision: Option<String>,
+        bytes: Vec<u8>,
+    ) -> Result<String, DocumentWriteFailure> {
+        if !path.starts_with('/') || bytes.len() > environment_protocol::MAX_DOCUMENT_BYTES as usize
         {
-            return Err(AppError::Validation {
+            return Err(DocumentWriteFailure::not_published(AppError::Validation {
                 field: Some("documentWrite".to_string()),
                 message: "WSL document write requires an absolute path and bounded content"
                     .to_string(),
-            });
+            }));
         }
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(DOCUMENT_WRITE_DEADLINE_MILLIS);
         let revision = document_revision(&bytes);
         let response = self
             .request_worker_control_for_generation(
@@ -132,12 +145,17 @@ impl WslWorkspace {
                     },
                 },
                 None,
-                Duration::from_millis(DOCUMENT_WRITE_DEADLINE_MILLIS),
+                remaining_document_time(deadline)?,
             )
-            .await?;
+            .await
+            .map_err(DocumentWriteFailure::not_published)?;
         let transfer_id = match response {
             environment_protocol::Message::TransferReady { transfer_id } => transfer_id,
-            message => return Err(document_write_response_error(message, "TransferReady")),
+            message => {
+                return Err(DocumentWriteFailure::not_published(
+                    document_write_response_error(message, "TransferReady"),
+                ));
+            }
         };
         let response = self
             .send_worker_transfer_for_generation(
@@ -145,14 +163,15 @@ impl WslWorkspace {
                 transfer_id,
                 &bytes,
                 environment_protocol::MAX_DOCUMENT_BYTES as usize,
-                Duration::from_millis(DOCUMENT_WRITE_DEADLINE_MILLIS),
+                remaining_document_time(deadline)?,
             )
-            .await?;
+            .await
+            .map_err(DocumentWriteFailure::unknown)?;
         match response {
             environment_protocol::Message::DocumentWritten {
                 revision: actual_revision,
             } if actual_revision == revision => Ok(revision),
-            message => Err(document_write_response_error(message, "DocumentWritten")),
+            message => Err(document_write_response_failure(message, "DocumentWritten")),
         }
     }
 
@@ -161,12 +180,12 @@ impl WslWorkspace {
         generation: u64,
         path: String,
         expected_revision: Option<String>,
-    ) -> Result<(), AppError> {
+    ) -> Result<(), DocumentWriteFailure> {
         if !path.starts_with('/') {
-            return Err(AppError::Validation {
+            return Err(DocumentWriteFailure::not_published(AppError::Validation {
                 field: Some("documentRemove".to_string()),
                 message: "WSL document remove requires an absolute path".to_string(),
-            });
+            }));
         }
         let response = self
             .request_worker_control_for_generation(
@@ -181,10 +200,11 @@ impl WslWorkspace {
                 None,
                 Duration::from_millis(DOCUMENT_WRITE_DEADLINE_MILLIS),
             )
-            .await?;
+            .await
+            .map_err(DocumentWriteFailure::unknown)?;
         match response {
             environment_protocol::Message::DocumentRemoved => Ok(()),
-            message => Err(document_write_response_error(message, "DocumentRemoved")),
+            message => Err(document_write_response_failure(message, "DocumentRemoved")),
         }
     }
 }
@@ -295,34 +315,108 @@ fn document_revision(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+fn remaining_document_time(
+    deadline: tokio::time::Instant,
+) -> Result<Duration, DocumentWriteFailure> {
+    deadline
+        .checked_duration_since(tokio::time::Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| DocumentWriteFailure::not_published(AppError::WslCommandTimedOut))
+}
+
 fn document_write_response_error(
     message: environment_protocol::Message,
     expected: &str,
 ) -> AppError {
+    document_write_response_failure(message, expected).into_error()
+}
+
+fn document_write_response_failure(
+    message: environment_protocol::Message,
+    expected: &str,
+) -> DocumentWriteFailure {
     match message {
-        environment_protocol::Message::Error { code, .. } if code == "documentConflict" => {
-            AppError::StaleTarget
+        environment_protocol::Message::Error { code, phase, .. } if code == "documentConflict" => {
+            DocumentWriteFailure::not_published_at(
+                document_write_phase(&phase),
+                AppError::StaleTarget,
+            )
         }
-        environment_protocol::Message::Error { code, .. } if code == "deadlineExceeded" => {
-            AppError::WslCommandTimedOut
+        environment_protocol::Message::Error { code, phase, .. } if code == "deadlineExceeded" => {
+            DocumentWriteFailure::not_published_at(
+                document_write_phase(&phase),
+                AppError::WslCommandTimedOut,
+            )
         }
-        environment_protocol::Message::Error { code, phase, .. } => AppError::ExecutionFailed {
-            message: format!("WSL Worker document write failed during {phase}: {code}"),
-        },
-        _ => AppError::ConfigurationCorrupted {
+        environment_protocol::Message::Error { code, phase, .. }
+            if matches!(
+                code.as_str(),
+                "invalidRequest" | "invalidTarget" | "invalidTransfer" | "cancelled"
+            ) =>
+        {
+            DocumentWriteFailure::not_published_at(
+                document_write_phase(&phase),
+                AppError::ExecutionFailed {
+                    message: format!("WSL Worker document write failed during {phase}: {code}"),
+                },
+            )
+        }
+        environment_protocol::Message::Error { code, phase, .. }
+            if code == "documentPublishedUnconfirmed" =>
+        {
+            DocumentWriteFailure {
+                error: AppError::ExecutionFailed {
+                    message: format!("WSL Worker document write failed during {phase}: {code}"),
+                },
+                phase: document_write_phase(&phase),
+                publication: PublicationState::PublishedUnconfirmed,
+            }
+        }
+        environment_protocol::Message::Error { code, phase, .. }
+            if code == "documentOutcomeUnknown" =>
+        {
+            DocumentWriteFailure::unknown_at(
+                document_write_phase(&phase),
+                AppError::ExecutionFailed {
+                    message: format!("WSL Worker document write failed during {phase}: {code}"),
+                },
+            )
+        }
+        environment_protocol::Message::Error { code, phase, .. } => {
+            DocumentWriteFailure::unknown_at(
+                document_write_phase(&phase),
+                AppError::ExecutionFailed {
+                    message: format!("WSL Worker document write failed during {phase}: {code}"),
+                },
+            )
+        }
+        _ => DocumentWriteFailure::unknown(AppError::ConfigurationCorrupted {
             message: format!("WSL Worker returned an invalid {expected} response"),
-        },
+        }),
+    }
+}
+
+fn document_write_phase(phase: &str) -> crate::storage::atomic_document::WritePhase {
+    use crate::storage::atomic_document::WritePhase;
+
+    match phase {
+        "writing" => WritePhase::Writing,
+        "beforePublish" => WritePhase::BeforePublish,
+        "publishing" => WritePhase::Publishing,
+        "confirming" => WritePhase::Confirming,
+        _ => WritePhase::Preparing,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::document_write_response_error;
+    use super::document_write_response_failure;
     use crate::error::AppError;
+    use crate::storage::atomic_document::{PublicationState, WritePhase};
 
     #[test]
     fn document_conflict_maps_to_stale_target() {
-        let error = document_write_response_error(
+        let failure = document_write_response_failure(
             environment_protocol::Message::Error {
                 code: "documentConflict".to_string(),
                 phase: "documentWrite".to_string(),
@@ -331,6 +425,30 @@ mod tests {
             "DocumentWritten",
         );
 
-        assert_eq!(error, AppError::StaleTarget);
+        assert_eq!(failure.error, AppError::StaleTarget);
+        assert_eq!(failure.publication, PublicationState::NotPublished);
+    }
+
+    #[test]
+    fn worker_publication_codes_retain_their_commit_state() {
+        for (code, publication) in [
+            (
+                "documentPublishedUnconfirmed",
+                PublicationState::PublishedUnconfirmed,
+            ),
+            ("documentOutcomeUnknown", PublicationState::OutcomeUnknown),
+        ] {
+            let failure = document_write_response_failure(
+                environment_protocol::Message::Error {
+                    code: code.to_string(),
+                    phase: "confirming".to_string(),
+                    parameters: Vec::new(),
+                },
+                "DocumentWritten",
+            );
+
+            assert_eq!(failure.publication, publication);
+            assert_eq!(failure.phase, WritePhase::Confirming);
+        }
     }
 }

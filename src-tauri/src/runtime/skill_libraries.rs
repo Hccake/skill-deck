@@ -166,7 +166,7 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     let distro_name = distro_name.clone();
                     let library_id = library_id.as_str().to_string();
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             async move {
                                 Ok((
@@ -363,7 +363,7 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     let skill_name = install_dir_name;
                     let path = self
                         .wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             let skill_name = skill_name.clone();
                             async move {
@@ -479,7 +479,7 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
                     let context = context.clone();
                     let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let context = context.clone();
                             let workspace = workspace.clone();
                             async move {
@@ -576,7 +576,7 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
                     let library_id = library_id.as_str().to_string();
                     let skill_name = install_dir_name;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             let skill_name = skill_name.clone();
                             async move {
@@ -717,6 +717,20 @@ fn save_native_catalog(
         )?;
     }
     crate::environment::native::atomic_file::write_native_atomic(&root.join("catalog.json"), bytes)
+}
+
+fn save_native_catalog_if_unchanged(
+    root: &Path,
+    expected: Option<&[u8]>,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    environment_engine::atomic_document::replace_if_unchanged(
+        &root.join("catalog.json"),
+        expected,
+        bytes,
+    )
+    .map_err(crate::storage::atomic_document::DocumentWriteFailure::from_engine)
+    .map_err(crate::storage::atomic_document::DocumentWriteFailure::into_error)
 }
 
 fn delete_native_library(root: &Path, library_id: &LibraryId) -> Result<LibraryCatalog, AppError> {
@@ -1128,10 +1142,7 @@ fn commit_native_member(root: &Path, request: CommitLibraryMemberRequest) -> Res
             }
         }
         prepare_native_catalog_commit(root, &catalog_hash)?;
-        crate::environment::native::atomic_file::write_native_atomic(
-            &root.join("catalog.json"),
-            &catalog_bytes,
-        )?;
+        save_native_catalog_if_unchanged(root, current_catalog_bytes.as_deref(), &catalog_bytes)?;
         finalize_native_catalog_commit(root, &catalog_hash)
     })();
     if let Err(error) = commit {

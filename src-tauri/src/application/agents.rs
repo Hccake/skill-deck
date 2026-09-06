@@ -465,7 +465,7 @@ pub async fn list_agents(
             let retry_context = context.clone();
             let service = agent_registry;
             environment_registry
-                .with_session_retry(&distro_name, move |session| {
+                .with_session_read_retry(&distro_name, move |session| {
                     let workspace = workspace.clone();
                     let context = retry_context.clone();
                     async move {
@@ -561,7 +561,7 @@ pub async fn validate_custom_agent_draft(
             let workspace = environment_registry.workspace(&distro_name)?;
             let retry_context = context.clone();
             environment_registry
-                .with_session_retry(&distro_name, move |session| {
+                .with_session_read_retry(&distro_name, move |session| {
                     let workspace = workspace.clone();
                     let context = retry_context.clone();
                     let preview_snapshot = preview_snapshot.clone();
@@ -696,7 +696,7 @@ pub async fn preview_custom_agent_delete(
             let distro_name = distro_name.clone();
             let workspace = environment_registry.workspace(&distro_name)?;
             environment_registry
-                .with_session_retry(&distro_name, move |session| {
+                .with_session_read_retry(&distro_name, move |session| {
                     let workspace = workspace.clone();
                     let context = context.clone();
                     let definition = definition.clone();

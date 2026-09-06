@@ -1732,6 +1732,7 @@ async fn execute_document_write(
             PathBuf::from(preparation.path).as_path(),
             preparation.expected_revision.as_deref(),
             &bytes,
+            environment_protocol::MAX_DOCUMENT_BYTES as usize,
         )
     })
     .await
@@ -1756,8 +1757,13 @@ async fn execute_document_write(
                 .await
                 .map_err(|error| error.to_string())?;
         }
-        Err(error) => {
-            let _ = error;
+        Err(environment_engine::document::DocumentWriteError::Io { phase, publication }) => {
+            let code = document_write_error_code(publication);
+            send_error(&writer, request_id, code, document_write_phase(phase))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Err(environment_engine::document::DocumentWriteError::UnsupportedPlatform) => {
             send_error(&writer, request_id, "documentWriteFailed", "documentWrite")
                 .await
                 .map_err(|error| error.to_string())?;
@@ -1879,6 +1885,7 @@ async fn execute_document_remove(
         environment_engine::document::remove_document_if_revision(
             PathBuf::from(request.path).as_path(),
             request.expected_revision.as_deref(),
+            environment_protocol::MAX_DOCUMENT_BYTES as usize,
         )
     })
     .await
@@ -1901,11 +1908,49 @@ async fn execute_document_remove(
                 .await
                 .map_err(|error| error.to_string())?
         }
-        Err(_) => send_error(&writer, request_id, "documentWriteFailed", "documentRemove")
+        Err(environment_engine::document::DocumentWriteError::Io { phase, publication }) => {
+            send_error(
+                &writer,
+                request_id,
+                document_write_error_code(publication),
+                document_write_phase(phase),
+            )
             .await
-            .map_err(|error| error.to_string())?,
+            .map_err(|error| error.to_string())?
+        }
+        Err(environment_engine::document::DocumentWriteError::UnsupportedPlatform) => {
+            send_error(&writer, request_id, "documentWriteFailed", "documentRemove")
+                .await
+                .map_err(|error| error.to_string())?
+        }
     }
     Ok(request_id)
+}
+
+fn document_write_error_code(
+    publication: environment_engine::atomic_document::PublicationState,
+) -> &'static str {
+    match publication {
+        environment_engine::atomic_document::PublicationState::NotPublished => {
+            "documentWriteFailed"
+        }
+        environment_engine::atomic_document::PublicationState::PublishedUnconfirmed => {
+            "documentPublishedUnconfirmed"
+        }
+        environment_engine::atomic_document::PublicationState::OutcomeUnknown => {
+            "documentOutcomeUnknown"
+        }
+    }
+}
+
+fn document_write_phase(phase: environment_engine::atomic_document::WritePhase) -> &'static str {
+    match phase {
+        environment_engine::atomic_document::WritePhase::Preparing => "preparing",
+        environment_engine::atomic_document::WritePhase::Writing => "writing",
+        environment_engine::atomic_document::WritePhase::BeforePublish => "beforePublish",
+        environment_engine::atomic_document::WritePhase::Publishing => "publishing",
+        environment_engine::atomic_document::WritePhase::Confirming => "confirming",
+    }
 }
 
 async fn send_library_error(

@@ -1,9 +1,6 @@
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
-use tempfile::NamedTempFile;
 
 use super::agent_definition::{AgentFieldError, AgentId, CustomAgentDefinition};
 use super::agent_settings::CustomAgentRecord;
@@ -11,6 +8,7 @@ use super::app_config::get_config_path;
 use crate::error::AppError;
 
 pub const CUSTOM_AGENT_SCHEMA_VERSION: u32 = 1;
+const MAX_CUSTOM_AGENT_BYTES: usize = environment_protocol::MAX_DOCUMENT_BYTES as usize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomAgentFile {
@@ -79,14 +77,20 @@ impl CustomAgentRepository {
             Err(ReadFailure::UnsupportedSchema(version)) => Err(unsupported_schema_error(version)),
             Err(ReadFailure::Io(error)) => Err(error),
             Err(ReadFailure::Missing) => match read_file(&self.backup_path()) {
-                Ok(file) => Ok(file),
+                Ok(file) => {
+                    log::warn!("Custom Agent repository loaded its last valid backup");
+                    Ok(file)
+                }
                 Err(ReadFailure::UnsupportedSchema(version)) => {
                     Err(unsupported_schema_error(version))
                 }
                 Err(_) => Ok(CustomAgentFile::default()),
             },
             Err(ReadFailure::Corrupt(primary_error)) => match read_file(&self.backup_path()) {
-                Ok(file) => Ok(file),
+                Ok(file) => {
+                    log::warn!("Custom Agent repository loaded its last valid backup");
+                    Ok(file)
+                }
                 Err(ReadFailure::UnsupportedSchema(version)) => {
                     Err(unsupported_schema_error(version))
                 }
@@ -100,21 +104,19 @@ impl CustomAgentRepository {
             return Err(unsupported_schema_error(file.schema_version as u64));
         }
         validate_records(&file.records)?;
+        let bytes = serialize_file(file)?;
 
-        match fs::read(&self.path) {
-            Ok(existing) => match parse_file(&existing) {
+        if let Some(existing) = read_document_bytes(&self.path)? {
+            match parse_file(&existing) {
                 Ok(_) => write_atomic(&self.backup_path(), &existing)?,
                 Err(ReadFailure::UnsupportedSchema(version)) => {
                     return Err(unsupported_schema_error(version));
                 }
                 Err(ReadFailure::Io(error)) => return Err(error),
                 Err(ReadFailure::Missing | ReadFailure::Corrupt(_)) => {}
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+            }
         }
 
-        let bytes = serialize_file(file)?;
         write_atomic(&self.path, &bytes)
     }
 
@@ -373,11 +375,16 @@ fn serialize_file(file: &CustomAgentFile) -> Result<Vec<u8>, AppError> {
 }
 
 fn read_file(path: &Path) -> Result<CustomAgentFile, ReadFailure> {
-    match fs::read(path) {
-        Ok(bytes) => parse_file(&bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(ReadFailure::Missing),
-        Err(error) => Err(ReadFailure::Io(error.into())),
+    match read_document_bytes(path) {
+        Ok(Some(bytes)) => parse_file(&bytes),
+        Ok(None) => Err(ReadFailure::Missing),
+        Err(error) => Err(ReadFailure::Io(error)),
     }
+}
+
+fn read_document_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    environment_engine::atomic_document::read_optional_bounded(path, MAX_CUSTOM_AGENT_BYTES)
+        .map_err(Into::into)
 }
 
 fn parse_file(bytes: &[u8]) -> Result<CustomAgentFile, ReadFailure> {
@@ -452,14 +459,9 @@ fn deserialization_error(error: &serde_json::Error) -> AgentFieldError {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let mut temp = NamedTempFile::new_in(parent)?;
-    temp.write_all(bytes)?;
-    temp.flush()?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    // The repository owns its one-generation backup. The shared publication
+    // mechanism must neither rotate nor delete it.
+    crate::environment::native::atomic_file::write_native_atomic(path, bytes)
 }
 
 enum ReadFailure {
@@ -1140,5 +1142,40 @@ mod tests {
         ));
         assert_eq!(repository.load().expect("reload repository"), saved);
         assert_eq!(fs::read_to_string(marker).expect("read marker"), "keep me");
+    }
+    #[test]
+    fn backup_publication_failure_does_not_overwrite_the_primary() {
+        let temp = tempdir().unwrap();
+        let repository = CustomAgentRepository::new(temp.path().join("custom-agents.json"));
+        let first = file(vec![CustomAgentRecord::valid(definition("first-agent"))]);
+        repository.save(&first).unwrap();
+        let before = fs::read(repository.path()).unwrap();
+        // A directory is a deterministic, cross-platform publication failure.
+        fs::create_dir(repository.backup_path()).unwrap();
+        let second = file(vec![CustomAgentRecord::valid(definition("second-agent"))]);
+        assert!(repository.save(&second).is_err());
+        assert_eq!(fs::read(repository.path()).unwrap(), before);
+        assert!(repository.backup_path().is_dir());
+    }
+
+    #[test]
+    fn oversized_repository_is_rejected_as_io_without_modifying_it() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("custom-agents.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(u64::from(environment_protocol::MAX_DOCUMENT_BYTES) + 1)
+            .unwrap();
+        let repository = CustomAgentRepository::new(path.clone());
+
+        let error = repository.load().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Io { ref message } if message.contains("exceeds its read limit")
+        ));
+        assert_eq!(
+            fs::metadata(path).unwrap().len(),
+            u64::from(environment_protocol::MAX_DOCUMENT_BYTES) + 1
+        );
     }
 }

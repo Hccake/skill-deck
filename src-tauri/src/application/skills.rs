@@ -358,7 +358,7 @@ pub async fn list_skills(
             let retry_runtime = runtime.clone();
             let workspace = environment_registry.workspace(&distro_name)?;
             let (resolved, plan) = environment_registry
-                .with_session_retry(&distro_name, move |session| {
+                .with_session_read_retry(&distro_name, move |session| {
                     let context = retry_context.clone();
                     let runtime = retry_runtime.clone();
                     let workspace = workspace.clone();
@@ -379,7 +379,7 @@ pub async fn list_skills(
             let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
             let retry_resolved = resolved.clone();
             let (lock_bytes, lock_kind) = environment_registry
-                .with_session_retry(&distro_name, move |session| {
+                .with_session_read_retry(&distro_name, move |session| {
                     let resolved = retry_resolved.clone();
                     let workspace = workspace.clone();
                     async move {

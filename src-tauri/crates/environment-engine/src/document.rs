@@ -1,6 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::atomic_document::{PublicationState, WritePhase};
+
 #[cfg(target_os = "linux")]
 use std::fs;
 #[cfg(target_os = "linux")]
@@ -59,7 +61,10 @@ impl fmt::Display for DocumentError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentWriteError {
     UnsupportedPlatform,
-    Io,
+    Io {
+        phase: WritePhase,
+        publication: PublicationState,
+    },
     Conflict,
     InvalidTarget,
 }
@@ -68,7 +73,9 @@ impl fmt::Display for DocumentWriteError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedPlatform => formatter.write_str("Linux document write is unavailable"),
-            Self::Io => formatter.write_str("document write failed"),
+            Self::Io { phase, publication } => {
+                write!(formatter, "document write failed ({phase:?}, {publication:?})")
+            }
             Self::Conflict => formatter.write_str("document changed since it was read"),
             Self::InvalidTarget => formatter.write_str("document target is not a regular file"),
         }
@@ -79,15 +86,17 @@ pub fn write_document_atomic(
     path: &std::path::Path,
     expected_revision: Option<&str>,
     bytes: &[u8],
+    max_current_bytes: usize,
 ) -> Result<String, DocumentWriteError> {
-    write_document_platform(path, expected_revision, bytes)
+    write_document_platform(path, expected_revision, bytes, max_current_bytes)
 }
 
 pub fn remove_document_if_revision(
     path: &std::path::Path,
     expected_revision: Option<&str>,
+    max_current_bytes: usize,
 ) -> Result<(), DocumentWriteError> {
-    remove_document_platform(path, expected_revision)
+    remove_document_platform(path, expected_revision, max_current_bytes)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -95,6 +104,7 @@ fn write_document_platform(
     _path: &std::path::Path,
     _expected_revision: Option<&str>,
     _bytes: &[u8],
+    _max_current_bytes: usize,
 ) -> Result<String, DocumentWriteError> {
     Err(DocumentWriteError::UnsupportedPlatform)
 }
@@ -103,6 +113,7 @@ fn write_document_platform(
 fn remove_document_platform(
     _path: &std::path::Path,
     _expected_revision: Option<&str>,
+    _max_current_bytes: usize,
 ) -> Result<(), DocumentWriteError> {
     Err(DocumentWriteError::UnsupportedPlatform)
 }
@@ -112,10 +123,8 @@ fn write_document_platform(
     path: &std::path::Path,
     expected_revision: Option<&str>,
     bytes: &[u8],
+    max_current_bytes: usize,
 ) -> Result<String, DocumentWriteError> {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
     if !path.is_absolute() || path.file_name().is_none() {
         return Err(DocumentWriteError::InvalidTarget);
     }
@@ -123,51 +132,41 @@ fn write_document_platform(
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(DocumentWriteError::InvalidTarget)
         }
-        Ok(_) => Some(fs::read(path).map_err(|_| DocumentWriteError::Io)?),
+        Ok(_) => crate::atomic_document::read_optional_bounded(path, max_current_bytes).map_err(
+            |_| DocumentWriteError::Io {
+                phase: WritePhase::BeforePublish,
+                publication: PublicationState::NotPublished,
+            },
+        )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return Err(DocumentWriteError::Io),
+        Err(_) => {
+            return Err(DocumentWriteError::Io {
+                phase: WritePhase::BeforePublish,
+                publication: PublicationState::NotPublished,
+            })
+        }
     };
     let current_revision = current.as_deref().map(document_revision);
     if current_revision.as_deref() != expected_revision {
         return Err(DocumentWriteError::Conflict);
     }
     let parent = path.parent().ok_or(DocumentWriteError::InvalidTarget)?;
-    fs::create_dir_all(parent).map_err(|_| DocumentWriteError::Io)?;
-    let temporary = parent.join(format!(".skill-deck-document-{}", std::process::id()));
-    if fs::symlink_metadata(&temporary).is_ok() {
-        return Err(DocumentWriteError::Io);
-    }
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_| DocumentWriteError::Io)?;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
-            .map_err(|_| DocumentWriteError::Io)?;
-        file.write_all(bytes).map_err(|_| DocumentWriteError::Io)?;
-        file.sync_all().map_err(|_| DocumentWriteError::Io)?;
-        let latest = match fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-                return Err(DocumentWriteError::InvalidTarget)
+    fs::create_dir_all(parent).map_err(|_| DocumentWriteError::Io {
+        phase: WritePhase::Preparing,
+        publication: PublicationState::NotPublished,
+    })?;
+    crate::atomic_document::replace_if_unchanged(path, current.as_deref(), bytes).map_err(
+        |error| {
+            if error.is_conflict() {
+                DocumentWriteError::Conflict
+            } else {
+                DocumentWriteError::Io {
+                    phase: error.phase,
+                    publication: error.publication,
+                }
             }
-            Ok(_) => Some(fs::read(path).map_err(|_| DocumentWriteError::Io)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err(DocumentWriteError::Io),
-        };
-        if latest.as_deref().map(document_revision).as_deref() != expected_revision {
-            return Err(DocumentWriteError::Conflict);
-        }
-        fs::rename(&temporary, path).map_err(|_| DocumentWriteError::Io)?;
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| DocumentWriteError::Io)?;
-        Ok::<_, DocumentWriteError>(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result?;
+        },
+    )?;
     Ok(document_revision(bytes))
 }
 
@@ -175,6 +174,7 @@ fn write_document_platform(
 fn remove_document_platform(
     path: &std::path::Path,
     expected_revision: Option<&str>,
+    max_current_bytes: usize,
 ) -> Result<(), DocumentWriteError> {
     if !path.is_absolute() || path.file_name().is_none() {
         return Err(DocumentWriteError::InvalidTarget);
@@ -183,9 +183,19 @@ fn remove_document_platform(
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(DocumentWriteError::InvalidTarget)
         }
-        Ok(_) => Some(fs::read(path).map_err(|_| DocumentWriteError::Io)?),
+        Ok(_) => crate::atomic_document::read_optional_bounded(path, max_current_bytes).map_err(
+            |_| DocumentWriteError::Io {
+                phase: WritePhase::BeforePublish,
+                publication: PublicationState::NotPublished,
+            },
+        )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return Err(DocumentWriteError::Io),
+        Err(_) => {
+            return Err(DocumentWriteError::Io {
+                phase: WritePhase::BeforePublish,
+                publication: PublicationState::NotPublished,
+            })
+        }
     };
     if current.as_deref().map(document_revision).as_deref() != expected_revision {
         return Err(DocumentWriteError::Conflict);
@@ -193,15 +203,16 @@ fn remove_document_platform(
     if current.is_none() {
         return Ok(());
     }
-    let latest = fs::read(path).map_err(|_| DocumentWriteError::Io)?;
-    if document_revision(&latest) != expected_revision.unwrap_or_default() {
-        return Err(DocumentWriteError::Conflict);
-    }
-    fs::remove_file(path).map_err(|_| DocumentWriteError::Io)?;
-    let parent = path.parent().ok_or(DocumentWriteError::InvalidTarget)?;
-    fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DocumentWriteError::Io)
+    crate::atomic_document::remove_if_unchanged(path, current.as_deref()).map_err(|error| {
+        if error.is_conflict() {
+            DocumentWriteError::Conflict
+        } else {
+            DocumentWriteError::Io {
+                phase: error.phase,
+                publication: error.publication,
+            }
+        }
+    })
 }
 
 #[cfg(target_os = "linux")]

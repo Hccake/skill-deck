@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 static CONFIG_UPDATE_LOCK: Mutex<()> = Mutex::new(());
+const MAX_CONFIG_BYTES: usize = environment_protocol::MAX_DOCUMENT_BYTES as usize;
 
 fn get_skill_deck_home() -> Result<PathBuf, AppError> {
     let home = dirs::home_dir().ok_or(AppError::Path {
@@ -45,30 +46,49 @@ fn update_config_at_path(
     let _guard = CONFIG_UPDATE_LOCK
         .lock()
         .expect("config update lock poisoned");
-    let mut config = read_config_from_path(path)?;
+    let mut config = read_config_document(path, true)?;
     update(&mut config);
     write_config_to_path(&config, path)?;
     Ok(config)
 }
 
 fn read_config_from_path(path: &Path) -> Result<SkillDeckConfig, AppError> {
-    if !path.exists() {
-        log::info!("配置文件不存在，返回默认配置");
-        return Ok(SkillDeckConfig::default());
-    }
+    read_config_document(path, false)
+}
 
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("读取配置文件失败: {}，返回默认配置", e);
+fn read_config_document(path: &Path, require_writable: bool) -> Result<SkillDeckConfig, AppError> {
+    let bytes =
+        match environment_engine::atomic_document::read_optional_bounded(path, MAX_CONFIG_BYTES) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Ok(SkillDeckConfig::default()),
+            Err(error) if require_writable => return Err(error.into()),
+            Err(error) => {
+                log::warn!("读取配置文件失败，运行时使用默认配置，原文件保持不变: {error}");
+                return Ok(SkillDeckConfig::default());
+            }
+        };
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(error) if require_writable => {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error).into());
+        }
+        Err(error) => {
+            log::warn!("配置文件编码无效，运行时使用默认配置，原文件保持不变: {error}");
             return Ok(SkillDeckConfig::default());
         }
     };
-
-    let mut value: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|e| {
-        log::warn!("解析配置文件失败: {}，返回默认配置", e);
-        serde_json::json!({})
-    });
+    let mut value: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(error) if require_writable => {
+            return Err(AppError::ConfigurationCorrupted {
+                message: format!("configuration must be repaired before saving: {error}"),
+            });
+        }
+        Err(error) => {
+            log::warn!("配置损坏，运行时使用默认配置，原文件保持不变: {error}");
+            return Ok(SkillDeckConfig::default());
+        }
+    };
     let network_proxy = value
         .as_object_mut()
         .and_then(|object| object.remove("networkProxy"))
@@ -83,15 +103,31 @@ fn read_config_from_path(path: &Path) -> Result<SkillDeckConfig, AppError> {
                             .map_err(|error| format!("code={}", error.code()))
                     })
             },
-        )
-        .unwrap_or_else(|error| {
+        );
+    let network_proxy = match network_proxy {
+        Ok(settings) => settings,
+        Err(error) if require_writable => {
+            return Err(AppError::ConfigurationCorrupted {
+                message: format!("network proxy settings must be repaired before saving: {error}"),
+            });
+        }
+        Err(error) => {
             log::warn!("代理设置无效，使用直接连接: {}", error);
             NetworkProxySettings::default()
-        });
-    let mut config: SkillDeckConfig = serde_json::from_value(value).unwrap_or_else(|e| {
-        log::warn!("解析应用配置失败: {}，返回默认配置", e);
-        SkillDeckConfig::default()
-    });
+        }
+    };
+    let mut config: SkillDeckConfig = match serde_json::from_value(value) {
+        Ok(config) => config,
+        Err(error) if require_writable => {
+            return Err(AppError::ConfigurationCorrupted {
+                message: format!("configuration must be repaired before saving: {error}"),
+            });
+        }
+        Err(error) => {
+            log::warn!("解析配置失败，运行时使用默认配置，原文件保持不变: {error}");
+            SkillDeckConfig::default()
+        }
+    };
     config.network_proxy = network_proxy;
     Ok(config)
 }
@@ -102,7 +138,7 @@ fn write_config_to_path(config: &SkillDeckConfig, path: &Path) -> Result<(), App
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    fs::write(path, content)?;
+    crate::environment::native::atomic_file::write_native_atomic(path, content.as_bytes())?;
 
     log::info!("配置已保存到: {:?}", path);
     Ok(())
@@ -117,6 +153,7 @@ mod tests {
     use super::{
         get_skill_library_root, read_config_from_path, update_config_at_path, write_config_to_path,
     };
+    use crate::error::AppError;
     use crate::models::{NativeGitProxySettings, ProxyMode, SkillDeckConfig};
     use tempfile::tempdir;
 
@@ -191,6 +228,30 @@ mod tests {
     }
 
     #[test]
+    fn invalid_network_settings_are_not_overwritten_by_an_unrelated_update() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("config.json");
+        let original = br#"{
+            "projects": ["/must-survive"],
+            "networkProxy": {
+                "mode": "system",
+                "customProxyUrl": "http://127.0.0.1:7890"
+            }
+        }"#;
+        fs::write(&path, original).expect("invalid network settings");
+
+        let result = update_config_at_path(&path, |config| {
+            config.git_clone_timeout_secs = 60;
+        });
+
+        assert!(matches!(
+            result,
+            Err(AppError::ConfigurationCorrupted { .. })
+        ));
+        assert_eq!(fs::read(path).expect("original config"), original);
+    }
+
+    #[test]
     fn config_updates_are_serialized_across_read_modify_write() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("config.json");
@@ -236,5 +297,74 @@ mod tests {
         let config = read_config_from_path(&path).expect("final config");
         assert_eq!(config.git_clone_timeout_secs, 300);
         assert!(config.wsl_integration_enabled);
+    }
+    #[test]
+    fn corrupt_config_can_degrade_for_reading_but_is_not_overwritten_by_an_update() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let original = b"{\"projects\": [\"/keep-me\"]";
+        fs::write(&path, original).unwrap();
+        assert!(read_config_from_path(&path).is_ok());
+        assert!(update_config_at_path(&path, |config| config.git_clone_timeout_secs = 60).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn invalid_typed_config_is_preserved_instead_of_saved_as_defaults() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let original = br#"{"projects":"not-an-array"}"#;
+        fs::write(&path, original).unwrap();
+        assert!(update_config_at_path(&path, |config| config.git_clone_timeout_secs = 60).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn an_unreadable_document_is_not_treated_as_missing_during_update() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::create_dir(&path).unwrap();
+        assert!(update_config_at_path(&path, |config| config.git_clone_timeout_secs = 60).is_err());
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn first_config_update_initializes_missing_file_without_removing_a_backup() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let backup = temp.path().join("config.json.bak");
+        fs::write(&backup, b"owned-by-another-maintenance-flow").unwrap();
+        update_config_at_path(&path, |config| config.git_clone_timeout_secs = 60).unwrap();
+        assert_eq!(
+            read_config_from_path(&path).unwrap().git_clone_timeout_secs,
+            60
+        );
+        assert_eq!(
+            fs::read(backup).unwrap(),
+            b"owned-by-another-maintenance-flow"
+        );
+    }
+
+    #[test]
+    fn oversized_config_is_rejected_before_it_can_be_saved() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(u64::from(environment_protocol::MAX_DOCUMENT_BYTES) + 1)
+            .unwrap();
+
+        let error = update_config_at_path(&path, |config| {
+            config.git_clone_timeout_secs = 60;
+        })
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Io { ref message } if message.contains("exceeds its read limit")
+        ));
+        assert_eq!(
+            fs::metadata(path).unwrap().len(),
+            u64::from(environment_protocol::MAX_DOCUMENT_BYTES) + 1
+        );
     }
 }

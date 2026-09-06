@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! Shared Linux filesystem mechanics used by Native Linux and the WSL Worker.
+//! Shared filesystem mechanics, with platform-specific Linux operations for the WSL Worker.
 
+pub mod atomic_document;
 pub mod directory;
 pub mod document;
 pub mod entry;

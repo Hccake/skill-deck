@@ -2531,6 +2531,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn credential_cleanup_converges_after_an_unconfirmed_publish() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/update-check.json");
+        let now = Arc::new(AtomicU64::new(1_000));
+        let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Failed(
+            EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::AuthenticationRequired,
+                message: "token required".to_string(),
+                retry_at_epoch_ms: None,
+                provider_cooldown: false,
+            },
+        )]));
+        let coordinator = persistent_coordinator(detector, now.clone(), &path);
+        coordinator
+            .check(
+                request("acme/private", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .inner
+            .state_file
+            .as_ref()
+            .expect("state file")
+            .set_post_publish_failure(true);
+
+        coordinator.clear_native_github_auth_suppression().unwrap();
+
+        let operation = EnvironmentEvidenceKey::new(&EnvironmentRef::Native, &key("acme/private"));
+        assert!(!state(&coordinator.inner)
+            .unwrap()
+            .attempts
+            .contains_key(&operation));
+        drop(coordinator);
+        let restarted = persistent_coordinator(Arc::new(ScriptedDetector::new([])), now, &path);
+        assert!(!state(&restarted.inner)
+            .unwrap()
+            .attempts
+            .contains_key(&operation));
+    }
+
+    #[tokio::test]
     async fn source_repair_clears_only_the_exact_environment_and_source() {
         let detector = Arc::new(ScriptedDetector::new([
             EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("first")),

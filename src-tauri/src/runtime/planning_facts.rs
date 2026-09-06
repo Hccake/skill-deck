@@ -105,7 +105,7 @@ impl RuntimePlanningFactSource {
                 let registry = Arc::clone(&registry);
                 let workspace = self.environments.workspace(distro_name)?;
                 self.environments
-                    .with_session_retry(distro_name, move |session| {
+                    .with_session_read_retry(distro_name, move |session| {
                         let context = context.clone();
                         let registry = Arc::clone(&registry);
                         let workspace = workspace.clone();
@@ -482,7 +482,11 @@ where
     I: AtomicDocumentIo + ?Sized,
 {
     let current = ProjectsFile::new(Vec::new(), semantics);
-    let Some(bytes) = io.read_optional(target).await? else {
+    let Some(bytes) = io
+        .observe(target, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+        .await?
+        .bytes
+    else {
         return Ok(current);
     };
     let parsed: ProjectsFile = serde_json::from_slice(&bytes)?;
@@ -573,7 +577,9 @@ mod tests {
     use crate::core::agent_registry::AgentRegistrySnapshot;
     use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
     use crate::environment::wsl::{WslRuntime, WslSession};
-    use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
+    use crate::storage::atomic_document::{
+        AtomicDocumentIo, DocumentCommitReceipt, DocumentSnapshot, DocumentWriteFailure, IoFuture,
+    };
 
     struct StaticRegistry(Arc<AgentRegistrySnapshot>);
 
@@ -589,21 +595,34 @@ mod tests {
     }
 
     impl AtomicDocumentIo for RecordingDocumentIo {
-        fn read_optional<'a>(
+        fn observe<'a>(
             &'a self,
             target: &'a crate::environment::types::ResourceLocator,
-        ) -> IoFuture<'a, Result<Option<Vec<u8>>, AppError>> {
+            _max_bytes: u64,
+        ) -> IoFuture<'a, Result<DocumentSnapshot, AppError>> {
             Box::pin(async move {
                 self.reads.lock().unwrap().push(target.native_path.clone());
-                Ok(Some(self.bytes.clone()))
+                Ok(DocumentSnapshot {
+                    bytes: Some(self.bytes.clone()),
+                    generation: None,
+                })
             })
         }
 
-        fn write_atomic<'a>(
+        fn replace<'a>(
             &'a self,
             _target: &'a crate::environment::types::ResourceLocator,
+            _expected: DocumentSnapshot,
             _bytes: Vec<u8>,
-        ) -> IoFuture<'a, Result<(), AppError>> {
+        ) -> IoFuture<'a, Result<DocumentCommitReceipt, DocumentWriteFailure>> {
+            Box::pin(async { panic!("context capture is read-only") })
+        }
+
+        fn remove<'a>(
+            &'a self,
+            _target: &'a crate::environment::types::ResourceLocator,
+            _expected: DocumentSnapshot,
+        ) -> IoFuture<'a, Result<(), DocumentWriteFailure>> {
             Box::pin(async { panic!("context capture is read-only") })
         }
     }

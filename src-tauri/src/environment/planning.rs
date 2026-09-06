@@ -238,7 +238,7 @@ impl TargetFactResolver for RuntimeTargetFactResolver {
                     let cancellation_for_retry = cancellation.clone();
                     let workspace = self.environments.workspace(distro_name)?;
                     self.environments
-                        .with_session_retry(distro_name, move |session| {
+                        .with_session_read_retry(distro_name, move |session| {
                             let destinations = destinations.clone();
                             let cancellation = cancellation_for_retry.clone();
                             let workspace = workspace.clone();
