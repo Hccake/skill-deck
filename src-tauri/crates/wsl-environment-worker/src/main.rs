@@ -30,8 +30,8 @@ use wsl_environment_worker::source::{
 use wsl_environment_worker::{
     error_message, execute_directory_count, execute_directory_list, execute_document_read,
     execute_entry_facts, execute_inspection, execute_manifest, execute_map_windows_paths,
-    execute_path_metadata, execute_path_observation, execute_projection, file_sha256, RequestError,
-    WorkerIdentity, WorkerRuntime,
+    execute_path_metadata, execute_path_observation, execute_projection, execute_write_probe,
+    file_sha256, RequestError, WorkerIdentity, WorkerRuntime,
 };
 
 struct QueuedRequest {
@@ -62,6 +62,8 @@ enum InboundAction {
 }
 
 struct PreparedInbound {
+    owner_request_id: u64,
+    deadline: Instant,
     transfer_id: u64,
     total_bytes: u64,
     sha256: String,
@@ -73,6 +75,7 @@ struct PreparedInbound {
 
 struct ActiveInbound {
     owner_request_id: u64,
+    deadline: Instant,
     path: PathBuf,
     action: InboundAction,
     transfer: InboundTransfer,
@@ -142,7 +145,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
 
+        let inbound_deadline = prepared_inbound
+            .as_ref()
+            .map(|inbound| inbound.deadline)
+            .or_else(|| active_inbound.as_ref().map(|inbound| inbound.deadline));
+        let inbound_deadline_sleep =
+            tokio::time::sleep_until(inbound_deadline.unwrap_or_else(Instant::now).into());
+        tokio::pin!(inbound_deadline_sleep);
+
         tokio::select! {
+            _ = &mut inbound_deadline_sleep, if inbound_deadline.is_some() => {
+                if let Some(inbound) = prepared_inbound.take() {
+                    drop(inbound.file);
+                    finish_inbound_with_error(
+                        &writer,
+                        inbound.owner_request_id,
+                        "deadlineExceeded",
+                        &payloads,
+                        inbound.path,
+                        inbound.action,
+                    ).await?;
+                } else if let Some(inbound) = active_inbound.take() {
+                    finish_inbound_with_error(
+                        &writer,
+                        inbound.owner_request_id,
+                        "deadlineExceeded",
+                        &payloads,
+                        inbound.path,
+                        inbound.action,
+                    ).await?;
+                }
+            }
             completed = tasks.join_next(), if !tasks.is_empty() => {
                 match completed {
                     Some(Ok(Ok(request_id))) => {
@@ -183,6 +216,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     | Message::MapHostPaths { .. }
                     | Message::InspectEntries { .. }
                     | Message::ProjectTargets { .. }
+                    | Message::ProbeWriteTargets { .. }
                     | Message::BuildManifest { .. }
                     | Message::AcquireGitSource { .. }
                     | Message::OpenLocalSource { .. }
@@ -276,6 +310,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             .checked_add(1)
                             .ok_or("inbound transfer handle space exhausted")?;
                         prepared_inbound = Some(PreparedInbound {
+                            owner_request_id: request_id,
+                            deadline: Instant::now()
+                                + Duration::from_millis(preparation.deadline_millis),
                             transfer_id,
                             total_bytes: preparation.total_bytes,
                             sha256: preparation.sha256.clone(),
@@ -373,6 +410,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             .checked_add(1)
                             .ok_or("inbound transfer handle space exhausted")?;
                         prepared_inbound = Some(PreparedInbound {
+                            owner_request_id: request_id,
+                            deadline: Instant::now()
+                                + Duration::from_millis(preparation.deadline_millis),
                             transfer_id,
                             total_bytes: preparation.total_bytes,
                             sha256: preparation.sha256,
@@ -414,6 +454,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     .checked_add(1)
                                     .ok_or("inbound transfer handle space exhausted")?;
                                 prepared_inbound = Some(PreparedInbound {
+                                    owner_request_id: request_id,
+                                    deadline: Instant::now()
+                                        + Duration::from_millis(MAX_REQUEST_DEADLINE_MILLIS),
                                     transfer_id,
                                     total_bytes,
                                     sha256,
@@ -456,6 +499,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     .checked_add(1)
                                     .ok_or("inbound transfer handle space exhausted")?;
                                 prepared_inbound = Some(PreparedInbound {
+                                    owner_request_id: request_id,
+                                    deadline: Instant::now()
+                                        + Duration::from_millis(MAX_REQUEST_DEADLINE_MILLIS),
                                     transfer_id,
                                     total_bytes,
                                     sha256,
@@ -539,6 +585,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             .checked_add(1)
                             .ok_or("inbound transfer handle space exhausted")?;
                         prepared_inbound = Some(PreparedInbound {
+                            owner_request_id: request_id,
+                            deadline: Instant::now()
+                                + Duration::from_millis(MAX_REQUEST_DEADLINE_MILLIS),
                             transfer_id,
                             total_bytes,
                             sha256,
@@ -582,6 +631,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         )?;
                         active_inbound = Some(ActiveInbound {
                             owner_request_id,
+                            deadline: prepared.deadline,
                             path: prepared.path,
                             action: prepared.action,
                             transfer,
@@ -665,28 +715,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         if let Some(cancelled) = active.get(&target_request_id) {
                             cancelled.store(true, Ordering::Release);
                         }
+                        if prepared_inbound
+                            .as_ref()
+                            .is_some_and(|inbound| inbound.owner_request_id == target_request_id)
+                        {
+                            let inbound = prepared_inbound.take().unwrap();
+                            drop(inbound.file);
+                            finish_inbound_with_error(
+                                &writer,
+                                target_request_id,
+                                "cancelled",
+                                &payloads,
+                                inbound.path,
+                                inbound.action,
+                            )
+                            .await?;
+                        }
                         if active_inbound
                             .as_ref()
                             .is_some_and(|inbound| inbound.owner_request_id == target_request_id)
                         {
                             let inbound = active_inbound.take().unwrap();
-                            let _ = tokio::fs::remove_file(inbound.path).await;
-                            match inbound.action {
-                                InboundAction::Blob { upload_id, .. }
-                                | InboundAction::Manifest { upload_id } => {
-                                    payloads.lock().await.abort_upload(upload_id);
-                                    send_error(&writer, target_request_id, "cancelled", "payloadUpload").await?;
-                                }
-                                InboundAction::Mutation { .. } => {
-                                    send_error(&writer, target_request_id, "cancelled", "mutation").await?;
-                                }
-                                InboundAction::Document { .. } => {
-                                    send_error(&writer, target_request_id, "cancelled", "documentWrite").await?;
-                                }
-                                InboundAction::Library { .. } => {
-                                    send_error(&writer, target_request_id, "cancelled", "library").await?;
-                                }
-                            }
+                            finish_inbound_with_error(
+                                &writer,
+                                target_request_id,
+                                "cancelled",
+                                &payloads,
+                                inbound.path,
+                                inbound.action,
+                            )
+                            .await?;
                         }
                     }
                     Message::Shutdown => {
@@ -913,6 +971,16 @@ async fn execute_business_request(
                 execute_projection(intent, || operation_cancelled.load(Ordering::Acquire))
             });
             let result = timeout_result(deadline, task, &cancelled, "projection").await?;
+            send_payload_result(request_id, result, request.cancelled, writer).await?;
+        }
+        Message::ProbeWriteTargets { request: intent } => {
+            let deadline = Duration::from_millis(intent.deadline_millis);
+            let cancelled = Arc::clone(&request.cancelled);
+            let operation_cancelled = Arc::clone(&cancelled);
+            let task = tokio::task::spawn_blocking(move || {
+                execute_write_probe(intent, || operation_cancelled.load(Ordering::Acquire))
+            });
+            let result = finish_write_probe(deadline, task, &cancelled).await?;
             send_payload_result(request_id, result, request.cancelled, writer).await?;
         }
         Message::BuildManifest { request: intent } => {
@@ -2172,6 +2240,27 @@ async fn timeout_result<T>(
     }
 }
 
+async fn finish_write_probe(
+    deadline: Duration,
+    mut task: tokio::task::JoinHandle<
+        Result<environment_protocol::WriteProbeResponse, RequestError>,
+    >,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<Result<environment_protocol::WriteProbeResponse, RequestError>, String> {
+    match tokio::time::timeout(deadline, &mut task).await {
+        Ok(joined) => joined.map_err(|error| error.to_string()),
+        Err(_) => {
+            cancelled.store(true, Ordering::Release);
+            // A terminal response must follow the last filesystem side effect.
+            let _ = task.await.map_err(|error| error.to_string())?;
+            Ok(Err(RequestError {
+                code: "deadlineExceeded",
+                phase: "writePreflight",
+            }))
+        }
+    }
+}
+
 async fn send_payload_result<T>(
     request_id: u64,
     result: Result<T, RequestError>,
@@ -2237,6 +2326,27 @@ async fn discard_inbound(
     }
 }
 
+async fn finish_inbound_with_error(
+    writer: &ProtocolWriter,
+    request_id: u64,
+    code: &'static str,
+    payloads: &Arc<tokio::sync::Mutex<PayloadManager>>,
+    path: PathBuf,
+    action: InboundAction,
+) -> Result<(), environment_protocol::WriterError> {
+    let _ = tokio::fs::remove_file(path).await;
+    let phase = match action {
+        InboundAction::Blob { upload_id, .. } | InboundAction::Manifest { upload_id } => {
+            payloads.lock().await.abort_upload(upload_id);
+            "payloadUpload"
+        }
+        InboundAction::Mutation { .. } => "mutation",
+        InboundAction::Document { .. } => "documentWrite",
+        InboundAction::Library { .. } => "library",
+    };
+    send_error(writer, request_id, code, phase).await
+}
+
 fn cancel_all(active: &HashMap<u64, Arc<AtomicBool>>) {
     for cancelled in active.values() {
         cancelled.store(true, Ordering::Release);
@@ -2254,4 +2364,47 @@ fn effective_user_id() -> u32 {
 #[cfg(not(unix))]
 fn effective_user_id() -> u32 {
     0
+}
+
+#[cfg(test)]
+mod write_probe_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn write_probe_timeout_waits_for_inflight_filesystem_work() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed_cancelled = cancelled.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let task = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            released.recv_timeout(Duration::from_secs(2)).unwrap();
+            Ok(environment_protocol::WriteProbeResponse { checked_count: 1 })
+        });
+        ready.await.unwrap();
+        let result =
+            tokio::spawn(async move { finish_write_probe(Duration::ZERO, task, &cancelled).await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !observed_cancelled.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let finished_before_work = result.is_finished();
+        release.send(()).unwrap();
+        let outcome = result.await.unwrap().unwrap();
+
+        assert!(
+            !finished_before_work,
+            "a write probe cannot acknowledge timeout while filesystem work is still running"
+        );
+        assert!(matches!(
+            outcome,
+            Err(RequestError {
+                code: "deadlineExceeded",
+                ..
+            })
+        ));
+    }
 }

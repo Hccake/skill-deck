@@ -14,6 +14,7 @@ use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::PayloadId;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
+use crate::storage::atomic_document::DocumentWriteFailure;
 use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -27,7 +28,8 @@ pub struct MutationUnitProgress {
 
 pub type MutationUnitObserver<'a> = Arc<dyn Fn(MutationUnitProgress) + Send + Sync + 'a>;
 
-pub trait PreparedEntryExecutor: Send + Sync {
+#[cfg(test)]
+pub trait PreparedEntryTestDriver: Send + Sync {
     type Staged: Send;
 
     #[cfg(test)]
@@ -59,7 +61,7 @@ pub trait PreparedLockCommitter: Send + Sync {
     fn commit<'a>(
         &'a self,
         mutation: &'a PreparedLockMutation,
-    ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>>;
+    ) -> BoxFuture<'a, Result<LockCommitReceipt, DocumentWriteFailure>>;
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +104,7 @@ impl<E, L> PhasedUnitExecutor<E, L> {
 #[cfg(test)]
 impl<E, L> PreparedUnitExecutor for PhasedUnitExecutor<E, L>
 where
-    E: PreparedEntryExecutor,
+    E: PreparedEntryTestDriver,
     L: PreparedLockCommitter,
 {
     type Prepared = E::Staged;
@@ -128,7 +130,12 @@ where
                 self.entries.swap(&mut prepared).await?;
                 self.entries.verify(&prepared).await?;
                 match lock {
-                    Some(lock) => self.locks.commit(lock).await.map(Some),
+                    Some(lock) => self
+                        .locks
+                        .commit(lock)
+                        .await
+                        .map(Some)
+                        .map_err(DocumentWriteFailure::into_error),
                     None => Ok(None),
                 }
             }
@@ -265,6 +272,24 @@ where
             return results;
         }
 
+        if plan.kind == crate::core::mutation::MutationKind::ManageLibraries
+            && staged_units.values().any(Result::is_err)
+        {
+            let mut results = Vec::with_capacity(plan.units.len());
+            for (index, unit) in plan.units.iter().enumerate() {
+                match staged_units
+                    .remove(&index)
+                    .expect("every unit has a preflight result")
+                {
+                    Ok((_prepared, _)) => results.push(not_run(unit, AppError::StaleTarget)),
+                    Err(error) => {
+                        results.push(failed_result(unit, error_for_preflight(&error), false));
+                    }
+                }
+            }
+            return results;
+        }
+
         let mut results = Vec::with_capacity(plan.units.len());
         let mut blocked_targets = BTreeSet::new();
         for index in 0..plan.units.len() {
@@ -351,7 +376,7 @@ where
 #[cfg(test)]
 impl<E, L, R> MutationCoordinator<PhasedUnitExecutor<E, L>, R>
 where
-    E: PreparedEntryExecutor,
+    E: PreparedEntryTestDriver,
     L: PreparedLockCommitter,
     R: RuntimeRevisionSource,
 {
@@ -926,6 +951,30 @@ mod tests {
             .position(|entry| entry == "execute:first")
             .unwrap();
         assert!(prepare_third < execute_first);
+    }
+
+    #[tokio::test]
+    async fn library_application_prepare_failure_stops_the_entire_scope_before_writes() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut plan = plan(vec![
+            unit("first", key("first")),
+            unit("second", key("second")),
+            unit("third", key("third")),
+        ]);
+        plan.kind = crate::core::mutation::MutationKind::ManageLibraries;
+
+        let results = coordinator(Failure::PrepareSecond, log.clone())
+            .execute(plan, CancellationSignal::default())
+            .await;
+
+        assert_eq!(results[0].status, MutationUnitStatus::NotRun);
+        assert_eq!(results[1].status, MutationUnitStatus::Failed);
+        assert_eq!(results[2].status, MutationUnitStatus::NotRun);
+        assert!(!log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.starts_with("execute:")));
     }
 
     #[tokio::test]

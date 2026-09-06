@@ -1,9 +1,26 @@
 #![cfg(target_os = "linux")]
 
 use environment_engine::linux_mutation::{
-    content_hash_path, fingerprint_path, parent_identity, EntryAction, EntryIntent, MutationError,
-    StagedMutation,
+    content_hash_path, fingerprint_path, parent_identity, preflight_write_targets, EntryAction,
+    EntryIntent, MutationError, StagedMutation,
 };
+
+#[test]
+fn write_preflight_rejects_an_already_read_only_parent_without_leaving_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let parent = temp.path().join("read-only");
+    let destination = parent.join("demo");
+    std::fs::create_dir(&parent).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    let result = preflight_write_targets(std::slice::from_ref(&destination), || false);
+
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_dir(parent).unwrap().count(), 0);
+}
 use environment_engine::payload::build_payload;
 
 #[test]

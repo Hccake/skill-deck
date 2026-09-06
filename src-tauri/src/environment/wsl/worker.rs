@@ -19,7 +19,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::process::Child;
 use tokio::sync::{oneshot, watch};
 use tokio::task::AbortHandle;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use tokio_util::codec::FramedRead;
 
 use crate::core::mutation::CancellationSignal;
@@ -156,7 +156,7 @@ enum ExpectedResponse {
 #[derive(Debug)]
 pub(super) struct MutationSessionError {
     pub error: AppError,
-    pub accepted_resource_id: Option<String>,
+    pub recovery_resource_id: Option<String>,
 }
 
 enum RoutedResponse {
@@ -312,7 +312,8 @@ impl WorkerSession {
         max_payload_bytes: usize,
         cancellation: Option<CancellationSignal>,
     ) -> Result<Vec<u8>, AppError> {
-        match self
+        let write_probe = matches!(&message, Message::ProbeWriteTargets { .. });
+        let response = self
             .request_response_with_payload_limit(
                 message,
                 limit,
@@ -320,8 +321,17 @@ impl WorkerSession {
                 cancellation,
                 max_payload_bytes,
             )
-            .await?
-        {
+            .await;
+        let probe_may_be_running = write_probe
+            && (matches!(
+                &response,
+                Err(AppError::WslCommandTimedOut | AppError::EnvironmentUnavailable { .. })
+            ) || *self.inner.closed.borrow());
+        if probe_may_be_running {
+            self.retire_and_wait("worker write probe did not reach a terminal result")
+                .await;
+        }
+        match response? {
             RoutedResponse::Payload(payload) => Ok(payload),
             RoutedResponse::Control(Message::Error { code, phase, .. }) => Err(
                 payload_control_error(&self.inner.distro_name, &code, &phase),
@@ -340,6 +350,7 @@ impl WorkerSession {
         max_payload_bytes: usize,
         limit: Duration,
     ) -> Result<Message, AppError> {
+        let deadline = tokio::time::Instant::now() + limit;
         let request_id = self.inner.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (response_tx, response_rx) = oneshot::channel();
         self.inner
@@ -356,21 +367,33 @@ impl WorkerSession {
                     sender: response_tx,
                 },
             );
-        if let Err(error) = self
-            .inner
-            .writer
-            .send_transfer_with_limit(request_id, transfer_id, payload, max_payload_bytes)
-            .await
+        match tokio::time::timeout_at(
+            deadline,
+            self.inner.writer.send_transfer_with_limit(
+                request_id,
+                transfer_id,
+                payload,
+                max_payload_bytes,
+            ),
+        )
+        .await
         {
-            self.inner
-                .routes
-                .lock()
-                .expect("worker response routes lock poisoned")
-                .pending
-                .remove(&request_id);
-            return Err(unavailable(&self.inner.distro_name, error.to_string()));
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                self.inner
+                    .routes
+                    .lock()
+                    .expect("worker response routes lock poisoned")
+                    .pending
+                    .remove(&request_id);
+                return Err(unavailable(&self.inner.distro_name, error.to_string()));
+            }
+            Err(_) => {
+                self.retire("worker transfer did not finish before its deadline");
+                return Err(AppError::WslCommandTimedOut);
+            }
         }
-        match tokio::time::timeout(limit, response_rx).await {
+        match tokio::time::timeout_at(deadline, response_rx).await {
             Ok(Ok(Ok(RoutedResponse::Control(message)))) => Ok(message),
             Ok(Ok(Ok(RoutedResponse::Payload(_)))) => Err(unavailable(
                 &self.inner.distro_name,
@@ -382,32 +405,7 @@ impl WorkerSession {
                 "worker response router stopped",
             )),
             Err(_) => {
-                let cancelled = {
-                    let mut routes = self
-                        .inner
-                        .routes
-                        .lock()
-                        .expect("worker response routes lock poisoned");
-                    let cancelled = routes.cancel_request(request_id);
-                    if cancelled {
-                        routes.remember_tombstone(request_id);
-                    }
-                    cancelled
-                };
-                if cancelled {
-                    let cancel_request_id =
-                        self.inner.next_request_id.fetch_add(1, Ordering::Relaxed);
-                    let _ = self
-                        .inner
-                        .writer
-                        .send_control(WireRecord::Control(Envelope {
-                            request_id: cancel_request_id,
-                            message: Message::Cancel {
-                                target_request_id: request_id,
-                            },
-                        }))
-                        .await;
-                }
+                self.retire("worker transfer response exceeded its deadline");
                 Err(AppError::WslCommandTimedOut)
             }
         }
@@ -416,10 +414,12 @@ impl WorkerSession {
     pub(super) async fn send_prepared_mutation(
         &self,
         transfer_id: u64,
+        resource_id: &str,
         payload: &[u8],
         cancellation: CancellationSignal,
         limit: Duration,
     ) -> Result<environment_protocol::MutationUnitOutcome, MutationSessionError> {
+        let deadline = tokio::time::Instant::now() + limit;
         let request_id = self.inner.next_request_id.fetch_add(1, Ordering::Relaxed);
         let accepted_resource = Arc::new(Mutex::new(None));
         let (response_tx, response_rx) = oneshot::channel();
@@ -437,29 +437,38 @@ impl WorkerSession {
                     sender: response_tx,
                 },
             );
-        if let Err(error) = self
-            .inner
-            .writer
-            .send_transfer_with_limit(
+        match tokio::time::timeout_at(
+            deadline,
+            self.inner.writer.send_transfer_with_limit(
                 request_id,
                 transfer_id,
                 payload,
                 environment_protocol::MAX_MUTATION_TRANSFER_BYTES,
-            )
-            .await
+            ),
+        )
+        .await
         {
-            self.inner
-                .routes
-                .lock()
-                .expect("worker response routes lock poisoned")
-                .pending
-                .remove(&request_id);
-            return Err(MutationSessionError {
-                error: unavailable(&self.inner.distro_name, error.to_string()),
-                accepted_resource_id: None,
-            });
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                self.inner
+                    .routes
+                    .lock()
+                    .expect("worker response routes lock poisoned")
+                    .pending
+                    .remove(&request_id);
+                return Err(MutationSessionError {
+                    error: unavailable(&self.inner.distro_name, error.to_string()),
+                    recovery_resource_id: None,
+                });
+            }
+            Err(_) => {
+                self.retire("worker mutation transfer did not finish before its deadline");
+                return Err(MutationSessionError {
+                    error: AppError::WslCommandTimedOut,
+                    recovery_resource_id: None,
+                });
+            }
         }
-        let deadline = tokio::time::Instant::now() + limit;
         let mut response_rx = response_rx;
         let mut cancel_sent = false;
         let waited = tokio::select! {
@@ -468,16 +477,16 @@ impl WorkerSession {
             _ = cancellation.cancelled() => {
                 cancel_sent = true;
                 let cancel_request_id = self.inner.next_request_id.fetch_add(1, Ordering::Relaxed);
-                let _ = self
-                    .inner
-                    .writer
-                    .send_control(WireRecord::Control(Envelope {
+                let _ = tokio::time::timeout_at(
+                    deadline,
+                    self.inner.writer.send_control(WireRecord::Control(Envelope {
                         request_id: cancel_request_id,
                         message: Message::Cancel {
                             target_request_id: request_id,
                         },
-                    }))
-                    .await;
+                    })),
+                )
+                .await;
                 tokio::time::timeout_at(deadline, &mut response_rx)
                     .await
                     .ok()
@@ -506,6 +515,7 @@ impl WorkerSession {
                 "worker response router stopped",
             )),
             None => {
+                self.retire("worker mutation did not reach a terminal result before its deadline");
                 let cancelled = {
                     let mut routes = self
                         .inner
@@ -541,10 +551,11 @@ impl WorkerSession {
         };
         result.map_err(|error| MutationSessionError {
             error,
-            accepted_resource_id: accepted_resource
+            recovery_resource_id: accepted_resource
                 .lock()
                 .expect("worker mutation accepted state lock poisoned")
-                .clone(),
+                .clone()
+                .or_else(|| Some(resource_id.to_string())),
         })
     }
 
@@ -604,6 +615,7 @@ impl WorkerSession {
         cancellation: Option<CancellationSignal>,
         max_payload_bytes: usize,
     ) -> Result<RoutedResponse, AppError> {
+        let deadline = tokio::time::Instant::now() + limit;
         let request_id = self.inner.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (response_tx, response_rx) = oneshot::channel();
         self.inner
@@ -620,37 +632,64 @@ impl WorkerSession {
                     sender: response_tx,
                 },
             );
-        if let Err(error) = self
-            .inner
-            .writer
-            .send_control(WireRecord::Control(Envelope {
-                request_id,
-                message,
-            }))
-            .await
-        {
+        match tokio::time::timeout_at(
+            deadline,
             self.inner
-                .routes
-                .lock()
-                .expect("worker response routes lock poisoned")
-                .pending
-                .remove(&request_id);
-            return Err(unavailable(&self.inner.distro_name, error.to_string()));
+                .writer
+                .send_control(WireRecord::Control(Envelope {
+                    request_id,
+                    message,
+                })),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                self.inner
+                    .routes
+                    .lock()
+                    .expect("worker response routes lock poisoned")
+                    .pending
+                    .remove(&request_id);
+                return Err(unavailable(&self.inner.distro_name, error.to_string()));
+            }
+            Err(_) => {
+                self.retire("worker control request did not send before its deadline");
+                return Err(AppError::WslCommandTimedOut);
+            }
         }
 
         enum WaitResult<T> {
             Response(T),
             TimedOut,
-            Cancelled,
+            Cancelled { terminal_observed: bool },
         }
+        let mut response_rx = response_rx;
         let waited = if let Some(cancellation) = cancellation {
             tokio::select! {
-                response = response_rx => WaitResult::Response(response),
-                _ = sleep(limit) => WaitResult::TimedOut,
-                _ = cancellation.cancelled() => WaitResult::Cancelled,
+                response = &mut response_rx => WaitResult::Response(response),
+                _ = tokio::time::sleep_until(deadline) => WaitResult::TimedOut,
+                _ = cancellation.cancelled() => {
+                    let cancel_request_id =
+                        self.inner.next_request_id.fetch_add(1, Ordering::Relaxed);
+                    let sent = tokio::time::timeout_at(
+                        deadline,
+                        self.inner.writer.send_control(WireRecord::Control(Envelope {
+                            request_id: cancel_request_id,
+                            message: Message::Cancel {
+                                target_request_id: request_id,
+                            },
+                        })),
+                    ).await;
+                    let terminal_observed = matches!(sent, Ok(Ok(())))
+                        && tokio::time::timeout_at(deadline, &mut response_rx)
+                            .await
+                            .is_ok();
+                    WaitResult::Cancelled { terminal_observed }
+                },
             }
         } else {
-            match tokio::time::timeout(limit, response_rx).await {
+            match tokio::time::timeout_at(deadline, response_rx).await {
                 Ok(response) => WaitResult::Response(response),
                 Err(_) => WaitResult::TimedOut,
             }
@@ -661,8 +700,7 @@ impl WorkerSession {
                 &self.inner.distro_name,
                 "worker response router stopped",
             )),
-            reason @ (WaitResult::TimedOut | WaitResult::Cancelled) => {
-                let was_cancelled = matches!(reason, WaitResult::Cancelled);
+            WaitResult::TimedOut => {
                 let cancelled = {
                     let mut routes = self
                         .inner
@@ -681,25 +719,75 @@ impl WorkerSession {
                     let _ = self
                         .inner
                         .writer
-                        .send_control(WireRecord::Control(Envelope {
+                        .try_send_control(WireRecord::Control(Envelope {
                             request_id: cancel_request_id,
                             message: Message::Cancel {
                                 target_request_id: request_id,
                             },
-                        }))
-                        .await;
+                        }));
                 }
-                if was_cancelled {
-                    Err(AppError::MutationCancelled)
-                } else {
-                    Err(AppError::WslCommandTimedOut)
+                Err(AppError::WslCommandTimedOut)
+            }
+            WaitResult::Cancelled { terminal_observed } => {
+                let cancelled = {
+                    let mut routes = self
+                        .inner
+                        .routes
+                        .lock()
+                        .expect("worker response routes lock poisoned");
+                    let cancelled = routes.cancel_request(request_id);
+                    if cancelled {
+                        routes.remember_tombstone(request_id);
+                    }
+                    cancelled
+                };
+                if cancelled && !terminal_observed {
+                    self.retire("worker cancellation did not reach a terminal result");
                 }
+                Err(AppError::MutationCancelled)
             }
         }
     }
 
     pub(super) fn closed_receiver(&self) -> watch::Receiver<bool> {
         self.inner.closed.subscribe()
+    }
+
+    fn retire(&self, message: &str) {
+        fail_pending(
+            &self.inner.routes,
+            unavailable(&self.inner.distro_name, message),
+        );
+        self.inner.closed.send_replace(true);
+        self.inner.reader_task.abort();
+        self.inner.writer_task.abort();
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(task) = &self.inner.stderr_task {
+                task.abort();
+            }
+            if let Ok(mut child) = self.inner.child.lock() {
+                if let Some(child) = child.as_mut() {
+                    let _ = child.start_kill();
+                }
+            }
+        }
+    }
+
+    async fn retire_and_wait(&self, message: &str) {
+        self.retire(message);
+        #[cfg(target_os = "windows")]
+        {
+            let child = self
+                .inner
+                .child
+                .lock()
+                .ok()
+                .and_then(|mut child| child.take());
+            if let Some(mut child) = child {
+                let _ = child.wait().await;
+            }
+        }
     }
 
     async fn handshake(
@@ -1419,6 +1507,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn control_request_deadline_includes_a_blocked_send() {
+        let (client, _server) = duplex(1);
+        let (client_reader, client_writer) = split(client);
+        let session = WorkerSession::from_io(client_reader, client_writer, "Ubuntu".to_string());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            for request_id in 1..=65 {
+                session
+                    .inner
+                    .writer
+                    .send_control(WireRecord::Control(Envelope {
+                        request_id,
+                        message: Message::ObservePath {
+                            path: "/tmp".to_string(),
+                        },
+                    }))
+                    .await
+                    .unwrap();
+            }
+        })
+        .await
+        .expect("control queue fixture must fill without blocking");
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            session.request(
+                Message::ObservePath {
+                    path: "/home/alice".to_string(),
+                },
+                Duration::from_millis(25),
+            ),
+        )
+        .await
+        .expect("the request deadline must include control queue backpressure");
+
+        assert_eq!(
+            result.unwrap_err(),
+            crate::error::AppError::WslCommandTimedOut
+        );
+        assert!(*session.closed_receiver().borrow());
+    }
+
+    #[tokio::test]
     async fn payload_response_is_bounded_reassembled_and_verified() {
         let (client, server) = duplex(4096);
         let (client_reader, client_writer) = split(client);
@@ -1533,6 +1663,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prepared_transfer_deadline_includes_a_blocked_send() {
+        let (client, _server) = duplex(1);
+        let (client_reader, client_writer) = split(client);
+        let session = WorkerSession::from_io(client_reader, client_writer, "Ubuntu".to_string());
+        let payload = vec![0x5a; environment_protocol::MAX_PAYLOAD_CHUNK_BYTES * 16];
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            session.send_prepared_transfer(700, &payload, payload.len(), Duration::from_millis(25)),
+        )
+        .await
+        .expect("the transfer deadline must include writer backpressure");
+
+        assert_eq!(
+            result.unwrap_err(),
+            crate::error::AppError::WslCommandTimedOut
+        );
+        assert!(*session.closed_receiver().borrow());
+    }
+
+    #[tokio::test]
     async fn mutation_acceptance_keeps_the_pending_route_until_terminal_payload() {
         let (client, server) = duplex(4096);
         let (client_reader, client_writer) = split(client);
@@ -1573,6 +1724,7 @@ mod tests {
         let outcome = session
             .send_prepared_mutation(
                 700,
+                "resource-1",
                 b"request",
                 CancellationSignal::default(),
                 Duration::from_secs(1),
@@ -1586,6 +1738,32 @@ mod tests {
             environment_protocol::MutationUnitOutcome::Cancelled
         );
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mutation_deadline_includes_a_blocked_send() {
+        let (client, _server) = duplex(1);
+        let (client_reader, client_writer) = split(client);
+        let session = WorkerSession::from_io(client_reader, client_writer, "Ubuntu".to_string());
+        let payload = vec![0x5a; environment_protocol::MAX_PAYLOAD_CHUNK_BYTES * 16];
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            session.send_prepared_mutation(
+                700,
+                "resource-requested",
+                &payload,
+                CancellationSignal::default(),
+                Duration::from_millis(25),
+            ),
+        )
+        .await
+        .expect("the mutation deadline must include writer backpressure")
+        .unwrap_err();
+
+        assert_eq!(result.error, crate::error::AppError::WslCommandTimedOut);
+        assert_eq!(result.recovery_resource_id, None);
+        assert!(*session.closed_receiver().borrow());
     }
 
     #[tokio::test]
@@ -1621,6 +1799,7 @@ mod tests {
             let error = session
                 .send_prepared_mutation(
                     710,
+                    "resource-requested",
                     b"request",
                     CancellationSignal::default(),
                     Duration::from_secs(1),
@@ -1629,8 +1808,12 @@ mod tests {
                 .unwrap_err();
 
             assert_eq!(
-                error.accepted_resource_id.as_deref(),
-                accepted.then_some("resource-accepted")
+                error.recovery_resource_id.as_deref(),
+                Some(if accepted {
+                    "resource-accepted"
+                } else {
+                    "resource-requested"
+                })
             );
             server_task.await.unwrap();
         }
@@ -1684,7 +1867,13 @@ mod tests {
         };
 
         let outcome = session
-            .send_prepared_mutation(711, b"request", cancellation, Duration::from_secs(1))
+            .send_prepared_mutation(
+                711,
+                "resource-cancelled",
+                b"request",
+                cancellation,
+                Duration::from_secs(1),
+            )
             .await
             .map_err(|error| error.error)
             .unwrap();
@@ -1849,6 +2038,43 @@ mod tests {
             }
         ));
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_probe_timeout_retires_the_worker_session() {
+        let (client, server) = duplex(4096);
+        let (client_reader, client_writer) = split(client);
+        let session = WorkerSession::from_io(client_reader, client_writer, "Ubuntu".to_string());
+        let closed = session.closed_receiver();
+        let (server_reader, _server_writer) = split(server);
+        let mut reader = FramedRead::new(server_reader, codec());
+        let requesting = session.clone();
+        let request = tokio::spawn(async move {
+            requesting
+                .request_payload_with_limit(
+                    Message::ProbeWriteTargets {
+                        request: environment_protocol::WriteProbeRequest {
+                            destinations: vec!["/tmp/skills/demo".to_string()],
+                            deadline_millis: 1_000,
+                        },
+                    },
+                    Duration::from_millis(50),
+                    1024,
+                    None,
+                )
+                .await
+        });
+        assert!(matches!(
+            next_envelope(&mut reader).await.message,
+            Message::ProbeWriteTargets { .. }
+        ));
+        let result = request.await.unwrap();
+
+        assert_eq!(result, Err(crate::error::AppError::WslCommandTimedOut));
+        assert!(
+            *closed.borrow(),
+            "a timed-out write probe must not leave a reusable Worker session"
+        );
     }
 
     #[tokio::test]

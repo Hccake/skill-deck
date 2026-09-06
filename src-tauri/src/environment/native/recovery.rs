@@ -9,14 +9,14 @@ use crate::environment::recovery::{
 };
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
 use crate::error::{AppError, RecoveryResourceId};
-use crate::storage::atomic_document::AtomicDocumentIo;
+use crate::storage::atomic_document::{AtomicDocumentIo, DocumentWriteFailure, PublicationState};
 
 const MARKER_FILE: &str = "recovery.json";
 
 #[derive(Clone)]
 pub struct NativeRecoveryMarkerStore {
     root: PathBuf,
-    io: NativeAtomicDocumentIo,
+    io: std::sync::Arc<dyn AtomicDocumentIo>,
 }
 
 impl NativeRecoveryMarkerStore {
@@ -24,7 +24,19 @@ impl NativeRecoveryMarkerStore {
         fs::create_dir_all(root.as_ref())?;
         Ok(Self {
             root: fs::canonicalize(root.as_ref())?,
-            io: NativeAtomicDocumentIo,
+            io: std::sync::Arc::new(NativeAtomicDocumentIo),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_io(
+        root: impl AsRef<Path>,
+        io: std::sync::Arc<dyn AtomicDocumentIo>,
+    ) -> Result<Self, AppError> {
+        fs::create_dir_all(root.as_ref())?;
+        Ok(Self {
+            root: fs::canonicalize(root.as_ref())?,
+            io,
         })
     }
 
@@ -162,17 +174,28 @@ impl RecoveryMarkerStore for NativeRecoveryMarkerStore {
             }
             let root = self.managed_root(&marker.resource_id);
             fs::create_dir(&root)?;
+            let locator = self.marker_locator(&root);
+            let snapshot = self
+                .io
+                .observe(
+                    &locator,
+                    u64::from(environment_protocol::MAX_DOCUMENT_BYTES),
+                )
+                .await?;
             let result = self
                 .io
-                .write_atomic(
-                    &self.marker_locator(&root),
-                    serde_json::to_vec_pretty(marker)?,
-                )
+                .replace(&locator, snapshot, serde_json::to_vec_pretty(marker)?)
                 .await;
-            if result.is_err() {
+            if matches!(
+                &result,
+                Err(DocumentWriteFailure {
+                    publication: PublicationState::NotPublished,
+                    ..
+                })
+            ) {
                 let _ = fs::remove_dir_all(&root);
             }
-            result?;
+            result.map_err(|failure| marker_write_error(&marker.resource_id, failure))?;
             Ok(self.marker_ref(marker, &root))
         })
     }
@@ -190,12 +213,19 @@ impl RecoveryMarkerStore for NativeRecoveryMarkerStore {
             {
                 return Err(AppError::StaleTarget);
             }
-            self.io
-                .write_atomic(
-                    &self.marker_locator(&root),
-                    serde_json::to_vec_pretty(marker)?,
+            let locator = self.marker_locator(&root);
+            let snapshot = self
+                .io
+                .observe(
+                    &locator,
+                    u64::from(environment_protocol::MAX_DOCUMENT_BYTES),
                 )
+                .await?;
+            self.io
+                .replace(&locator, snapshot, serde_json::to_vec_pretty(marker)?)
                 .await
+                .map(|_| ())
+                .map_err(|failure| marker_write_error(&marker_ref.resource_id, failure))
         })
     }
 
@@ -273,6 +303,19 @@ impl RecoveryMarkerStore for NativeRecoveryMarkerStore {
             fs::remove_dir_all(root)?;
             Ok(())
         })
+    }
+}
+
+fn marker_write_error(resource_id: &RecoveryResourceId, failure: DocumentWriteFailure) -> AppError {
+    if failure.publication == PublicationState::NotPublished {
+        return failure.error;
+    }
+    AppError::RecoveryRequired {
+        recovery_resource_id: resource_id.clone(),
+        message: format!(
+            "recovery marker publication is not confirmed during {:?}: {}",
+            failure.phase, failure.error
+        ),
     }
 }
 

@@ -1,10 +1,12 @@
 use std::io::Write;
 
 #[cfg(target_os = "linux")]
-use environment_protocol::{InspectionEntryKind, InspectionRequest, InspectionRoot};
+use environment_protocol::{
+    InspectionEntryKind, InspectionRequest, InspectionRoot, WriteProbeRequest,
+};
 use environment_protocol::{Message, PathKind};
 #[cfg(target_os = "linux")]
-use wsl_environment_worker::execute_inspection;
+use wsl_environment_worker::{execute_inspection, execute_write_probe};
 use wsl_environment_worker::{file_sha256, Dispatch, WorkerIdentity, WorkerRuntime};
 
 fn identity(home: &str) -> WorkerIdentity {
@@ -132,4 +134,26 @@ fn inspection_adapter_executes_the_shared_engine_and_returns_raw_path_bytes() {
     assert!(response.facts.iter().any(|fact| {
         fact.relative_path == vec![b's', b'k', 0x80] && fact.kind == InspectionEntryKind::File
     }));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn write_probe_adapter_rejects_an_already_read_only_parent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let parent = temp.path().join("read-only");
+    std::fs::create_dir(&parent).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    let result = execute_write_probe(
+        WriteProbeRequest {
+            destinations: vec![parent.join("demo").to_string_lossy().into_owned()],
+            deadline_millis: 1_000,
+        },
+        || false,
+    );
+
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
 }

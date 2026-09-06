@@ -367,6 +367,17 @@ pub struct ProjectionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WriteProbeRequest {
+    pub destinations: Vec<String>,
+    pub deadline_millis: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WriteProbeResponse {
+    pub checked_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestRequest {
     pub root: String,
     pub deadline_millis: u64,
@@ -733,6 +744,9 @@ pub enum Message {
     ProjectTargets {
         request: ProjectionRequest,
     },
+    ProbeWriteTargets {
+        request: WriteProbeRequest,
+    },
     BuildManifest {
         request: ManifestRequest,
     },
@@ -955,6 +969,10 @@ impl ProtocolWriter {
             .send(record)
             .await
             .map_err(|_| WriterError::Closed)
+    }
+
+    pub fn try_send_control(&self, record: WireRecord) -> bool {
+        self.control.try_send(record).is_ok()
     }
 
     pub async fn send_binary(&self, record: WireRecord) -> Result<(), WriterError> {

@@ -10,7 +10,8 @@ use environment_engine::inspection::{
 #[cfg(target_os = "linux")]
 use environment_engine::{
     directory as engine_directory, document as engine_document, entry as engine_entry,
-    manifest as engine_manifest, path as engine_path, projection as engine_projection,
+    linux_mutation as engine_linux_mutation, manifest as engine_manifest, path as engine_path,
+    projection as engine_projection,
 };
 #[cfg(target_os = "linux")]
 use environment_protocol::{
@@ -26,7 +27,8 @@ use environment_protocol::{
     DocumentReadRequest, DocumentReadResponse, EntryFactsRequest, EntryFactsResponse,
     InspectionRequest, InspectionResponse, ManifestRequest, ManifestResponse,
     MapWindowsPathsRequest, MapWindowsPathsResponse, Message, PathKind, PathMetadataRequest,
-    PathMetadataResponse, ProjectionRequest, ProjectionResponse,
+    PathMetadataResponse, ProjectionRequest, ProjectionResponse, WriteProbeRequest,
+    WriteProbeResponse,
 };
 use sha2::{Digest, Sha256};
 
@@ -583,6 +585,40 @@ where
 }
 
 #[cfg(target_os = "linux")]
+pub fn execute_write_probe<F>(
+    request: WriteProbeRequest,
+    is_cancelled: F,
+) -> Result<WriteProbeResponse, RequestError>
+where
+    F: Fn() -> bool,
+{
+    validate_paths(
+        &request.destinations,
+        request.deadline_millis,
+        "writePreflight",
+    )?;
+    let checked_count = u32::try_from(request.destinations.len())
+        .map_err(|_| planning_error("invalidRequest", "writePreflight"))?;
+    engine_linux_mutation::preflight_write_targets(
+        &request
+            .destinations
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>(),
+        is_cancelled,
+    )
+    .map_err(|error| {
+        let code = match error {
+            engine_linux_mutation::MutationError::Cancelled => "cancelled",
+            engine_linux_mutation::MutationError::InvalidRequest => "invalidRequest",
+            _ => "writeProbeFailed",
+        };
+        planning_error(code, "writePreflight")
+    })?;
+    Ok(WriteProbeResponse { checked_count })
+}
+
+#[cfg(target_os = "linux")]
 pub fn execute_manifest<F>(
     request: ManifestRequest,
     is_cancelled: F,
@@ -726,6 +762,17 @@ where
     F: Fn() -> bool,
 {
     Err(planning_error("unsupportedPlatform", "projection"))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn execute_write_probe<F>(
+    _request: WriteProbeRequest,
+    _is_cancelled: F,
+) -> Result<WriteProbeResponse, RequestError>
+where
+    F: Fn() -> bool,
+{
+    Err(planning_error("unsupportedPlatform", "writePreflight"))
 }
 
 #[cfg(not(target_os = "linux"))]

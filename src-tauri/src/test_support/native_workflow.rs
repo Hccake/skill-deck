@@ -31,7 +31,7 @@ use crate::application::manage_agents::{
     ManageAgentsPreviewRequest, ManageAgentsRequest, ManageAgentsService,
 };
 use crate::application::mutation::coordinator::{
-    BoxFuture, MutationCoordinator, PreparedEntryExecutor, PreparedLockCommitter,
+    BoxFuture, MutationCoordinator, PreparedEntryTestDriver, PreparedLockCommitter,
     RuntimeRevisionSource,
 };
 use crate::application::mutation::executor::MutationPlanExecutor;
@@ -85,6 +85,7 @@ use crate::models::InstallMode;
 use crate::runtime::copy_service::RuntimeCopyProjectComparator;
 use crate::runtime::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::runtime::planning_facts::{NativeRuntimeSnapshot, RuntimePlanningFactSource};
+use crate::storage::atomic_document::DocumentWriteFailure;
 use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
 pub(crate) struct StaticRegistry(pub(crate) Arc<AgentRegistrySnapshot>);
@@ -217,7 +218,7 @@ struct SelectiveVerifyStaged {
     fail_verify: bool,
 }
 
-impl PreparedEntryExecutor for SelectiveVerifyFailureEntryExecutor {
+impl PreparedEntryTestDriver for SelectiveVerifyFailureEntryExecutor {
     type Staged = SelectiveVerifyStaged;
 
     fn stage<'a>(
@@ -269,7 +270,7 @@ impl PreparedEntryExecutor for SelectiveVerifyFailureEntryExecutor {
     }
 }
 
-impl PreparedEntryExecutor for VerifyFailureEntryExecutor {
+impl PreparedEntryTestDriver for VerifyFailureEntryExecutor {
     type Staged = NativePreparedEntrySet;
 
     fn stage<'a>(
@@ -338,13 +339,15 @@ impl PreparedLockCommitter for RejectingLockCommitter {
     fn commit<'a>(
         &'a self,
         _mutation: &'a PreparedLockMutation,
-    ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
+    ) -> BoxFuture<'a, Result<LockCommitReceipt, DocumentWriteFailure>> {
         self.attempted
             .store(true, std::sync::atomic::Ordering::SeqCst);
         Box::pin(async {
-            Err(AppError::ExecutionFailed {
-                message: "injected Manage Agents lock failure".to_string(),
-            })
+            Err(DocumentWriteFailure::not_published(
+                AppError::ExecutionFailed {
+                    message: "injected Manage Agents lock failure".to_string(),
+                },
+            ))
         })
     }
 }
@@ -2131,7 +2134,7 @@ mod update_lifecycle {
     use super::*;
     use crate::application::install::InstallFuture;
     use crate::application::mutation::coordinator::{
-        BoxFuture, MutationCoordinator, PreparedEntryExecutor,
+        BoxFuture, MutationCoordinator, PreparedEntryTestDriver,
     };
     use crate::application::mutation::executor::MutationPlanExecutor;
     use crate::application::mutation::plan::{ExecutionUnit, MutationPlan};
@@ -2190,7 +2193,7 @@ mod update_lifecycle {
         private_root: PathBuf,
     }
 
-    impl PreparedEntryExecutor for StageFailureEntryExecutor {
+    impl PreparedEntryTestDriver for StageFailureEntryExecutor {
         type Staged = NativePreparedEntrySet;
 
         fn stage<'a>(

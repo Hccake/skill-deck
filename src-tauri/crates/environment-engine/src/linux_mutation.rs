@@ -3,6 +3,8 @@ use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
@@ -126,6 +128,70 @@ pub fn fingerprint_path(path: &Path) -> Result<String, MutationError> {
         hasher.update(target.as_os_str().as_encoded_bytes());
     }
     Ok(format!("entry-v1-{:x}", hasher.finalize()))
+}
+
+pub fn preflight_write_targets<F>(
+    destinations: &[PathBuf],
+    is_cancelled: F,
+) -> Result<(), MutationError>
+where
+    F: Fn() -> bool,
+{
+    preflight_write_targets_platform(destinations, is_cancelled)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn preflight_write_targets_platform(
+    _destinations: &[PathBuf],
+    _is_cancelled: impl Fn() -> bool,
+) -> Result<(), MutationError> {
+    Err(MutationError::UnsupportedPlatform)
+}
+
+#[cfg(target_os = "linux")]
+fn preflight_write_targets_platform(
+    destinations: &[PathBuf],
+    is_cancelled: impl Fn() -> bool,
+) -> Result<(), MutationError> {
+    static NEXT_PROBE: AtomicU64 = AtomicU64::new(1);
+
+    if destinations.is_empty() || destinations.iter().any(|path| !path.is_absolute()) {
+        return Err(MutationError::InvalidRequest);
+    }
+    for destination in destinations {
+        if is_cancelled() {
+            return Err(MutationError::Cancelled);
+        }
+        let mut parent = destination.parent().ok_or(MutationError::InvalidRequest)?;
+        loop {
+            match fs::symlink_metadata(parent) {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    parent = parent.parent().ok_or(MutationError::InvalidRequest)?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if !fs::metadata(parent).is_ok_and(|metadata| metadata.is_dir()) {
+            return Err(MutationError::InvalidRequest);
+        }
+        let sequence = NEXT_PROBE.fetch_add(1, Ordering::Relaxed);
+        let probe = parent.join(format!(
+            ".skill-deck-preflight-{}-{sequence}",
+            std::process::id()
+        ));
+        let renamed = probe.with_extension("renamed");
+        fs::create_dir(&probe)?;
+        if let Err(error) = fs::rename(&probe, &renamed) {
+            let _ = fs::remove_dir(&probe);
+            return Err(error.into());
+        }
+        if let Err(error) = fs::remove_dir(&renamed) {
+            let _ = fs::remove_dir(&renamed);
+            return Err(error.into());
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_intents<F>(intents: &[EntryIntent], is_cancelled: F) -> Result<(), MutationError>

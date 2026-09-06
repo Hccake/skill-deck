@@ -749,22 +749,34 @@ fn delete_native_library(root: &Path, library_id: &LibraryId) -> Result<LibraryC
     validate_catalog(&catalog)?;
     remove_catalog_library(&mut catalog, library_id.as_str())?;
     let updated_bytes = serde_json::to_vec_pretty(&catalog)?;
-    crate::environment::native::atomic_file::write_native_atomic(
-        &root.join("catalog.json"),
-        &updated_bytes,
-    )?;
     let destination = root.join("libraries").join(library_id.as_str());
-    match fs::remove_dir_all(destination) {
-        Ok(()) => Ok(catalog),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(catalog),
-        Err(error) => {
-            crate::environment::native::atomic_file::write_native_atomic(
-                &root.join("catalog.json"),
-                &original_bytes,
-            )?;
-            Err(error.into())
+    let metadata = match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Some(metadata),
+        Ok(_) => return Err(AppError::StaleTarget),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.is_none() {
+        save_native_catalog_if_unchanged(root, Some(&original_bytes), &updated_bytes)?;
+        return Ok(catalog);
+    }
+    let catalog_hash = bytes_sha256(&updated_bytes);
+    let commit = (|| {
+        stage_native_skill_deletion(root, &destination)?;
+        prepare_native_catalog_commit(root, &catalog_hash)?;
+        save_native_catalog_if_unchanged(root, Some(&original_bytes), &updated_bytes)?;
+        finalize_native_catalog_commit(root, &catalog_hash)
+    })();
+    if let Err(error) = commit {
+        let current_hash = fs::read(root.join("catalog.json"))
+            .ok()
+            .map(|bytes| bytes_sha256(&bytes));
+        recover_native_library_transactions(root, current_hash.as_deref())?;
+        if current_hash.as_deref() != Some(&catalog_hash) {
+            return Err(error);
         }
     }
+    Ok(catalog)
 }
 
 async fn delete_wsl_library(
@@ -1315,6 +1327,18 @@ fn recover_native_transactions(root: &Path, catalog_hash: Option<&str>) -> Resul
         let destination = PathBuf::from(record.destination);
         let stage = transaction.join("stage");
         let backup = transaction.join("backup");
+        if matches!(
+            record.phase,
+            NativeLibraryTransactionPhase::CatalogCommitted
+        ) {
+            if let Err(error) = cleanup_native_committed_transaction(&transaction) {
+                log::warn!(
+                    "Skill Library committed transaction cleanup remains pending at {}: {error}",
+                    transaction.display()
+                );
+            }
+            continue;
+        }
         match record.phase {
             NativeLibraryTransactionPhase::Preparing => {}
             NativeLibraryTransactionPhase::Staged if destination.exists() || stage.exists() => {}
@@ -1322,6 +1346,14 @@ fn recover_native_transactions(root: &Path, catalog_hash: Option<&str>) -> Resul
             }
             NativeLibraryTransactionPhase::BackedUp
                 if !destination.exists() && backup.exists() && stage.exists() =>
+            {
+                fs::rename(&backup, &destination)?;
+            }
+            NativeLibraryTransactionPhase::BackedUp
+                if !record.desired_presence
+                    && !destination.exists()
+                    && backup.exists()
+                    && !stage.exists() =>
             {
                 fs::rename(&backup, &destination)?;
             }
@@ -1342,8 +1374,6 @@ fn recover_native_transactions(root: &Path, catalog_hash: Option<&str>) -> Resul
                     rollback_native_library_content(&destination, &backup)?;
                 }
             }
-            NativeLibraryTransactionPhase::CatalogCommitted
-                if destination.exists() == record.desired_presence => {}
             _ => {
                 return Err(AppError::ConfigurationCorrupted {
                     message: format!(
@@ -1412,13 +1442,27 @@ fn finalize_native_catalog_commit(root: &Path, catalog_hash: &str) -> Result<(),
                 record.desired_presence,
                 record.expected_catalog_hash,
             )?;
-            let backup = transaction.join("backup");
-            if backup.exists() {
-                fs::remove_dir_all(backup)?;
+            if let Err(error) = cleanup_native_committed_transaction(&transaction) {
+                log::warn!(
+                    "Skill Library commit succeeded but cleanup remains pending at {}: {error}",
+                    transaction.display()
+                );
             }
-            fs::remove_dir_all(transaction)?;
         }
     }
+    Ok(())
+}
+
+fn cleanup_native_committed_transaction(transaction: &Path) -> Result<(), AppError> {
+    let stage = transaction.join("stage");
+    if stage.exists() {
+        fs::remove_dir_all(stage)?;
+    }
+    let backup = transaction.join("backup");
+    if backup.exists() {
+        fs::remove_dir_all(backup)?;
+    }
+    fs::remove_dir_all(transaction)?;
     Ok(())
 }
 
@@ -1487,6 +1531,7 @@ mod tests {
         LibraryApplicationRecord, LibraryApplicationRepository, LibraryApplicationState,
     };
     use crate::application::skill_libraries::SkillLibraryModule;
+    use crate::application::skill_libraries::LIBRARY_SCHEMA_VERSION;
     use crate::application::skill_paths::{SkillPathObserver, SkillTargetRequest};
     use crate::core::projects::ProjectMigrationState;
     use crate::core::skill_payload::build_skill_payload;
@@ -1683,6 +1728,157 @@ mod tests {
         assert_eq!(catalog.libraries.len(), 1);
         assert_eq!(catalog.libraries[0].id, library_id);
         assert!(library_path.is_file());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_library_delete_stays_committed_when_backup_cleanup_is_blocked() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = Arc::new(RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        ));
+        let created = SkillLibraryModule::new(repository.clone())
+            .create(EnvironmentRef::Native, "Backend".to_string())
+            .await
+            .unwrap();
+        let library_id = created.libraries[0].id.clone();
+        let library_path = root.join("libraries").join(library_id.as_str());
+        let locked = library_path.join("skills/locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("SKILL.md"), b"content").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = repository
+            .delete_library(&EnvironmentRef::Native, &library_id)
+            .await;
+
+        assert!(result.is_ok(), "delete must stay committed: {result:?}");
+        assert!(repository
+            .load(&EnvironmentRef::Native)
+            .await
+            .expect("load committed catalog")
+            .libraries
+            .is_empty());
+        assert!(!library_path.exists());
+
+        if let Ok(entries) = fs::read_dir(root.join(".transactions")) {
+            for entry in entries.flatten() {
+                let locked = entry.path().join("backup/skills/locked");
+                if locked.exists() {
+                    fs::set_permissions(locked, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn committed_cleanup_does_not_depend_on_a_later_destination_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let transaction = root.join(".transactions/committed-cleanup");
+        let destination = root.join("libraries/lib-one/skills/demo");
+        fs::create_dir_all(transaction.join("backup")).unwrap();
+        fs::write(transaction.join("backup/SKILL.md"), b"old").unwrap();
+        fs::write(
+            transaction.join("transaction.json"),
+            serde_json::to_vec(&NativeLibraryTransaction {
+                destination: destination.to_string_lossy().into_owned(),
+                phase: NativeLibraryTransactionPhase::CatalogCommitted,
+                desired_presence: true,
+                expected_catalog_hash: Some("committed".to_string()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let catalog = LibraryCatalog {
+            schema_version: LIBRARY_SCHEMA_VERSION,
+            libraries: Vec::new(),
+            extra: serde_json::Map::new(),
+        };
+        fs::write(
+            root.join("catalog.json"),
+            serde_json::to_vec_pretty(&catalog).unwrap(),
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+
+        let loaded = repository.load(&EnvironmentRef::Native).await;
+
+        assert!(loaded.is_ok());
+        assert!(!transaction.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn native_library_delete_keeps_the_original_while_a_member_file_is_open() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING,
+        };
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = Arc::new(RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        ));
+        let created = SkillLibraryModule::new(repository.clone())
+            .create(EnvironmentRef::Native, "Backend".to_string())
+            .await
+            .unwrap();
+        let library_id = created.libraries[0].id.clone();
+        let library_path = root.join("libraries").join(library_id.as_str());
+        let member_file = library_path.join("skills/locked/SKILL.md");
+        fs::create_dir_all(member_file.parent().unwrap()).unwrap();
+        fs::write(&member_file, b"content").unwrap();
+        let wide = member_file
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_GENERIC_READ,
+                FILE_SHARE_READ,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(handle, INVALID_HANDLE_VALUE);
+
+        let result = repository
+            .delete_library(&EnvironmentRef::Native, &library_id)
+            .await;
+
+        assert!(result.is_err(), "open member must block the directory move");
+        let catalog = repository
+            .load(&EnvironmentRef::Native)
+            .await
+            .expect("load original catalog");
+        assert_eq!(catalog.libraries.len(), 1);
+        assert_eq!(catalog.libraries[0].id, library_id);
+        assert!(member_file.exists());
+
+        unsafe { CloseHandle(handle) };
+        repository
+            .delete_library(&EnvironmentRef::Native, &library_id)
+            .await
+            .expect("delete after releasing the file");
+        assert!(!library_path.exists());
     }
 
     #[tokio::test]
@@ -2064,5 +2260,42 @@ mod tests {
         let stored: serde_json::Value =
             serde_json::from_slice(&fs::read(applications.join("global.json")).unwrap()).unwrap();
         assert!(stored.get("target").is_none());
+    }
+
+    #[tokio::test]
+    async fn native_repository_restores_a_retired_member_if_delete_crashes_after_rename() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        repository
+            .save(&EnvironmentRef::Native, &LibraryCatalog::default())
+            .await
+            .unwrap();
+        let destination = root.join("libraries/library-1/skills/demo");
+        let transaction = root.join(".transactions/interrupted-delete");
+        let backup = transaction.join("backup");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::create_dir_all(&backup).unwrap();
+        fs::write(backup.join("SKILL.md"), b"retired content").unwrap();
+        write_native_transaction(
+            &transaction.join("transaction.json"),
+            &destination,
+            NativeLibraryTransactionPhase::BackedUp,
+            false,
+            None,
+        )
+        .unwrap();
+
+        repository.load(&EnvironmentRef::Native).await.unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("SKILL.md")).unwrap(),
+            b"retired content"
+        );
+        assert!(!transaction.exists());
     }
 }

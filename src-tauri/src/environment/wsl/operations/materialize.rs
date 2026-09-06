@@ -447,6 +447,40 @@ impl PreparedUnitExecutor for WslPreparedUnitExecutor {
                     })
                 })
                 .collect::<Result<Vec<_>, AppError>>()?;
+            let write_destinations = entries
+                .iter()
+                .filter(|entry| {
+                    !matches!(
+                        entry.action,
+                        environment_protocol::MutationEntryAction::Keep
+                    )
+                })
+                .map(|entry| entry.destination.clone())
+                .collect::<Vec<_>>();
+            if !write_destinations.is_empty() {
+                let expected_count =
+                    u32::try_from(write_destinations.len()).map_err(|_| AppError::StaleTarget)?;
+                let response: environment_protocol::WriteProbeResponse = self
+                    .workspace
+                    .request_worker_payload_for_generation(
+                        self.session.runtime_generation,
+                        environment_protocol::Message::ProbeWriteTargets {
+                            request: environment_protocol::WriteProbeRequest {
+                                destinations: write_destinations,
+                                deadline_millis: 10_000,
+                            },
+                        },
+                        1024,
+                        Some(cancellation),
+                        Duration::from_secs(10),
+                    )
+                    .await?;
+                if response.checked_count != expected_count {
+                    return Err(AppError::ConfigurationCorrupted {
+                        message: "invalid WSL write preflight response".to_string(),
+                    });
+                }
+            }
             Ok(PreparedWslUnit {
                 generation: self.session.runtime_generation,
                 resource_id: resource_id.clone(),
@@ -797,7 +831,7 @@ mod windows_worker_mutation_tests {
         );
         run_fixture(
             &distro,
-            "set -eu; mkdir -p \"$1/demo\"; printf old > \"$1/demo/SKILL.md\"",
+            "set -eu; mkdir -p \"$1/demo\"; printf old > \"$1/demo/SKILL.md\"; chmod 500 \"$1\"",
             &fixture,
         )
         .await;
@@ -868,6 +902,19 @@ mod windows_worker_mutation_tests {
             "mutation-gate",
             MutationKind::Remove,
         );
+
+        let blocked = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await;
+        assert!(blocked.is_err());
+        assert_ne!(
+            inspect_entries(&workspace, std::slice::from_ref(&destination), None)
+                .await
+                .unwrap()[0]
+                .kind,
+            crate::environment::wsl::operations::entry::PosixEntryKind::Missing
+        );
+        run_fixture(&distro, "chmod 700 \"$1\"", &fixture).await;
 
         let prepared = executor
             .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())

@@ -22,27 +22,49 @@ use crate::environment::wsl::operations::materialize::WslPreparedUnitExecutor;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::runtime::recovery::{RuntimeRecoveryGraph, RuntimeRecoveryService};
+use crate::storage::atomic_document::{AtomicDocumentIo, DocumentWriteFailure};
 use crate::storage::lock_plan::{LockCommitReceipt, LockPlanCommitter, PreparedLockMutation};
 
-#[derive(Default)]
-pub struct RuntimeLockCommitter;
+pub struct RuntimeLockCommitter<I = NativeAtomicDocumentIo> {
+    io: Arc<I>,
+}
 
-impl RuntimeLockCommitter {
-    pub fn new() -> Self {
-        Self
+impl Default for RuntimeLockCommitter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl PreparedLockCommitter for RuntimeLockCommitter {
+impl RuntimeLockCommitter {
+    pub fn new() -> Self {
+        Self {
+            io: Arc::new(NativeAtomicDocumentIo),
+        }
+    }
+}
+
+impl<I> RuntimeLockCommitter<I> {
+    #[cfg(test)]
+    pub(crate) fn with_io(io: Arc<I>) -> Self {
+        Self { io }
+    }
+}
+
+impl<I> PreparedLockCommitter for RuntimeLockCommitter<I>
+where
+    I: AtomicDocumentIo,
+{
     fn commit<'a>(
         &'a self,
         mutation: &'a PreparedLockMutation,
-    ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
+    ) -> BoxFuture<'a, Result<LockCommitReceipt, DocumentWriteFailure>> {
         Box::pin(async move {
             if mutation.target.environment != EnvironmentRef::Native {
-                return Err(AppError::StaleEnvironment);
+                return Err(DocumentWriteFailure::not_published(
+                    AppError::StaleEnvironment,
+                ));
             }
-            LockPlanCommitter::new(Arc::new(NativeAtomicDocumentIo))
+            LockPlanCommitter::new(Arc::clone(&self.io))
                 .commit(mutation.clone())
                 .await
         })
@@ -245,7 +267,7 @@ impl PreparedLockCommitter for SharedLocks {
     fn commit<'a>(
         &'a self,
         mutation: &'a PreparedLockMutation,
-    ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
+    ) -> BoxFuture<'a, Result<LockCommitReceipt, DocumentWriteFailure>> {
         self.0.commit(mutation)
     }
 }
@@ -406,7 +428,7 @@ mod tests {
         fn commit<'a>(
             &'a self,
             _mutation: &'a PreparedLockMutation,
-        ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
+        ) -> BoxFuture<'a, Result<LockCommitReceipt, DocumentWriteFailure>> {
             Box::pin(async { panic!("test plan has no lock mutation") })
         }
     }

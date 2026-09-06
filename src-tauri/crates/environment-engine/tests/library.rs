@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use environment_engine::library::{
@@ -29,6 +30,7 @@ fn member_upsert_commits_content_and_catalog_as_one_intent() {
         catalog: CatalogWrite {
             expected_revision: None,
             bytes: catalog.clone(),
+            max_current_bytes: 1024,
         },
     })
     .unwrap();
@@ -64,6 +66,7 @@ fn member_commit_accepts_a_managed_root_reached_through_a_symlinked_parent() {
         catalog: CatalogWrite {
             expected_revision: None,
             bytes: br#"{"schemaVersion":1}"#.to_vec(),
+            max_current_bytes: 1024,
         },
     })
     .unwrap();
@@ -72,6 +75,31 @@ fn member_commit_accepts_a_managed_root_reached_through_a_symlinked_parent() {
         std::fs::read(destination.join("SKILL.md")).unwrap(),
         b"linked home"
     );
+}
+
+#[test]
+fn committed_cleanup_ignores_a_later_destination_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("libraries");
+    let transaction = root.join(".transactions/committed-cleanup");
+    let destination = root.join("libraries/lib-one/skills/demo");
+    std::fs::create_dir_all(transaction.join("backup")).unwrap();
+    std::fs::write(transaction.join("backup/SKILL.md"), b"old").unwrap();
+    std::fs::write(
+        transaction.join("destination"),
+        destination.as_os_str().as_bytes(),
+    )
+    .unwrap();
+    std::fs::write(transaction.join("desired-presence"), b"1").unwrap();
+    std::fs::write(transaction.join("expected-catalog-hash"), b"committed").unwrap();
+    std::fs::write(transaction.join("phase"), b"catalogCommitted").unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("catalog.json"), br#"{"schemaVersion":1}"#).unwrap();
+
+    let loaded = read_catalog(&root);
+
+    assert!(loaded.is_ok());
+    assert!(!transaction.exists());
 }
 
 #[test]
@@ -85,6 +113,7 @@ fn catalog_write_is_conditional_and_creates_declared_library_roots() {
         CatalogWrite {
             expected_revision: None,
             bytes: first,
+            max_current_bytes: 1024,
         },
     )
     .unwrap();
@@ -96,6 +125,7 @@ fn catalog_write_is_conditional_and_creates_declared_library_roots() {
         CatalogWrite {
             expected_revision: Some(revision),
             bytes: second.clone(),
+            max_current_bytes: 1024,
         },
     )
     .unwrap();
@@ -109,11 +139,46 @@ fn catalog_write_is_conditional_and_creates_declared_library_roots() {
             CatalogWrite {
                 expected_revision: Some("sha256:wrong".to_string()),
                 bytes: b"stale".to_vec(),
+                max_current_bytes: 1024,
             },
         ),
         Err(LibraryError::StaleTarget)
     ));
     assert_eq!(read_catalog(&root).unwrap().bytes, Some(second));
+}
+
+#[test]
+fn committed_cleanup_failure_remains_retryable_across_catalog_reads() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("skill-libraries");
+    let transaction = root.join(".transactions/committed-cleanup");
+    let destination = root.join("libraries/lib-1");
+    std::fs::create_dir_all(&transaction).unwrap();
+    std::fs::write(
+        transaction.join("destination"),
+        destination.as_os_str().as_bytes(),
+    )
+    .unwrap();
+    std::fs::write(transaction.join("desired-presence"), b"0").unwrap();
+    std::fs::write(transaction.join("expected-catalog-hash"), b"committed").unwrap();
+    std::fs::write(transaction.join("phase"), b"catalogCommitted").unwrap();
+    let catalog = br#"{"schemaVersion":1,"libraries":[]}"#.to_vec();
+    std::fs::write(root.join("catalog.json"), &catalog).unwrap();
+    let locked = transaction.join("backup/locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("SKILL.md"), b"remaining backup").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    let first = read_catalog(&root);
+    let second = read_catalog(&root);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(first.unwrap().bytes, Some(catalog.clone()));
+    assert_eq!(second.unwrap().bytes, Some(catalog.clone()));
+    assert_eq!(read_catalog(&root).unwrap().bytes, Some(catalog));
+    assert!(!transaction.exists());
 }
 
 #[test]
@@ -130,6 +195,7 @@ fn delete_commit_removes_the_destination_and_updates_catalog() {
         CatalogWrite {
             expected_revision: None,
             bytes: first,
+            max_current_bytes: 1024,
         },
     )
     .unwrap();
@@ -144,6 +210,7 @@ fn delete_commit_removes_the_destination_and_updates_catalog() {
         catalog: CatalogWrite {
             expected_revision: Some(revision),
             bytes: second.clone(),
+            max_current_bytes: 1024,
         },
     })
     .unwrap();

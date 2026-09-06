@@ -999,6 +999,42 @@ async fn worker_writes_one_document_atomically_over_stdio() {
     writer
         .send_control(WireRecord::Control(Envelope {
             request_id: 6,
+            message: Message::Cancel {
+                target_request_id: 5,
+            },
+        }))
+        .await
+        .unwrap();
+    let replacement_path = home.path().join(".skill-deck/replacement.json");
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 7,
+            message: Message::PrepareDocumentWrite {
+                request: DocumentWritePreparation {
+                    path: replacement_path.to_string_lossy().into_owned(),
+                    expected_revision: None,
+                    total_bytes: bytes.len() as u64,
+                    sha256: format!("sha256:{:x}", Sha256::digest(bytes)),
+                    deadline_millis: 30_000,
+                },
+            },
+        }))
+        .await
+        .unwrap();
+    let cancelled = next_message(&mut reader).await;
+    assert_eq!(cancelled.request_id, 5);
+    assert!(matches!(
+        cancelled.message,
+        Message::Error { ref code, .. } if code == "cancelled"
+    ));
+    assert!(matches!(
+        next_message(&mut reader).await.message,
+        Message::TransferReady { .. }
+    ));
+
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 8,
             message: Message::Shutdown,
         }))
         .await
@@ -1011,12 +1047,113 @@ async fn worker_writes_one_document_atomically_over_stdio() {
         .unwrap()
         .success());
     assert!(!abandoned_path.exists());
-    for request_id in [2_u64, 3, 5] {
+    for request_id in [2_u64, 3, 5, 7] {
         assert!(!std::path::PathBuf::from(format!(
             "/tmp/.skill-deck-document-request-{worker_pid}-{request_id}"
         ))
         .exists());
     }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn prepared_document_expires_without_follow_up_traffic() {
+    use sha2::{Digest, Sha256};
+
+    let binary = env!("CARGO_BIN_EXE_wsl-environment-worker");
+    let build_id = file_sha256(std::path::Path::new(binary)).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(".skill-deck/expired.json");
+    let bytes = br#"{"value":1}"#;
+    let digest = format!("sha256:{:x}", Sha256::digest(bytes));
+    let mut child = Command::new(binary)
+        .env("WSL_DISTRO_NAME", "Ubuntu")
+        .env("USER", "alice")
+        .env("HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (writer, writer_task) = environment_protocol::spawn_writer(stdin);
+    let mut reader = FramedRead::new(stdout, codec());
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 1,
+            message: Message::Handshake { build_id },
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_message(&mut reader).await.message,
+        Message::HandshakeResult { .. }
+    ));
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 2,
+            message: Message::PrepareDocumentWrite {
+                request: DocumentWritePreparation {
+                    path: path.to_string_lossy().into_owned(),
+                    expected_revision: None,
+                    total_bytes: bytes.len() as u64,
+                    sha256: digest.clone(),
+                    deadline_millis: 25,
+                },
+            },
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_message(&mut reader).await.message,
+        Message::TransferReady { .. }
+    ));
+
+    let expired = timeout(Duration::from_secs(2), next_message(&mut reader))
+        .await
+        .expect("prepared document must expire without another request");
+    assert_eq!(expired.request_id, 2);
+    assert!(matches!(
+        expired.message,
+        Message::Error { ref code, .. } if code == "deadlineExceeded"
+    ));
+
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 3,
+            message: Message::PrepareDocumentWrite {
+                request: DocumentWritePreparation {
+                    path: path.to_string_lossy().into_owned(),
+                    expected_revision: None,
+                    total_bytes: bytes.len() as u64,
+                    sha256: digest,
+                    deadline_millis: 30_000,
+                },
+            },
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_message(&mut reader).await.message,
+        Message::TransferReady { .. }
+    ));
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 4,
+            message: Message::Shutdown,
+        }))
+        .await
+        .unwrap();
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+    assert!(timeout(Duration::from_secs(2), child.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
+    assert!(!path.exists());
 }
 
 #[cfg(target_os = "linux")]

@@ -13,6 +13,7 @@ pub struct CatalogSnapshot {
 pub struct CatalogWrite {
     pub expected_revision: Option<String>,
     pub bytes: Vec<u8>,
+    pub max_current_bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +183,7 @@ fn commit_platform(request: LibraryCommit) -> Result<(), LibraryError> {
             &request.root.join("catalog.json"),
             request.catalog.expected_revision.as_deref(),
             &request.catalog.bytes,
+            request.catalog.max_current_bytes,
         )?;
         write_state(&transaction.join("phase"), "catalogCommitted")?;
         remove_any(&backup)?;
@@ -254,6 +256,7 @@ fn write_catalog_platform(
         &root.join("catalog.json"),
         catalog.expected_revision.as_deref(),
         &catalog.bytes,
+        catalog.max_current_bytes,
     );
     if result.is_err() {
         for library in created {
@@ -336,8 +339,9 @@ fn write_catalog_document(
     path: &Path,
     expected_revision: Option<&str>,
     bytes: &[u8],
+    max_current_bytes: usize,
 ) -> Result<(), LibraryError> {
-    crate::document::write_document_atomic(path, expected_revision, bytes)
+    crate::document::write_document_atomic(path, expected_revision, bytes, max_current_bytes)
         .map(|_| ())
         .map_err(|error| match error {
             crate::document::DocumentWriteError::Conflict => LibraryError::StaleTarget,
@@ -345,7 +349,7 @@ fn write_catalog_document(
             crate::document::DocumentWriteError::UnsupportedPlatform => {
                 LibraryError::UnsupportedPlatform
             }
-            crate::document::DocumentWriteError::Io => {
+            crate::document::DocumentWriteError::Io { .. } => {
                 LibraryError::Io(std::io::Error::other("failed to write Library catalog"))
             }
         })
@@ -431,6 +435,13 @@ fn recover(root: &Path, catalog_revision: Option<&str>) -> Result<(), LibraryErr
             };
         let stage = transaction.join("stage");
         let backup = transaction.join("backup");
+        if phase == "catalogCommitted" {
+            // Keep the commit evidence until all retained content is removed.
+            if remove_any(&stage).is_ok() && remove_any(&backup).is_ok() {
+                let _ = std::fs::remove_dir_all(&transaction);
+            }
+            continue;
+        }
         match phase.as_str() {
             "preparing" | "staged" => {}
             "backedUp" if !destination.exists() && backup.is_dir() && stage.exists() => {
@@ -445,7 +456,6 @@ fn recover(root: &Path, catalog_revision: Option<&str>) -> Result<(), LibraryErr
                     rollback(&destination, &backup)?;
                 }
             }
-            "catalogCommitted" if destination.exists() == desired_presence => {}
             _ => return Err(LibraryError::RecoveryIncomplete),
         }
         remove_any(&stage)?;
