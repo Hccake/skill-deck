@@ -356,6 +356,8 @@ pub fn project_skill_snapshot(
             ordered_libraries: Vec::new(),
             selected_agent_ids: Vec::new(),
             pending: false,
+            sync_state:
+                crate::application::library_application::LibraryApplicationSyncState::Synced,
         },
     })
 }

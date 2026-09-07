@@ -3,6 +3,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use specta::Type;
 
+use crate::application::library_application::{
+    LibraryApplicationFuture, LibraryApplicationRecoveryStatus, ScopeRecoveryState,
+};
 use crate::application::mutation::result::ErrorReport;
 use crate::environment::recovery::{
     RecoveryResourcePath, RecoveryResourcePathKind, RecoverySubject,
@@ -145,6 +148,48 @@ where
     }
 }
 
+impl<C> LibraryApplicationRecoveryStatus for RecoveryService<C>
+where
+    C: RecoveryConsistencyChecker,
+{
+    fn status<'a>(
+        &'a self,
+        context: &'a crate::environment::types::SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<ScopeRecoveryState, AppError>> {
+        Box::pin(async move {
+            let mut result = ScopeRecoveryState::Clear;
+            for recovery in self.list().await? {
+                let same_environment = recovery.environment.as_ref().is_some_and(|environment| {
+                    crate::environment::types::same_environment_identity(
+                        environment,
+                        &context.environment,
+                    )
+                });
+                let same_scope = recovery.subject.as_ref().is_some_and(|subject| {
+                    crate::environment::types::same_environment_identity(
+                        &subject.context.environment,
+                        &context.environment,
+                    ) && subject.context.scope == context.scope
+                });
+                if !(same_scope || same_environment && recovery.subject.is_none()) {
+                    continue;
+                }
+                match recovery.state {
+                    RecoveryResourceState::NeedsAttention | RecoveryResourceState::Invalid => {
+                        return Ok(ScopeRecoveryState::Required);
+                    }
+                    RecoveryResourceState::EnvironmentUnavailable => {
+                        result = ScopeRecoveryState::Unverified;
+                    }
+                    RecoveryResourceState::ConsistentCanCleanup
+                    | RecoveryResourceState::Missing => {}
+                }
+            }
+            Ok(result)
+        })
+    }
+}
+
 fn status_from_assessment(
     assessment: crate::storage::recovery_repository::RecoveryAssessment,
 ) -> RecoveryResourceStatus {
@@ -261,6 +306,15 @@ mod tests {
         let attention = service.status(&marker.resource_id).await.expect("status");
         assert_eq!(attention.state, RecoveryResourceState::NeedsAttention);
         assert!(!attention.revision.is_empty());
+        assert_eq!(
+            LibraryApplicationRecoveryStatus::status(
+                &service,
+                &marker.subject.as_ref().unwrap().context,
+            )
+            .await
+            .expect("application recovery status"),
+            ScopeRecoveryState::Required
+        );
 
         service
             .repository()
@@ -272,6 +326,15 @@ mod tests {
         assert_eq!(
             consistent.state,
             RecoveryResourceState::ConsistentCanCleanup
+        );
+        assert_eq!(
+            LibraryApplicationRecoveryStatus::status(
+                &service,
+                &marker.subject.as_ref().unwrap().context,
+            )
+            .await
+            .expect("application recovery status"),
+            ScopeRecoveryState::Clear
         );
         service
             .confirm_resolved(&marker.resource_id, &consistent.revision)

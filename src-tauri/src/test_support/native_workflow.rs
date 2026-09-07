@@ -19,8 +19,10 @@ use crate::application::install_planner::ConcreteInstallPlanner;
 use crate::application::installed_skill_payload::InstalledSkillPayloadAcquirer;
 use crate::application::installed_skill_resolver::SkillDirectoryName;
 use crate::application::library_application::{
-    ApplyLibraryApplicationRequest, LibraryApplicationDraft, LibraryApplicationFuture,
-    LibraryApplicationModule, LibraryApplicationRecord, LibraryApplicationRepository,
+    ApplicationInventory, ApplicationRegistry, ApplyLibraryApplicationRequest,
+    LibraryApplicationBackend, LibraryApplicationDraft, LibraryApplicationFuture,
+    LibraryApplicationModule, LibraryApplicationRecord, LibraryApplicationResources,
+    VersionedApplicationRecord,
 };
 use crate::application::library_candidates::LibraryCandidateSet;
 use crate::application::library_candidates::{
@@ -131,31 +133,60 @@ async fn observe_skill(
     .map_err(|error| error.into_app_error())
 }
 
-struct MemoryLibraryApplicationRepository {
+struct MemoryApplicationRegistry {
     record: Mutex<LibraryApplicationRecord>,
     catalog: LibraryCatalog,
     members_root: PathBuf,
 }
 
-impl LibraryApplicationRepository for MemoryLibraryApplicationRepository {
+impl ApplicationRegistry for MemoryApplicationRegistry {
     fn load_application<'a>(
         &'a self,
-        _context: &'a SkillLocationRef,
-    ) -> LibraryApplicationFuture<'a, Result<LibraryApplicationRecord, AppError>> {
-        Box::pin(async move { Ok(self.record.lock().expect("library record lock").clone()) })
-    }
-
-    fn save_application<'a>(
-        &'a self,
-        _context: &'a SkillLocationRef,
-        record: &'a LibraryApplicationRecord,
-    ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+        context: &'a SkillLocationRef,
+    ) -> LibraryApplicationFuture<'a, Result<VersionedApplicationRecord, AppError>> {
         Box::pin(async move {
-            *self.record.lock().expect("library record lock") = record.clone();
-            Ok(())
+            Ok(VersionedApplicationRecord::in_memory(
+                context.clone(),
+                self.record.lock().expect("library record lock").clone(),
+            ))
         })
     }
 
+    fn save_application_if<'a>(
+        &'a self,
+        observed: &'a VersionedApplicationRecord,
+        record: &'a LibraryApplicationRecord,
+    ) -> LibraryApplicationFuture<'a, Result<VersionedApplicationRecord, AppError>> {
+        Box::pin(async move {
+            *self.record.lock().expect("library record lock") = record.clone();
+            Ok(VersionedApplicationRecord::in_memory(
+                observed.context.clone(),
+                record.clone(),
+            ))
+        })
+    }
+
+    fn enumerate<'a>(
+        &'a self,
+        environment: &'a EnvironmentRef,
+    ) -> LibraryApplicationFuture<'a, Result<ApplicationInventory, AppError>> {
+        Box::pin(async move {
+            Ok(ApplicationInventory {
+                records: vec![VersionedApplicationRecord::in_memory(
+                    SkillLocationRef {
+                        environment: environment.clone(),
+                        scope: SkillLocation::Global,
+                    },
+                    self.record.lock().expect("library record lock").clone(),
+                )],
+                problems: Vec::new(),
+                complete: true,
+            })
+        })
+    }
+}
+
+impl LibraryApplicationResources for MemoryApplicationRegistry {
     fn library_skill_locator<'a>(
         &'a self,
         context: &'a SkillLocationRef,
@@ -188,9 +219,9 @@ impl LibraryApplicationRepository for MemoryLibraryApplicationRepository {
         Box::pin(async move { Ok(self.catalog.clone()) })
     }
 
-    fn remove_application<'a>(
+    fn remove_application_if<'a>(
         &'a self,
-        _context: &'a SkillLocationRef,
+        _observed: &'a VersionedApplicationRecord,
     ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
             *self.record.lock().expect("library record lock") = LibraryApplicationRecord::empty();
@@ -1427,19 +1458,18 @@ async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<()
     let context = project_context("version-election");
     let first_id = LibraryId::parse("library-one");
     let second_id = LibraryId::parse("library-two");
-    let repository: Arc<dyn LibraryApplicationRepository> =
-        Arc::new(MemoryLibraryApplicationRepository {
-            record: Mutex::new(LibraryApplicationRecord::empty()),
-            catalog: LibraryCatalog {
-                schema_version: LIBRARY_SCHEMA_VERSION,
-                libraries: vec![
-                    test_library_record(first_id.clone(), "Library One", "library-one"),
-                    test_library_record(second_id.clone(), "Library Two", "library-two"),
-                ],
-                extra: serde_json::Map::new(),
-            },
-            members_root,
-        });
+    let repository: Arc<dyn LibraryApplicationBackend> = Arc::new(MemoryApplicationRegistry {
+        record: Mutex::new(LibraryApplicationRecord::empty()),
+        catalog: LibraryCatalog {
+            schema_version: LIBRARY_SCHEMA_VERSION,
+            libraries: vec![
+                test_library_record(first_id.clone(), "Library One", "library-one"),
+                test_library_record(second_id.clone(), "Library Two", "library-two"),
+            ],
+            extra: serde_json::Map::new(),
+        },
+        members_root,
+    });
     let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
     let environments = Arc::new(WslRuntime::default());
     let facts = RuntimePlanningFactSource::with_native_snapshot(

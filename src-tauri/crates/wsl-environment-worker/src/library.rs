@@ -6,8 +6,8 @@ use environment_engine::library::{
 };
 use environment_engine::linux_mutation::ParentIdentity;
 use environment_protocol::{
-    LibraryCatalogResponse, LibraryMemberAction, LibraryOperationAction, LibraryOperationRequest,
-    MAX_REQUEST_DEADLINE_MILLIS,
+    LibraryApplicationIndex, LibraryCatalogResponse, LibraryMemberAction, LibraryOperationAction,
+    LibraryOperationRequest, MAX_DIRECTORY_COUNT_LIMIT, MAX_REQUEST_DEADLINE_MILLIS,
 };
 
 use crate::payload::{PayloadError, PayloadManager};
@@ -46,6 +46,90 @@ impl LibraryManager {
             present: snapshot.bytes.is_some(),
             bytes: snapshot.bytes.unwrap_or_default(),
             revision: snapshot.revision,
+        })
+    }
+
+    pub fn list_applications(&self) -> Result<LibraryApplicationIndex, LibraryError> {
+        let applications = self.root.join("applications");
+        let mut project_ids = Vec::new();
+        let mut problem_keys = Vec::new();
+        match std::fs::read_dir(&applications) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(_) => {
+                            problem_keys.push("applications/<unreadable>".to_string());
+                            continue;
+                        }
+                    };
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name != "global.json" && name != "projects" {
+                        problem_keys.push(name);
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(LibraryApplicationIndex {
+                    project_ids,
+                    problem_keys,
+                    complete: true,
+                });
+            }
+            Err(_) => {
+                problem_keys.push("applications".to_string());
+                return Ok(LibraryApplicationIndex {
+                    project_ids,
+                    problem_keys,
+                    complete: false,
+                });
+            }
+        }
+        let projects = applications.join("projects");
+        match std::fs::read_dir(projects) {
+            Ok(entries) => {
+                for (index, entry) in entries.enumerate() {
+                    if index == MAX_DIRECTORY_COUNT_LIMIT as usize {
+                        problem_keys.push("projects/<limit>".to_string());
+                        break;
+                    }
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(_) => {
+                            problem_keys.push("projects/<unreadable>".to_string());
+                            continue;
+                        }
+                    };
+                    let name = entry.file_name();
+                    let display = name.to_string_lossy().into_owned();
+                    let project_id = std::path::Path::new(&name)
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .filter(|_| {
+                            std::path::Path::new(&name)
+                                .extension()
+                                .is_some_and(|value| value == "json")
+                        });
+                    let valid = entry.file_type().is_ok_and(|kind| kind.is_file())
+                        && project_id.is_some_and(valid_component);
+                    if let Some(project_id) = project_id.filter(|_| valid) {
+                        project_ids.push(project_id.to_string());
+                    } else {
+                        problem_keys.push(format!("projects/{display}"));
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => problem_keys.push("projects".to_string()),
+        }
+        project_ids.sort();
+        project_ids.dedup();
+        problem_keys.sort();
+        problem_keys.dedup();
+        Ok(LibraryApplicationIndex {
+            complete: problem_keys.is_empty(),
+            project_ids,
+            problem_keys,
         })
     }
 
@@ -180,4 +264,25 @@ fn map_engine_error(error: engine::LibraryError) -> LibraryError {
 
 fn map_payload_error(_error: PayloadError) -> LibraryError {
     LibraryError::StalePayload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LibraryManager;
+
+    #[test]
+    fn inaccessible_project_namespace_returns_an_incomplete_inventory() {
+        let home = tempfile::tempdir().unwrap();
+        let applications = home.path().join(".skill-deck/skill-libraries/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(applications.join("projects"), b"not a directory").unwrap();
+
+        let inventory = LibraryManager::new(home.path().to_path_buf())
+            .list_applications()
+            .unwrap();
+
+        assert!(inventory.project_ids.is_empty());
+        assert_eq!(inventory.problem_keys, vec!["projects"]);
+        assert!(!inventory.complete);
+    }
 }

@@ -243,11 +243,12 @@ impl RuntimeServiceGraph {
                 agent_selection_targets.clone(),
                 update_evidence.clone(),
             );
-        let library_application = Arc::new(LibraryApplicationModule::new(
+        let library_application = Arc::new(LibraryApplicationModule::with_recovery_status(
             library_repository.clone(),
             agent_selection_facts.clone(),
             agent_selection_targets.clone(),
             execution.executor(wsl.clone(), Arc::new(agent_selection_facts.clone())),
+            Arc::new(execution.recovery_service()),
         ));
         let library_candidates: Arc<dyn LibraryCandidateSource> =
             Arc::new(RepositoryLibraryCandidateSource::new(

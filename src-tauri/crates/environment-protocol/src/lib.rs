@@ -228,6 +228,13 @@ pub struct LibraryCatalogResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryApplicationIndex {
+    pub project_ids: Vec<String>,
+    pub problem_keys: Vec<String>,
+    pub complete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryOperationPreparation {
     pub total_bytes: u64,
     pub sha256: String,
@@ -724,6 +731,9 @@ pub enum Message {
     },
     DocumentRemoved,
     ReadLibraryCatalog {
+        deadline_millis: u64,
+    },
+    ListLibraryApplications {
         deadline_millis: u64,
     },
     PrepareLibraryOperation {

@@ -211,6 +211,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     | Message::CountDirectoryEntries { .. }
                     | Message::ReadDocuments { .. }
                     | Message::ReadLibraryCatalog { .. }
+                    | Message::ListLibraryApplications { .. }
                     | Message::ListChildDirectories { .. }
                     | Message::MapPathsToWindows { .. }
                     | Message::MapHostPaths { .. }
@@ -1279,6 +1280,40 @@ async fn execute_business_request(
                 }
                 Ok(_) => {}
                 Err(error) => send_library_error(&writer, request_id, error, "libraryRead").await?,
+            }
+        }
+        Message::ListLibraryApplications { deadline_millis } => {
+            let result = if deadline_millis == 0
+                || deadline_millis > environment_protocol::MAX_REQUEST_DEADLINE_MILLIS
+            {
+                Err(LibraryError::InvalidRequest)
+            } else {
+                let task = tokio::task::spawn_blocking(move || {
+                    libraries.blocking_lock().list_applications()
+                });
+                match tokio::time::timeout(Duration::from_millis(deadline_millis), task).await {
+                    Ok(joined) => joined.map_err(|error| error.to_string())?,
+                    Err(_) => {
+                        request.cancelled.store(true, Ordering::Release);
+                        send_error(&writer, request_id, "deadlineExceeded", "applicationList")
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        return Ok(request_id);
+                    }
+                }
+            };
+            match result {
+                Ok(response) if !request.cancelled.load(Ordering::Acquire) => {
+                    let payload = encode_payload(&response).map_err(|error| error.to_string())?;
+                    writer
+                        .send_transfer(request_id, request_id, &payload)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    send_library_error(&writer, request_id, error, "applicationList").await?
+                }
             }
         }
         Message::RemovePayload {

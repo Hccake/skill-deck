@@ -1257,6 +1257,73 @@ async fn worker_executes_one_library_catalog_operation_over_stdio() {
         .success());
 }
 
+#[tokio::test]
+async fn worker_lists_only_managed_library_application_keys() {
+    let binary = env!("CARGO_BIN_EXE_wsl-environment-worker");
+    let build_id = file_sha256(std::path::Path::new(binary)).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let applications = home.path().join(".skill-deck/skill-libraries/applications");
+    let projects = applications.join("projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    std::fs::write(projects.join("registered.json"), b"{}").unwrap();
+    std::fs::write(projects.join("orphan.json"), b"{}").unwrap();
+    std::fs::create_dir(projects.join("not-a-record.json")).unwrap();
+    std::fs::write(applications.join("unexpected.json"), b"{}").unwrap();
+    let mut child = Command::new(binary)
+        .env("WSL_DISTRO_NAME", "Ubuntu")
+        .env("USER", "alice")
+        .env("HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (writer, writer_task) = environment_protocol::spawn_writer(stdin);
+    let mut reader = FramedRead::new(stdout, codec());
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 1,
+            message: Message::Handshake { build_id },
+        }))
+        .await
+        .unwrap();
+    let _ = next_message(&mut reader).await;
+
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 2,
+            message: Message::ListLibraryApplications {
+                deadline_millis: 30_000,
+            },
+        }))
+        .await
+        .unwrap();
+    let response: environment_protocol::LibraryApplicationIndex =
+        environment_protocol::decode_payload(&next_transfer(&mut reader, 2).await).unwrap();
+
+    assert_eq!(response.project_ids, vec!["orphan", "registered"]);
+    assert!(!response.complete);
+    assert_eq!(response.problem_keys.len(), 2);
+
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 3,
+            message: Message::Shutdown,
+        }))
+        .await
+        .unwrap();
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+    assert!(timeout(Duration::from_secs(2), child.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
+}
+
 #[cfg(target_os = "linux")]
 async fn next_transfer<R>(
     reader: &mut FramedRead<R, tokio_util::codec::LengthDelimitedCodec>,

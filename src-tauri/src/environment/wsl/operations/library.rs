@@ -15,6 +15,32 @@ pub struct LibraryCatalogSnapshot {
 }
 
 impl WslWorkspace {
+    pub(crate) async fn list_library_applications(
+        &self,
+    ) -> Result<environment_protocol::LibraryApplicationIndex, AppError> {
+        let response: environment_protocol::LibraryApplicationIndex = self
+            .request_worker_payload(environment_protocol::Message::ListLibraryApplications {
+                deadline_millis: LIBRARY_DEADLINE_MILLIS,
+            })
+            .await?;
+        if response.project_ids.len() > environment_protocol::MAX_DIRECTORY_COUNT_LIMIT as usize
+            || response.problem_keys.len()
+                > environment_protocol::MAX_DIRECTORY_COUNT_LIMIT as usize
+            || response
+                .project_ids
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || response
+                .problem_keys
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            || response.complete != response.problem_keys.is_empty()
+        {
+            return Err(protocol_error("LibraryApplicationIndex"));
+        }
+        Ok(response)
+    }
+
     pub(crate) async fn read_library_catalog(&self) -> Result<Option<Vec<u8>>, AppError> {
         let response: environment_protocol::LibraryCatalogResponse = self
             .request_worker_payload(environment_protocol::Message::ReadLibraryCatalog {

@@ -137,6 +137,7 @@ pub struct AgentSelectionGroup {
 #[specta(rename_all = "camelCase")]
 pub enum UnavailableAgentSelectionReason {
     DefinitionMissing,
+    OptionUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
