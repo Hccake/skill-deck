@@ -39,7 +39,8 @@ import type {
   ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdatePreview,
   LibraryUpdateContinuation, LibraryUpdatePreviewToken, LibraryUpdateRiskConfirmation,
   UpdateLibrarySkillsRequest,
-  RemoveLibrarySkillRequest,
+  ExecuteRetireLibrarySkillRequest, LibraryMembershipOutcome,
+  LibraryRetirePreview, LibraryRetireResponse, RemoveLibrarySkillRequest,
   LibraryUsage,
 } from '@/bindings';
 
@@ -75,7 +76,8 @@ export type {
   ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdatePreview,
   LibraryUpdateContinuation, LibraryUpdatePreviewToken, LibraryUpdateRiskConfirmation,
   UpdateLibrarySkillsRequest,
-  RemoveLibrarySkillRequest,
+  ExecuteRetireLibrarySkillRequest, LibraryMembershipOutcome,
+  LibraryRetirePreview, LibraryRetireResponse, RemoveLibrarySkillRequest,
   LibraryUsage,
 };
 
@@ -311,9 +313,22 @@ export async function previewLibrarySkillUpdates(
 }
 
 export async function removeLibrarySkill(
-  request: RemoveLibrarySkillRequest,
-): Promise<SkillLibraryDetail> {
+  request: ExecuteRetireLibrarySkillRequest,
+): Promise<LibraryRetireResponse> {
   return unwrap(await commands.removeLibrarySkill(request));
+}
+
+export async function previewRemoveLibrarySkill(
+  request: RemoveLibrarySkillRequest,
+): Promise<LibraryRetirePreview> {
+  return unwrap(await commands.previewRemoveLibrarySkill(request));
+}
+
+export async function resumeLibraryMembership(
+  environment: EnvironmentRef,
+  libraryId: LibraryId | null,
+): Promise<LibraryMembershipOutcome> {
+  return unwrap(await commands.resumeLibraryMembership(environment, libraryId));
 }
 
 export async function deleteSkillLibrary(

@@ -437,6 +437,7 @@ mod tests {
                             updated_at: None,
                             extra: serde_json::Map::new(),
                         }],
+                        retired_skills: Vec::new(),
                         extra: serde_json::Map::new(),
                     }],
                     extra: serde_json::Map::new(),

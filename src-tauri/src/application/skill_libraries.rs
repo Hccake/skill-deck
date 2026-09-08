@@ -8,8 +8,9 @@ use specta::Type;
 use crate::application::collection_records::{
     CollectionRecordReader, DocumentRevision, LibraryCatalogRecordReader, SourceRecordRevision,
 };
-#[cfg(test)]
 use crate::application::installed_skill_resolver::InstalledSkillResolver;
+use crate::application::library_membership::LibraryMembershipOutcome;
+use crate::application::library_membership::LibraryMembershipPreview;
 use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, PayloadSessionManager,
@@ -23,7 +24,7 @@ use crate::core::skill::parse_skill_md_content;
 use crate::core::skill_payload::{PayloadEntryKind, SkillPayload};
 use crate::environment::content_manifest::ContentManifestReader;
 use crate::environment::planning::{TargetEntryKind, TargetFactResolver};
-use crate::environment::types::{EnvironmentRef, SkillLocationRef};
+use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
 use crate::error::AppError;
 
 pub(crate) const LIBRARY_SCHEMA_VERSION: u32 = 3;
@@ -41,6 +42,25 @@ impl LibraryId {
 
     #[cfg(test)]
     pub fn parse(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Type)]
+#[serde(transparent)]
+pub struct RetirementId(String);
+
+impl RetirementId {
+    pub(crate) fn new() -> Self {
+        Self(uuid::Uuid::new_v4().simple().to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parse(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 }
@@ -86,8 +106,8 @@ pub struct SkillLibraryDetail {
 
 /// 某个 Skill 位置引用当前对象的方式。
 ///
-/// 生效与锁定是两件事：`Confirmed` 表示配置已经起作用，`PendingAdjustment` 表示只有
-/// 未完成的应用操作引用它、尚未确认生效。两者的并集才是成员锁定的判定依据。
+/// `Confirmed` 表示配置已经起作用，`PendingAdjustment` 表示只有未完成的应用操作
+/// 引用它、尚未确认生效。两者的并集用于整库删除保护和使用状态展示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
@@ -116,6 +136,13 @@ pub struct LibraryUsageProjection {
     pub library_id: LibraryId,
     pub confirmed_count: u32,
     pub pending_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryUsageSnapshot {
+    pub projections: Vec<LibraryUsageProjection>,
+    pub inventory_complete: bool,
+    pub problem_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -170,6 +197,25 @@ pub struct LibraryAddPreview {
     pub token: LibraryAddPreviewToken,
     pub skills: Vec<LibraryAddSkillPreview>,
     pub redirected_download_host: Option<String>,
+    pub membership: LibraryMembershipPreview,
+}
+
+impl LibraryAddPreview {
+    pub(crate) fn bind_membership(
+        &mut self,
+        request: &PreviewAddLibrarySkillsRequest,
+        membership: LibraryMembershipPreview,
+    ) -> Result<(), AppError> {
+        self.token.generation = library_add_preview_generation(
+            request,
+            &self.redirected_download_host,
+            &self.token.context_revision,
+            &self.token.skill_revisions,
+            &membership,
+        )?;
+        self.membership = membership;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -178,6 +224,7 @@ pub struct LibraryAddPreview {
 pub struct ExecuteAddLibrarySkillsRequest {
     pub request: PreviewAddLibrarySkillsRequest,
     pub expected_token: LibraryAddPreviewToken,
+    pub membership: LibraryMembershipPreview,
     pub acknowledge_redirect: bool,
 }
 
@@ -205,7 +252,14 @@ pub struct LibraryAddSkillResult {
 #[specta(rename_all = "camelCase")]
 pub struct LibraryAddResponse {
     pub results: Vec<LibraryAddSkillResult>,
-    pub library: SkillLibraryDetail,
+    pub library: Option<SkillLibraryDetail>,
+    pub membership: LibraryMembershipOutcome,
+}
+
+pub(crate) struct LibraryAddCommitResponse {
+    pub(crate) results: Vec<LibraryAddSkillResult>,
+    pub(crate) library: Option<SkillLibraryDetail>,
+    pub(crate) snapshot_error: Option<AppError>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -226,6 +280,70 @@ pub struct RemoveLibrarySkillRequest {
     pub skill_name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct LibraryRetirePreview {
+    pub skill_name: String,
+    pub token: String,
+    pub membership: LibraryMembershipPreview,
+}
+
+pub(crate) struct PreparedLibraryRetire {
+    skill_name: String,
+    base_token: String,
+}
+
+impl PreparedLibraryRetire {
+    pub(crate) fn skill_name(&self) -> &str {
+        &self.skill_name
+    }
+
+    pub(crate) fn bind(
+        self,
+        membership: LibraryMembershipPreview,
+    ) -> Result<LibraryRetirePreview, AppError> {
+        Ok(LibraryRetirePreview {
+            skill_name: self.skill_name,
+            token: bound_retire_preview_token(&self.base_token, &membership)?,
+            membership,
+        })
+    }
+}
+
+fn bound_retire_preview_token(
+    base_token: &str,
+    membership: &LibraryMembershipPreview,
+) -> Result<String, AppError> {
+    stable_digest(&(
+        "library-retire-preview",
+        base_token,
+        membership.token.as_str(),
+    ))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ExecuteRetireLibrarySkillRequest {
+    pub request: RemoveLibrarySkillRequest,
+    pub expected_token: String,
+    pub membership: LibraryMembershipPreview,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct LibraryRetireResponse {
+    pub library: Option<SkillLibraryDetail>,
+    pub membership: LibraryMembershipOutcome,
+}
+
+pub(crate) struct LibraryRetireCommitResponse {
+    pub(crate) library: Option<SkillLibraryDetail>,
+    pub(crate) snapshot_error: Option<AppError>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
@@ -235,6 +353,8 @@ pub struct LibraryWorkspaceSnapshot {
     /// catalog 内容的摘要。应用关系不参与该摘要，页面重新进入时自行拉取最新投影。
     pub revision: String,
     pub usage_projection: Vec<LibraryUsageProjection>,
+    pub usage_inventory_complete: bool,
+    pub usage_inventory_problem_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +372,17 @@ pub(crate) struct SkillLibraryRecord {
     pub(crate) id: LibraryId,
     pub(crate) name: String,
     pub(crate) skills: Vec<LibrarySkillRecord>,
+    pub(crate) retired_skills: Vec<RetiredLibrarySkillRecord>,
+    #[serde(flatten)]
+    pub(crate) extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RetiredLibrarySkillRecord {
+    pub(crate) retirement_id: RetirementId,
+    pub(crate) member: LibrarySkillRecord,
+    pub(crate) retired_at: String,
     #[serde(flatten)]
     pub(crate) extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -311,7 +442,10 @@ pub(crate) enum LibraryMemberMutation {
         content: Box<SkillPayload>,
         record: Box<LibrarySkillRecord>,
     },
-    Delete,
+    Retire {
+        retirement_id: RetirementId,
+        retired_at: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -321,6 +455,14 @@ pub(crate) struct CommitLibraryMemberRequest {
     pub(crate) skill_name: String,
     pub(crate) expected: LibraryMemberCommitExpectation,
     pub(crate) mutation: LibraryMemberMutation,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PurgeRetiredLibraryMemberRequest {
+    pub(crate) environment: EnvironmentRef,
+    pub(crate) library_id: LibraryId,
+    pub(crate) skill_name: String,
+    pub(crate) retirement_id: RetirementId,
 }
 
 impl Default for LibraryCatalog {
@@ -356,6 +498,11 @@ pub trait SkillLibraryRepository: Send + Sync {
         request: CommitLibraryMemberRequest,
     ) -> LibraryFuture<'a, Result<(), AppError>>;
 
+    fn purge_retired<'a>(
+        &'a self,
+        request: PurgeRetiredLibraryMemberRequest,
+    ) -> LibraryFuture<'a, Result<(), AppError>>;
+
     fn delete_library<'a>(
         &'a self,
         environment: &'a EnvironmentRef,
@@ -373,8 +520,8 @@ pub trait SkillLibraryRepository: Send + Sync {
 pub trait LibraryUsageProvider: Send + Sync {
     /// 返回引用该库的全部 Skill 位置，包含已确认生效和仅被未完成操作引用两种状态。
     ///
-    /// 成员锁定依赖这个并集语义：任何卷入未完成操作的库都必须锁住。展示层需要区分状态时
-    /// 读取每一项的 `state`，不要改变本方法的收集范围。
+    /// 整库删除保护依赖这个并集语义：任何卷入未完成操作的库都不能删除。展示层需要区分
+    /// 状态时读取每一项的 `state`，不要改变本方法的收集范围。
     fn usages<'a>(
         &'a self,
         environment: &'a EnvironmentRef,
@@ -385,7 +532,7 @@ pub trait LibraryUsageProvider: Send + Sync {
     fn usage_projection<'a>(
         &'a self,
         environment: &'a EnvironmentRef,
-    ) -> LibraryFuture<'a, Result<Vec<LibraryUsageProjection>, AppError>>;
+    ) -> LibraryFuture<'a, Result<LibraryUsageSnapshot, AppError>>;
 
     fn agent_usages<'a>(
         &'a self,
@@ -412,8 +559,14 @@ impl LibraryUsageProvider for EmptyLibraryUsageProvider {
     fn usage_projection<'a>(
         &'a self,
         _environment: &'a EnvironmentRef,
-    ) -> LibraryFuture<'a, Result<Vec<LibraryUsageProjection>, AppError>> {
-        Box::pin(async { Ok(Vec::new()) })
+    ) -> LibraryFuture<'a, Result<LibraryUsageSnapshot, AppError>> {
+        Box::pin(async {
+            Ok(LibraryUsageSnapshot {
+                projections: Vec::new(),
+                inventory_complete: true,
+                problem_count: 0,
+            })
+        })
     }
 }
 
@@ -453,8 +606,8 @@ impl SkillLibraryModule {
         environment: EnvironmentRef,
         catalog: LibraryCatalog,
     ) -> Result<LibraryWorkspaceSnapshot, AppError> {
-        let usage_projection = self.usages.usage_projection(&environment).await?;
-        workspace_snapshot(environment, catalog, usage_projection)
+        let usage = self.usages.usage_projection(&environment).await?;
+        workspace_snapshot(environment, catalog, usage)
     }
 
     pub async fn create(
@@ -470,6 +623,7 @@ impl SkillLibraryModule {
             id: LibraryId(uuid::Uuid::new_v4().simple().to_string()),
             name,
             skills: Vec::new(),
+            retired_skills: Vec::new(),
             extra: serde_json::Map::new(),
         });
         self.repository.save(&environment, &catalog).await?;
@@ -515,19 +669,38 @@ impl SkillLibraryModule {
         Ok(detail_from_record(library, usages))
     }
 
+    #[cfg(test)]
     pub async fn preview_add_skills<T>(
         &self,
         payloads: &PayloadSessionManager,
         targets: &T,
         request: PreviewAddLibrarySkillsRequest,
+        membership: LibraryMembershipPreview,
     ) -> Result<LibraryAddPreview, AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
         Ok(self
-            .build_add_skills(payloads, targets, request, true)
+            .preview_add_skills_with_catalog(payloads, targets, request, membership)
             .await?
-            .preview)
+            .0)
+    }
+
+    pub(crate) async fn preview_add_skills_with_catalog<T>(
+        &self,
+        payloads: &PayloadSessionManager,
+        targets: &T,
+        request: PreviewAddLibrarySkillsRequest,
+        membership: LibraryMembershipPreview,
+    ) -> Result<(LibraryAddPreview, LibraryCatalog), AppError>
+    where
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
+    {
+        let built = self
+            .build_add_skills(payloads, targets, request, membership, true)
+            .await?;
+        let projected = projected_add_catalog(&built)?;
+        Ok((built.preview, projected))
     }
 
     pub async fn execute_add_skills<T>(
@@ -535,18 +708,25 @@ impl SkillLibraryModule {
         payloads: &PayloadSessionManager,
         targets: &T,
         execution: ExecuteAddLibrarySkillsRequest,
-    ) -> Result<LibraryAddResponse, AppError>
+    ) -> Result<LibraryAddCommitResponse, AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
         let built = self
-            .build_add_skills(payloads, targets, execution.request, false)
+            .build_add_skills(
+                payloads,
+                targets,
+                execution.request,
+                execution.membership,
+                false,
+            )
             .await?;
         let expected_generation = library_add_preview_generation(
             &built.request,
             &execution.expected_token.redirected_download_host,
             &execution.expected_token.context_revision,
             &execution.expected_token.skill_revisions,
+            &built.preview.membership,
         )?;
         if expected_generation != execution.expected_token.generation {
             return Err(AppError::StaleContext);
@@ -652,13 +832,21 @@ impl SkillLibraryModule {
                 error: None,
             });
         }
-        let library = self
+        let snapshot = self
             .detail(
                 built.request.environment.clone(),
                 built.request.library_id.clone(),
             )
-            .await?;
-        Ok(LibraryAddResponse { results, library })
+            .await;
+        let (library, snapshot_error) = match snapshot {
+            Ok(library) => (Some(library), None),
+            Err(error) => (None, Some(error)),
+        };
+        Ok(LibraryAddCommitResponse {
+            results,
+            library,
+            snapshot_error,
+        })
     }
 
     async fn build_add_skills<T>(
@@ -666,20 +854,34 @@ impl SkillLibraryModule {
         payloads: &PayloadSessionManager,
         targets: &T,
         request: PreviewAddLibrarySkillsRequest,
+        membership: LibraryMembershipPreview,
         reject_conflicts: bool,
     ) -> Result<BuiltLibraryAdd, AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
+        validate_membership_target(&membership, &request.environment, &request.library_id)?;
         if request.skills.is_empty() || request.discovery_session.environment != request.environment
         {
             return Err(AppError::StalePayload);
         }
         let usage_revision = self
-            .unapplied_usage_revision(&request.environment, &request.library_id)
+            .usage_revision(&request.environment, &request.library_id)
             .await?;
         let catalog = self.repository.load(&request.environment).await?;
         validate_catalog(&catalog)?;
+        let library = catalog
+            .libraries
+            .iter()
+            .find(|library| library.id == request.library_id)
+            .ok_or_else(|| AppError::PathNotFound {
+                path: request.library_id.as_str().to_string(),
+            })?;
+        let retired = library
+            .retired_skills
+            .iter()
+            .map(|retired| (retired.member.name.as_str(), &retired.member))
+            .collect::<std::collections::BTreeMap<_, _>>();
         let collection = self
             .repository
             .resolve_collection(&request.environment, &request.library_id)
@@ -747,8 +949,19 @@ impl SkillLibraryModule {
                     .iter()
                     .find(|record| record.skill_name == change.skill_name)
                     .is_some_and(|record| record.projection.metadata().is_some());
+                let reactivating = retired
+                    .get(change.skill_name.as_str())
+                    .is_some_and(|member| {
+                        change.canonical_target.target.entry_kind == TargetEntryKind::Directory
+                            && change
+                                .canonical_target
+                                .content_revision
+                                .manifest_hash()
+                                .is_some_and(|hash| hash.as_str() == member.content_manifest_hash)
+                    });
                 if existing_record
-                    || change.canonical_target.target.entry_kind != TargetEntryKind::Missing
+                    || (change.canonical_target.target.entry_kind != TargetEntryKind::Missing
+                        && !reactivating)
                 {
                     return Err(AppError::Validation {
                         field: Some("skillName".to_string()),
@@ -792,6 +1005,7 @@ impl SkillLibraryModule {
             &redirected_download_host,
             &context_revision,
             &skill_revisions,
+            &membership,
         )?;
         let preview = LibraryAddPreview {
             token: LibraryAddPreviewToken {
@@ -812,11 +1026,13 @@ impl SkillLibraryModule {
                 })
                 .collect(),
             redirected_download_host,
+            membership,
         };
         Ok(BuiltLibraryAdd {
             request,
             items,
             preview,
+            catalog,
         })
     }
 
@@ -828,7 +1044,7 @@ impl SkillLibraryModule {
         prepared: ReadyUpdatePayload,
     ) -> Result<(), AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
         let current_collection = self
             .repository
@@ -910,16 +1126,87 @@ impl SkillLibraryModule {
             .await
     }
 
-    pub async fn remove_skill<T>(
+    pub(crate) async fn prepare_retire_skill_with_catalog<T>(
         &self,
         targets: &T,
         request: RemoveLibrarySkillRequest,
-    ) -> Result<SkillLibraryDetail, AppError>
+        membership: LibraryMembershipPreview,
+    ) -> Result<(PreparedLibraryRetire, LibraryCatalog), AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
-        self.ensure_not_applied(&request.environment, &request.library_id)
+        let observed = self
+            .observe_retire_skill(targets, &request, &membership)
             .await?;
+        let mut projected = observed.catalog;
+        crate::application::library_membership::apply_membership_change(
+            &mut projected,
+            &request.library_id,
+            &request.skill_name,
+            crate::application::library_membership::MembershipChange::Retire {
+                retirement_id: RetirementId("preview".to_string()),
+                retired_at: "preview".to_string(),
+            },
+        )?;
+        Ok((
+            PreparedLibraryRetire {
+                skill_name: request.skill_name,
+                base_token: observed.token,
+            },
+            projected,
+        ))
+    }
+
+    pub async fn retire_skill<T>(
+        &self,
+        targets: &T,
+        execution: ExecuteRetireLibrarySkillRequest,
+    ) -> Result<LibraryRetireCommitResponse, AppError>
+    where
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
+    {
+        let observed = self
+            .observe_retire_skill(targets, &execution.request, &execution.membership)
+            .await?;
+        if bound_retire_preview_token(&observed.token, &execution.membership)?
+            != execution.expected_token
+        {
+            return Err(AppError::StaleContext);
+        }
+        let request = execution.request;
+        self.repository
+            .commit_member(CommitLibraryMemberRequest {
+                environment: request.environment.clone(),
+                library_id: request.library_id.clone(),
+                skill_name: request.skill_name.clone(),
+                expected: observed.expected,
+                mutation: LibraryMemberMutation::Retire {
+                    retirement_id: RetirementId::new(),
+                    retired_at: committed_at(),
+                },
+            })
+            .await?;
+        let snapshot = self.detail(request.environment, request.library_id).await;
+        let (library, snapshot_error) = match snapshot {
+            Ok(library) => (Some(library), None),
+            Err(error) => (None, Some(error)),
+        };
+        Ok(LibraryRetireCommitResponse {
+            library,
+            snapshot_error,
+        })
+    }
+
+    async fn observe_retire_skill<T>(
+        &self,
+        targets: &T,
+        request: &RemoveLibrarySkillRequest,
+        membership: &LibraryMembershipPreview,
+    ) -> Result<ObservedLibraryRetire, AppError>
+    where
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
+    {
+        validate_membership_target(membership, &request.environment, &request.library_id)?;
         let collection = self
             .repository
             .resolve_collection(&request.environment, &request.library_id)
@@ -935,7 +1222,7 @@ impl SkillLibraryModule {
             crate::application::collection_records::RecordProjection::Missing
         ) {
             return Err(AppError::PathNotFound {
-                path: request.skill_name,
+                path: request.skill_name.clone(),
             });
         }
         let target = SkillPathObserver::resolve_skill_targets(
@@ -949,21 +1236,25 @@ impl SkillLibraryModule {
         .await?
         .pop()
         .ok_or(AppError::StaleTarget)?;
-        self.repository
-            .commit_member(CommitLibraryMemberRequest {
-                environment: request.environment.clone(),
-                library_id: request.library_id.clone(),
-                skill_name: request.skill_name.clone(),
-                expected: LibraryMemberCommitExpectation {
-                    document_revision: snapshot.document_revision,
-                    source_record_revision: snapshot.records[0].source_record_revision.clone(),
-                    target_revision: target.target_revision,
-                    content_revision: target.content_revision,
-                },
-                mutation: LibraryMemberMutation::Delete,
-            })
-            .await?;
-        self.detail(request.environment, request.library_id).await
+        let expected = LibraryMemberCommitExpectation {
+            document_revision: snapshot.document_revision,
+            source_record_revision: snapshot.records[0].source_record_revision.clone(),
+            target_revision: target.target_revision,
+            content_revision: target.content_revision,
+        };
+        let token = stable_digest(&(
+            "library-retire-evidence",
+            request,
+            &expected.document_revision,
+            expected.source_record_revision.as_str(),
+            &expected.target_revision,
+            &expected.content_revision,
+        ))?;
+        Ok(ObservedLibraryRetire {
+            expected,
+            token,
+            catalog,
+        })
     }
 
     pub async fn delete(
@@ -971,39 +1262,44 @@ impl SkillLibraryModule {
         environment: EnvironmentRef,
         library_id: LibraryId,
     ) -> Result<LibraryWorkspaceSnapshot, AppError> {
-        self.ensure_not_applied(&environment, &library_id).await?;
+        let usage = self.ensure_not_applied(&environment, &library_id).await?;
         let catalog = self
             .repository
             .delete_library(&environment, &library_id)
             .await?;
-        self.snapshot_with_usages(environment, catalog).await
+        workspace_snapshot(environment, catalog, usage)
     }
 
     async fn ensure_not_applied(
         &self,
         environment: &EnvironmentRef,
         library_id: &LibraryId,
-    ) -> Result<(), AppError> {
-        self.unapplied_usage_revision(environment, library_id)
-            .await
-            .map(|_| ())
+    ) -> Result<LibraryUsageSnapshot, AppError> {
+        let usage = self.usages.usage_projection(environment).await?;
+        if !usage.inventory_complete {
+            return Err(AppError::ConfigurationCorrupted {
+                message: "Skill Library application inventory is incomplete".to_string(),
+            });
+        }
+        if usage.projections.iter().any(|projection| {
+            &projection.library_id == library_id
+                && (projection.confirmed_count > 0 || projection.pending_count > 0)
+        }) {
+            return Err(AppError::Validation {
+                field: Some("libraryId".to_string()),
+                message: "Skill Library cannot be deleted while it is applied".to_string(),
+            });
+        }
+        Ok(usage)
     }
 
-    async fn unapplied_usage_revision(
+    async fn usage_revision(
         &self,
         environment: &EnvironmentRef,
         library_id: &LibraryId,
     ) -> Result<String, AppError> {
         let usages = self.usages.usages(environment, library_id).await?;
-        if usages.is_empty() {
-            stable_digest(&("library-add-usages-v1", usages))
-        } else {
-            Err(AppError::Validation {
-                field: Some("libraryId".to_string()),
-                message: "Skill Library membership cannot change while the Library is applied"
-                    .to_string(),
-            })
-        }
+        stable_digest(&("library-membership-usages-v1", usages))
     }
 
     async fn observe_add_skill<T>(
@@ -1015,11 +1311,9 @@ impl SkillLibraryModule {
         install_dir_name: &str,
     ) -> Result<ObservedLibraryAddSkill, AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
-        let usage_revision = self
-            .unapplied_usage_revision(environment, library_id)
-            .await?;
+        let usage_revision = self.usage_revision(environment, library_id).await?;
         let collection = self
             .repository
             .resolve_collection(environment, library_id)
@@ -1166,6 +1460,26 @@ struct BuiltLibraryAdd {
     request: PreviewAddLibrarySkillsRequest,
     items: Vec<BuiltLibraryAddItem>,
     preview: LibraryAddPreview,
+    catalog: LibraryCatalog,
+}
+
+fn projected_add_catalog(built: &BuiltLibraryAdd) -> Result<LibraryCatalog, AppError> {
+    let mut catalog = built.catalog.clone();
+    for change in built.items.iter().filter_map(|item| match item {
+        BuiltLibraryAddItem::Prepared(change) => Some(change.as_ref()),
+        BuiltLibraryAddItem::Failed(_) => None,
+    }) {
+        let frontmatter = payload_frontmatter(change.payload.payload())?;
+        let mut record = library_record(&change.payload, frontmatter.description)?;
+        record.updated_at = None;
+        crate::application::library_membership::apply_membership_change(
+            &mut catalog,
+            &built.request.library_id,
+            &change.skill_name,
+            crate::application::library_membership::MembershipChange::Upsert(record),
+        )?;
+    }
+    Ok(catalog)
 }
 
 enum BuiltLibraryAddItem {
@@ -1215,7 +1529,7 @@ async fn prepare_library_add_targets<T>(
     cancellation: Option<crate::core::mutation::CancellationSignal>,
 ) -> Result<Vec<PreparedLibraryAdd>, AppError>
 where
-    T: TargetFactResolver + ContentManifestReader,
+    T: TargetFactResolver + ContentManifestReader + ?Sized,
 {
     if payloads.is_empty() {
         return Err(AppError::Validation {
@@ -1277,11 +1591,18 @@ struct ObservedLibraryAddSkill {
     expected: LibraryMemberCommitExpectation,
 }
 
+struct ObservedLibraryRetire {
+    expected: LibraryMemberCommitExpectation,
+    token: String,
+    catalog: LibraryCatalog,
+}
+
 fn library_add_preview_generation(
     request: &PreviewAddLibrarySkillsRequest,
     redirected_download_host: &Option<String>,
     context_revision: &str,
     skill_revisions: &[LibraryAddSkillRevision],
+    membership: &LibraryMembershipPreview,
 ) -> Result<String, AppError> {
     stable_digest(&(
         "library-add-preview-v2",
@@ -1289,6 +1610,7 @@ fn library_add_preview_generation(
         redirected_download_host,
         context_revision,
         skill_revisions,
+        membership,
     ))
 }
 
@@ -1350,6 +1672,20 @@ fn committed_at() -> String {
         .to_string()
 }
 
+fn validate_membership_target(
+    membership: &LibraryMembershipPreview,
+    environment: &EnvironmentRef,
+    library_id: &LibraryId,
+) -> Result<(), AppError> {
+    if &membership.library_id == library_id
+        && same_environment_identity(&membership.environment, environment)
+    {
+        Ok(())
+    } else {
+        Err(AppError::StaleContext)
+    }
+}
+
 fn library_source_record(
     source: &crate::application::skill_changes::NormalizedSkillSource,
 ) -> LibrarySkillSourceRecord {
@@ -1395,24 +1731,10 @@ pub(crate) fn merge_unknown_source_fields(
     }
 }
 
-#[cfg(test)]
-fn find_library_mut<'a>(
-    catalog: &'a mut LibraryCatalog,
-    id: &LibraryId,
-) -> Result<&'a mut SkillLibraryRecord, AppError> {
-    catalog
-        .libraries
-        .iter_mut()
-        .find(|library| &library.id == id)
-        .ok_or_else(|| AppError::PathNotFound {
-            path: id.as_str().to_string(),
-        })
-}
-
 fn workspace_snapshot(
     environment: EnvironmentRef,
     catalog: LibraryCatalog,
-    usage_projection: Vec<LibraryUsageProjection>,
+    usage: LibraryUsageSnapshot,
 ) -> Result<LibraryWorkspaceSnapshot, AppError> {
     validate_catalog(&catalog)?;
     let revision = crate::application::mutation::plan::stable_digest(&catalog)?;
@@ -1429,7 +1751,9 @@ fn workspace_snapshot(
         environment,
         libraries,
         revision,
-        usage_projection,
+        usage_projection: usage.projections,
+        usage_inventory_complete: usage.inventory_complete,
+        usage_inventory_problem_count: usage.problem_count,
     })
 }
 
@@ -1481,7 +1805,44 @@ pub(crate) fn validate_catalog(catalog: &LibraryCatalog) -> Result<(), AppError>
             ),
         });
     }
+    let invalid = |message: &str| AppError::ConfigurationCorrupted {
+        message: message.to_string(),
+    };
+    let mut library_ids = std::collections::BTreeSet::new();
+    let mut retirement_ids = std::collections::BTreeSet::new();
+    for library in &catalog.libraries {
+        if !library_ids.insert(library.id.clone())
+            || library.name.trim().is_empty()
+            || !valid_library_storage_component(library.id.as_str())
+        {
+            return Err(invalid("invalid Skill Library identity"));
+        }
+        let mut member_directories = std::collections::BTreeSet::new();
+        for member in &library.skills {
+            let directory = InstalledSkillResolver::install_dir_name(&member.name)
+                .map_err(|_| invalid("invalid active Skill Library member name"))?;
+            if !member_directories.insert(directory) || member.content_manifest_hash.is_empty() {
+                return Err(invalid("duplicate active Skill Library member directory"));
+            }
+        }
+        for retired in &library.retired_skills {
+            let directory = InstalledSkillResolver::install_dir_name(&retired.member.name)
+                .map_err(|_| invalid("invalid retired Skill Library member name"))?;
+            if retired.retirement_id.as_str().is_empty()
+                || retired.retired_at.is_empty()
+                || !retirement_ids.insert(retired.retirement_id.as_str())
+                || !member_directories.insert(directory)
+                || retired.member.content_manifest_hash.is_empty()
+            {
+                return Err(invalid("invalid retired Skill Library member"));
+            }
+        }
+    }
     Ok(())
+}
+
+fn valid_library_storage_component(value: &str) -> bool {
+    !value.is_empty() && !matches!(value, "." | "..") && !value.contains(['/', '\\', '\0'])
 }
 
 #[cfg(test)]
@@ -1508,8 +1869,31 @@ mod tests {
         fn usage_projection<'a>(
             &'a self,
             _environment: &'a EnvironmentRef,
-        ) -> LibraryFuture<'a, Result<Vec<LibraryUsageProjection>, AppError>> {
-            Box::pin(async { Ok(Vec::new()) })
+        ) -> LibraryFuture<'a, Result<LibraryUsageSnapshot, AppError>> {
+            Box::pin(async move {
+                let confirmed_count = self
+                    .0
+                    .iter()
+                    .filter(|usage| usage.state == LibraryUsageState::Confirmed)
+                    .count() as u32;
+                let pending_count = self
+                    .0
+                    .iter()
+                    .filter(|usage| usage.state == LibraryUsageState::PendingAdjustment)
+                    .count() as u32;
+                Ok(LibraryUsageSnapshot {
+                    projections: (!self.0.is_empty())
+                        .then(|| LibraryUsageProjection {
+                            library_id: LibraryId::parse("library-1"),
+                            confirmed_count,
+                            pending_count,
+                        })
+                        .into_iter()
+                        .collect(),
+                    inventory_complete: true,
+                    problem_count: 0,
+                })
+            })
         }
     }
 
@@ -1603,27 +1987,16 @@ mod tests {
                 {
                     return Err(error);
                 }
-                let library = find_library_mut(catalog, &request.library_id)?;
                 match request.mutation {
                     LibraryMemberMutation::Upsert { content, record } => {
-                        let mut record = *record;
-                        if let Some(current) = library
-                            .skills
-                            .iter_mut()
-                            .find(|skill| skill.name == request.skill_name)
-                        {
-                            record.extra = current.extra.clone();
-                            merge_unknown_source_fields(
-                                &mut record.source_record,
-                                &current.source_record,
-                            );
-                            *current = record;
-                        } else {
-                            library.skills.push(record);
-                            library
-                                .skills
-                                .sort_by(|left, right| left.name.cmp(&right.name));
-                        }
+                        crate::application::library_membership::apply_membership_change(
+                            catalog,
+                            &request.library_id,
+                            &request.skill_name,
+                            crate::application::library_membership::MembershipChange::Upsert(
+                                *record,
+                            ),
+                        )?;
                         self.payloads.lock().expect("payloads").insert(
                             (
                                 environment_key,
@@ -1633,21 +2006,46 @@ mod tests {
                             *content,
                         );
                     }
-                    LibraryMemberMutation::Delete => {
-                        let before = library.skills.len();
-                        library
-                            .skills
-                            .retain(|skill| skill.name != request.skill_name);
-                        if before == library.skills.len() {
-                            return Err(AppError::StaleTarget);
-                        }
-                        self.payloads.lock().expect("payloads").remove(&(
-                            environment_key,
-                            request.library_id.as_str().to_string(),
-                            request.skill_name,
-                        ));
+                    LibraryMemberMutation::Retire {
+                        retirement_id,
+                        retired_at,
+                    } => {
+                        crate::application::library_membership::apply_membership_change(
+                            catalog,
+                            &request.library_id,
+                            &request.skill_name,
+                            crate::application::library_membership::MembershipChange::Retire {
+                                retirement_id,
+                                retired_at,
+                            },
+                        )?;
                     }
                 }
+                Ok(())
+            })
+        }
+
+        fn purge_retired<'a>(
+            &'a self,
+            request: PurgeRetiredLibraryMemberRequest,
+        ) -> LibraryFuture<'a, Result<(), AppError>> {
+            Box::pin(async move {
+                let environment_key = EnvironmentKey::from_ref(&request.environment);
+                let mut catalogs = self.catalogs.lock().expect("catalogs");
+                let catalog = catalogs.entry(environment_key.clone()).or_default();
+                crate::application::library_membership::apply_membership_change(
+                    catalog,
+                    &request.library_id,
+                    &request.skill_name,
+                    crate::application::library_membership::MembershipChange::Purge {
+                        retirement_id: request.retirement_id,
+                    },
+                )?;
+                self.payloads.lock().expect("payloads").remove(&(
+                    environment_key,
+                    request.library_id.as_str().to_string(),
+                    request.skill_name,
+                ));
                 Ok(())
             })
         }
@@ -1766,6 +2164,21 @@ mod tests {
         payload_manager_with_storage().0
     }
 
+    fn membership_preview(
+        environment: &EnvironmentRef,
+        library_id: &LibraryId,
+    ) -> LibraryMembershipPreview {
+        LibraryMembershipPreview {
+            environment: environment.clone(),
+            library_id: library_id.clone(),
+            scopes: Vec::new(),
+            impacts: Vec::new(),
+            inventory_complete: true,
+            inventory_token: "membership-preview".to_string(),
+            token: "membership-preview".to_string(),
+        }
+    }
+
     fn payload_manager_with_storage() -> (
         PayloadSessionManager,
         Arc<crate::application::payload_session::InMemoryPayloadSessionStorage>,
@@ -1782,6 +2195,38 @@ mod tests {
             || 1_000,
         );
         (manager, storage)
+    }
+
+    #[test]
+    fn membership_preview_must_match_the_member_request_target() {
+        let environment = EnvironmentRef::Native;
+        let library_id = LibraryId::parse("library-1");
+        let preview = membership_preview(&environment, &LibraryId::parse("library-2"));
+
+        assert!(matches!(
+            validate_membership_target(&preview, &environment, &library_id),
+            Err(AppError::StaleContext)
+        ));
+    }
+
+    #[test]
+    fn retire_preview_token_binds_the_final_membership_impact() {
+        let environment = EnvironmentRef::Native;
+        let library_id = LibraryId::parse("library-1");
+        let prepared = PreparedLibraryRetire {
+            skill_name: "demo".to_string(),
+            base_token: "member-evidence".to_string(),
+        };
+        let mut final_membership = membership_preview(&environment, &library_id);
+        final_membership.token = "impact-evidence".to_string();
+
+        let preview = prepared.bind(final_membership).unwrap();
+
+        assert_ne!(preview.token, "member-evidence");
+        assert_eq!(
+            preview.token,
+            bound_retire_preview_token("member-evidence", &preview.membership).unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1842,7 +2287,8 @@ mod tests {
                         "sourceExtension": ["keep"]
                     },
                     "contentManifestHash": "manifest-old"
-                }]
+                }],
+                "retiredSkills": []
             }]
         });
 
@@ -1859,6 +2305,33 @@ mod tests {
             serialized["libraries"][0]["skills"][0]["sourceRecord"]["sourceExtension"][0],
             "keep"
         );
+    }
+
+    #[test]
+    fn catalog_rejects_active_and_retired_directory_collision() {
+        let active = test_library_record("CE:Review", "active");
+        let retired = test_library_record("ce-review", "retired");
+        let catalog = LibraryCatalog {
+            schema_version: LIBRARY_SCHEMA_VERSION,
+            libraries: vec![SkillLibraryRecord {
+                id: LibraryId::parse("library-1"),
+                name: "Library".to_string(),
+                skills: vec![active],
+                retired_skills: vec![RetiredLibrarySkillRecord {
+                    retirement_id: RetirementId::parse("retirement-1"),
+                    member: retired,
+                    retired_at: "2026-09-06T00:00:00Z".to_string(),
+                    extra: serde_json::Map::new(),
+                }],
+                extra: serde_json::Map::new(),
+            }],
+            extra: serde_json::Map::new(),
+        };
+
+        assert!(matches!(
+            validate_catalog(&catalog),
+            Err(AppError::ConfigurationCorrupted { .. })
+        ));
     }
 
     #[test]
@@ -1938,6 +2411,7 @@ mod tests {
                     test_library_record("alpha", "alpha-v1"),
                     test_library_record("beta", "beta-v1"),
                 ],
+                retired_skills: Vec::new(),
                 extra: serde_json::Map::new(),
             }],
             extra: serde_json::Map::new(),
@@ -2118,7 +2592,12 @@ mod tests {
             crate::environment::wsl::WslRuntime::default(),
         ));
         let preview = module
-            .preview_add_skills(&manager, &targets, request.clone())
+            .preview_add_skills(
+                &manager,
+                &targets,
+                request.clone(),
+                membership_preview(&request.environment, &request.library_id),
+            )
             .await
             .unwrap();
         std::fs::create_dir_all(skills_root.join("stale")).unwrap();
@@ -2129,7 +2608,8 @@ mod tests {
                 &targets,
                 ExecuteAddLibrarySkillsRequest {
                     request,
-                    expected_token: preview.token,
+                    expected_token: preview.token.clone(),
+                    membership: preview.membership.clone(),
                     acknowledge_redirect: false,
                 },
             )
@@ -2139,7 +2619,7 @@ mod tests {
         assert_eq!(response.results[0].status, LibraryAddSkillStatus::Failed);
         assert_eq!(response.results[0].error, Some(AppError::StaleTarget));
         assert_eq!(response.results[1].status, LibraryAddSkillStatus::Succeeded);
-        assert_eq!(response.library.skills[0].name, "ready");
+        assert_eq!(response.library.as_ref().unwrap().skills[0].name, "ready");
     }
 
     #[tokio::test]
@@ -2182,7 +2662,12 @@ mod tests {
             crate::environment::wsl::WslRuntime::default(),
         ));
         let preview = module
-            .preview_add_skills(&manager, &targets, request.clone())
+            .preview_add_skills(
+                &manager,
+                &targets,
+                request.clone(),
+                membership_preview(&request.environment, &request.library_id),
+            )
             .await
             .unwrap();
 
@@ -2192,7 +2677,8 @@ mod tests {
                 &targets,
                 ExecuteAddLibrarySkillsRequest {
                     request,
-                    expected_token: preview.token,
+                    expected_token: preview.token.clone(),
+                    membership: preview.membership.clone(),
                     acknowledge_redirect: false,
                 },
             )
@@ -2213,6 +2699,8 @@ mod tests {
         assert_eq!(
             response
                 .library
+                .as_ref()
+                .unwrap()
                 .skills
                 .iter()
                 .map(|skill| skill.name.as_str())
@@ -2263,7 +2751,12 @@ mod tests {
             crate::environment::wsl::WslRuntime::default(),
         ));
         let preview = module
-            .preview_add_skills(&manager, &targets, request.clone())
+            .preview_add_skills(
+                &manager,
+                &targets,
+                request.clone(),
+                membership_preview(&request.environment, &request.library_id),
+            )
             .await
             .unwrap();
         let stale = &request.skills[0].payload;
@@ -2281,7 +2774,8 @@ mod tests {
                 &targets,
                 ExecuteAddLibrarySkillsRequest {
                     request,
-                    expected_token: preview.token,
+                    expected_token: preview.token.clone(),
+                    membership: preview.membership.clone(),
                     acknowledge_redirect: false,
                 },
             )
@@ -2291,7 +2785,7 @@ mod tests {
         assert_eq!(response.results[0].status, LibraryAddSkillStatus::Failed);
         assert_eq!(response.results[0].error, Some(AppError::StalePayload));
         assert_eq!(response.results[1].status, LibraryAddSkillStatus::Succeeded);
-        assert_eq!(response.library.skills[0].name, "ready");
+        assert_eq!(response.library.as_ref().unwrap().skills[0].name, "ready");
     }
 
     #[tokio::test]
@@ -2339,7 +2833,12 @@ mod tests {
             crate::environment::wsl::WslRuntime::default(),
         ));
         let preview = module
-            .preview_add_skills(&manager, &targets, request.clone())
+            .preview_add_skills(
+                &manager,
+                &targets,
+                request.clone(),
+                membership_preview(&request.environment, &request.library_id),
+            )
             .await
             .unwrap();
 
@@ -2349,7 +2848,8 @@ mod tests {
                 &targets,
                 ExecuteAddLibrarySkillsRequest {
                     request,
-                    expected_token: preview.token,
+                    expected_token: preview.token.clone(),
+                    membership: preview.membership.clone(),
                     acknowledge_redirect: false,
                 },
             )
@@ -2358,7 +2858,7 @@ mod tests {
 
         assert_eq!(response.results[0].status, LibraryAddSkillStatus::Cancelled);
         assert_eq!(response.results[1].status, LibraryAddSkillStatus::NotRun);
-        assert!(response.library.skills.is_empty());
+        assert!(response.library.as_ref().unwrap().skills.is_empty());
     }
 
     #[tokio::test]
@@ -2437,7 +2937,12 @@ mod tests {
             crate::environment::wsl::WslRuntime::default(),
         ));
         let preview = module
-            .preview_add_skills(&manager, &targets, request.clone())
+            .preview_add_skills(
+                &manager,
+                &targets,
+                request.clone(),
+                membership_preview(&request.environment, &request.library_id),
+            )
             .await
             .expect("preview add skill");
         assert!(repository.payloads.lock().unwrap().is_empty());
@@ -2447,13 +2952,14 @@ mod tests {
                 &targets,
                 ExecuteAddLibrarySkillsRequest {
                     request,
-                    expected_token: preview.token,
+                    expected_token: preview.token.clone(),
+                    membership: preview.membership.clone(),
                     acknowledge_redirect: false,
                 },
             )
             .await
             .expect("execute add skill");
-        let detail = response.library;
+        let detail = response.library.unwrap();
 
         assert_eq!(response.results[0].status, LibraryAddSkillStatus::Succeeded);
         assert_eq!(detail.skills.len(), 1);

@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::watch;
 
+use crate::application::library_membership::{
+    LibraryMembershipModule, MembershipScopeState, RetiredCleanupState,
+};
 use crate::application::payload_session::{
     PayloadCleanupReport, PayloadSessionMaintenance, PayloadSessionManager,
 };
@@ -147,10 +150,12 @@ struct MaintenanceEntry {
 pub struct RuntimeMaintenanceCoordinator {
     payloads: Arc<PayloadSessionManager>,
     backend: Arc<dyn RuntimeMaintenanceBackend>,
+    membership: Option<Arc<LibraryMembershipModule>>,
     entries: Mutex<HashMap<EnvironmentKey, MaintenanceEntry>>,
 }
 
 impl RuntimeMaintenanceCoordinator {
+    #[cfg(test)]
     pub fn new(
         payloads: Arc<PayloadSessionManager>,
         backend: Arc<dyn RuntimeMaintenanceBackend>,
@@ -158,6 +163,20 @@ impl RuntimeMaintenanceCoordinator {
         Self {
             payloads,
             backend,
+            membership: None,
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn with_membership(
+        payloads: Arc<PayloadSessionManager>,
+        backend: Arc<dyn RuntimeMaintenanceBackend>,
+        membership: Arc<LibraryMembershipModule>,
+    ) -> Self {
+        Self {
+            payloads,
+            backend,
+            membership: Some(membership),
             entries: Mutex::new(HashMap::new()),
         }
     }
@@ -258,6 +277,47 @@ impl RuntimeMaintenanceCoordinator {
         };
 
         let outcome = self.backend.run(&environment).await;
+        if let Some(membership) = &self.membership {
+            match membership
+                .resume(
+                    environment.clone(),
+                    None,
+                    crate::core::mutation::CancellationSignal::default(),
+                )
+                .await
+            {
+                Ok(result) => {
+                    if let Some(error) = result.snapshot_error {
+                        log::warn!(
+                            "Library membership inventory is incomplete for {environment:?}: {error}"
+                        );
+                    }
+                    for scope in result.scopes {
+                        if !matches!(scope.state, MembershipScopeState::Synced) {
+                            log::warn!(
+                                "Library membership resume for {:?} remains {:?}: {:?}",
+                                scope.context,
+                                scope.state,
+                                scope.error
+                            );
+                        }
+                    }
+                    for cleanup in result.cleanup {
+                        if cleanup.state == RetiredCleanupState::Failed {
+                            log::warn!(
+                                "Retired Library member cleanup failed for {}/{}: {:?}",
+                                cleanup.library_id.as_str(),
+                                cleanup.member_name,
+                                cleanup.error
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Library membership resume failed for {environment:?}: {error}");
+                }
+            }
+        }
         let mut issues = Vec::new();
         match outcome.payload {
             Ok(report) => {

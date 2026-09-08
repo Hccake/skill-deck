@@ -1768,6 +1768,7 @@ fn test_library_record(id: LibraryId, name: &str, version: &str) -> SkillLibrary
             updated_at: Some(fixed_time()),
             extra: serde_json::Map::new(),
         }],
+        retired_skills: Vec::new(),
         extra: serde_json::Map::new(),
     }
 }

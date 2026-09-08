@@ -6,6 +6,7 @@ use specta::Type;
 
 #[cfg(test)]
 use crate::application::collection_records::SkillSelection;
+use crate::application::library_membership::LibraryMembershipOutcome;
 use crate::application::mutation::plan::stable_digest;
 use crate::application::mutation::result::ErrorReport;
 use crate::application::payload_session::{
@@ -67,7 +68,8 @@ pub struct LibraryUpdateResponse {
     pub sources: Vec<UpdateSourceResult>,
     pub results: Vec<LibraryUpdateSkillResult>,
     pub outcome: UpdateOutcome,
-    pub library: SkillLibraryDetail,
+    pub library: Option<SkillLibraryDetail>,
+    pub membership: LibraryMembershipOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -161,7 +163,7 @@ pub struct ExecuteLibraryUpdateRequest {
 #[specta(tag = "status", rename_all = "camelCase")]
 pub enum LibraryUpdateExecutionOutcome {
     Completed {
-        response: LibraryUpdateResponse,
+        response: Box<LibraryUpdateResponse>,
     },
     ConfirmationRequired {
         token: LibraryUpdatePreviewToken,
@@ -300,10 +302,11 @@ where
                 Ok(acquisitions) => continuation_from_acquisitions(acquisitions),
                 Err(AppError::MutationCancelled) => {
                     mark_cancelled(&request.skill_names, &mut results);
-                    return self
-                        .response(request, &[], results)
-                        .await
-                        .map(|response| LibraryUpdateExecutionOutcome::Completed { response });
+                    return self.response(request, &[], results).await.map(|response| {
+                        LibraryUpdateExecutionOutcome::Completed {
+                            response: Box::new(response),
+                        }
+                    });
                 }
                 Err(error) => return Err(error),
             },
@@ -607,7 +610,9 @@ where
         }
         self.response(request, &continuation.sources, results)
             .await
-            .map(|response| LibraryUpdateExecutionOutcome::Completed { response })
+            .map(|response| LibraryUpdateExecutionOutcome::Completed {
+                response: Box::new(response),
+            })
     }
 
     async fn response(
@@ -643,14 +648,23 @@ where
             })
             .collect();
         let outcome = library_update_outcome(&ordered);
+        let snapshot = self
+            .libraries
+            .detail(request.environment.clone(), request.library_id.clone())
+            .await;
+        let (library, snapshot_error) = match snapshot {
+            Ok(library) => (Some(library), None),
+            Err(error) => (None, Some(error)),
+        };
         Ok(LibraryUpdateResponse {
             sources: source_results,
             results: ordered,
             outcome,
-            library: self
-                .libraries
-                .detail(request.environment.clone(), request.library_id.clone())
-                .await?,
+            library,
+            membership: LibraryMembershipOutcome {
+                snapshot_error,
+                ..LibraryMembershipOutcome::default()
+            },
         })
     }
 }
@@ -919,8 +933,9 @@ mod tests {
         PayloadPlanningMetadata, PayloadSessionLimits,
     };
     use crate::application::skill_libraries::{
-        LibraryCatalog, LibraryId, LibrarySkillRecord, LibrarySkillSourceRecord,
-        SkillLibraryRecord, SkillLibraryRepository, LIBRARY_SCHEMA_VERSION,
+        LibraryCatalog, LibraryFuture, LibraryId, LibrarySkillRecord, LibrarySkillSourceRecord,
+        LibraryUsage, LibraryUsageProvider, LibraryUsageSnapshot, SkillLibraryRecord,
+        SkillLibraryRepository, LIBRARY_SCHEMA_VERSION,
     };
     use crate::application::skill_paths::{
         ContentRevision, RootResolutionRevision, TargetRevision,
@@ -946,6 +961,35 @@ mod tests {
         environment: EnvironmentRef,
         library_id: LibraryId,
         names: Vec<String>,
+    }
+
+    struct FailingSnapshotUsages;
+
+    impl LibraryUsageProvider for FailingSnapshotUsages {
+        fn usages<'a>(
+            &'a self,
+            _environment: &'a EnvironmentRef,
+            _library_id: &'a LibraryId,
+        ) -> LibraryFuture<'a, Result<Vec<LibraryUsage>, AppError>> {
+            Box::pin(async {
+                Err(AppError::Io {
+                    message: "snapshot unavailable".to_string(),
+                })
+            })
+        }
+
+        fn usage_projection<'a>(
+            &'a self,
+            _environment: &'a EnvironmentRef,
+        ) -> LibraryFuture<'a, Result<LibraryUsageSnapshot, AppError>> {
+            Box::pin(async {
+                Ok(LibraryUsageSnapshot {
+                    projections: Vec::new(),
+                    inventory_complete: true,
+                    problem_count: 0,
+                })
+            })
+        }
     }
 
     impl FixedSubjects {
@@ -1259,7 +1303,7 @@ mod tests {
             )
             .await?
         {
-            LibraryUpdateExecutionOutcome::Completed { response } => Ok(response),
+            LibraryUpdateExecutionOutcome::Completed { response } => Ok(*response),
             LibraryUpdateExecutionOutcome::ConfirmationRequired { .. } => {
                 Err(AppError::StaleContext)
             }
@@ -1500,6 +1544,8 @@ mod tests {
         assert_eq!(
             response
                 .library
+                .as_ref()
+                .unwrap()
                 .skills
                 .iter()
                 .map(|skill| skill.description.as_str())
@@ -1511,6 +1557,52 @@ mod tests {
             .skills
             .iter()
             .all(|skill| source_revision(&skill.source_record).as_deref() == Some("new")));
+    }
+
+    #[tokio::test]
+    async fn committed_update_survives_a_failed_detail_snapshot() {
+        let Fixture {
+            _temp,
+            repository,
+            library_id,
+            manager,
+            subjects: _,
+            source,
+        } = fixture(&["alpha"], None).await;
+        let service = LibraryUpdateService::new(
+            manager,
+            LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
+            source,
+            targets(),
+            Arc::new(SkillLibraryModule::with_usages(
+                repository.clone(),
+                Arc::new(FailingSnapshotUsages),
+            )),
+        );
+
+        let response = execute_completed(
+            &service,
+            UpdateLibrarySkillsRequest {
+                environment: EnvironmentRef::Native,
+                library_id,
+                skill_names: vec!["alpha".to_string()],
+            },
+            CancellationSignal::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            response.results[0].status,
+            LibraryUpdateSkillStatus::Succeeded
+        );
+        assert!(response.library.is_none());
+        assert!(matches!(
+            response.membership.snapshot_error,
+            Some(AppError::Io { .. })
+        ));
+        let saved = repository.load(&EnvironmentRef::Native).await.unwrap();
+        assert_eq!(saved.libraries[0].skills[0].description, "alpha updated");
     }
 
     #[tokio::test]
@@ -1584,7 +1676,10 @@ mod tests {
             response.results[0].status,
             LibraryUpdateSkillStatus::Succeeded
         );
-        assert_eq!(response.library.skills[0].description, "alpha updated");
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[0].description,
+            "alpha updated"
+        );
     }
 
     #[tokio::test]
@@ -1628,7 +1723,10 @@ mod tests {
             response.results[0].status,
             LibraryUpdateSkillStatus::NameChanged
         );
-        assert_eq!(response.library.skills[0].description, "alpha old");
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[0].description,
+            "alpha old"
+        );
     }
 
     #[tokio::test]
@@ -1673,8 +1771,14 @@ mod tests {
             response.results[1].status,
             LibraryUpdateSkillStatus::Succeeded
         );
-        assert_eq!(response.library.skills[0].description, "alpha old");
-        assert_eq!(response.library.skills[1].description, "beta updated");
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[0].description,
+            "alpha old"
+        );
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[1].description,
+            "beta updated"
+        );
     }
 
     fn payload_manager() -> PayloadSessionManager {
@@ -1723,6 +1827,7 @@ mod tests {
                         extra: serde_json::Map::new(),
                     })
                     .collect(),
+                retired_skills: Vec::new(),
                 extra: serde_json::Map::new(),
             }],
             extra: serde_json::Map::new(),

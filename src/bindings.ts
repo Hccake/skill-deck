@@ -126,6 +126,14 @@ async previewAddLibrarySkills(request: PreviewAddLibrarySkillsRequest) : Promise
     else return { status: "error", error: e  as any };
 }
 },
+async previewRemoveLibrarySkill(request: RemoveLibrarySkillRequest) : Promise<Result<LibraryRetirePreview, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_remove_library_skill", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewLibrarySkillUpdates(request: UpdateLibrarySkillsRequest) : Promise<Result<LibraryUpdatePreview, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_library_skill_updates", { request }) };
@@ -150,9 +158,17 @@ async renameSkillLibrary(environment: EnvironmentRef, libraryId: LibraryId, name
     else return { status: "error", error: e  as any };
 }
 },
-async removeLibrarySkill(request: RemoveLibrarySkillRequest) : Promise<Result<SkillLibraryDetail, AppError>> {
+async removeLibrarySkill(request: ExecuteRetireLibrarySkillRequest) : Promise<Result<LibraryRetireResponse, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remove_library_skill", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resumeLibraryMembership(environment: EnvironmentRef, libraryId: LibraryId | null) : Promise<Result<LibraryMembershipOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_library_membership", { environment, libraryId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -788,8 +804,9 @@ export type EvidenceAttempt = { checkedAtEpochMs: number; failure: EvidenceDetec
 export type EvidenceDetectionFailure = { reason: EvidenceFailureReason; message: string; retryAtEpochMs: number | null; providerCooldown: boolean }
 export type EvidenceFailureReason = "rateLimited" | "authenticationRequired" | "refNotFound" | "repositoryNotFound" | "notFoundOrUnauthorized" | "network" | "incompleteEvidence" | "sourceUnavailable"
 export type EvidenceFreshness = "fresh" | "cached" | "stale" | "coolingDown" | "backingOff" | "unavailable"
-export type ExecuteAddLibrarySkillsRequest = { request: PreviewAddLibrarySkillsRequest; expectedToken: LibraryAddPreviewToken; acknowledgeRedirect: boolean }
+export type ExecuteAddLibrarySkillsRequest = { request: PreviewAddLibrarySkillsRequest; expectedToken: LibraryAddPreviewToken; membership: LibraryMembershipPreview; acknowledgeRedirect: boolean }
 export type ExecuteLibraryUpdateRequest = { request: UpdateLibrarySkillsRequest; expectedToken: LibraryUpdatePreviewToken; continuation: LibraryUpdateContinuation | null; riskConfirmation: LibraryUpdateRiskConfirmation | null }
+export type ExecuteRetireLibrarySkillRequest = { request: RemoveLibrarySkillRequest; expectedToken: string; membership: LibraryMembershipPreview }
 export type FallbackReasonCode = "symlinkUnavailable" | "crossStorageCopyRequired" | "targetCapabilityFallback"
 /**
  * 来源发现结果
@@ -916,9 +933,9 @@ export type LegacyMigrationTarget = "currentPrivate" | "standardCanonical"
 export type LegacyPath = { scope: LegacyPathScope; path: PathSpec; behavior: LegacyPathBehavior; migrationTarget: LegacyMigrationTarget }
 export type LegacyPathBehavior = "detectOnly" | "offerMigration"
 export type LegacyPathScope = "global" | "project"
-export type LibraryAddPreview = { token: LibraryAddPreviewToken; skills: LibraryAddSkillPreview[]; redirectedDownloadHost: string | null }
+export type LibraryAddPreview = { token: LibraryAddPreviewToken; skills: LibraryAddSkillPreview[]; redirectedDownloadHost: string | null; membership: LibraryMembershipPreview }
 export type LibraryAddPreviewToken = { generation: string; contextRevision: string; skillRevisions: LibraryAddSkillRevision[]; redirectedDownloadHost: string | null }
-export type LibraryAddResponse = { results: LibraryAddSkillResult[]; library: SkillLibraryDetail }
+export type LibraryAddResponse = { results: LibraryAddSkillResult[]; library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
 export type LibraryAddSkillPreview = { skillName: string; targetPath: string }
 export type LibraryAddSkillResult = { skillName: string; status: LibraryAddSkillStatus; error: AppError | null }
 export type LibraryAddSkillRevision = { skillName: string; targetRevision: string; sourceRecordRevision: string }
@@ -933,6 +950,10 @@ export type LibraryApplicationSummary = { orderedLibraries: SkillLibrarySummary[
 export type LibraryApplicationSyncState = "synced" | "pending" | "unverified" | "recoveryRequired"
 export type LibraryCommitStatus = "succeeded" | "failed" | "notRun"
 export type LibraryId = string
+export type LibraryMembershipOutcome = { scopes: MembershipScopeResult[]; cleanup: RetiredCleanupResult[]; snapshotError: AppError | null }
+export type LibraryMembershipPreview = { environment: EnvironmentRef; libraryId: LibraryId; scopes: SkillLocationRef[]; impacts: MembershipScopeImpact[]; inventoryComplete: boolean; inventoryToken: string; token: string }
+export type LibraryRetirePreview = { skillName: string; token: string; membership: LibraryMembershipPreview }
+export type LibraryRetireResponse = { library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
 export type LibrarySkillSummary = { name: string; description: string; source: string; sourceType: string; sourceUrl: string | null; skillPath: string; contentHash: string;
 /**
  * 内容所属插件。属于 Skill 自身的元数据，与 Agent 无关。
@@ -955,7 +976,7 @@ export type LibraryUpdatePreparedSource = { sourceResultId: string; source: stri
 export type LibraryUpdatePreparedSourceResult = { status: "acquired"; discoverySession: DiscoverySessionHandle; payloads: LibraryUpdatePreparedPayload[]; skillErrors: LibraryUpdatePreparedSkillError[]; redirectedDownloadHost: string | null } | { status: "failed"; error: ErrorReport }
 export type LibraryUpdatePreview = { token: LibraryUpdatePreviewToken; skillNames: string[] }
 export type LibraryUpdatePreviewToken = { generation: string }
-export type LibraryUpdateResponse = { sources: UpdateSourceResult[]; results: LibraryUpdateSkillResult[]; outcome: UpdateOutcome; library: SkillLibraryDetail }
+export type LibraryUpdateResponse = { sources: UpdateSourceResult[]; results: LibraryUpdateSkillResult[]; outcome: UpdateOutcome; library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
 export type LibraryUpdateRiskConfirmation = { redirectedDownloadHosts: string[] }
 export type LibraryUpdateSkillResult = { skillName: string; status: LibraryUpdateSkillStatus; sourceResultId: string; contentCommit: LibraryCommitStatus; catalogCommit: LibraryCommitStatus; error: ErrorReport | null }
 export type LibraryUpdateSkillStatus = "succeeded" | "failed" | "nameChanged" | "deletedUpstream" | "cancelled" | "notRun"
@@ -970,15 +991,15 @@ export type LibraryUsageProjection = { libraryId: LibraryId; confirmedCount: num
 /**
  * 某个 Skill 位置引用当前对象的方式。
  *
- * 生效与锁定是两件事：`Confirmed` 表示配置已经起作用，`PendingAdjustment` 表示只有
- * 未完成的应用操作引用它、尚未确认生效。两者的并集才是成员锁定的判定依据。
+ * `Confirmed` 表示配置已经起作用，`PendingAdjustment` 表示只有未完成的应用操作
+ * 引用它、尚未确认生效。两者的并集用于整库删除保护和使用状态展示。
  */
 export type LibraryUsageState = "confirmed" | "pendingAdjustment"
 export type LibraryWorkspaceSnapshot = { environment: EnvironmentRef; libraries: SkillLibrarySummary[];
 /**
  * catalog 内容的摘要。应用关系不参与该摘要，页面重新进入时自行拉取最新投影。
  */
-revision: string; usageProjection: LibraryUsageProjection[] }
+revision: string; usageProjection: LibraryUsageProjection[]; usageInventoryComplete: boolean; usageInventoryProblemCount: number }
 export type LifecycleAction = "closeCurrentWindow" | "quitApplication" | "restartApplication"
 export type LifecycleActionOutcome = { status: "performed" } | { status: "delegated" } | { status: "blocked"; snapshot: BackendActivitySnapshot }
 export type LifecycleActionRequestedEvent = { action: LifecycleAction }
@@ -1007,6 +1028,11 @@ export type ManageInstallOptionState = { optionId: AgentInstallOptionId; current
 export type ManageSelectedEffect = "retain" | "add" | "repair"
 export type ManageSelectionDisabledReason = "unrecognizedEntry"
 export type ManageUnselectedEffect = "keepAbsent" | "remove" | "restoreLibrary"
+export type MembershipScopeImpact = { context: SkillLocationRef; skills: MembershipSkillImpact[] }
+export type MembershipScopeImpactKind = "added" | "switched" | "fallback" | "removed" | "unchanged" | "unverified"
+export type MembershipScopeResult = { context: SkillLocationRef; state: MembershipScopeState; error: AppError | null }
+export type MembershipScopeState = "synced" | "pending" | "unverified" | "recoveryRequired" | "cancelled"
+export type MembershipSkillImpact = { skillName: string; kind: MembershipScopeImpactKind }
 export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "manageAgentDefinitions" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference" | "updateSettings" | "manageGithubCredential" | "manageLibraries" | "resolveRecovery"
 export type MutationPhase = "preparing" | "acquiring" | "validating" | "committing" | "finishing"
 export type MutationProgress = { subject: string | null; current: number | null; total: number | null }
@@ -1055,6 +1081,8 @@ export type ResolvedAgent = { definition: AgentDefinition; detection: DetectionS
 export type ResolvedAgentScope = { enabled: boolean; readsStandard: boolean; standardPath: string | null; privatePath: string | null; readPaths: string[]; standardPresence: DirectoryPresenceState | null; privatePresence: DirectoryPresenceState | null; legacyPaths: ResolvedPathPresence[] }
 export type ResolvedPathPresence = { path: string | null; presence: DirectoryPresenceState }
 export type ResourceLocator = { environment: EnvironmentRef; nativePath: string }
+export type RetiredCleanupResult = { libraryId: LibraryId; memberName: string; retirementId: string; state: RetiredCleanupState; error: AppError | null }
+export type RetiredCleanupState = "purged" | "retained" | "failed"
 /**
  * 安装范围
  */

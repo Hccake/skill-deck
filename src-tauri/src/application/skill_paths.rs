@@ -133,7 +133,7 @@ impl SkillPathObserver {
         cancellation: Option<CancellationSignal>,
     ) -> Result<Vec<ResolvedSkillTarget>, AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
         if requests.is_empty() {
             return Err(AppError::Validation {
@@ -211,7 +211,7 @@ impl SkillPathObserver {
         cancellation: Option<CancellationSignal>,
     ) -> Result<Vec<ResolvedSkillTarget>, AppError>
     where
-        T: TargetFactResolver + ContentManifestReader,
+        T: TargetFactResolver + ContentManifestReader + ?Sized,
     {
         if requested_names.is_empty() {
             return Err(AppError::Validation {

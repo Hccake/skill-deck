@@ -23,6 +23,7 @@ pub mod installed_skill_resolver;
 pub(crate) mod library_agent_placements;
 pub mod library_application;
 pub mod library_candidates;
+pub mod library_membership;
 pub mod library_update;
 pub mod manage_agents;
 pub mod mutation;

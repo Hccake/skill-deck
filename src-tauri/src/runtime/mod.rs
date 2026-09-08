@@ -13,6 +13,7 @@ use crate::application::library_application::LibraryApplicationModule;
 use crate::application::library_candidates::{
     LibraryCandidateSource, RepositoryLibraryCandidateSource,
 };
+use crate::application::library_membership::LibraryMembershipModule;
 use crate::application::payload_session::{PayloadSessionLimits, PayloadSessionManager};
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::skill_libraries::{LibraryUsageProvider, SkillLibraryModule};
@@ -147,6 +148,7 @@ pub struct RuntimeServiceGraph {
             RuntimePlanExecutor,
         >,
     >,
+    library_membership: Arc<LibraryMembershipModule>,
     connection_probe: network_connection::RuntimeNetworkConnectionProbe,
 }
 
@@ -222,10 +224,6 @@ impl RuntimeServiceGraph {
             wsl.clone(),
             admission.clone(),
         ));
-        let maintenance = Arc::new(RuntimeMaintenanceCoordinator::new(
-            payloads.clone(),
-            maintenance_backend,
-        ));
         let update_evidence = build_runtime_source_evidence_coordinator(
             payloads.clone(),
             source_snapshots.clone(),
@@ -249,6 +247,20 @@ impl RuntimeServiceGraph {
             agent_selection_targets.clone(),
             execution.executor(wsl.clone(), Arc::new(agent_selection_facts.clone())),
             Arc::new(execution.recovery_service()),
+        ));
+        let library_membership = Arc::new(LibraryMembershipModule::new(
+            library_repository.clone(),
+            library_application.clone(),
+            library_repository.clone(),
+            admission.clone(),
+            skill_libraries.clone(),
+            payloads.clone(),
+            Arc::new(agent_selection_targets.clone()),
+        ));
+        let maintenance = Arc::new(RuntimeMaintenanceCoordinator::with_membership(
+            payloads.clone(),
+            maintenance_backend,
+            library_membership.clone(),
         ));
         let library_candidates: Arc<dyn LibraryCandidateSource> =
             Arc::new(RepositoryLibraryCandidateSource::new(
@@ -344,6 +356,7 @@ impl RuntimeServiceGraph {
             skill_libraries,
             library_usages,
             library_application,
+            library_membership,
             connection_probe,
         })
     }
@@ -460,6 +473,10 @@ impl RuntimeServiceGraph {
         RuntimePlanExecutor,
     > {
         self.library_application.as_ref()
+    }
+
+    pub(crate) fn library_membership(&self) -> &LibraryMembershipModule {
+        self.library_membership.as_ref()
     }
 
     pub(crate) fn connection_probe(&self) -> &network_connection::RuntimeNetworkConnectionProbe {
