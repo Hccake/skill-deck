@@ -23,7 +23,6 @@ interface LibrarySkillDetailPanelProps {
   loading: boolean;
   contentError?: boolean;
   busy?: boolean;
-  libraryInUse?: boolean;
   onClose: () => void;
   onUpdate?: (skillName: string) => void;
   onRemove?: (skillName: string) => void;
@@ -43,7 +42,6 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   loading,
   contentError = false,
   busy = false,
-  libraryInUse = false,
   onClose,
   onUpdate,
   onRemove,
@@ -111,10 +109,8 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
                       size="icon"
                       className="size-8 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       aria-label={t('libraries.removeSkill', { name: skill.name })}
-                      title={libraryInUse
-                        ? t('libraries.lockedMembership')
-                        : t('libraries.removeSkillTitle', { name: skill.name })}
-                      disabled={busy || libraryInUse}
+                      title={t('libraries.removeSkillTitle', { name: skill.name })}
+                      disabled={busy}
                       onClick={() => onRemove(skill.name)}
                     >
                       <Trash2 className="size-4" aria-hidden="true" />

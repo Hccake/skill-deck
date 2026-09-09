@@ -86,7 +86,7 @@ describe('SkillsSection', () => {
         libraryApplication={{
           orderedLibraries: [{ id: 'frontend', name: 'Frontend', skillCount: 3 }],
           selectedAgentIds: [],
-          pending: true,
+          pending: true, syncState: 'pending',
         }}
         onSkillClick={vi.fn()}
         onPrepareUpdate={vi.fn(async () => true)}
@@ -106,7 +106,7 @@ describe('SkillsSection', () => {
     const libraryName = within(library).getByText('Frontend');
     expect(libraryName).toBeTruthy();
     expect(within(library).getByText('libraries.skillCount')).toBeTruthy();
-    expect(screen.getByRole('status').textContent).toBe('libraries.pending');
+    expect(screen.getByRole('status').textContent).toBe('libraries.syncState.pending');
     fireEvent.click(within(actions).getByRole('button', { name: 'libraries.manage' }));
     expect(onManageLibraries).toHaveBeenCalledOnce();
   });

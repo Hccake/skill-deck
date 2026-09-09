@@ -48,7 +48,11 @@ export function LibraryApplicationStrip({ application, compact = false }: Librar
           ))}
         </div>
       ) : null}
-      {application.pending ? <span role="status" className="shrink-0 text-xs font-medium text-warning">{t('libraries.pending')}</span> : null}
+      {application.syncState !== 'synced' ? (
+        <span role="status" className="shrink-0 text-xs font-medium text-warning">
+          {t(`libraries.syncState.${application.syncState}`)}
+        </span>
+      ) : null}
     </div>
   );
 }

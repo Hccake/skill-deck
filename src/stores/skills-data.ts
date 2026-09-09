@@ -280,7 +280,7 @@ function emptyContextSnapshot(): ContextSkillSnapshot {
   return {
     skills: [],
     agents: [],
-    libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+    libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
     pathExists: true,
     loading: false,
     error: null,

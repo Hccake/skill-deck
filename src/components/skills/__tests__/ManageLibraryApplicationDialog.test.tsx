@@ -66,19 +66,22 @@ function libraryAgentOptions(
 
 describe('ManageLibraryApplicationDialog', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(listSkillLibraries).mockResolvedValue({
       environment: { kind: 'native' },
       libraries: [],
       revision: 'empty',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
     vi.mocked(getLibraryAgentOptions).mockResolvedValue(libraryAgentOptions());
     vi.mocked(retryLibraryApplication).mockResolvedValue({
-      application: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+      application: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
       units: [],
     });
     vi.mocked(applyLibraryApplication).mockResolvedValue({
-      application: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+      application: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
       units: [],
     });
     vi.mocked(previewLibraryApplication).mockResolvedValue({
@@ -99,7 +102,7 @@ describe('ManageLibraryApplicationDialog', () => {
   });
 
   it('identifies the Global Skill Library target in the dialog title', async () => {
-    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'libraries.manageGlobal' })).toBeTruthy();
@@ -110,7 +113,7 @@ describe('ManageLibraryApplicationDialog', () => {
 
   it('identifies the selected Project in the dialog title', async () => {
     renderDialog(
-      { orderedLibraries: [], selectedAgentIds: [], pending: false },
+      { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
       vi.fn(async () => {}),
       {
         context: {
@@ -129,7 +132,7 @@ describe('ManageLibraryApplicationDialog', () => {
   });
 
   it('continues the recorded target instead of opening a new selection while pending', async () => {
-    const { onApplied } = renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: true });
+    const { onApplied } = renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: true, syncState: 'pending' });
 
     fireEvent.click(screen.getByRole('button', { name: 'libraries.continue' }));
 
@@ -137,17 +140,22 @@ describe('ManageLibraryApplicationDialog', () => {
     expect(onApplied).toHaveBeenCalledOnce();
   });
 
-  it('shows empty libraries with their identity while keeping them unavailable', async () => {
+  it('allows applying an empty Library so the Scope follows future members', async () => {
     vi.mocked(listSkillLibraries).mockResolvedValue({
       environment: { kind: 'native' },
       libraries: [{ id: 'empty', name: 'Empty', skillCount: 0 }],
       revision: 'empty-library',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
-    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     const emptyLibrary = await screen.findByRole('checkbox', { name: 'Empty' });
-    expect(emptyLibrary.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(emptyLibrary);
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: 'libraries.save' }).hasAttribute('disabled'),
+    ).toBe(false));
     expect(screen.getByText('libraries.skillCount')).toBeTruthy();
     expect(screen.getByTestId('library-icon')).toBeTruthy();
   });
@@ -158,13 +166,41 @@ describe('ManageLibraryApplicationDialog', () => {
       libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       revision: 'dirty-state',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
-    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     const save = await screen.findByRole('button', { name: 'libraries.save' });
     expect(save.hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('checkbox', { name: 'Backend' }));
     expect(save.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('reapplies an unchanged configured Scope on explicit request', async () => {
+    vi.mocked(listSkillLibraries).mockResolvedValue({
+      environment: { kind: 'native' },
+      libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
+      revision: 'reapply',
+      usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
+    });
+    renderDialog({
+      orderedLibraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
+      selectedAgentIds: [],
+      pending: false,
+      syncState: 'synced',
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'libraries.reapply' }));
+
+    await waitFor(() => expect(previewLibraryApplication).toHaveBeenCalledWith({
+      context,
+      orderedLibraryIds: ['backend'],
+      selectedAgentIds: [],
+    }));
+    expect(applyLibraryApplication).toHaveBeenCalledOnce();
   });
 
   it('keeps the selection open when execution returns a failed unit', async () => {
@@ -173,12 +209,14 @@ describe('ManageLibraryApplicationDialog', () => {
       libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       revision: 'failed-apply',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
     vi.mocked(applyLibraryApplication).mockResolvedValue({
-      application: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+      application: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
       units: [{ status: 'failed' } as never],
     });
-    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     fireEvent.click(await screen.findByRole('checkbox'));
     fireEvent.click(screen.getByRole('button', { name: 'libraries.save' }));
@@ -198,6 +236,8 @@ describe('ManageLibraryApplicationDialog', () => {
       libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       revision: 'agent-conflict',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
     vi.mocked(getLibraryAgentOptions).mockResolvedValue(libraryAgentOptions({
       selection: makeAgentSelectionSnapshot({
@@ -235,7 +275,7 @@ describe('ManageLibraryApplicationDialog', () => {
     renderDialog({
       orderedLibraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       selectedAgentIds: [],
-      pending: false,
+      pending: false, syncState: 'synced',
     });
 
     const agent = await screen.findByRole('checkbox', { name: /Agent demo/ });
@@ -248,8 +288,8 @@ describe('ManageLibraryApplicationDialog', () => {
 
     expect(screen.queryByRole('alert')).toBeNull();
     expect(agent.getAttribute('data-state')).toBe('unchecked');
-    expect(screen.getByRole('button', { name: 'libraries.save' }).hasAttribute('disabled'))
-      .toBe(true);
+    expect(screen.getByRole('button', { name: 'libraries.reapply' }).hasAttribute('disabled'))
+      .toBe(false);
   });
 
   it('changes the persisted priority order with keyboard-accessible controls', async () => {
@@ -261,6 +301,8 @@ describe('ManageLibraryApplicationDialog', () => {
       ],
       revision: 'ordered',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
     renderDialog({
       orderedLibraries: [
@@ -268,7 +310,7 @@ describe('ManageLibraryApplicationDialog', () => {
         { id: 'second', name: 'Second', skillCount: 1 },
       ],
       selectedAgentIds: [],
-      pending: false,
+      pending: false, syncState: 'synced',
     });
     await screen.findByText('First');
 
@@ -286,6 +328,8 @@ describe('ManageLibraryApplicationDialog', () => {
       libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       revision: 'agents',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
     vi.mocked(getLibraryAgentOptions).mockResolvedValue(libraryAgentOptions({
       selection: makeAgentSelectionSnapshot({
@@ -326,7 +370,7 @@ describe('ManageLibraryApplicationDialog', () => {
     renderDialog({
       orderedLibraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       selectedAgentIds: [],
-      pending: false,
+      pending: false, syncState: 'synced',
     });
     await screen.findByRole('checkbox', { name: /Claude Code/ });
     expect(screen.getByText('libraries.copyOnlyUnsupported')).toBeTruthy();
@@ -343,11 +387,47 @@ describe('ManageLibraryApplicationDialog', () => {
     })));
   });
 
+  it('keeps an unavailable saved Agent association until the user removes it', async () => {
+    vi.mocked(listSkillLibraries).mockResolvedValue({
+      environment: { kind: 'native' },
+      libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
+      revision: 'unavailable-agent',
+      usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
+    });
+    vi.mocked(getLibraryAgentOptions).mockResolvedValue(libraryAgentOptions({
+      selection: makeAgentSelectionSnapshot({
+        unavailableExplicitAgents: [{ agentId: 'removed-agent', reason: 'definitionMissing' }],
+      }),
+    }));
+    renderDialog({
+      orderedLibraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
+      selectedAgentIds: ['removed-agent'],
+      pending: false,
+      syncState: 'synced',
+    });
+
+    const unavailable = await screen.findByRole('checkbox', { name: 'removed-agent' });
+    expect(unavailable.getAttribute('data-state')).toBe('checked');
+    expect(screen.getByRole('button', { name: 'libraries.reapply' }).hasAttribute('disabled'))
+      .toBe(false);
+
+    fireEvent.click(unavailable);
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.save' }));
+
+    await waitFor(() => expect(previewLibraryApplication).toHaveBeenCalledWith({
+      context,
+      orderedLibraryIds: ['backend'],
+      selectedAgentIds: [],
+    }));
+  });
+
   it('shows a stable loading state and blocks actions until both selections are ready', () => {
     vi.mocked(listSkillLibraries).mockReturnValue(new Promise(() => {}));
     vi.mocked(getLibraryAgentOptions).mockReturnValue(new Promise(() => {}));
 
-    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     expect(screen.getByRole('status').textContent).toContain('common.loading');
     expect(screen.getByRole('button', { name: 'libraries.save' }).hasAttribute('disabled')).toBe(true);
@@ -360,8 +440,10 @@ describe('ManageLibraryApplicationDialog', () => {
       libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       revision: 'discard',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
-    const { onOpenChange } = renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    const { onOpenChange } = renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Backend' }));
     fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
@@ -377,9 +459,11 @@ describe('ManageLibraryApplicationDialog', () => {
       libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
       revision: 'busy',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     });
     vi.mocked(previewLibraryApplication).mockReturnValue(new Promise(() => {}));
-    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false });
+    renderDialog({ orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' });
 
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Backend' }));
     fireEvent.click(screen.getByRole('button', { name: 'libraries.save' }));

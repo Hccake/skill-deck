@@ -29,7 +29,6 @@ interface LibrarySkillCardProps {
   /** 本次整库更新批次中该成员的阶段或结果。 */
   updateStatus?: SkillUpdateDisplayStatus;
   busy?: boolean;
-  libraryInUse?: boolean;
   onClick?: (skillName: string) => void;
   onUpdate?: (skillName: string) => void;
   onRemove?: (skillName: string) => void;
@@ -47,7 +46,6 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
   check,
   updateStatus,
   busy = false,
-  libraryInUse = false,
   onClick,
   onUpdate,
   onRemove,
@@ -196,12 +194,10 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                   size="icon"
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   aria-label={t('libraries.removeSkill', { name: skill.name })}
-                  // 成员锁定是库特有的约束，用户需要读到原因；
-                  // aria-disabled 保留指针事件，禁用状态下 Tooltip 才能触发。
-                  aria-disabled={busy || libraryInUse}
+                  aria-disabled={busy}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (!busy && !libraryInUse) onRemove(skill.name);
+                    if (!busy) onRemove(skill.name);
                   }}
                 >
                   <Trash2 className="size-3.5" aria-hidden="true" />
@@ -209,9 +205,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
               </TooltipTrigger>
               <TooltipContent>
                 <p>
-                  {libraryInUse
-                    ? t('libraries.lockedMembership')
-                    : t('libraries.removeSkillTitle', { name: skill.name })}
+                  {t('libraries.removeSkillTitle', { name: skill.name })}
                 </p>
               </TooltipContent>
             </Tooltip>

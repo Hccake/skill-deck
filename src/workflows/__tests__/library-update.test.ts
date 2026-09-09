@@ -74,7 +74,13 @@ describe('library update workflow', () => {
       })
       .mockResolvedValueOnce({
         status: 'completed',
-        response: { sources: [], results: [], outcome: 'succeeded', library: { id: 'library-1', name: 'Tools', skills: [], usages: [] } },
+        response: {
+          sources: [],
+          results: [],
+          outcome: 'succeeded',
+          library: { id: 'library-1', name: 'Tools', skills: [], usages: [] },
+          membership: { scopes: [], cleanup: [], snapshotError: null },
+        },
       });
 
     await useLibraryUpdateWorkflow.getState().prepare(['demo']);
@@ -87,6 +93,43 @@ describe('library update workflow', () => {
       continuation,
       riskConfirmation: { redirectedDownloadHosts: ['cdn.example.com'] },
     });
+  });
+
+  it('completes once when only the post-commit Library snapshot fails', async () => {
+    mocks.previewLibrarySkillUpdates.mockResolvedValue(preview);
+    mocks.updateLibrarySkills.mockResolvedValue({
+      status: 'completed',
+      response: {
+        sources: [],
+        results: [{
+          skillName: 'demo',
+          status: 'succeeded',
+          sourceResultId: 'source-1',
+          contentCommit: 'succeeded',
+          catalogCommit: 'succeeded',
+          error: null,
+        }],
+        outcome: 'succeeded',
+        library: null,
+        membership: {
+          scopes: [],
+          cleanup: [],
+          snapshotError: { kind: 'io', data: { message: 'snapshot unavailable' } },
+        },
+      },
+    });
+
+    await useLibraryUpdateWorkflow.getState().prepare(['demo']);
+    const response = await useLibraryUpdateWorkflow.getState().confirm();
+
+    expect(response?.library).toBeNull();
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({
+      phase: 'idle',
+      pending: null,
+      hasError: false,
+      lastResults: { demo: 'succeeded' },
+    });
+    expect(mocks.updateLibrarySkills).toHaveBeenCalledOnce();
   });
 
   it('does not let an old check overwrite a newly activated Library', async () => {

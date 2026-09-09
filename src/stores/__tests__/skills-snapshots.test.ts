@@ -58,7 +58,7 @@ function result(name: string, scope: 'global' | 'project' = 'global'): ListSkill
     skills: [skill(name, scope)],
     agents: [],
     pathExists: true,
-    libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+    libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
   };
 }
 

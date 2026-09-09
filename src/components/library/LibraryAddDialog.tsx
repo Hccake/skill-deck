@@ -36,6 +36,8 @@ import {
   type LibraryAddPhase,
   type LibraryAddTarget,
 } from './useLibraryAddFlow';
+import { MembershipImpactSummary } from './MembershipImpactSummary';
+import { MembershipOutcomeSummary } from './MembershipOutcomeSummary';
 
 interface LibraryAddDialogProps {
   open: boolean;
@@ -325,6 +327,16 @@ function LibraryAddReviewStep({ flow }: { flow: LibraryAddFlow }) {
       <p className="shrink-0 text-sm font-medium">
         {t('libraries.addFlow.review.summary', { count: preview?.skills.length ?? 0 })}
       </p>
+      {preview ? (
+        <div className="shrink-0 space-y-1">
+          <p className="text-xs text-muted-foreground">
+            {preview.membership.inventoryComplete
+              ? t('libraries.membership.affectedScopes', { count: preview.membership.scopes.length })
+              : t('libraries.membership.inventoryIncomplete', { count: preview.membership.scopes.length })}
+          </p>
+          <MembershipImpactSummary preview={preview.membership} />
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border">
         {preview?.skills.map((skill) => (
           <div key={skill.skillName} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b px-3 py-2.5 text-sm last:border-b-0">
@@ -413,6 +425,9 @@ function LibraryAddResultStep({ flow }: { flow: LibraryAddFlow }) {
           </div>
         ))}
       </div>
+      {flow.membershipOutcome ? (
+        <MembershipOutcomeSummary outcome={flow.membershipOutcome} />
+      ) : null}
       {flow.flowError ? (
         <p role="alert" className="shrink-0 text-sm text-destructive">
           {formatAppError(flow.flowError, t)}

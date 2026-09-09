@@ -40,6 +40,19 @@ const target = {
   libraryName: 'Backend',
 } as const;
 
+const membershipPreview = {
+  environment,
+  libraryId: 'lib-1',
+  scopes: [],
+  impacts: [{
+    context: { environment, scope: { scope: 'global' as const } },
+    skills: [{ skillName: 'ui-review', kind: 'added' as const }],
+  }],
+  inventoryComplete: true,
+  inventoryToken: 'inventory-1',
+  token: 'membership-1',
+} as const;
+
 const discovery = {
   discoverySession: {
     sessionId: 'session-1',
@@ -187,6 +200,7 @@ describe('LibraryAddDialog', () => {
               },
               skills: [{ skillName: 'ui-review', targetPath: '/libraries/lib-1/skills/ui-review' }],
               redirectedDownloadHost: null,
+              membership: membershipPreview,
             },
           },
           retryAdd: null,
@@ -226,6 +240,7 @@ describe('LibraryAddDialog', () => {
       skillPaths: [discovery.skills[1].relativePath],
     }));
     expect(await screen.findByText('libraries.addFlow.review.summary:{"count":1}')).toBeTruthy();
+    expect(screen.getByText('libraries.membership.impact.added:{"count":1}')).toBeTruthy();
     expect(screen.queryByText('libraries.addFlow.review.title')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'libraries.addFlow.review.confirm' }));
@@ -251,6 +266,7 @@ describe('LibraryAddDialog', () => {
         targetPath: `/libraries/lib-1/skills/${skill.name}`,
       })),
       redirectedDownloadHost: null,
+      membership: membershipPreview,
     };
     const execute = vi.fn()
       .mockResolvedValueOnce({
@@ -328,6 +344,7 @@ describe('LibraryAddDialog', () => {
             },
             skills: [{ skillName: 'ui-review', targetPath: '/libraries/lib-1/skills/ui-review' }],
             redirectedDownloadHost: 'cdn.example.net',
+            membership: membershipPreview,
           },
         },
         retryAdd: null,
@@ -369,5 +386,66 @@ describe('LibraryAddDialog', () => {
       kind: 'confirmAddSkills',
       acknowledgeRedirect: true,
     }));
+  });
+
+  it('refreshes a stale preview in the same Review step', async () => {
+    const user = userEvent.setup();
+    const preview = {
+      token: {
+        generation: 'preview-1',
+        contextRevision: 'context-1',
+        skillRevisions: [],
+        redirectedDownloadHost: null,
+      },
+      skills: [{ skillName: 'ui-review', targetPath: '/libraries/lib-1/skills/ui-review' }],
+      redirectedDownloadHost: null,
+      membership: membershipPreview,
+    };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        snapshot: { pendingAdd: { request: {}, preview }, retryAdd: null, lastAddResults: [] },
+      })
+      .mockResolvedValueOnce({
+        status: 'failed',
+        error: { kind: 'staleContext' },
+        failureSource: 'command',
+        snapshot: { pendingAdd: { request: {}, preview } },
+      })
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        snapshot: {
+          pendingAdd: {
+            request: {},
+            preview: {
+              ...preview,
+              token: { ...preview.token, generation: 'preview-2' },
+            },
+          },
+          retryAdd: null,
+          lastAddResults: [],
+        },
+      });
+    render(
+      <LibraryAddDialog
+        open
+        target={target}
+        existingSkillNames={new Set(['api-design'])}
+        execute={execute}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'libraries.addFlow.source.label' }),
+      'https://example.com/repo',
+    );
+    await user.click(screen.getByRole('button', { name: 'libraries.addFlow.source.read' }));
+    await user.click(await screen.findByRole('checkbox', { name: /ui-review/ }));
+    await user.click(screen.getByRole('button', { name: 'libraries.addFlow.selection.review' }));
+    await user.click(await screen.findByRole('button', { name: 'libraries.addFlow.review.confirm' }));
+
+    await waitFor(() => expect(execute).toHaveBeenLastCalledWith({ kind: 'retryAddPreview' }));
+    expect(screen.getByRole('button', { name: 'libraries.addFlow.review.confirm' })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

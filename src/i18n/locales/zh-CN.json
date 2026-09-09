@@ -23,15 +23,47 @@
       "appliedToLocation": "已应用到 {{location}}",
       "globalLocation": "全局 Skill",
       "pendingOnly": "应用调整未完成",
+      "inventoryIncomplete": "应用记录盘点不完整（{{count}} 项问题）",
       "viewDetails": "{{summary}}，查看全部使用位置",
       "unapplied": "未应用"
+    },
+    "membership": {
+      "affectedScopes": "将同步 {{count}} 个已应用位置",
+      "inventoryIncomplete": "已识别 {{count}} 个位置，另有位置当前无法验证",
+      "snapshotError": "库已保存，但无法读取最新展示信息。",
+      "retry": "重试同步",
+      "impact": {
+        "added": "新增 {{count}} 项",
+        "switched": "切换 {{count}} 项",
+        "fallback": "回退 {{count}} 项",
+        "removed": "移除 {{count}} 项",
+        "unchanged": "保持不变 {{count}} 项",
+        "unverified": "无法验证 {{count}} 项"
+      },
+      "scopeResult": {
+        "synced": "已同步 {{count}} 个位置",
+        "pending": "{{count}} 个位置待同步",
+        "unverified": "{{count}} 个位置无法验证",
+        "recoveryRequired": "{{count}} 个位置需要恢复",
+        "cancelled": "已取消 {{count}} 个位置"
+      },
+      "cleanupState": {
+        "purged": "已清理 {{count}} 个退役项",
+        "retained": "保留 {{count}} 个退役项",
+        "failed": "{{count}} 个退役项清理失败"
+      }
+    },
+    "syncState": {
+      "pending": "等待同步",
+      "unverified": "部分位置无法验证",
+      "recoveryRequired": "需要检查写入结果",
+      "synced": "已同步"
     },
     "appliedTo": "已应用到",
     "pendingAdjustment": "应用调整未完成",
     "pendingAdjustmentDescription": "上次库应用变更尚未完成，这些位置的内容可能与目标不一致。",
     "unappliedHint": "在 Skills 页的全局或项目区域应用此库后，Agent 才能读取其中的 Skill。",
     "moreUsages": "+{{count}}",
-    "lockedMembership": "使用中的库不能增删成员",
     "lockedDelete": "使用中的库不能删除",
     "lockedDeleteApplied": "此库正在被使用。请先在 Skills 页解除全局或项目应用。",
     "lockedDeletePending": "此库存在未完成的应用调整。请先在 Skills 页继续处理。",
@@ -121,7 +153,7 @@
     "manageGlobal": "管理全局 Skill 库",
     "manageProject": "管理「{{name}}」的 Skill 库",
     "manageProjectFallback": "管理项目 Skill 库",
-    "manageDescription": "选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。",
+    "manageDescription": "选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。保存后，此位置会持续跟随库内成员变化。",
     "appliedSection": "应用的 Skill 库",
     "availableSection": "未应用的 Skill 库",
     "selectedCount": "已选择 {{count}} 个",
@@ -131,9 +163,16 @@
     "linkableAgents": "选择后关联",
     "linkableAgentsHelp": "所选 Skill 库会通过链接应用到这些 Agent 的专用 Skill 目录。",
     "noLinkableAgents": "当前没有可关联的 Agent",
+    "unavailableSavedAgents": "已保存但当前不可关联",
+    "unavailableAgentReasons": {
+      "definitionMissing": "Agent 定义已不存在。取消选择后会解除这项关联。",
+      "optionUnavailable": "此 Agent 当前不再使用可关联的专用 Skill 目录。"
+    },
     "selectionLoadError": "无法加载 Skill 库或关联 Agent。",
     "save": "保存",
     "saving": "正在保存…",
+    "reapply": "重新应用",
+    "reapplying": "正在重新应用…",
     "saveError": "无法保存 Skill 库设置，请重试。",
     "targetConflictAgent": "{{agents}} 的专用 Skill 目录中存在无法安全处理的 {{skill}}，请取消关联后再保存。",
     "targetConflictScope": "通用 Skill 目录中的 {{skill}} 不是可管理的 Skill，请处理该目录项后再保存。",
@@ -159,10 +198,9 @@
     "confirmUpdateTitle": "更新库内 Skill",
     "confirmUpdateDescription": "将更新 {{count}} 个 Skill。已经应用此库的位置会通过现有链接直接使用新内容。",
     "maintenanceError": "库内容维护失败，请检查来源后重试。",
-    "inUse": "此库正在使用中。请先从以下位置移除应用关系，再调整库成员或删除库。",
     "removeSkill": "从库中移除 {{name}}",
     "removeSkillTitle": "移除 {{name}}",
-    "removeSkillDescription": "该 Skill 的独立库内容将被删除，其他库中的同名 Skill 不受影响。",
+    "removeSkillDescription": "该 Skill 将退出当前库。Skill Deck 会同步已应用位置，并在确认没有引用后清理库内内容。其他库中的同名 Skill 不受影响。",
     "deleteLibrary": "删除库",
     "deleteLibraryTitle": "删除 {{name}}",
     "deleteLibraryDescriptionWithCount": "将删除此库及其中的 {{count}} 个 Skill。",

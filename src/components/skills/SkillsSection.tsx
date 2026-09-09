@@ -90,7 +90,7 @@ export const SkillsSection = memo(function SkillsSection({
   onAdd,
   onCheckUpdates,
   emptyState,
-  libraryApplication = { orderedLibraries: [], selectedAgentIds: [], pending: false },
+  libraryApplication = { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
   onManageLibraries,
 }: SkillsSectionProps) {
   const { t, i18n } = useTranslation();

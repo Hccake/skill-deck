@@ -9,11 +9,13 @@ describe('Skill Library application copy', () => {
     expect(zhCN.libraries.manageProject).toBe('管理「{{name}}」的 Skill 库');
     expect(zhCN.libraries.manageProjectFallback).toBe('管理项目 Skill 库');
     expect(zhCN.libraries.manageDescription)
-      .toBe('选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。');
+      .toBe('选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。保存后，此位置会持续跟随库内成员变化。');
     expect(zhCN.libraries.appliedSection).toBe('应用的 Skill 库');
     expect(zhCN.libraries.availableSection).toBe('未应用的 Skill 库');
     expect(zhCN.libraries.save).toBe('保存');
     expect(zhCN.libraries.saving).toBe('正在保存…');
+    expect(zhCN.libraries.reapply).toBe('重新应用');
+    expect(zhCN.libraries.reapplying).toBe('正在重新应用…');
     expect(zhCN.libraries.saveError).toBe('无法保存 Skill 库设置，请重试。');
     expect(zhCN.libraries.targetConflictAgent)
       .toBe('{{agents}} 的专用 Skill 目录中存在无法安全处理的 {{skill}}，请取消关联后再保存。');
@@ -28,10 +30,14 @@ describe('Skill Library application copy', () => {
     expect(en.libraries.manageGlobal).toBe('Manage Global Skill Libraries');
     expect(en.libraries.manageProject).toBe('Manage Skill Libraries for “{{name}}”');
     expect(en.libraries.manageProjectFallback).toBe('Manage Project Skill Libraries');
+    expect(en.libraries.manageDescription)
+      .toBe('Choose and order the Skill Libraries used here, and select the Agents that need links. This location will keep following future member changes.');
     expect(en.libraries.appliedSection).toBe('Applied Skill Libraries');
     expect(en.libraries.availableSection).toBe('Unapplied Skill Libraries');
     expect(en.libraries.save).toBe('Save');
     expect(en.libraries.saving).toBe('Saving…');
+    expect(en.libraries.reapply).toBe('Reapply');
+    expect(en.libraries.reapplying).toBe('Reapplying…');
     expect(en.libraries.saveError).toBe('Skill Library settings could not be saved. Try again.');
     expect(en.libraries.targetConflictAgent)
       .toBe('{{agents}} has an unsupported {{skill}} entry in its private Skill directory. Remove the association before saving.');

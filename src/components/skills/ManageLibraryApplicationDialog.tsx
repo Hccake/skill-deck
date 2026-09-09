@@ -80,6 +80,7 @@ export function ManageLibraryApplicationDialog({
   const [catalog, setCatalog] = useState<LibraryWorkspaceSnapshot | null>(null);
   const [agentOptions, setAgentOptions] = useState<LibraryAgentOptions | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSelectionSession | null>(null);
+  const [retainedUnavailableAgentIds, setRetainedUnavailableAgentIds] = useState<string[]>([]);
   const [selected, setSelected] = useState<LibraryId[]>([]);
   const [loadState, setLoadState] = useState<LoadState>('idle');
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -102,6 +103,7 @@ export function ManageLibraryApplicationDialog({
     setCatalog(null);
     setAgentOptions(null);
     setAgentSession(null);
+    setRetainedUnavailableAgentIds([]);
     if (application.pending) {
       setLoadState('ready');
       return;
@@ -120,6 +122,9 @@ export function ManageLibraryApplicationDialog({
       setCatalog(nextCatalog);
       setAgentOptions({ ...nextAgentOptions, selection });
       setAgentSession(createAgentSelectionSession(selection));
+      setRetainedUnavailableAgentIds(
+        nextAgentOptions.selection.unavailableExplicitAgents.map((agent) => agent.agentId),
+      );
       setLoadState('ready');
     }).catch(() => {
       if (requestId === loadRequestId.current) setLoadState('error');
@@ -130,9 +135,12 @@ export function ManageLibraryApplicationDialog({
   const selection = agentOptions?.selection ?? null;
   const selectedAgentIds = useMemo(() => (
     selection && agentSession
-      ? selectedAgentsFromOptions(selection, agentSession.selectedOptionIds)
+      ? [...new Set([
+        ...selectedAgentsFromOptions(selection, agentSession.selectedOptionIds),
+        ...retainedUnavailableAgentIds,
+      ])].sort()
       : []
-  ), [agentSession, selection]);
+  ), [agentSession, retainedUnavailableAgentIds, selection]);
   const draft = useMemo(() => (
     context && loadState === 'ready' && agentSession
       ? { context, orderedLibraryIds: selected, selectedAgentIds }
@@ -142,6 +150,7 @@ export function ManageLibraryApplicationDialog({
     ? !sameArray(draft.orderedLibraryIds, application.orderedLibraries.map((library) => library.id))
       || !sameSet(draft.selectedAgentIds, application.selectedAgentIds)
     : false;
+  const canReapply = Boolean(application?.orderedLibraries.length) && !dirty;
   const selectedLibraries = selected.flatMap((id) => {
     const library = catalog?.libraries.find((candidate) => candidate.id === id)
       ?? application?.orderedLibraries.find((candidate) => candidate.id === id);
@@ -166,6 +175,7 @@ export function ManageLibraryApplicationDialog({
       const next = current.filter((id) => id !== libraryId);
       if (next.length === 0) {
         setAgentSession((session) => session ? { ...session, selectedOptionIds: [] } : session);
+        setRetainedUnavailableAgentIds([]);
       }
       return next;
     });
@@ -175,7 +185,7 @@ export function ManageLibraryApplicationDialog({
     onOpenChange(false);
   };
   const save = async () => {
-    if (!draft || !dirty) return;
+    if (!draft || (!dirty && !canReapply)) return;
     setOperation('saving');
     setSaveFailure(null);
     try {
@@ -268,6 +278,7 @@ export function ManageLibraryApplicationDialog({
               selection={selection}
               agentSession={agentSession}
               agentOptions={agentOptions}
+              retainedUnavailableAgentIds={retainedUnavailableAgentIds}
               agentPresentation={agentPresentation}
               agentsDisabled={selected.length === 0}
               onRemoveLibrary={removeLibrary}
@@ -279,6 +290,12 @@ export function ManageLibraryApplicationDialog({
               onAgentSessionChange={(session) => {
                 setSaveFailure(null);
                 setAgentSession(session);
+              }}
+              onUnavailableAgentChange={(agentId, retained) => {
+                setSaveFailure(null);
+                setRetainedUnavailableAgentIds((current) => retained
+                  ? [...new Set([...current, agentId])].sort()
+                  : current.filter((id) => id !== agentId));
               }}
             />
           )}
@@ -296,12 +313,14 @@ export function ManageLibraryApplicationDialog({
           <Button
             type="button"
             onClick={() => void (application?.pending || incomplete ? resume() : save())}
-            disabled={busy || (!application?.pending && !incomplete && !dirty)}
+            disabled={busy || (!application?.pending && !incomplete && !dirty && !canReapply)}
           >
             {operation ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
             {application?.pending || incomplete
               ? t(operation === 'resuming' ? 'libraries.resuming' : 'libraries.continue')
-              : t(operation === 'saving' ? 'libraries.saving' : 'libraries.save')}
+              : t(operation === 'saving'
+                ? canReapply ? 'libraries.reapplying' : 'libraries.saving'
+                : canReapply ? 'libraries.reapply' : 'libraries.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -370,12 +389,14 @@ function LibraryApplicationEditor({
   selection,
   agentSession,
   agentOptions,
+  retainedUnavailableAgentIds,
   agentPresentation,
   agentsDisabled,
   onRemoveLibrary,
   onAddLibrary,
   onMoveLibrary,
   onAgentSessionChange,
+  onUnavailableAgentChange,
 }: {
   libraries: SkillLibrarySummary[];
   availableLibraries: SkillLibrarySummary[];
@@ -383,12 +404,14 @@ function LibraryApplicationEditor({
   selection: AgentSelectionSnapshot;
   agentSession: AgentSelectionSession;
   agentOptions: LibraryAgentOptions;
+  retainedUnavailableAgentIds: string[];
   agentPresentation: ReturnType<typeof useAgentSelectionPresentation>;
   agentsDisabled: boolean;
   onRemoveLibrary: (id: LibraryId) => void;
   onAddLibrary: (id: LibraryId) => void;
   onMoveLibrary: (id: LibraryId, offset: number) => void;
   onAgentSessionChange: (session: AgentSelectionSession) => void;
+  onUnavailableAgentChange: (agentId: string, retained: boolean) => void;
 }) {
   const { t } = useTranslation();
   const setOption = (optionId: AgentInstallOptionId, selected: boolean) => {
@@ -487,6 +510,33 @@ function LibraryApplicationEditor({
               <span>{t('libraries.copyOnlyUnsupported', { names: agentOptions.unsupportedAgentNames.join(', ') })}</span>
             </div>
           ) : null}
+          {!agentsDisabled && selection.unavailableExplicitAgents.length > 0 ? (
+            <section className="space-y-2" aria-labelledby="unavailable-library-agents-title">
+              <h3 id="unavailable-library-agents-title" className="text-xs font-semibold text-muted-foreground">
+                {t('libraries.unavailableSavedAgents')}
+              </h3>
+              <div className="space-y-1.5">
+                {selection.unavailableExplicitAgents.map((agent) => {
+                  const id = `unavailable-library-agent-${agent.agentId}`;
+                  return (
+                    <div key={agent.agentId} className="grid min-h-11 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-md border px-3 py-2">
+                      <Checkbox
+                        id={id}
+                        checked={retainedUnavailableAgentIds.includes(agent.agentId)}
+                        onCheckedChange={(checked) => onUnavailableAgentChange(agent.agentId, checked === true)}
+                      />
+                      <div className="min-w-0">
+                        <Label htmlFor={id} className="block truncate">{agent.agentId}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t(`libraries.unavailableAgentReasons.${agent.reason}`)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
           {!agentsDisabled ? agentOptions.migrations
             .filter((migration) => selectedAgentsFromOptions(selection, agentSession.selectedOptionIds).includes(migration.agentId))
             .map((migration) => (
@@ -535,7 +585,7 @@ function SelectedLibraryRow({
 function AvailableLibraryRow({ library, onAdd }: { library: SkillLibrarySummary; onAdd: () => void }) {
   return (
     <Label className="grid min-h-11 cursor-pointer grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-md px-2.5 hover:bg-muted/50 has-[[data-disabled]]:cursor-not-allowed has-[[data-disabled]]:opacity-60">
-      <Checkbox checked={false} disabled={library.skillCount === 0} onCheckedChange={(selected) => selected && onAdd()} aria-label={library.name} />
+      <Checkbox checked={false} onCheckedChange={(selected) => selected && onAdd()} aria-label={library.name} />
       <span className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-2">
         <LibraryIdentity library={library} />
       </span>

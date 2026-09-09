@@ -42,7 +42,7 @@ import type { AgentId, InstalledSkill, LibraryApplicationSummary, ResolvedAgent,
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
   agents: [],
-  libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+  libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
   pathExists: true,
   loading: false,
   error: null,
@@ -468,16 +468,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           onSkillClick={selectSkill}
           projectEmptyState={projectFilterEmptyState}
           globalEmptyState={globalFilterEmptyState}
-          projectLibraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
-          globalLibraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+          projectLibraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
+          globalLibraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
           onManageProjectLibraries={isProjectSelected ? () => setManageLibraries({
             context: selectedContext,
-            application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+            application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
             projectName: selectedProjectName,
           }) : undefined}
           onManageGlobalLibraries={() => setManageLibraries({
             context: selectedGlobalContext,
-            application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+            application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
           })}
         />
       ) : (
@@ -508,10 +508,10 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               onAdd={handleAddProject}
               onCheckUpdates={handleCheckProjectUpdates}
               emptyState={projectEmptyState}
-              libraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+              libraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
               onManageLibraries={() => setManageLibraries({
                 context: selectedContext,
-                application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+                application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
                 projectName: selectedProjectName,
               })}
             />
@@ -538,10 +538,10 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             onAdd={handleAddGlobal}
             onCheckUpdates={handleCheckGlobalUpdates}
             emptyState={globalEmptyState}
-            libraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+            libraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
             onManageLibraries={() => setManageLibraries({
               context: selectedGlobalContext,
-              application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+              application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
             })}
           />
         </div>

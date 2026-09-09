@@ -23,15 +23,47 @@
       "appliedToLocation": "Applied to {{location}}",
       "globalLocation": "Global Skills",
       "pendingOnly": "Application adjustment unfinished",
+      "inventoryIncomplete": "Application inventory is incomplete ({{count}} issues)",
       "viewDetails": "{{summary}}. View all usage locations",
       "unapplied": "Not applied"
+    },
+    "membership": {
+      "affectedScopes": "{{count}} applied locations will be synchronized",
+      "inventoryIncomplete": "{{count}} locations were identified; others cannot currently be verified",
+      "snapshotError": "The Library was saved, but its latest display snapshot could not be loaded.",
+      "retry": "Retry synchronization",
+      "impact": {
+        "added": "{{count}} additions",
+        "switched": "{{count}} switches",
+        "fallback": "{{count}} fallbacks",
+        "removed": "{{count}} removals",
+        "unchanged": "{{count}} unchanged",
+        "unverified": "{{count}} cannot be verified"
+      },
+      "scopeResult": {
+        "synced": "{{count}} synchronized",
+        "pending": "{{count}} pending",
+        "unverified": "{{count}} unverified",
+        "recoveryRequired": "{{count}} need recovery",
+        "cancelled": "{{count}} cancelled"
+      },
+      "cleanupState": {
+        "purged": "{{count}} retired items cleaned up",
+        "retained": "{{count}} retired items retained",
+        "failed": "{{count}} cleanup failures"
+      }
+    },
+    "syncState": {
+      "pending": "Waiting to synchronize",
+      "unverified": "Some locations cannot be verified",
+      "recoveryRequired": "Write result needs attention",
+      "synced": "Synchronized"
     },
     "appliedTo": "Applied to",
     "pendingAdjustment": "Application adjustment unfinished",
     "pendingAdjustmentDescription": "The last library application change did not finish, so these locations may not match the target yet.",
     "unappliedHint": "Apply this library from the global or project area on the Skills page so Agents can read its Skills.",
     "moreUsages": "+{{count}}",
-    "lockedMembership": "Members cannot change while the library is in use",
     "lockedDelete": "A library in use cannot be deleted",
     "lockedDeleteApplied": "This Library is in use. Remove its global or project applications from the Skills page first.",
     "lockedDeletePending": "This Library has an unfinished application adjustment. Continue it from the Skills page first.",
@@ -121,7 +153,7 @@
     "manageGlobal": "Manage Global Skill Libraries",
     "manageProject": "Manage Skill Libraries for “{{name}}”",
     "manageProjectFallback": "Manage Project Skill Libraries",
-    "manageDescription": "Choose and order the Skill Libraries used here, and select the Agents that need links.",
+    "manageDescription": "Choose and order the Skill Libraries used here, and select the Agents that need links. This location will keep following future member changes.",
     "appliedSection": "Applied Skill Libraries",
     "availableSection": "Unapplied Skill Libraries",
     "selectedCount": "{{count}} selected",
@@ -131,9 +163,16 @@
     "linkableAgents": "Associate when selected",
     "linkableAgentsHelp": "The selected Skill Libraries are linked into these Agents' dedicated Skill directories.",
     "noLinkableAgents": "No Agents can be associated here",
+    "unavailableSavedAgents": "Saved associations currently unavailable",
+    "unavailableAgentReasons": {
+      "definitionMissing": "The Agent definition no longer exists. Clear this selection to remove the association.",
+      "optionUnavailable": "This Agent no longer uses a dedicated Skill directory that can be associated."
+    },
     "selectionLoadError": "Skill Libraries or associated Agents could not be loaded.",
     "save": "Save",
     "saving": "Saving…",
+    "reapply": "Reapply",
+    "reapplying": "Reapplying…",
     "saveError": "Skill Library settings could not be saved. Try again.",
     "targetConflictAgent": "{{agents}} has an unsupported {{skill}} entry in its private Skill directory. Remove the association before saving.",
     "targetConflictScope": "{{skill}} in the shared Skill directory cannot be managed. Resolve the entry before saving.",
@@ -159,10 +198,9 @@
     "confirmUpdateTitle": "Update Library Skills",
     "confirmUpdateDescription": "{{count}} Skills will be updated. Scopes already using this Library will read the new content through their existing links.",
     "maintenanceError": "Library maintenance failed. Check the source and try again.",
-    "inUse": "This Library is in use. Remove it from these locations before changing membership or deleting the Library.",
     "removeSkill": "Remove {{name}} from Library",
     "removeSkillTitle": "Remove {{name}}",
-    "removeSkillDescription": "This Library's independent Skill content will be deleted. Skills with the same name in other Libraries are unaffected.",
+    "removeSkillDescription": "This Skill will leave the Library. Skill Deck synchronizes applied locations and removes the stored content after no references remain. Skills with the same name in other Libraries are unaffected.",
     "deleteLibrary": "Delete Library",
     "deleteLibraryTitle": "Delete {{name}}",
     "deleteLibraryDescriptionWithCount": "This Library and its {{count}} Skills will be deleted.",

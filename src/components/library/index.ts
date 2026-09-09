@@ -6,3 +6,5 @@ export { LibraryUsageLine } from './LibraryUsageLine';
 export { LibraryUsageIdentity } from './LibraryUsageIdentity';
 export { DeleteLibraryDialog } from './DeleteLibraryDialog';
 export { LibraryAddDialog } from './LibraryAddDialog';
+export { MembershipImpactSummary } from './MembershipImpactSummary';
+export { MembershipOutcomeSummary } from './MembershipOutcomeSummary';

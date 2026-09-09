@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LibrarySkillCard } from '../LibrarySkillCard';
@@ -90,14 +90,16 @@ describe('LibrarySkillCard', () => {
     expect(screen.getByText('skills.refBadge:{"ref":"main"}')).toBeTruthy();
   });
 
-  it('explains why removal is blocked while the library is in use', () => {
+  it('allows an applied Library member to enter the retirement flow', () => {
+    const onRemove = vi.fn();
     render(
       <TooltipProvider>
-        <LibrarySkillCard skill={sampleSkill} libraryInUse onRemove={vi.fn()} />
+        <LibrarySkillCard skill={sampleSkill} onRemove={onRemove} />
       </TooltipProvider>
     );
 
-    expect(removeButton().getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(removeButton());
+    expect(onRemove).toHaveBeenCalledWith('backend-utils');
   });
 
   it('offers the update action only when an update is actually available', () => {

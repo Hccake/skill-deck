@@ -107,12 +107,12 @@ describe('CompactSkillList', () => {
             { id: 'project-c', name: 'Project C', skillCount: 1 },
           ],
           selectedAgentIds: [],
-          pending: false,
+          pending: false, syncState: 'synced',
         }}
         globalLibraryApplication={{
           orderedLibraries: [{ id: 'global-a', name: 'Global A', skillCount: 1 }],
           selectedAgentIds: [],
-          pending: true,
+          pending: true, syncState: 'pending',
         }}
         onManageProjectLibraries={vi.fn()}
         onManageGlobalLibraries={vi.fn()}
@@ -130,6 +130,6 @@ describe('CompactSkillList', () => {
     expect(screen.getByText('Project B')).toBeDefined();
     expect(screen.getByText('Project C')).toBeDefined();
     expect(screen.queryByRole('button', { name: /^\+\d+$/ })).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe('libraries.pending');
+    expect(screen.getByRole('status').textContent).toBe('libraries.syncState.pending');
   });
 });

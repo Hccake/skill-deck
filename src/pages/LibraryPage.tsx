@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { useGroupRef } from 'react-resizable-panels';
 import {
   BookOpen,
@@ -33,6 +42,8 @@ import {
   LibrarySkillCard,
   LibrarySkillDetailPanel,
   LibraryUsageLine,
+  MembershipImpactSummary,
+  MembershipOutcomeSummary,
 } from '@/components/library';
 import { useLibraryWorkspace } from '@/hooks/useLibraryWorkspace';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
@@ -42,7 +53,7 @@ import { environmentKey } from '@/lib/context';
 import { environmentDisplayName } from '@/lib/environments/presentation';
 import { cn } from '@/lib/utils';
 import { formatAppError } from '@/utils/format-app-error';
-import { removeLibrarySkill, readLibrarySkillContent } from '@/hooks/useTauriApi';
+import { readLibrarySkillContent } from '@/hooks/useTauriApi';
 import { useLibraryUpdateWorkflow } from '@/workflows/library-update';
 import { libraryUpdateDisplayStatuses } from '@/lib/libraries/update-progress';
 import {
@@ -51,7 +62,6 @@ import {
 } from '@/lib/libraries/update-summary';
 import type {
   AppError,
-  EnvironmentRef,
   LibraryId,
   SkillLibrarySummary,
 } from '@/bindings';
@@ -74,6 +84,26 @@ const LIST_VIEW_LAYOUT = {
   'library-skills-list-panel': 100,
 } as const;
 
+function useLibraryViewState<T>(
+  key: string,
+  initialValue: T,
+): [T, Dispatch<SetStateAction<T>>] {
+  const [stored, setStored] = useState(() => ({ key, value: initialValue }));
+  const value = stored.key === key ? stored.value : initialValue;
+  const setValue = useCallback<Dispatch<SetStateAction<T>>>((next) => {
+    setStored((current) => {
+      const currentValue = current.key === key ? current.value : initialValue;
+      return {
+        key,
+        value: typeof next === 'function'
+          ? (next as (previous: T) => T)(currentValue)
+          : next,
+      };
+    });
+  }, [initialValue, key]);
+  return [value, setValue];
+}
+
 export function LibraryPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -81,6 +111,7 @@ export function LibraryPage() {
   const environment = useWorkspaceContextStore((state) => state.selectedContext.environment);
   const environments = useEnvironmentStore((state) => state.environments);
   const workspace = useLibraryWorkspace(environment);
+  const localViewKey = `${environmentKey(environment)}:${workspace.selectedLibraryId ?? ''}`;
 
   // 选择先提交到 Workspace，下面的路由协调 effect 再同步实际选中项。
   const selectLibrary = useCallback((libraryId: LibraryId) => {
@@ -107,36 +138,29 @@ export function LibraryPage() {
     existingSkillNames: ReadonlySet<string>;
     execute: ExecuteLibraryCommand;
   } | null>(null);
-  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
   // 读取来源、移除成员和删除库的失败原因不同，不能共用一句通用文案。
-  const [pageError, setPageError] = useState<{ scope: 'remove'; error: AppError } | null>(null);
-  const [removeSkillName, setRemoveSkillName] = useState<string | null>(null);
+  const [pageError, setPageError] = useLibraryViewState<{
+    scope: 'remove'; error: AppError;
+  } | null>(localViewKey, null);
+  const [removeSkillName, setRemoveSkillName] = useLibraryViewState<string | null>(
+    localViewKey,
+    null,
+  );
   const [deleteRequest, setDeleteRequest] = useState<LibraryDeletionRequest | null>(null);
-  const [query, setQuery] = useState('');
-  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
-  const [skillContent, setSkillContent] = useState<string | null>(null);
-  const [contentError, setContentError] = useState(false);
+  const [query, setQuery] = useLibraryViewState(localViewKey, '');
+  const [selectedSkillName, setSelectedSkillName] = useLibraryViewState<string | null>(
+    localViewKey,
+    null,
+  );
+  const [skillContent, setSkillContent] = useLibraryViewState<string | null>(localViewKey, null);
+  const [contentError, setContentError] = useLibraryViewState(localViewKey, false);
 
   const layoutRef = useGroupRef();
   const addTriggerRef = useRef<HTMLButtonElement | null>(null);
   const previousSplitViewRef = useRef(false);
   const committedRouteKeyRef = useRef<string | null>(null);
-  const maintenanceRequestId = useRef(0);
   const contentRequestId = useRef(0);
-  const activeLibraryTarget = useRef({
-    environmentKey: environmentKey(environment),
-    libraryId: workspace.selectedLibraryId,
-  });
-  activeLibraryTarget.current = {
-    environmentKey: environmentKey(environment),
-    libraryId: workspace.selectedLibraryId,
-  };
   const routeSyncKey = `${environmentKey(environment)}:${requestedLibraryId ?? ''}`;
-
-  const targetIsActive = (requestedEnvironment: EnvironmentRef, libraryId: LibraryId) => (
-    activeLibraryTarget.current.environmentKey === environmentKey(requestedEnvironment)
-    && activeLibraryTarget.current.libraryId === libraryId
-  );
 
   useEffect(() => {
     if (
@@ -188,13 +212,7 @@ export function LibraryPage() {
   }, [environment, requestedLibraryId, routeSyncKey, setSearchParams, workspace.catalog, workspace.phase, workspace.selectedLibraryId]);
 
   useEffect(() => {
-    setPageError(null);
-    setQuery('');
-    setSelectedSkillName(null);
-    setSkillContent(null);
-    setContentError(false);
     activateUpdate(environment, workspace.selectedLibraryId);
-    maintenanceRequestId.current += 1;
     contentRequestId.current += 1;
   }, [activateUpdate, environment, workspace.selectedLibraryId]);
 
@@ -203,7 +221,12 @@ export function LibraryPage() {
   const updateBusy = updatePhase === 'checking'
     || updatePhase === 'preparing'
     || updatePhase === 'executing';
-  const busy = writeBlocked || workspace.phase === 'writing' || maintenanceBusy || updateBusy;
+  const busy = writeBlocked || workspace.phase === 'writing' || updateBusy;
+  const removePreview = workspace.pendingRetire?.libraryId === workspace.selectedLibraryId
+    && workspace.pendingRetire.skillName === removeSkillName
+    ? workspace.pendingRetire.preview
+    : null;
+  const membershipOutcome = workspace.membershipOutcome;
 
   const submitName = async () => {
     if (!nameDialog || !name.trim()) return;
@@ -225,7 +248,7 @@ export function LibraryPage() {
 
   const openAddDialog = (trigger: HTMLButtonElement) => {
     const detail = workspace.detail;
-    if (!detail || !workspace.selectedLibraryId || busy || libraryInUse) return;
+    if (!detail || !workspace.selectedLibraryId || busy) return;
     addTriggerRef.current = trigger;
     const environmentEntry = environments.find(
       (entry) => environmentKey(entry.environment) === environmentKey(environment),
@@ -265,35 +288,65 @@ export function LibraryPage() {
   const applyUpdates = async () => {
     const response = await confirmUpdates();
     if (response) {
-      await workspace.execute({ kind: 'select', libraryId: response.library.id });
+      const libraryId = response.library?.id ?? workspace.selectedLibraryId;
+      if (libraryId) await workspace.execute({ kind: 'select', libraryId });
     }
   };
 
   const submitSkillRemoval = async () => {
     const libraryId = workspace.selectedLibraryId;
     const requestedSkillName = removeSkillName;
-    const requestedEnvironment = environment;
-    if (!libraryId || !requestedSkillName) return;
-    const requestId = ++maintenanceRequestId.current;
-    setMaintenanceBusy(true);
+    const removePreview = workspace.pendingRetire?.preview;
+    if (!libraryId || !requestedSkillName || !removePreview) return;
     setPageError(null);
-    try {
-      await removeLibrarySkill({
-        environment: requestedEnvironment,
-        libraryId,
-        skillName: requestedSkillName,
-      });
-      if (requestId !== maintenanceRequestId.current || !targetIsActive(requestedEnvironment, libraryId)) return;
-      await workspace.execute({ kind: 'select', libraryId });
-      if (requestId !== maintenanceRequestId.current || !targetIsActive(requestedEnvironment, libraryId)) return;
-      setRemoveSkillName(null);
-      if (selectedSkillName === requestedSkillName) {
-        setSelectedSkillName(null);
+    const result = await workspace.execute({ kind: 'confirmRetire' });
+    if (result.status === 'failed') {
+      if (result.error.kind === 'staleContext') {
+        const refreshed = await workspace.execute({
+          kind: 'prepareRetire',
+          libraryId,
+          skillName: requestedSkillName,
+        });
+        if (refreshed.status === 'failed') {
+          setPageError({ scope: 'remove', error: refreshed.error });
+        }
+      } else {
+        setPageError({ scope: 'remove', error: result.error });
       }
-    } catch (error) {
-      if (requestId === maintenanceRequestId.current) setPageError({ scope: 'remove', error: error as AppError });
-    } finally {
-      if (requestId === maintenanceRequestId.current) setMaintenanceBusy(false);
+      return;
+    }
+    if (result.status === 'notRun') return;
+    setRemoveSkillName(null);
+    if (selectedSkillName === requestedSkillName) {
+      setSelectedSkillName(null);
+    }
+  };
+
+  const openSkillRemoval = async (skillName: string) => {
+    const libraryId = workspace.selectedLibraryId;
+    if (!libraryId || busy) return;
+    setRemoveSkillName(skillName);
+    setPageError(null);
+    const result = await workspace.execute({
+      kind: 'prepareRetire',
+      libraryId,
+      skillName,
+    });
+    if (result.status === 'failed') {
+      setPageError({ scope: 'remove', error: result.error });
+    }
+  };
+
+  const retryMembership = async () => {
+    const libraryId = workspace.selectedLibraryId;
+    if (!libraryId || busy) return;
+    setPageError(null);
+    const result = await workspace.execute({
+      kind: 'resumeMembership',
+      libraryId,
+    });
+    if (result.status === 'failed') {
+      setPageError({ scope: 'remove', error: result.error });
     }
   };
 
@@ -316,7 +369,6 @@ export function LibraryPage() {
     [updatePhase, pendingUpdate, lastResults],
   );
 
-  const libraryInUse = (workspace.detail?.usages.length ?? 0) > 0;
   // 与 Skills 页一致：选中成员即进入分栏，列表切换为紧凑导航。
   const compact = Boolean(selectedSkillName);
 
@@ -466,7 +518,10 @@ export function LibraryPage() {
       <main className="library-workspace flex min-w-0 flex-1 flex-col overflow-hidden bg-panel">
         {workspace.catalogError && workspace.catalog ? (
           <div role="alert" className="library-workspace-gutter flex shrink-0 items-center justify-between gap-3 py-2 text-sm text-destructive">
-            <span>{t('libraries.loadError')}</span>
+            <div className="min-w-0">
+              <p>{t('libraries.loadError')}</p>
+              <p className="break-words text-xs">{formatAppError(workspace.catalogError, t)}</p>
+            </div>
             <Button
               size="sm"
               variant="ghost"
@@ -478,9 +533,23 @@ export function LibraryPage() {
             </Button>
           </div>
         ) : null}
+        {workspace.catalog && !workspace.catalog.usageInventoryComplete ? (
+          <div
+            role="status"
+            className="library-workspace-gutter flex shrink-0 items-center gap-2 py-2 text-xs text-warning"
+          >
+            <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+            <span>{t('libraries.usage.inventoryIncomplete', {
+              count: workspace.catalog.usageInventoryProblemCount,
+            })}</span>
+          </div>
+        ) : null}
         {workspace.catalogError && !workspace.catalog ? (
           <div role="alert" className="m-auto max-w-md py-16 text-center">
             <p className="text-sm font-medium text-destructive">{t('libraries.loadError')}</p>
+            <p className="mt-2 break-words text-xs text-destructive">
+              {formatAppError(workspace.catalogError, t)}
+            </p>
             <Button className="mt-4 gap-2" variant="outline" onClick={() => void workspace.execute({ kind: 'load' })}>
               <RefreshCw className="size-4" aria-hidden="true" />
               {t('common.retry')}
@@ -553,10 +622,8 @@ export function LibraryPage() {
                       variant="secondary"
                       size="sm"
                       className="h-7 shrink-0 cursor-pointer gap-1.5 border border-transparent bg-primary/[0.04] px-2.5 text-xs font-semibold text-primary/80 shadow-none transition-colors hover:bg-primary/10 hover:text-primary sm:px-3"
-                      onClick={(event) => {
-                        if (!busy && !libraryInUse) openAddDialog(event.currentTarget);
-                      }}
-                      aria-disabled={busy || libraryInUse}
+                      onClick={(event) => openAddDialog(event.currentTarget)}
+                      disabled={busy}
                       aria-label={t('libraries.addSkill')}
                     >
                       <Plus className="size-3.5 shrink-0" aria-hidden="true" />
@@ -564,7 +631,7 @@ export function LibraryPage() {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>{t(libraryInUse ? 'libraries.lockedMembership' : 'libraries.addSkill')}</p>
+                    <p>{t('libraries.addSkill')}</p>
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -644,6 +711,28 @@ export function LibraryPage() {
                           {formatAppError(pageError.error, t)}
                         </div>
                       ) : null}
+                      {membershipOutcome ? (
+                        <div className="rounded-md border px-3 py-2">
+                          <MembershipOutcomeSummary
+                            outcome={membershipOutcome}
+                            action={membershipOutcome.snapshotError
+                            || membershipOutcome.scopes.some((scope) => scope.state !== 'synced')
+                            || membershipOutcome.cleanup.some((item) => item.state === 'failed') ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 shrink-0 gap-1"
+                                onClick={() => void retryMembership()}
+                                disabled={busy}
+                              >
+                                <RefreshCw className="size-3.5" aria-hidden="true" />
+                                {t('libraries.membership.retry')}
+                              </Button>
+                              ) : null}
+                          />
+                        </div>
+                      ) : null}
 
                       {/* Skill 卡片列表 */}
                       {workspace.detail.skills.length === 0 ? (
@@ -656,7 +745,7 @@ export function LibraryPage() {
                             size="sm"
                             className="mt-4 gap-1.5 shadow-xs"
                             onClick={(event) => openAddDialog(event.currentTarget)}
-                            disabled={busy || libraryInUse}
+                            disabled={busy}
                           >
                             <Plus className="size-4" aria-hidden="true" />
                             {t('libraries.addSkill')}
@@ -687,10 +776,9 @@ export function LibraryPage() {
                               check={checks[skill.name]}
                               updateStatus={memberUpdateStatuses[skill.name]}
                               busy={busy}
-                              libraryInUse={libraryInUse}
                               onClick={(name) => void openSkillContent(name)}
                               onUpdate={(name) => void prepareUpdates([name])}
-                              onRemove={(name) => setRemoveSkillName(name)}
+                              onRemove={(name) => void openSkillRemoval(name)}
                             />
                           ))}
                         </div>
@@ -716,10 +804,9 @@ export function LibraryPage() {
                         loading={skillContent === null && !contentError}
                         contentError={contentError}
                         busy={busy}
-                        libraryInUse={libraryInUse}
                         onClose={() => setSelectedSkillName(null)}
                         onUpdate={(name) => void prepareUpdates([name])}
-                        onRemove={(name) => setRemoveSkillName(name)}
+                        onRemove={(name) => void openSkillRemoval(name)}
                         onRetry={() => void openSkillContent(selectedSkill.name)}
                       />
                     </ResizablePanel>
@@ -830,15 +917,33 @@ export function LibraryPage() {
       </Dialog>
 
       {/* 移除 Skill Dialog */}
-      <Dialog open={removeSkillName !== null} onOpenChange={(open) => !open && setRemoveSkillName(null)}>
+      <Dialog open={removeSkillName !== null} onOpenChange={(open) => {
+        if (!open) {
+          setRemoveSkillName(null);
+          void workspace.execute({ kind: 'discardRetire' });
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('libraries.removeSkillTitle', { name: removeSkillName ?? '' })}</DialogTitle>
             <DialogDescription>{t('libraries.removeSkillDescription')}</DialogDescription>
+            {removePreview ? (
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  {removePreview.membership.inventoryComplete
+                    ? t('libraries.membership.affectedScopes', { count: removePreview.membership.scopes.length })
+                    : t('libraries.membership.inventoryIncomplete', { count: removePreview.membership.scopes.length })}
+                </p>
+                <MembershipImpactSummary preview={removePreview.membership} />
+              </div>
+            ) : null}
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRemoveSkillName(null)}>{t('common.cancel')}</Button>
-            <Button type="button" variant="destructive" onClick={() => void submitSkillRemoval()} disabled={busy}>{t('common.delete')}</Button>
+            <Button type="button" variant="outline" onClick={() => {
+              setRemoveSkillName(null);
+              void workspace.execute({ kind: 'discardRetire' });
+            }}>{t('common.cancel')}</Button>
+            <Button type="button" variant="destructive" onClick={() => void submitSkillRemoval()} disabled={busy || !removePreview}>{t('common.delete')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
