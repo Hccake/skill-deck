@@ -345,6 +345,9 @@ pub enum AppError {
     #[error("Native project migration failed: {message}")]
     ProjectMigrationFailed { message: String },
 
+    #[error("The Environment home directory cannot be added as a Project")]
+    ProjectMatchesEnvironmentHome,
+
     #[error("{target}")]
     LockConflict { target: LockConflictTarget },
 

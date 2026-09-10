@@ -110,6 +110,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       });
     case 'projectMigrationFailed':
       return error.data.message;
+    case 'projectMatchesEnvironmentHome':
+      return t('settings.projectHomeConflict');
     case 'configurationReadOnly':
       return t('addSkill.error.configurationReadOnly');
     case 'payloadStorageRequiresCleanup':

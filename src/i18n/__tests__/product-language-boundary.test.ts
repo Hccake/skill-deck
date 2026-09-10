@@ -7,6 +7,13 @@ function serialized(value: unknown): string {
 }
 
 describe('product language boundary', () => {
+  it('explains the project and Global Scope path conflict in Settings', () => {
+    expect(zhCN.settings.projectHomeConflict)
+      .toBe('用户主目录已用于全局 Skill，请选择具体项目目录。');
+    expect(en.settings.projectHomeConflict)
+      .toBe('Your home directory is already used for global Skills. Choose a specific project directory.');
+  });
+
   it('keeps internal Agent installation nouns out of user-facing copy', () => {
     const zhProductCopy = serialized({
       agentSelection: zhCN.agentSelection,

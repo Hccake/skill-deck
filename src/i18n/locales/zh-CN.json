@@ -1313,6 +1313,7 @@
     "projectsEmptyHint": "添加项目以管理项目级 Skills",
     "addProject": "添加项目",
     "addProjectError": "无法添加此项目，请重试。",
+    "projectHomeConflict": "用户主目录已用于全局 Skill，请选择具体项目目录。",
     "removeProject": "移除项目",
     "about": "关于",
     "aboutSections": {

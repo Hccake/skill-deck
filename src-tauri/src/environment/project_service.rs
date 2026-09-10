@@ -337,11 +337,11 @@ pub async fn add_environment_project(
 ) -> Result<AddProjectResult, AppError> {
     match environment {
         EnvironmentRef::Native => {
-            let result = ensure_native_projects_ready(migration)?.add(native_path)?;
-            Ok(AddProjectResult {
-                project: native_project_info(result.project),
-                created: result.created,
-            })
+            let store = ensure_native_projects_ready(migration)?;
+            let home = dirs::home_dir().ok_or_else(|| AppError::Path {
+                message: "cannot resolve home directory".to_string(),
+            })?;
+            add_native_environment_project(&store, &home, native_path)
         }
         EnvironmentRef::Wsl { distro_name } => {
             let workspace = registry.workspace(&distro_name)?;
@@ -357,6 +357,7 @@ pub async fn add_environment_project(
                             Some(mapped) => mapped,
                             None => map_windows_path_with_wslpath(&workspace, &native_path).await?,
                         };
+                        ensure_wsl_project_is_not_home(&session, &workspace, &native_path).await?;
                         let snapshot =
                             projects::read_projects_snapshot(&session, &workspace).await?;
                         let result = add_project_binding(
@@ -388,6 +389,57 @@ pub async fn add_environment_project(
                 .await
         }
     }
+}
+
+fn add_native_environment_project(
+    store: &ProjectsStore,
+    home: &std::path::Path,
+    native_path: String,
+) -> Result<AddProjectResult, AppError> {
+    let semantics = ProjectPathSemantics::native();
+    let normalized_project = normalize_project_native_path(&native_path, semantics);
+    let normalized_home = normalize_project_native_path(&home.to_string_lossy(), semantics);
+    let same_directory = normalized_project == normalized_home
+        || std::fs::canonicalize(&native_path)
+            .ok()
+            .zip(std::fs::canonicalize(home).ok())
+            .is_some_and(|(project, home)| project == home);
+    if same_directory {
+        return Err(AppError::ProjectMatchesEnvironmentHome);
+    }
+    let result = store.add(native_path)?;
+    Ok(AddProjectResult {
+        project: native_project_info(result.project),
+        created: result.created,
+    })
+}
+
+async fn ensure_wsl_project_is_not_home(
+    session: &WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
+    native_path: &str,
+) -> Result<(), AppError> {
+    let normalized_project =
+        normalize_project_native_path(native_path, ProjectPathSemantics::Posix);
+    let normalized_home = normalize_project_native_path(&session.home, ProjectPathSemantics::Posix);
+    if normalized_project == normalized_home {
+        return Err(AppError::ProjectMatchesEnvironmentHome);
+    }
+    let identity_child = ".skill-deck-project-directory-identity";
+    let destinations = vec![
+        format!("{}/{identity_child}", native_path.trim_end_matches('/')),
+        format!("{}/{identity_child}", session.home.trim_end_matches('/')),
+    ];
+    let resolved =
+        crate::environment::planning::resolve_wsl_targets(session, workspace, &destinations, None)
+            .await?;
+    if resolved.len() != 2 {
+        return Err(AppError::StaleTarget);
+    }
+    if resolved[0].key == resolved[1].key {
+        return Err(AppError::ProjectMatchesEnvironmentHome);
+    }
+    Ok(())
 }
 
 pub async fn remove_environment_project(
@@ -503,15 +555,38 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        environment_infos_from_wsl_discovery, list_environments_with, map_environment_path,
-        native_environment_info, native_project_info_for_platform,
-        native_projects_store_from_config,
+        add_native_environment_project, environment_infos_from_wsl_discovery,
+        list_environments_with, map_environment_path, native_environment_info,
+        native_project_info_for_platform, native_projects_store_from_config,
     };
     use crate::environment::types::{
         EnvironmentRef, EnvironmentStatus, RegisteredProject, StorageAccess,
     };
     use crate::environment::wsl::WslRuntime;
     use crate::error::AppError;
+
+    #[cfg(target_os = "windows")]
+    struct WslPathCleanup {
+        distro: String,
+        path: String,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl Drop for WslPathCleanup {
+        fn drop(&mut self) {
+            let _ = crate::background_process::std_command("wsl.exe")
+                .args([
+                    "--distribution",
+                    &self.distro,
+                    "--exec",
+                    "/bin/rm",
+                    "-f",
+                    "--",
+                    &self.path,
+                ])
+                .status();
+        }
+    }
 
     #[test]
     fn native_environment_is_always_available() {
@@ -701,5 +776,126 @@ mod tests {
         assert_eq!(fs::read(&config_path).expect("read config"), original);
         assert!(!temp.path().join("projects.json").exists());
         assert_eq!(fs::read_dir(temp.path()).expect("list files").count(), 1);
+    }
+
+    #[test]
+    fn native_project_add_rejects_the_environment_home_without_writing() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let config = temp.path().join("config.json");
+        fs::create_dir_all(&home).expect("create home");
+        let store = native_projects_store_from_config(&config);
+
+        let error =
+            add_native_environment_project(&store, &home, home.to_string_lossy().into_owned())
+                .expect_err("home cannot be a Project");
+
+        assert_eq!(error, AppError::ProjectMatchesEnvironmentHome);
+        assert!(store.read().expect("read projects").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_project_add_rejects_a_symlink_to_the_environment_home() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let alias = temp.path().join("home-alias");
+        let config = temp.path().join("config.json");
+        fs::create_dir_all(&home).expect("create home");
+        std::os::unix::fs::symlink(&home, &alias).expect("create home alias");
+        let store = native_projects_store_from_config(&config);
+
+        let error =
+            add_native_environment_project(&store, &home, alias.to_string_lossy().into_owned())
+                .expect_err("home alias cannot be a Project");
+
+        assert_eq!(error, AppError::ProjectMatchesEnvironmentHome);
+        assert!(store.read().expect("read projects").is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_project_add_rejects_windows_aliases_to_the_environment_home() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let alias = temp.path().join("home-alias");
+        let config = temp.path().join("config.json");
+        fs::create_dir_all(&home).expect("create home");
+        junction::create(&home, &alias).expect("create home junction");
+        let store = native_projects_store_from_config(&config);
+
+        for candidate in [
+            alias.to_string_lossy().into_owned(),
+            home.to_string_lossy().to_uppercase(),
+        ] {
+            let error = add_native_environment_project(&store, &home, candidate)
+                .expect_err("home alias cannot be a Project");
+            assert_eq!(error, AppError::ProjectMatchesEnvironmentHome);
+        }
+        assert!(store.read().expect("read projects").is_empty());
+    }
+
+    #[test]
+    fn native_project_add_accepts_a_directory_below_the_environment_home() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let project = home.join("project");
+        let config = temp.path().join("config.json");
+        fs::create_dir_all(&project).expect("create project");
+        let store = native_projects_store_from_config(&config);
+
+        let added =
+            add_native_environment_project(&store, &home, project.to_string_lossy().into_owned())
+                .expect("add child Project");
+
+        assert!(added.created);
+        assert_eq!(added.project.binding.native_path, project.to_string_lossy());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    #[ignore = "requires Windows with a WSL 2 distribution"]
+    async fn real_wsl_project_add_rejects_the_environment_home_and_its_final_symlink() {
+        let distro =
+            std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+        let runtime = WslRuntime::for_wsl_test();
+        let workspace = runtime.workspace(&distro).expect("WSL workspace");
+        let session = runtime.connect(&distro).await.expect("connect WSL");
+
+        let error = super::ensure_wsl_project_is_not_home(&session, &workspace, &session.home)
+            .await
+            .expect_err("WSL home cannot be a Project");
+
+        assert_eq!(error, AppError::ProjectMatchesEnvironmentHome);
+
+        let alias = format!(
+            "/tmp/skill-deck-home-alias-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let status = crate::background_process::tokio_command("wsl.exe")
+            .args([
+                "--distribution",
+                &distro,
+                "--exec",
+                "/bin/ln",
+                "-s",
+                "--",
+                &session.home,
+                &alias,
+            ])
+            .status()
+            .await
+            .expect("create WSL home alias");
+        assert!(status.success());
+        let _cleanup = WslPathCleanup {
+            distro: distro.clone(),
+            path: alias.clone(),
+        };
+
+        let alias_error = super::ensure_wsl_project_is_not_home(&session, &workspace, &alias)
+            .await
+            .expect_err("a final symlink to WSL home cannot be a Project");
+
+        assert_eq!(alias_error, AppError::ProjectMatchesEnvironmentHome);
     }
 }

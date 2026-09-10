@@ -287,6 +287,9 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.retryOrContact')],
       };
 
+    case 'projectMatchesEnvironmentHome':
+      return { message: t('settings.projectHomeConflict') };
+
     case 'configurationReadOnly':
       return {
         message: t('addSkill.error.configurationReadOnly'),

@@ -1313,6 +1313,7 @@
     "projectsEmptyHint": "Add a project to manage project-level skills",
     "addProject": "Add Project",
     "addProjectError": "The project could not be added. Try again.",
+    "projectHomeConflict": "Your home directory is already used for global Skills. Choose a specific project directory.",
     "removeProject": "Remove Project",
     "about": "About",
     "aboutSections": {

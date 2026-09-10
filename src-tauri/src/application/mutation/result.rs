@@ -154,6 +154,7 @@ impl ErrorReport {
                     .insert("count".to_string(), usages.len().to_string());
                 report
             }
+            AppError::ProjectMatchesEnvironmentHome => Self::new(OperationErrorCode::Validation),
             AppError::SkillPlacementTargetConflict {
                 skill_name,
                 agent_ids,
