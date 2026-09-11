@@ -89,7 +89,7 @@ impl LibraryAgentPlacementMap {
             .retain(|agent| available_agents.contains(&agent.id));
         selection.install_options = projected_options;
         selection.groups.clear();
-        selection.initial_selected_option_ids.clear();
+        selection.baseline_selected_option_ids.clear();
         selection.unavailable_explicit_agents.clear();
         selection.user_mode_option_ids.clear();
         Self {
@@ -291,7 +291,7 @@ mod tests {
                 agents: vec![private_one, private_two, both],
                 install_options: vec![public.clone()],
                 groups: Vec::new(),
-                initial_selected_option_ids: Vec::new(),
+                baseline_selected_option_ids: Vec::new(),
                 unavailable_explicit_agents: Vec::new(),
                 user_mode_option_ids: Vec::new(),
                 revision: AgentSelectionRevision("revision".to_string()),

@@ -50,7 +50,7 @@ function api() {
     }),
     getInstallAgentSelection: vi.fn().mockResolvedValue({
       selection: {
-        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
+        agents: [], installOptions: [], groups: [], baselineSelectedOptionIds: [],
         unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-1',
       },
       selectionHistoryWarning: null,
@@ -120,7 +120,7 @@ describe('repairSkillSource', () => {
           disabledReason: null,
         }],
         groups: [],
-        initialSelectedOptionIds: [],
+        baselineSelectedOptionIds: [],
         unavailableExplicitAgents: [],
         userModeOptionIds: ['cursor-own-directory'],
         revision: 'selection-1',

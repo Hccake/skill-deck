@@ -35,7 +35,7 @@ function selectionSnapshot(): InstallAgentSelectionSnapshot {
         { id: 'claude', kind: 'standardDirectory', agentIds: ['claude-code'], displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
         { id: 'cursor', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
       ],
-      initialSelectedOptionIds: ['claude'],
+      baselineSelectedOptionIds: ['claude'],
       unavailableExplicitAgents: [{ agentId: 'old-agent', reason: 'definitionMissing' }],
       userModeOptionIds: ['claude', 'cursor'],
     }),
@@ -148,7 +148,7 @@ describe('OptionsStep', () => {
   it('allows choosing an installation mode before selecting an applicable Agent', async () => {
     const user = userEvent.setup();
     const snapshot = selectionSnapshot();
-    snapshot.selection.initialSelectedOptionIds = [];
+    snapshot.selection.baselineSelectedOptionIds = [];
     await renderStep(snapshot);
     const copyMode = screen.getByRole('radio', { name: 'agentSelection.copy' });
     await user.click(copyMode);
@@ -168,7 +168,7 @@ describe('OptionsStep', () => {
     snapshot.selection.agents = [];
     snapshot.selection.installOptions = [];
     snapshot.selection.groups = [];
-    snapshot.selection.initialSelectedOptionIds = [];
+    snapshot.selection.baselineSelectedOptionIds = [];
     snapshot.selection.userModeOptionIds = [];
     await renderStep(snapshot);
     expect(screen.getByText('agentSelection.installEmpty')).toBeDefined();
@@ -250,7 +250,7 @@ describe('OptionsStep', () => {
     snapshot.selection.installOptions = snapshot.selection.installOptions.filter((option) => (
       option.id === 'cursor'
     ));
-    snapshot.selection.initialSelectedOptionIds = ['cursor'];
+    snapshot.selection.baselineSelectedOptionIds = ['cursor'];
     snapshot.selection.userModeOptionIds = ['cursor'];
     await renderStep(snapshot);
 
@@ -272,7 +272,7 @@ describe('OptionsStep', () => {
     snapshot.selection.installOptions = snapshot.selection.installOptions.filter((option) => (
       option.id === 'cursor'
     ));
-    snapshot.selection.initialSelectedOptionIds = ['cursor'];
+    snapshot.selection.baselineSelectedOptionIds = ['cursor'];
     snapshot.selection.userModeOptionIds = ['cursor'];
     await renderStep(snapshot);
 
@@ -308,7 +308,7 @@ describe('OptionsStep', () => {
       { id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
       { id: 'trae', kind: 'standardDirectory', agentIds: ['trae'], displayName: 'Trae', path: '~/.trae/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
     );
-    snapshot.selection.initialSelectedOptionIds.push('trae');
+    snapshot.selection.baselineSelectedOptionIds.push('trae');
     snapshot.selection.userModeOptionIds.push('zed', 'trae');
     await renderStep(snapshot);
 
@@ -355,7 +355,7 @@ describe('OptionsStep', () => {
     snapshot.selection.agents.push({ kind: 'grouped', id: 'eve', displayName: 'Eve', detection: 'detected', directoryAccess: null, installOptionId: null, groupId: 'eve-group' });
     snapshot.selection.installOptions.push({ id: 'eve-root', kind: 'groupLocation', agentIds: ['eve'], displayName: 'Main', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null });
     snapshot.selection.groups.push({ id: 'eve-group', agentId: 'eve', displayName: 'Eve', optionIds: ['eve-root'], detection: 'detected' });
-    snapshot.selection.initialSelectedOptionIds.push('eve-root');
+    snapshot.selection.baselineSelectedOptionIds.push('eve-root');
     await renderStep(snapshot);
 
     const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
@@ -381,7 +381,7 @@ describe('OptionsStep', () => {
       modeConstraint: 'userSelectable',
       disabledReason: null,
     });
-    snapshot.selection.initialSelectedOptionIds = ['shared'];
+    snapshot.selection.baselineSelectedOptionIds = ['shared'];
     snapshot.selection.userModeOptionIds.push('shared');
     await renderStep(snapshot);
 

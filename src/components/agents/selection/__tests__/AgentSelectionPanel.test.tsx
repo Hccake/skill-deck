@@ -38,7 +38,7 @@ describe('AgentSelectionPanel', () => {
         modeConstraint: 'userSelectable',
         disabledReason: null,
       }],
-      initialSelectedOptionIds: ['claude'],
+      baselineSelectedOptionIds: ['claude'],
       userModeOptionIds: ['claude'],
     });
     const setOptionSelected = vi.fn();

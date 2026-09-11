@@ -853,7 +853,7 @@ fn copy_observed_selection(
     states: &[CopyObservedOptionState],
     library_candidates: &LibraryCandidateSnapshot,
 ) -> Result<AgentSelectionSnapshot, AppError> {
-    let initial_selected_option_ids = states
+    let baseline_selected_option_ids = states
         .iter()
         .filter(|state| state.initial_selected)
         .map(|state| state.option_id.clone())
@@ -875,7 +875,7 @@ fn copy_observed_selection(
             .collect::<Vec<_>>(),
     ))?);
     let mut snapshot = catalog.snapshot().clone();
-    snapshot.initial_selected_option_ids = initial_selected_option_ids;
+    snapshot.baseline_selected_option_ids = baseline_selected_option_ids;
     snapshot.revision = revision;
     Ok(snapshot)
 }
@@ -2148,7 +2148,7 @@ mod tests {
             target_project_ids,
             agent_selection: AgentSelectionSubmission {
                 revision: agent_selection.revision,
-                selected_option_ids: agent_selection.initial_selected_option_ids,
+                selected_option_ids: agent_selection.baseline_selected_option_ids,
                 requested_mode: InstallMode::Copy,
             },
         };
@@ -2207,7 +2207,7 @@ mod tests {
             target_project_ids: vec!["target".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: agent_selection.revision,
-                selected_option_ids: agent_selection.initial_selected_option_ids,
+                selected_option_ids: agent_selection.baseline_selected_option_ids,
                 requested_mode: InstallMode::Copy,
             },
         };
@@ -2372,7 +2372,7 @@ mod tests {
             .find(|option| option.agent_ids.contains(&agent_id))
             .unwrap();
 
-        assert!(!selection.initial_selected_option_ids.contains(&option.id));
+        assert!(!selection.baseline_selected_option_ids.contains(&option.id));
         calls.lock().unwrap().clear();
 
         let request = CopyRequest {
@@ -2382,7 +2382,7 @@ mod tests {
             target_project_ids: vec!["target".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: selection.revision,
-                selected_option_ids: selection.initial_selected_option_ids,
+                selected_option_ids: selection.baseline_selected_option_ids,
                 requested_mode: InstallMode::Copy,
             },
         };
@@ -2565,7 +2565,7 @@ mod tests {
             target_project_ids: vec!["healthy".to_string(), "broken".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: selection.revision,
-                selected_option_ids: selection.initial_selected_option_ids,
+                selected_option_ids: selection.baseline_selected_option_ids,
                 requested_mode: InstallMode::Copy,
             },
         };
@@ -2666,7 +2666,7 @@ mod tests {
             target_project_ids: vec!["first".to_string(), "second".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: source_selection.revision,
-                selected_option_ids: source_selection.initial_selected_option_ids,
+                selected_option_ids: source_selection.baseline_selected_option_ids,
                 requested_mode: InstallMode::Symlink,
             },
         };
@@ -2999,7 +2999,7 @@ mod tests {
             target_project_ids: vec!["target".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: selection.revision,
-                selected_option_ids: selection.initial_selected_option_ids,
+                selected_option_ids: selection.baseline_selected_option_ids,
                 requested_mode: InstallMode::Copy,
             },
         };

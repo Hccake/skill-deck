@@ -60,7 +60,7 @@ function agentSnapshot(): InstallAgentSelectionSnapshot {
         { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor-item', groupId: null },
       ],
       installOptions: [{ id: 'cursor-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
-      initialSelectedOptionIds: ['cursor-item'],
+      baselineSelectedOptionIds: ['cursor-item'],
       userModeOptionIds: ['cursor-item'],
     }),
     selectionHistoryWarning: null,
@@ -202,7 +202,7 @@ describe('ConfirmStep', () => {
     const latest = agentSnapshot();
     latest.selection.revision = 'selection-revision-2';
     latest.selection.installOptions.push({ id: 'new-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor extra', path: '~/.cursor/extra', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
-    latest.selection.initialSelectedOptionIds = ['new-item'];
+    latest.selection.baselineSelectedOptionIds = ['new-item'];
     preview.mockResolvedValue({ status: 'selectionStale', snapshot: latest });
     getSelection.mockResolvedValue(latest);
     const updateState = vi.fn();
@@ -271,7 +271,7 @@ describe('ConfirmStep', () => {
       path: './agent/skills', groupId: null, selectable: true,
       modeConstraint: 'copyOnly', disabledReason: null,
     });
-    selection.selection.initialSelectedOptionIds = ['cursor-item', 'eve-item'];
+    selection.selection.baselineSelectedOptionIds = ['cursor-item', 'eve-item'];
 
     renderConfirm(current, vi.fn(), selection, 'symlink');
 

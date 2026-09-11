@@ -102,7 +102,7 @@ describe('prepareInstall', () => {
   it('reloads a complete selection snapshot when the submitted revision is stale', async () => {
     const staleSnapshot = {
       selection: {
-        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
+        agents: [], installOptions: [], groups: [], baselineSelectedOptionIds: [],
         unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-2',
       },
       selectionHistoryWarning: null,
@@ -111,7 +111,7 @@ describe('prepareInstall', () => {
       ...staleSnapshot,
       selection: {
         ...staleSnapshot.selection,
-        initialSelectedOptionIds: ['new-item'],
+        baselineSelectedOptionIds: ['new-item'],
         revision: 'selection-3',
       },
       selectionHistoryWarning: 'readFailed' as const,

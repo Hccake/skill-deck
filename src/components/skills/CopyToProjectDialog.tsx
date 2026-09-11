@@ -167,6 +167,8 @@ function CopyToProjectDialogSession({
     : undefined;
   const targetEnvironment = targetEnvironmentEntry?.environment ?? null;
   const targetEnvironmentKey = targetEnvironmentSelection.key;
+  const copiesAcrossEnvironments = targetEnvironment !== null
+    && environmentKey(sourceContext.environment) !== environmentKey(targetEnvironment);
 
   useEffect(() => {
     if (targetEnvironmentSelection.kind !== 'valid' || targetEnvironmentEntry) return;
@@ -552,6 +554,12 @@ function CopyToProjectDialogSession({
                   disabled={copying}
                   emptyMessage={t('agentSelection.installEmpty')}
                   modeClassName="flex-col items-start gap-2"
+                  showRuntimeMetadata={!copiesAcrossEnvironments}
+                  notice={(
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {t('skills.copyToProject.agentSelectionDescription')}
+                    </p>
+                  )}
                 />
               </div>
             </section>

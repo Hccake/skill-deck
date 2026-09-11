@@ -203,6 +203,52 @@ describe('ManageLibraryApplicationDialog', () => {
     expect(applyLibraryApplication).toHaveBeenCalledOnce();
   });
 
+  it('shows a saved available Agent association as selected', async () => {
+    vi.mocked(listSkillLibraries).mockResolvedValue({
+      environment: { kind: 'native' },
+      libraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
+      revision: 'saved-agent',
+      usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
+    });
+    vi.mocked(getLibraryAgentOptions).mockResolvedValue(libraryAgentOptions({
+      selection: makeAgentSelectionSnapshot({
+        agents: [{
+          kind: 'standard',
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          detection: 'detected',
+          directoryAccess: 'privateOnly',
+          installOptionId: 'claude-code',
+          groupId: null,
+        }],
+        installOptions: [{
+          id: 'claude-code',
+          kind: 'standardDirectory',
+          agentIds: ['claude-code'],
+          displayName: 'Claude Code',
+          path: '~/.claude/skills',
+          groupId: null,
+          selectable: true,
+          modeConstraint: 'userSelectable',
+          disabledReason: null,
+        }],
+        baselineSelectedOptionIds: ['claude-code'],
+      }),
+    }));
+
+    renderDialog({
+      orderedLibraries: [{ id: 'backend', name: 'Backend', skillCount: 1 }],
+      selectedAgentIds: ['claude-code'],
+      pending: false,
+      syncState: 'synced',
+    });
+
+    expect((await screen.findByRole('checkbox', { name: 'Claude Code' })).dataset.state)
+      .toBe('checked');
+  });
+
   it('keeps the selection open when execution returns a failed unit', async () => {
     vi.mocked(listSkillLibraries).mockResolvedValue({
       environment: { kind: 'native' },

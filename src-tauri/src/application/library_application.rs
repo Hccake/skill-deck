@@ -1589,6 +1589,17 @@ async fn resolve_library_agent_options<T: TargetFactResolver>(
     .await?;
     let placement_map = LibraryAgentPlacementMap::from_catalog(&catalog);
     let mut selection = placement_map.selection_snapshot().clone();
+    selection.baseline_selected_option_ids = selection
+        .install_options
+        .iter()
+        .filter(|option| {
+            option
+                .agent_ids
+                .iter()
+                .all(|agent_id| saved_agent_ids.contains(agent_id))
+        })
+        .map(|option| option.id.clone())
+        .collect();
     let represented_saved_agent_ids = selection
         .install_options
         .iter()
@@ -3190,6 +3201,32 @@ mod tests {
         assert_eq!(
             preview.target.selected_agent_ids[0].as_str(),
             "private-agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_options_use_a_saved_association_as_the_selection_baseline() {
+        let (module, _executor, draft, _, _) = application_fixture_with(
+            TargetEntryKind::Directory,
+            TargetEntryKind::Symlink,
+            Some("/libraries/lib-one/skills/demo"),
+            vec![SkillLibraryRecord {
+                id: LibraryId::parse("lib-one"),
+                name: "Library One".to_string(),
+                skills: vec![skill("demo")],
+                retired_skills: Vec::new(),
+                extra: serde_json::Map::new(),
+            }],
+            vec![LibraryId::parse("lib-one")],
+            vec![LibraryId::parse("lib-one")],
+        );
+
+        let options = module.agent_options(draft.context).await.unwrap();
+        let option = options.selection.install_options.first().unwrap();
+
+        assert_eq!(
+            options.selection.baseline_selected_option_ids,
+            vec![option.id.clone()]
         );
     }
 

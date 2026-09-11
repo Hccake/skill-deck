@@ -779,7 +779,7 @@ fn build_observed_agent_selection(
         }
         states.push(state);
     }
-    let initial_selected_option_ids = states
+    let baseline_selected_option_ids = states
         .iter()
         .filter(|state| state.initial_selected)
         .map(|state| state.option_id.clone())
@@ -822,7 +822,7 @@ fn build_observed_agent_selection(
         })
         .collect();
     let mut selection = catalog.snapshot().clone();
-    selection.initial_selected_option_ids = initial_selected_option_ids;
+    selection.baseline_selected_option_ids = baseline_selected_option_ids;
     selection.revision = revision;
     selection.user_mode_option_ids = user_mode_option_ids;
 

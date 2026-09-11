@@ -112,7 +112,7 @@ describe('RepairSourceDialog', () => {
     mocks.acquireSelectedPayloads.mockResolvedValue([]);
     mocks.getInstallAgentSelection.mockResolvedValue({
       selection: {
-        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: ['claude-item'],
+        agents: [], installOptions: [], groups: [], baselineSelectedOptionIds: ['claude-item'],
         unavailableExplicitAgents: [], userModeOptionIds: ['claude-item'], revision: 'selection-1',
       },
       selectionHistoryWarning: null,

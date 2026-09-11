@@ -34,6 +34,7 @@ export function AgentSelectionPanel<TSnapshot extends AgentSelectionEnvelope>({
   modeClassName,
   modeWrapperClassName,
   showUnavailableNotice = true,
+  showRuntimeMetadata = true,
   layout = 'stacked',
   title,
   notice,
@@ -46,6 +47,7 @@ export function AgentSelectionPanel<TSnapshot extends AgentSelectionEnvelope>({
   modeClassName?: string;
   modeWrapperClassName?: string;
   showUnavailableNotice?: boolean;
+  showRuntimeMetadata?: boolean;
   layout?: 'stacked' | 'wizard';
   title?: string;
   notice?: ReactNode;
@@ -121,6 +123,7 @@ export function AgentSelectionPanel<TSnapshot extends AgentSelectionEnvelope>({
       optionStates={controller.optionStates}
       emptyMessage={emptyMessage}
       disabled={disabled}
+      showRuntimeMetadata={showRuntimeMetadata}
       onOptionChange={controller.setOptionSelected}
       onGroupChange={controller.setGroupSelected}
       onOtherExpandedChange={controller.setOtherAgentsExpanded}

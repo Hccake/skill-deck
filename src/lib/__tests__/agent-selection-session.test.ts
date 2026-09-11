@@ -17,7 +17,7 @@ function snapshot(): AgentSelectionSnapshot {
       { id: 'writer', kind: 'groupLocation', agentIds: ['eve'], displayName: 'Writer', path: '/writer', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
     ],
     groups: [{ id: 'eve', agentId: 'eve', displayName: 'Eve', optionIds: ['root', 'writer'], detection: 'detected' }],
-    initialSelectedOptionIds: ['root'],
+    baselineSelectedOptionIds: ['root'],
     unavailableExplicitAgents: [],
     userModeOptionIds: [],
     revision: 'revision-1',
@@ -61,7 +61,7 @@ describe('Agent selection session', () => {
     const next = snapshot();
     next.installOptions.push({ id: 'new-target', kind: 'groupLocation', agentIds: ['eve'], displayName: '新目录', path: '/new', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null });
     next.groups[0].optionIds.push('new-target');
-    next.initialSelectedOptionIds = ['root', 'new-target'];
+    next.baselineSelectedOptionIds = ['root', 'new-target'];
     next.revision = 'revision-2';
 
     const refreshed = refreshAgentSelectionSession(current, next);
@@ -72,7 +72,7 @@ describe('Agent selection session', () => {
 
   it('expands a group that contains an existing or abnormal directory entry', () => {
     const currentSnapshot = snapshot();
-    currentSnapshot.initialSelectedOptionIds = [];
+    currentSnapshot.baselineSelectedOptionIds = [];
     const states: ManageInstallOptionState[] = [{
       optionId: 'writer',
       currentEntry: 'unrecognized',
@@ -104,7 +104,7 @@ describe('Agent selection session', () => {
     }];
     currentSnapshot.groups = [];
     currentSnapshot.userModeOptionIds = ['cursor'];
-    currentSnapshot.initialSelectedOptionIds = [];
+    currentSnapshot.baselineSelectedOptionIds = [];
     const inactiveChoice = {
       ...createAgentSelectionSession(currentSnapshot),
       mode: 'copy' as const,
@@ -112,7 +112,7 @@ describe('Agent selection session', () => {
 
     expect(hasUserSelectionChanges(inactiveChoice, currentSnapshot)).toBe(false);
 
-    currentSnapshot.initialSelectedOptionIds = ['cursor'];
+    currentSnapshot.baselineSelectedOptionIds = ['cursor'];
     const activeChoice = {
       ...createAgentSelectionSession(currentSnapshot),
       mode: 'copy' as const,

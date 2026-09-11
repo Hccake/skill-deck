@@ -71,7 +71,7 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `lastSelectedAgents` | `skills` CLI | CLI 最近一次选择的 Agent ID |
 | `defaultTargetAgents` | 旧版 Skill Deck | 当前版本不读取、不写入且不清理；重写全局 lock 时原样保留 |
 
-Skill Deck 在用户确认安装目标后写入 `lastSelectedAgents`，内容只包含当前参考版本能够识别的内置 Agent ID。全局安装和项目安装共用当前 Environment 的全局字段；明确指定 Agent 的安装入口不会更新该字段。初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。
+Skill Deck 在用户确认 Agent 选择并进入安装确认步骤时写入 `lastSelectedAgents`，内容只包含当前参考版本能够识别的内置 Agent ID。该字段记录最近确认的安装选择，不表示安装已经成功。全局安装和项目安装共用当前 Environment 的全局字段；明确指定 Agent 的安装入口不会更新该字段。初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。
 
 ## 项目 lock 与 Eve 安装位置
 

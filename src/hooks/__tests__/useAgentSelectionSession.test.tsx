@@ -25,7 +25,7 @@ describe('useAgentSelectionSession', () => {
           modeConstraint: 'userSelectable' as const,
           disabledReason: null,
         }],
-        initialSelectedOptionIds: ['claude'],
+        baselineSelectedOptionIds: ['claude'],
         userModeOptionIds: ['claude'],
       }),
     };
@@ -60,7 +60,7 @@ describe('useAgentSelectionSession', () => {
           modeConstraint: 'userSelectable' as const,
           disabledReason: null,
         }],
-        initialSelectedOptionIds: ['claude'],
+        baselineSelectedOptionIds: ['claude'],
         userModeOptionIds: ['claude'],
       }),
     };
@@ -100,7 +100,7 @@ describe('useAgentSelectionSession', () => {
       selection: makeAgentSelectionSnapshot({
         revision: 'revision-1',
         installOptions: [option],
-        initialSelectedOptionIds: ['existing'],
+        baselineSelectedOptionIds: ['existing'],
       }),
     };
     const latest = {
@@ -110,7 +110,7 @@ describe('useAgentSelectionSession', () => {
           option,
           { ...option, id: 'new-default', displayName: 'New default' },
         ],
-        initialSelectedOptionIds: ['existing', 'new-default'],
+        baselineSelectedOptionIds: ['existing', 'new-default'],
       }),
     };
     const { result } = renderHook(() => useAgentSelectionSession({

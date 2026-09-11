@@ -261,7 +261,7 @@ describe('CopyToProjectDialog', () => {
       revision: 'copy-selection-3',
       agents: selectableAgentState.snapshot.selection.agents,
       installOptions: selectableAgentState.snapshot.selection.installOptions,
-      initialSelectedOptionIds: ['claude'],
+      baselineSelectedOptionIds: ['claude'],
       userModeOptionIds: ['claude'],
     });
     const onCopy = vi.fn()
@@ -373,6 +373,54 @@ describe('CopyToProjectDialog', () => {
         name: 'skills.copyToProject.copy',
       }) as HTMLButtonElement).disabled).toBe(false);
     });
+  });
+
+  it('hides source runtime details when copying to another Environment', async () => {
+    const onLoadProjects = vi.fn(async () => undefined);
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        sourceContext={{
+          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+          scope: { scope: 'project', project_id: 'source' },
+        }}
+        environments={[
+          { environment: { kind: 'native' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
+          { environment: { kind: 'wsl', distro_name: 'Ubuntu' }, displayName: 'Ubuntu', status: 'available', revision: 1, error: null },
+        ]}
+        projectsByEnvironment={{
+          native: [{
+            binding: {
+              id: 'native-target', nativePath: 'C:\\Code\\target', displayName: 'Native target',
+              order: 0, suppressCrossStorageWarning: false,
+            },
+            storage: { access: 'native', owner: null },
+          }],
+          'wsl:ubuntu': [{
+            binding: {
+              id: 'source', nativePath: '/home/me/source', displayName: 'Source',
+              order: 0, suppressCrossStorageWarning: false,
+            },
+            storage: { access: 'native', owner: null },
+          }],
+        }}
+        loadAgentSelection={selectableAgentState.loadAgentSelection}
+        onLoadProjects={onLoadProjects}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText('agentSelection.detection.detected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('combobox', { name: 'skills.copyToProject.targetEnvironment' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Windows' }));
+
+    await waitFor(() => {
+      expect(onLoadProjects).toHaveBeenLastCalledWith({ kind: 'native' });
+      expect(screen.queryByText('agentSelection.detection.detected')).toBeNull();
+    });
+    expect(screen.getByText('skills.copyToProject.agentSelectionDescription')).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Claude Code' })).toBeTruthy();
   });
 
   it('requires an explicit reselect after the target Environment disappears', async () => {

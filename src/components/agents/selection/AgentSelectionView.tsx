@@ -54,6 +54,7 @@ interface AgentSelectionViewProps {
   onGroupExpandedChange: (groupId: string, expanded: boolean) => void;
   disabled?: boolean;
   emptyMessage?: string;
+  showRuntimeMetadata?: boolean;
 }
 
 export function AgentSelectionView({
@@ -68,12 +69,17 @@ export function AgentSelectionView({
   onGroupExpandedChange,
   disabled = false,
   emptyMessage,
+  showRuntimeMetadata = true,
 }: AgentSelectionViewProps) {
   const { t, i18n } = useTranslation();
   const states = new Map(optionStates.map((state) => [state.optionId, state]));
   const { agentsById, directAgents, separateOptions, additionalOptions } = projectAgentSelectionView(snapshot);
-  const detected = separateOptions.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected'));
-  const other = separateOptions.filter((option) => !detected.includes(option));
+  const detected = showRuntimeMetadata
+    ? separateOptions.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected'))
+    : separateOptions;
+  const other = showRuntimeMetadata
+    ? separateOptions.filter((option) => !detected.includes(option))
+    : [];
   const summarizedOptionIds = new Set([
     ...separateOptions.map((option) => option.id),
     ...snapshot.groups.flatMap((group) => group.optionIds),
@@ -133,6 +139,7 @@ export function AgentSelectionView({
         presentation={presentation}
         {...commonRowProps}
         onExpandedChange={onAdditionalExpandedChange}
+        showRuntimeMetadata={showRuntimeMetadata}
       />
 
       {(detected.length > 0 || other.length > 0 || snapshot.groups.length > 0) ? (
@@ -188,7 +195,7 @@ export function AgentSelectionView({
           ) : null}
           <div className="space-y-1">
             {detected.map((item) => (
-              <SelectionRow key={item.id} item={item} {...commonRowProps} />
+              <SelectionRow key={item.id} item={item} {...commonRowProps} showRuntimeMetadata={showRuntimeMetadata} />
             ))}
             {snapshot.groups.map((group) => (
               <SelectionGroup
@@ -197,6 +204,7 @@ export function AgentSelectionView({
                 {...commonRowProps}
                 onGroupChange={onGroupChange}
                 onGroupExpandedChange={onGroupExpandedChange}
+                showRuntimeMetadata={showRuntimeMetadata}
               />
             ))}
             {other.length > 0 ? (
@@ -247,20 +255,24 @@ function DirectAgentsSummary({
   disabled,
   onOptionChange,
   onExpandedChange,
+  showRuntimeMetadata,
 }: CommonRowProps & {
   agents: AgentSelectionSnapshot['agents'];
   options: AgentInstallOption[];
   presentation: AgentSelectionPresentation;
   onExpandedChange: (expanded: boolean) => void;
+  showRuntimeMetadata: boolean;
 }) {
   if (agents.length === 0) return null;
   const detected = agents.filter((agent) => agent.detection === 'detected');
   const more = agents.filter((agent) => agent.detection !== 'detected');
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const orderedOptions = [
-    ...options.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
-    ...options.filter((option) => !option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
-  ];
+  const orderedOptions = showRuntimeMetadata
+    ? [
+        ...options.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
+        ...options.filter((option) => !option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
+      ]
+    : options;
   const selectedIds = new Set(session.selectedOptionIds);
   const selectedAgentCount = new Set(
     options
@@ -278,7 +290,9 @@ function DirectAgentsSummary({
         {detected.map((agent) => (
           <DirectAgentBadge key={agent.id} name={agent.displayName} />
         ))}
-        {more.length > 0 ? <DirectAgentsMorePopover agents={more} /> : null}
+        {more.length > 0 ? (
+          <DirectAgentsMorePopover agents={more} showDescription={showRuntimeMetadata} />
+        ) : null}
       </div>
       {orderedOptions.length > 0 ? (
         <Collapsible
@@ -314,6 +328,7 @@ function DirectAgentsSummary({
                   states={states}
                   disabled={disabled}
                   onOptionChange={onOptionChange}
+                  showRuntimeMetadata={showRuntimeMetadata}
                 />
               ))}
             </div>
@@ -346,7 +361,13 @@ function SectionHeading({ id, title, help }: { id: string; title: string; help: 
   );
 }
 
-function DirectAgentsMorePopover({ agents }: { agents: AgentSelectionSnapshot['agents'] }) {
+function DirectAgentsMorePopover({
+  agents,
+  showDescription = true,
+}: {
+  agents: AgentSelectionSnapshot['agents'];
+  showDescription?: boolean;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -404,9 +425,11 @@ function DirectAgentsMorePopover({ agents }: { agents: AgentSelectionSnapshot['a
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
       >
-        <p className="whitespace-nowrap text-xs text-muted-foreground">
-          {t('agentSelection.moreAgentsDescription')}
-        </p>
+        {showDescription ? (
+          <p className="whitespace-nowrap text-xs text-muted-foreground">
+            {t('agentSelection.moreAgentsDescription')}
+          </p>
+        ) : null}
         <div className="flex max-w-96 flex-wrap gap-2">
           {agents.map((agent) => (
             <DirectAgentBadge key={agent.id} name={agent.displayName} />
@@ -432,6 +455,7 @@ interface CommonRowProps {
   states: Map<AgentInstallOptionId, ManageInstallOptionState>;
   disabled: boolean;
   onOptionChange: (optionId: AgentInstallOptionId, selected: boolean) => void;
+  showRuntimeMetadata?: boolean;
 }
 
 function SelectionGroup({
@@ -443,6 +467,7 @@ function SelectionGroup({
   onOptionChange,
   onGroupChange,
   onGroupExpandedChange,
+  showRuntimeMetadata = true,
 }: CommonRowProps & {
   group: AgentSelectionGroup;
   onGroupChange: (groupId: string, selected: boolean) => void;
@@ -492,7 +517,9 @@ function SelectionGroup({
           <Copy className="size-3.5" aria-hidden="true" />
           {t('agentSelection.copyOnly')}
         </span>
-        <DetectionText value={group.detection} className="justify-self-end text-right" />
+        {showRuntimeMetadata ? (
+          <DetectionText value={group.detection} className="justify-self-end text-right" />
+        ) : <span aria-hidden="true" />}
       </div>
       <CollapsibleContent className="space-y-1">
         {groupOptions.map((option) => (
@@ -504,6 +531,7 @@ function SelectionGroup({
             states={states}
             disabled={disabled}
             onOptionChange={onOptionChange}
+            showRuntimeMetadata={showRuntimeMetadata}
           />
         ))}
       </CollapsibleContent>
@@ -511,7 +539,7 @@ function SelectionGroup({
   );
 }
 
-function SelectionGroupChild({ option, session, states, disabled, onOptionChange }: CommonRowProps & { option: AgentInstallOption }) {
+function SelectionGroupChild({ option, session, states, disabled, onOptionChange, showRuntimeMetadata = true }: CommonRowProps & { option: AgentInstallOption }) {
   const checkboxId = useId();
   const selected = session.selectedOptionIds.includes(option.id);
   const state = states.get(option.id);
@@ -528,7 +556,7 @@ function SelectionGroupChild({ option, session, states, disabled, onOptionChange
           disabled={disabled}
           onOptionChange={onOptionChange}
         />
-        <PathLabel id={readOnly ? undefined : checkboxId} option={option} className="text-[13px]" />
+        <PathLabel id={readOnly ? undefined : checkboxId} option={option} className="text-[13px]" showPath={showRuntimeMetadata} />
       </span>
       <EntryState option={option} state={state} selected={selected} mode={session.mode} />
       <span aria-hidden="true" />
@@ -536,7 +564,7 @@ function SelectionGroupChild({ option, session, states, disabled, onOptionChange
   );
 }
 
-function SelectionRow({ item: option, snapshot, session, states, disabled, onOptionChange }: CommonRowProps & { item: AgentInstallOption }) {
+function SelectionRow({ item: option, snapshot, session, states, disabled, onOptionChange, showRuntimeMetadata = true }: CommonRowProps & { item: AgentInstallOption }) {
   const { t, i18n } = useTranslation();
   const checkboxId = useId();
   const state = states.get(option.id);
@@ -566,14 +594,17 @@ function SelectionRow({ item: option, snapshot, session, states, disabled, onOpt
           showGlyph
           glyph={members.length > 1 ? UsersRound : undefined}
           glyphSlot={members.length > 1 ? 'agent-group-glyph' : undefined}
+          showPath={showRuntimeMetadata}
         />
-        {members.length > 1 ? <MembersPopover members={members} /> : null}
+        {members.length > 1 ? <MembersPopover members={members} showDetection={showRuntimeMetadata} /> : null}
       </span>
       <EntryState option={option} state={state} selected={selected} mode={session.mode} />
       <span className="justify-self-end text-right text-xs text-muted-foreground">
-        {members.length > 1
-          ? <DetectedCount members={members} detected={detected} />
-          : <DetectionText value={members[0]?.detection ?? 'indeterminate'} />}
+        {showRuntimeMetadata
+          ? members.length > 1
+            ? <DetectedCount members={members} detected={detected} />
+            : <DetectionText value={members[0]?.detection ?? 'indeterminate'} />
+          : null}
       </span>
     </div>
   );
@@ -605,7 +636,7 @@ function SelectionCheckbox({ id, option, state, selected, disabled, label, onOpt
   );
 }
 
-function PathLabel({ id, option, label, className, showGlyph = false, glyph, glyphSlot }: {
+function PathLabel({ id, option, label, className, showGlyph = false, glyph, glyphSlot, showPath = true }: {
   id?: string;
   option: AgentInstallOption;
   label?: string;
@@ -613,6 +644,7 @@ function PathLabel({ id, option, label, className, showGlyph = false, glyph, gly
   showGlyph?: boolean;
   glyph?: typeof Bot;
   glyphSlot?: string;
+  showPath?: boolean;
 }) {
   const content = (
     <>
@@ -620,19 +652,19 @@ function PathLabel({ id, option, label, className, showGlyph = false, glyph, gly
       <span className="min-w-0 truncate">{label ?? option.displayName}</span>
     </>
   );
+  const trigger = id ? (
+    <label htmlFor={id} tabIndex={showPath ? 0 : undefined} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', 'cursor-pointer', className)}>
+      {content}
+    </label>
+  ) : (
+    <span tabIndex={showPath ? 0 : undefined} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
+      {content}
+    </span>
+  );
+  if (!showPath) return trigger;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        {id ? (
-          <label htmlFor={id} tabIndex={0} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', 'cursor-pointer', className)}>
-            {content}
-          </label>
-        ) : (
-          <span tabIndex={0} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
-            {content}
-          </span>
-        )}
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent sideOffset={6}><code translate="no">{option.path}</code></TooltipContent>
     </Tooltip>
   );

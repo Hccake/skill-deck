@@ -57,7 +57,7 @@ const snapshot: AgentSelectionSnapshot = {
     },
   ],
   groups: [],
-  initialSelectedOptionIds: [],
+  baselineSelectedOptionIds: [],
   unavailableExplicitAgents: [],
   userModeOptionIds: ['standard-private', 'codex-private'],
   revision: 'selection-v2',

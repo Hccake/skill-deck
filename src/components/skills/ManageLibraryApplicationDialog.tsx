@@ -115,13 +115,9 @@ export function ManageLibraryApplicationDialog({
       getLibraryAgentOptions(context),
     ]).then(([nextCatalog, nextAgentOptions]) => {
       if (requestId !== loadRequestId.current) return;
-      const selection = withInitialAgents(
-        nextAgentOptions.selection,
-        application.selectedAgentIds,
-      );
       setCatalog(nextCatalog);
-      setAgentOptions({ ...nextAgentOptions, selection });
-      setAgentSession(createAgentSelectionSession(selection));
+      setAgentOptions(nextAgentOptions);
+      setAgentSession(createAgentSelectionSession(nextAgentOptions.selection));
       setRetainedUnavailableAgentIds(
         nextAgentOptions.selection.unavailableExplicitAgents.map((agent) => agent.agentId),
       );
@@ -634,16 +630,6 @@ function PendingApplication() {
       </div>
     </div>
   );
-}
-
-function withInitialAgents(selection: AgentSelectionSnapshot, agentIds: string[]) {
-  const selected = new Set(agentIds);
-  return {
-    ...selection,
-    initialSelectedOptionIds: selection.installOptions
-      .filter((option) => option.agentIds.length > 0 && option.agentIds.every((id) => selected.has(id)))
-      .map((option) => option.id),
-  };
 }
 
 function selectedAgentsFromOptions(selection: AgentSelectionSnapshot, optionIds: string[]) {
