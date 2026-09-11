@@ -69,16 +69,60 @@ export function AgentSelectionView({
   disabled = false,
   emptyMessage,
 }: AgentSelectionViewProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const states = new Map(optionStates.map((state) => [state.optionId, state]));
   const { agentsById, directAgents, separateOptions, additionalOptions } = projectAgentSelectionView(snapshot);
   const detected = separateOptions.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected'));
   const other = separateOptions.filter((option) => !detected.includes(option));
+  const summarizedOptionIds = new Set([
+    ...separateOptions.map((option) => option.id),
+    ...snapshot.groups.flatMap((group) => group.optionIds),
+  ]);
+  const selectedOptions = session.selectedOptionIds.flatMap((id) => (
+    snapshot.installOptions
+      .filter((option) => option.id === id && summarizedOptionIds.has(option.id))
+      .map((option) => {
+        const group = option.groupId
+          ? snapshot.groups.find((candidate) => candidate.id === option.groupId)
+          : null;
+        const members = option.agentIds.flatMap((agentId) => (
+          snapshot.agents.filter((agent) => agent.id === agentId)
+        ));
+        return {
+          option,
+          displayName: group
+            ? [group.displayName, option.displayName].join(' · ')
+            : members.length > 1
+              ? mergedAgentNames(members, i18n?.resolvedLanguage ?? i18n?.language, t)
+              : option.displayName,
+          members,
+          grouped: group !== null,
+        };
+      })
+  ));
+  const viewRef = useRef<HTMLDivElement>(null);
+  const summaryRemoveRefs = useRef(new Map<AgentInstallOptionId, HTMLButtonElement>());
+  const removeSelectedOption = (optionId: AgentInstallOptionId) => {
+    const index = selectedOptions.findIndex(({ option }) => option.id === optionId);
+    const adjacent = selectedOptions[index + 1] ?? selectedOptions[index - 1];
+    if (adjacent) {
+      summaryRemoveRefs.current.get(adjacent.option.id)?.focus();
+    } else {
+      const candidate = [...(viewRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[data-agent-option-id]',
+      ) ?? [])].find((element) => element.dataset.agentOptionId === optionId);
+      const fallback = viewRef.current?.querySelector<HTMLButtonElement>(
+        '[data-agent-other-trigger]',
+      );
+      (candidate ?? fallback)?.focus();
+    }
+    onOptionChange(optionId, false);
+  };
   const hasSelectionContent = directAgents.length > 0 || snapshot.installOptions.length > 0;
   const commonRowProps = { snapshot, session, states, disabled, onOptionChange };
 
   return (
-    <div className="space-y-6">
+    <div ref={viewRef} className="space-y-6">
       {!hasSelectionContent && emptyMessage ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>
       ) : null}
@@ -98,6 +142,50 @@ export function AgentSelectionView({
             title={presentation.selectable.title}
             help={presentation.selectable.help}
           />
+          {selectedOptions.length > 0 ? (
+            <section
+              aria-label={t('agentSelection.selectedTitle')}
+              className="sticky top-0 z-10 -mx-1 flex min-h-8 flex-wrap items-center gap-1.5 border-b bg-background px-1 py-1.5"
+            >
+              <span className="mr-0.5 text-xs font-medium text-muted-foreground">
+                {t('agentSelection.selectedTitle')}
+              </span>
+              {selectedOptions.map(({ option, displayName, members, grouped }) => {
+                const state = states.get(option.id);
+                const removable = option.selectable
+                  && (state === undefined || state.allowedResults === 'both');
+                return (
+                  <span
+                    key={option.id}
+                    className={cn(
+                      'inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-md border border-border/70 bg-muted/30 pl-2 text-xs font-medium',
+                      removable ? 'pr-0.5' : 'pr-2',
+                    )}
+                  >
+                    <span className="min-w-0 truncate">{displayName}</span>
+                    {members.length > 1 && !grouped ? (
+                      <MembersPopover members={members} showDetection={false} />
+                    ) : null}
+                    {removable ? (
+                      <button
+                        ref={(element) => {
+                          if (element) summaryRemoveRefs.current.set(option.id, element);
+                          else summaryRemoveRefs.current.delete(option.id);
+                        }}
+                        type="button"
+                        className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={t('agentSelection.removeSelected', { agent: displayName })}
+                        onClick={() => removeSelectedOption(option.id)}
+                        disabled={disabled}
+                      >
+                        <X className="size-3" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </span>
+                );
+              })}
+            </section>
+          ) : null}
           <div className="space-y-1">
             {detected.map((item) => (
               <SelectionRow key={item.id} item={item} {...commonRowProps} />
@@ -113,7 +201,10 @@ export function AgentSelectionView({
             ))}
             {other.length > 0 ? (
               <Collapsible open={session.otherAgentsExpanded} onOpenChange={onOtherExpandedChange}>
-                <CollapsibleTrigger className="flex h-9 w-full items-center justify-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <CollapsibleTrigger
+                  data-agent-other-trigger
+                  className="flex h-9 w-full items-center justify-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
                   <span>{t('agentSelection.otherAgents', { count: other.length })}</span>
                   <ChevronDown className={cn('size-4 transition-transform', session.otherAgentsExpanded && 'rotate-180')} aria-hidden="true" />
                 </CollapsibleTrigger>
@@ -213,10 +304,7 @@ function DirectAgentsSummary({
             ) : null}
           </CollapsibleTrigger>
           <CollapsibleContent className="pt-1">
-            <p className="px-1 pl-7 text-xs leading-5 text-muted-foreground">
-              {presentation.ownDirectory.description}
-            </p>
-            <div className="mt-2 space-y-1 pl-5">
+            <div className="space-y-1 pl-5">
               {orderedOptions.map((item) => (
                 <SelectionRow
                   key={item.id}
@@ -503,7 +591,7 @@ function SelectionCheckbox({ id, option, state, selected, disabled, label, onOpt
   const accessibleLabel = label ?? option.displayName;
   const lockedSelected = state?.allowedResults === 'selected';
   const readOnly = !option.selectable || (state !== undefined && state.allowedResults !== 'both');
-  if (lockedSelected) return <Checkbox id={id} checked disabled aria-label={accessibleLabel} />;
+  if (lockedSelected) return <Checkbox id={id} checked disabled aria-label={accessibleLabel} data-agent-option-id={option.id} />;
   if (readOnly) return <TriangleAlert className="size-4 text-warning" aria-hidden="true" />;
   return (
     <Checkbox
@@ -512,6 +600,7 @@ function SelectionCheckbox({ id, option, state, selected, disabled, label, onOpt
       onCheckedChange={(value) => onOptionChange(option.id, value === true)}
       disabled={disabled}
       aria-label={accessibleLabel}
+      data-agent-option-id={option.id}
     />
   );
 }
@@ -549,7 +638,13 @@ function PathLabel({ id, option, label, className, showGlyph = false, glyph, gly
   );
 }
 
-function MembersPopover({ members }: { members: AgentSelectionSnapshot['agents'] }) {
+function MembersPopover({
+  members,
+  showDetection = true,
+}: {
+  members: AgentSelectionSnapshot['agents'];
+  showDetection?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <span className="flex shrink-0 items-center">
@@ -569,7 +664,7 @@ function MembersPopover({ members }: { members: AgentSelectionSnapshot['agents']
           {members.map((member) => (
             <span key={member.id} className="flex items-center justify-between gap-4">
               <span>{member.displayName}</span>
-              <DetectionText value={member.detection} />
+              {showDetection ? <DetectionText value={member.detection} /> : null}
             </span>
           ))}
         </PopoverContent>

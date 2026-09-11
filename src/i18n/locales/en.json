@@ -221,6 +221,8 @@
     "title": "Linked Agents",
     "installTitle": "Select Agents",
     "copyTitle": "Associated Agents",
+    "selectedTitle": "Selected",
+    "removeSelected": "Deselect {{agent}}",
     "modeTitle": "Installation method",
     "modeHelp": "Choose how to install this Skill in the selected Agent directories. Copy-only Agents are not affected.",
     "link": "Link",
@@ -251,18 +253,6 @@
     },
     "ownDirectory": {
       "title": "Also install in each Agent’s own Skill directory (optional)",
-      "install": {
-        "description": "These Agents can read this Skill from the common Skill directory after installation. Select an Agent only when its own Skill directory also needs a link or copy."
-      },
-      "manage": {
-        "description": "These Agents can already read this Skill from the common Skill directory. Selected Agents keep a link or copy in their own Skill directory."
-      },
-      "copyToProject": {
-        "description": "After copying, these Agents can read this Skill from the target Project's common Skill directory. Select an Agent only when its own Skill directory also needs a link or copy."
-      },
-      "libraryApplication": {
-        "description": "When selected, the Skill Libraries are linked into the Agent's own Skill directory."
-      },
       "selectedCount": "{{count}} Agents selected"
     },
     "otherAgents": "Other selectable Agents ({{count}})",

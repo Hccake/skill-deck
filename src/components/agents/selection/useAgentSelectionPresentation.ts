@@ -13,7 +13,6 @@ export interface AgentSelectionPresentation {
   };
   ownDirectory: {
     title: string;
-    description: string;
     selectedCount: (count: number) => string;
   };
 }
@@ -34,7 +33,6 @@ export function useAgentSelectionPresentation(
     },
     ownDirectory: {
       title: t('agentSelection.ownDirectory.title'),
-      description: t(`agentSelection.ownDirectory.${usage}.description`),
       selectedCount: (count) => t('agentSelection.ownDirectory.selectedCount', { count }),
     },
   };

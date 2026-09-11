@@ -61,12 +61,10 @@ describe('Agent selection copy', () => {
   it('presents own-directory installations as an optional nested setting', () => {
     expect(zhCN.agentSelection.ownDirectory.title)
       .toBe('同时安装到 Agent 自己的 Skill 目录（可选）');
-    expect(zhCN.agentSelection.ownDirectory.install.description)
-      .toBe('这些 Agent 安装后可以从通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。');
-    expect(zhCN.agentSelection.ownDirectory.manage.description)
-      .toBe('这些 Agent 已可从通用 Skill 目录读取此 Skill。选中后，它们会在自己的 Skill 目录中保留链接或副本。');
-    expect(zhCN.agentSelection.ownDirectory.copyToProject.description)
-      .toBe('复制完成后，这些 Agent 可以从目标 Project 的通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。');
+    for (const usage of ['install', 'manage', 'copyToProject', 'libraryApplication']) {
+      expect(usage in zhCN.agentSelection.ownDirectory).toBe(false);
+      expect(usage in en.agentSelection.ownDirectory).toBe(false);
+    }
     expect(zhCN.agentSelection.ownDirectory.selectedCount)
       .toBe('已选择 {{count}} 个 Agent');
     expect(en.agentSelection.ownDirectory.title)

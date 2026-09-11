@@ -221,6 +221,8 @@
     "title": "关联 Agent",
     "installTitle": "选择 Agent",
     "copyTitle": "关联 Agent",
+    "selectedTitle": "已选择",
+    "removeSelected": "取消选择 {{agent}}",
     "modeTitle": "安装方式",
     "modeHelp": "决定如何将 Skill 安装到所选 Agent 的 Skill 目录；仅支持复制的 Agent 不受此设置影响。",
     "link": "链接",
@@ -251,18 +253,6 @@
     },
     "ownDirectory": {
       "title": "同时安装到 Agent 自己的 Skill 目录（可选）",
-      "install": {
-        "description": "这些 Agent 安装后可以从通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。"
-      },
-      "manage": {
-        "description": "这些 Agent 已可从通用 Skill 目录读取此 Skill。选中后，它们会在自己的 Skill 目录中保留链接或副本。"
-      },
-      "copyToProject": {
-        "description": "复制完成后，这些 Agent 可以从目标 Project 的通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。"
-      },
-      "libraryApplication": {
-        "description": "选择后，Skill 库会通过链接应用到 Agent 自己的 Skill 目录。"
-      },
       "selectedCount": "已选择 {{count}} 个 Agent"
     },
     "otherAgents": "其他可选 Agent（{{count}}）",

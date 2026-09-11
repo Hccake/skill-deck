@@ -250,7 +250,7 @@ describe('ManageAgentsDialog', () => {
     const zed = screen.getByRole('checkbox', { name: 'Zed' });
     const trae = screen.getByRole('checkbox', { name: 'Trae' });
     expect(zed.compareDocumentPosition(trae) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(within(directSection as HTMLElement).getByText('agentSelection.ownDirectory.manage.description')).toBeDefined();
+    expect(within(directSection as HTMLElement).queryByText('agentSelection.ownDirectory.manage.description')).toBeNull();
     expect(within(directSection as HTMLElement).queryByRole('button', { name: /agentSelection\.otherAgents/ })).toBeNull();
   });
 
@@ -284,6 +284,21 @@ describe('ManageAgentsDialog', () => {
     const claudeRow = screen.getByRole('checkbox', { name: 'Claude Code' }).closest('[data-slot="agent-selection-row"]');
     expect(within(claudeRow as HTMLElement).getByText('agentSelection.detection.detected'))
       .toBeDefined();
+  });
+
+  it('shows a retained selection in the summary without an unavailable remove action', async () => {
+    const current = snapshot();
+    current.optionStates[0] = {
+      ...current.optionStates[0],
+      allowedResults: 'selected',
+    };
+    await renderDialog({ loadedSnapshot: current });
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    expect(within(summary).getByText('Claude Code')).toBeDefined();
+    expect(within(summary).queryByRole('button', {
+      name: 'agentSelection.removeSelected:{"agent":"Claude Code"}',
+    })).toBeNull();
   });
 
   it('shows Library availability without selecting a direct Agent association', async () => {

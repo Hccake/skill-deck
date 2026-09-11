@@ -36,6 +36,7 @@ export function createAgentSelectionSession(
   };
   const hasHiddenSelection = snapshot.installOptions.some((option) => (
     option.kind === 'standardDirectory'
+    && !selectedSet.has(option.id)
     && isVisibleByDefault(option.id)
     && option.agentIds.some((id) => agentsById.get(id)?.detection !== 'detected')
   ));
