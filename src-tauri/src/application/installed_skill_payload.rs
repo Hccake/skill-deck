@@ -6,6 +6,7 @@ use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySourceDescriptor, DiscoverySourceLocation,
     PayloadPlanningMetadata, PayloadSessionManager, PayloadStorageKey, RetainedDiscoverySource,
+    StoredPayload,
 };
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
@@ -83,17 +84,23 @@ impl InstalledSkillPayloadAcquirer {
                         retained,
                     )
                     .await?;
-                let key = PayloadStorageKey::new(&discovery.session_id, skill_name.clone());
-                let acquired = storage
-                    .acquire_from_path(&key, &standard_path, None)
-                    .await?;
                 self.payloads
-                    .register_existing_payload_with_metadata(
+                    .prepare_payload(
                         &discovery,
                         skill_name.clone(),
-                        acquired.manifest,
-                        acquired.total_bytes,
-                        installed_metadata(&skill_name, acquired.computed_hash)?,
+                        move |storage, key| async move {
+                            let acquired = storage
+                                .acquire_from_path(&key, &standard_path, None)
+                                .await?;
+                            let planning_metadata =
+                                installed_metadata(&skill_name, acquired.computed_hash)?;
+                            planning_metadata.validate()?;
+                            Ok(StoredPayload {
+                                manifest: acquired.manifest,
+                                total_bytes: acquired.total_bytes,
+                                planning_metadata,
+                            })
+                        },
                     )
                     .await
             }

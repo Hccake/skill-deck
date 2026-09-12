@@ -1628,6 +1628,8 @@
         "preview": "The current install targets could not be previewed."
       },
       "retryPreparation": "Retry preparation",
+      "rediscoverSource": "Refresh Skill list",
+      "sourceNeedsRefresh": "The source information or Skill content is no longer valid. Refresh the list and confirm your selection.",
       "conflictZone": "Existing targets",
       "freshZone": "New writes",
       "overwriteGroup": "Target exists",

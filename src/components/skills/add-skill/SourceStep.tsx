@@ -84,11 +84,14 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
     if (discoveryStatus !== 'success' || !discoveryResult || !discoverySelection) return;
 
     consumedOperationIdRef.current = discoveryOperationId;
+    const availableNames = new Set(discoveryResult.skills.map((skill) => skill.name));
     updateStateRef.current({
       source: discoverySelection.source,
       fetchStatus: 'success',
       availableSkills: discoveryResult.skills,
-      selectedSkills: discoverySelection.selectedSkillNames,
+      selectedSkills: state.selectedSkills.length > 0
+        ? state.selectedSkills.filter((name) => availableNames.has(name))
+        : discoverySelection.selectedSkillNames,
       skillFilter: discoveryResult.skillFilter,
       gitRef: discoveryResult.gitRef ?? null,
       discoverySession: discoveryResult.discoverySession,
@@ -98,7 +101,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       agentSelectionIntent: discoverySelection.agentSelectionIntent,
     });
     onNextRef.current();
-  }, [discoveryError, discoveryOperationId, discoveryResult, discoverySelection, discoveryStatus]);
+  }, [discoveryError, discoveryOperationId, discoveryResult, discoverySelection, discoveryStatus, state.selectedSkills]);
 
   // 核心 fetch 逻辑，接受 source 参数
   const handleFetchWithSource = useCallback(async (source: string) => {
@@ -121,6 +124,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       });
       return;
     }
+    autoFetchPendingRef.current = false;
     await discover(source);
   }, [discover, resetDiscovery, t, updateState]);
 
@@ -156,7 +160,6 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   // 回退再进入时 fetchStatus 已非 idle，不会重复触发，用户可自由修改 source
   useEffect(() => {
     if (autoFetchPendingRef.current && state.fetchStatus === 'idle' && state.sourceInput) {
-      autoFetchPendingRef.current = false;
       const frameId = requestAnimationFrame(() => {
         handleFetchWithSource(state.sourceInput);
       });

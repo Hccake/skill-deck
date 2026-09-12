@@ -35,6 +35,9 @@ mod git_fixture;
 #[cfg(test)]
 #[path = "test_support/native_workflow.rs"]
 mod native_workflow_integration_support;
+#[cfg(test)]
+#[path = "test_support/payload_storage.rs"]
+mod payload_storage_test_support;
 
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()

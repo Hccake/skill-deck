@@ -23,6 +23,7 @@ export interface InstallPreparationInput {
   agentSelectionIntent: AgentSelectionIntent;
   agentSelection: AgentSelectionSubmission;
   acknowledgeRedirect: boolean;
+  signal?: AbortSignal;
 }
 
 export interface PreparedInstall {
@@ -38,6 +39,7 @@ export interface InstallPreparationApi {
 
 export type InstallPreparationOutcome =
   | { status: 'ready'; prepared: PreparedInstall }
+  | { status: 'cancelled' }
   | { status: 'selectionStale'; snapshot: import('@/bindings').InstallAgentSelectionSnapshot }
   | { status: 'failed'; stage: 'payload' | 'preview'; error: AppError };
 
@@ -55,6 +57,7 @@ export async function prepareInstall(
   input: InstallPreparationInput,
   api: InstallPreparationApi = defaultApi,
 ): Promise<InstallPreparationOutcome> {
+  if (input.signal?.aborted) return { status: 'cancelled' };
   let payloads;
   try {
     payloads = await api.acquireSelectedPayloads({
@@ -62,8 +65,10 @@ export async function prepareInstall(
       skillPaths: input.skillPaths,
     });
   } catch (error) {
+    if (input.signal?.aborted) return { status: 'cancelled' };
     return { status: 'failed', stage: 'payload', error: toAppError(error) };
   }
+  if (input.signal?.aborted) return { status: 'cancelled' };
 
   const request: InstallRequest = {
     context: input.context,
@@ -77,12 +82,15 @@ export async function prepareInstall(
 
   try {
     const outcome = await api.previewInstall(request);
+    if (input.signal?.aborted) return { status: 'cancelled' };
     if (outcome.status === 'selectionStale') {
       const snapshot = await api.getInstallAgentSelection(input.context, input.agentSelectionIntent);
+      if (input.signal?.aborted) return { status: 'cancelled' };
       return { status: 'selectionStale', snapshot };
     }
     return { status: 'ready', prepared: { request, preview: outcome.preview } };
   } catch (error) {
+    if (input.signal?.aborted) return { status: 'cancelled' };
     return { status: 'failed', stage: 'preview', error: toAppError(error) };
   }
 }

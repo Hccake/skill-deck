@@ -1628,6 +1628,8 @@
         "preview": "无法根据当前目标生成安装预览。"
       },
       "retryPreparation": "重新准备",
+      "rediscoverSource": "重新获取 Skill 列表",
+      "sourceNeedsRefresh": "来源信息或 Skill 内容已失效，请重新获取列表并确认选择。",
       "conflictZone": "已有目标目录",
       "freshZone": "新增写入",
       "overwriteGroup": "目标目录已存在",

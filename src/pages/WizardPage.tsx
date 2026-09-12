@@ -312,7 +312,7 @@ export function WizardPage() {
             state={state}
             updateState={updateState}
             onNext={goNext}
-            autoFetch={!!wizardParams.prefillSource}
+            autoFetch={!!wizardParams.prefillSource || (state.fetchStatus === 'idle' && state.selectedSkills.length > 0)}
           />
         );
       case 'skills':

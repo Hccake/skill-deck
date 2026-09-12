@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
+import { StrictMode, useState } from 'react';
 import type { WizardState } from '../types';
 import { SourceStep } from '../SourceStep';
 import type { SearchSkill } from '../../skill-search/SkillSearch';
@@ -275,6 +275,32 @@ describe('SourceStep', () => {
     });
     expect(fetchAvailableMock).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox')).toHaveProperty('value', 'o');
+  });
+
+  it('automatically discovers a prefilled source under StrictMode', async () => {
+    const onNext = vi.fn();
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      gitRef: null,
+      skillFilter: 'demo',
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo' }],
+    });
+
+    render(
+      <StrictMode>
+        <Harness
+          onNext={onNext}
+          autoFetch
+          initialState={{ ...createState(), sourceInput: 'owner/repo@demo' }}
+        />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('fetch-status').textContent).toBe('success'));
+    expect(screen.getByTestId('selected-skills').textContent).toBe('demo');
+    expect(onNext).toHaveBeenCalledOnce();
   });
 
   it('stores the final host when a download redirects across hosts', async () => {
