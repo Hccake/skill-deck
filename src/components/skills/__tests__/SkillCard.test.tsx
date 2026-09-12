@@ -948,7 +948,7 @@ describe('SkillCard', () => {
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
-  it('uses auto-check unavailable copy for local sources', () => {
+  it('shows local sources as local Skills without an attention warning', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -963,7 +963,8 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.autoCheckUnavailable')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatusLabel.localSource')).toBeTruthy();
+    expect(screen.queryByTestId('skill-card-attention')).toBeNull();
     expect(screen.queryByText('skills.updateHint.local-source')).toBeNull();
   });
 

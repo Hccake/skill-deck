@@ -50,6 +50,11 @@ fn enrich_environment_skills_from_lock_at(
     kind: LockKind,
     project_root: Option<&str>,
 ) -> Result<Vec<InstalledSkill>, AppError> {
+    for skill in &mut skills {
+        skill.can_run_update = Some(false);
+        skill.can_check_for_updates = Some(false);
+        skill.update_reason = Some("local-source".to_string());
+    }
     let Some(bytes) = bytes else {
         return Ok(skills);
     };
@@ -79,46 +84,49 @@ fn enrich_environment_skills_from_lock_at(
         let Some(value) = entries.get(&resolved.lock_key).cloned() else {
             continue;
         };
-        let enriched =
-            match kind {
-                LockKind::Global => serde_json::from_value::<SkillLockEntry>(value)
-                    .ok()
-                    .map(|entry| skill.clone().with_lock_entry(Some(&entry))),
-                LockKind::Project => serde_json::from_value::<LocalSkillLockEntry>(value)
-                    .ok()
-                    .map(|mut entry| {
-                        if entry.source_type == "local" {
-                            if let Some(project_root) = project_root {
-                                entry.source =
-                                    crate::core::portable_project_path::resolve_project_source(
-                                        project_root,
-                                        &entry.source,
-                                    );
-                            }
+        let enriched = match kind {
+            LockKind::Global => serde_json::from_value::<SkillLockEntry>(value)
+                .map(|entry| skill.clone().with_lock_entry(Some(&entry))),
+            LockKind::Project => {
+                serde_json::from_value::<LocalSkillLockEntry>(value).map(|mut entry| {
+                    if entry.source_type == "local" {
+                        if let Some(project_root) = project_root {
+                            entry.source =
+                                crate::core::portable_project_path::resolve_project_source(
+                                    project_root,
+                                    &entry.source,
+                                );
                         }
-                        skill.clone().with_local_lock_entry(Some(&entry))
-                    }),
-                LockKind::LegacyProject => serde_json::from_value::<SkillLockEntry>(value)
-                    .ok()
-                    .map(|entry| {
-                        let local = LocalSkillLockEntry {
-                            source: entry.source,
-                            ref_name: entry.ref_name,
-                            source_type: entry.source_type,
-                            source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
-                            well_known_digest: entry.well_known_digest,
-                            computed_hash: String::new(),
-                            remote_hash: (!entry.skill_folder_hash.is_empty())
-                                .then_some(entry.skill_folder_hash),
-                            skill_path: entry.skill_path,
-                            subagents: None,
-                            plugin_name: entry.plugin_name,
-                        };
-                        skill.clone().with_local_lock_entry(Some(&local))
-                    }),
-            };
-        if let Some(enriched) = enriched {
-            *skill = enriched;
+                    }
+                    skill.clone().with_local_lock_entry(Some(&entry))
+                })
+            }
+            LockKind::LegacyProject => {
+                serde_json::from_value::<SkillLockEntry>(value).map(|entry| {
+                    let local = LocalSkillLockEntry {
+                        source: entry.source,
+                        ref_name: entry.ref_name,
+                        source_type: entry.source_type,
+                        source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
+                        well_known_digest: entry.well_known_digest,
+                        computed_hash: String::new(),
+                        remote_hash: (!entry.skill_folder_hash.is_empty())
+                            .then_some(entry.skill_folder_hash),
+                        skill_path: entry.skill_path,
+                        subagents: None,
+                        plugin_name: entry.plugin_name,
+                    };
+                    skill.clone().with_local_lock_entry(Some(&local))
+                })
+            }
+        };
+        match enriched {
+            Ok(enriched) => *skill = enriched,
+            Err(_) => {
+                skill.can_run_update = Some(false);
+                skill.can_check_for_updates = Some(false);
+                skill.update_reason = Some("missingSource".to_string());
+            }
         }
     }
     Ok(skills)
@@ -262,6 +270,42 @@ mod environment_tests {
             .expect("skill");
 
         assert_eq!(skill.source, None);
+    }
+
+    #[test]
+    fn distinguishes_an_invalid_source_record_from_an_unregistered_skill() {
+        let invalid_record = br#"{
+          "version": 3,
+          "skills": {
+            "toolkit": {
+              "source": 42,
+              "sourceType": "github"
+            }
+          }
+        }"#;
+        let skill = || {
+            installed_skill(
+                "toolkit",
+                "Toolkit",
+                "/home/alice/.agents/skills/toolkit",
+                InstalledSkillLocation::Global,
+                Vec::new(),
+            )
+        };
+        let enrich = |bytes: Option<&[u8]>| {
+            enrich_environment_skills_from_lock(vec![skill()], bytes, LockKind::Global)
+                .unwrap()
+                .pop()
+                .unwrap()
+        };
+
+        let invalid = enrich(Some(invalid_record));
+        assert_eq!(invalid.can_check_for_updates, Some(false));
+        assert_eq!(invalid.update_reason.as_deref(), Some("missingSource"));
+        for local in [enrich(Some(br#"{"version":3,"skills":{}}"#)), enrich(None)] {
+            assert_eq!(local.can_check_for_updates, Some(false));
+            assert_eq!(local.update_reason.as_deref(), Some("local-source"));
+        }
     }
 
     #[test]

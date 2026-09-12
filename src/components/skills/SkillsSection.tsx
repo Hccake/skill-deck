@@ -128,7 +128,11 @@ export const SkillsSection = memo(function SkillsSection({
       }
     } else if (updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed') {
       updateCheckFailureCount++;
-    } else if (updateStatusLabelKey && updateStatusLabelKey !== 'skills.updateStatusLabel.available') {
+    } else if (
+      updateStatusLabelKey
+      && updateStatusLabelKey !== 'skills.updateStatusLabel.available'
+      && updateStatusLabelKey !== 'skills.updateStatusLabel.localSource'
+    ) {
       maintenanceCount++;
     }
     if (skill.updateEvidence?.lastAttempt?.failure) {

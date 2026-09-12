@@ -355,7 +355,10 @@ export function resolveUpdateStatusLabelI18nKey(
   if (skill.updateReason === 'missingRemoteHash' || skill.updateReason === 'missing-remote-hash') {
     return 'skills.updateStatusLabel.reinstallRequired';
   }
-  if (skill.updateReason === 'unsupported-source-type' || skill.updateReason === 'local-source') {
+  if (skill.updateReason === 'local-source') {
+    return 'skills.updateStatusLabel.localSource';
+  }
+  if (skill.updateReason === 'unsupported-source-type') {
     return 'skills.updateStatusLabel.autoCheckUnavailable';
   }
   if (skill.updateReason) {
@@ -432,7 +435,8 @@ function buildRepairSource(
 function canRepairMissingSkillPath(
   skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { updateReason?: string | null; gitRef?: string | null }
 ): boolean {
-  return (skill.updateReason === 'missing-skill-path' || skill.updateReason === 'missingSource')
+  return (skill.updateReason === 'missingSource'
+    || skill.updateReason === 'missing-skill-path')
     && buildRepairSource(skill) !== null;
 }
 

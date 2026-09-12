@@ -701,16 +701,15 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
   forceCheckUpdates: async (context, selection) => {
     const cacheKey = contextKey(context);
-    const effectiveSelection: UpdateCheckSelection = selection.kind === 'all'
-      ? {
-          kind: 'skills',
-          skills: (get().snapshots[cacheKey]?.skills ?? []).map((skill) => ({
-            context,
-            skillName: skill.name,
-          })),
-        }
-      : selection;
-    if (effectiveSelection.kind === 'skills' && effectiveSelection.skills.length === 0) {
+    const checkableSkills = eligibleSkills(get().snapshots[cacheKey] ?? emptyContextSnapshot());
+    const checkableNames = new Set(checkableSkills.map((skill) => skill.name));
+    const effectiveSelection: UpdateCheckSelection = {
+      kind: 'skills',
+      skills: selection.kind === 'all'
+        ? checkableSkills.map((skill) => ({ context, skillName: skill.name }))
+        : selection.skills.filter((skill) => checkableNames.has(skill.skillName)),
+    };
+    if (effectiveSelection.skills.length === 0) {
       return null;
     }
     const admitted = (() => {

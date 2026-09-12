@@ -61,7 +61,8 @@ type AttentionKey =
   | 'skills.card.duplicateAgentInstall';
 
 function isMissingSource(skill: SkillListItem): boolean {
-  return skill.updateReason === 'missing-skill-path' || skill.updateReason === 'missingSource';
+  return skill.updateReason === 'missingSource'
+    || skill.updateReason === 'missing-skill-path';
 }
 
 function isDeletedUpstream(skill: SkillListItem): boolean {
@@ -150,6 +151,7 @@ export const SkillCard = memo(function SkillCard({
     'skills.updateStatusLabel.available',
     'skills.updateStatusLabel.reinstallRequired',
     'skills.updateStatusLabel.autoCheckUnavailable',
+    'skills.updateStatusLabel.localSource',
   ].includes(rawStatusLabelKey)
     ? rawStatusLabelKey
     : null;

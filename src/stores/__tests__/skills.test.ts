@@ -969,11 +969,46 @@ describe('skills data store', () => {
   });
 
   it('forwards the typed force-check selection unchanged', async () => {
+    setSkills([skill({ skillPath: 'skills/toolkit' })]);
     const selection: UpdateCheckSelection = {
       kind: 'skills', skills: [{ context, skillName: 'toolkit' }],
     };
     await useSkillsDataStore.getState().forceCheckUpdates(context, selection);
     expect(mocks.checkUpdates).toHaveBeenCalledWith({ context, mode: 'force', selection });
+  });
+
+  it.each([
+    ['a filtered Force check', true],
+    ['Force(all)', false],
+  ] as const)('excludes locally authored Skills from %s', async (_label, filtered) => {
+    setSkills([
+      skill({ name: 'remote', skillPath: 'skills/remote' }),
+      skill({
+        name: 'local-draft',
+        source: null,
+        canRunUpdate: null,
+        canCheckForUpdates: null,
+        updateStatus: null,
+        updateReason: null,
+        skillPath: null,
+      }),
+    ]);
+
+    await useSkillsDataStore.getState().forceCheckUpdates(context, filtered
+      ? {
+          kind: 'skills',
+          skills: [
+            { context, skillName: 'remote' },
+            { context, skillName: 'local-draft' },
+          ],
+        }
+      : { kind: 'all' });
+
+    expect(mocks.checkUpdates).toHaveBeenCalledWith({
+      context,
+      mode: 'force',
+      selection: selected(context, ['remote']),
+    });
   });
 
   it('keeps a newer Force(single) result when an older Automatic(all) finishes last', async () => {

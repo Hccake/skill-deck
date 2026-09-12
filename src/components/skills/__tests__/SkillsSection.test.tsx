@@ -337,6 +337,39 @@ describe('SkillsSection', () => {
     expect(screen.getByText('skills.uncheckableUpdateCount')).toBe(summary);
   });
 
+  it('does not report local Skills as update maintenance', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            name: 'remote',
+            hasUpdate: false,
+            updateStatus: 'upToDate',
+          }),
+          makeSkill('global', {
+            name: 'local-draft',
+            hasUpdate: false,
+            canRunUpdate: false,
+            canCheckForUpdates: false,
+            updateStatus: 'cannotCheck',
+            updateReason: 'local-source',
+          }),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        hasCommittedComparison
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.upToDate')).toBeTruthy();
+    expect(screen.queryByText('skills.uncheckableUpdateCount')).toBeNull();
+  });
+
   it('crossfades changed polite live-region content and removes the outgoing summary after 160ms', async () => {
     vi.useFakeTimers();
     const props = {

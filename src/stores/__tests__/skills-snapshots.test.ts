@@ -241,6 +241,8 @@ describe('context-keyed Skill snapshots', () => {
             ...skill('toolkit'),
             source: 'owner/repo',
             sourceUrl: 'https://github.com/owner/repo',
+            canRunUpdate: true,
+            canCheckForUpdates: true,
           }],
           agents: [],
           pathExists: true,
