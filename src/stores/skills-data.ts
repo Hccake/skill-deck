@@ -41,7 +41,7 @@ export type RefreshOrigin = 'initial' | 'passive' | 'selfMutation';
 
 export type RefreshOptions =
   | { origin?: Exclude<RefreshOrigin, 'selfMutation'>; mutatedSkillNames?: never }
-  | { origin: 'selfMutation'; mutatedSkillNames: string[] };
+  | { origin: 'selfMutation'; mutatedSkillNames: string[]; invalidateUpdates?: boolean };
 
 export interface UpdateCheckSession {
   active: boolean;
@@ -259,7 +259,6 @@ interface SkillsDataState {
     selection: UpdateCheckIntent,
   ) => Promise<UpdateCheckOutcome | null>;
   applyUpdateResult: (context: SkillLocationRef, response: UpdateResponse) => Promise<void>;
-  markSourceRepairSucceeded: (context: SkillLocationRef, skillName: string) => void;
   clearNativeGithubProviderCooldown: () => void;
 }
 
@@ -370,13 +369,44 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   refreshContext: async (context, options = {}) => {
     const origin = options.origin ?? 'passive';
     const key = contextKey(context);
-    const current = get().snapshots[key] ?? emptyContextSnapshot();
+    let current = get().snapshots[key] ?? emptyContextSnapshot();
+    if (options.origin === 'selfMutation' && options.invalidateUpdates && options.mutatedSkillNames.length > 0) {
+      const invalidatedNames = new Set(options.mutatedSkillNames);
+      // 使变更前启动的检查失效，避免迟到结果恢复旧状态。
+      admittedUpdateCheckRequests.delete(key);
+      let cache = updateInfoCache.get(key);
+      if (cache) {
+        const results = cache.results.filter((result) => !invalidatedNames.has(result.name));
+        cache = {
+          ...cache,
+          results,
+          sources: cache.sources.filter((source) => results.some((result) => sourceMatchesSkillUpdate(source, result))),
+          completeness: 'partial',
+        };
+        updateInfoCache.set(key, cache);
+      }
+      current = {
+        ...current,
+        skills: current.skills.map((skill) => invalidatedNames.has(skill.name) ? {
+          ...skill,
+          hasUpdate: false,
+          updateStatus: null,
+          updateReason: null,
+          updateFreshness: null,
+          updateEvidence: null,
+          updateAttempt: null,
+        } : skill),
+        updateCheck: cache
+          ? toUpdateCheckDisplaySnapshot(cache.results, cache.sources, cache.outcome, cache.checkedAt)
+          : current.updateCheck,
+      };
+    }
     const requestId = nextContextRequestGeneration(key);
     set((state) => ({
       snapshots: {
         ...state.snapshots,
         [key]: {
-          ...(state.snapshots[key] ?? emptyContextSnapshot()),
+          ...current,
           loading: true,
           error: null,
           requestId,
@@ -854,29 +884,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     await get().refreshContext(context, {
       origin: 'selfMutation',
       mutatedSkillNames: Array.from(successfulSkillNames),
-    });
-  },
-
-  markSourceRepairSucceeded: (context, skillName) => {
-    clearUpdateCacheForContextSkill(skillName, context, { clearCannotCheck: true });
-    const key = contextKey(context);
-    const scope = context.scope.scope;
-    set((state) => {
-      const current = state.snapshots[key] ?? emptyContextSnapshot();
-      return {
-        snapshots: {
-          ...state.snapshots,
-          [key]: {
-            ...current,
-            skills: clearLocalUpdateFlags(
-              current.skills,
-              scope,
-              new Set([skillName]),
-              { clearCannotCheck: true },
-            ),
-          },
-        },
-      };
     });
   },
 

@@ -85,7 +85,6 @@ export function SkillsPage() {
     s.phase === 'executing' ? s.skillNames : EMPTY_SKILL_NAMES
   ));
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
-  const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const allAgents = selectedContext.scope.scope === 'project'
     ? projectSnapshot.agents
@@ -162,14 +161,6 @@ export function SkillsPage() {
   const handleCopyToProject = useCallback((skill: InstalledSkill) => {
     openCopyToProject(skill, selectedContext);
   }, [openCopyToProject, selectedContext]);
-
-  const handleRepairSource = useCallback((skill: InstalledSkill) => {
-    openRepairSource(
-      skill,
-      skill.scope === 'project' ? selectedContext : selectedGlobalContext,
-      skill.scope === 'project' ? selectedProjectPath : undefined
-    );
-  }, [openRepairSource, selectedContext, selectedGlobalContext, selectedProjectPath]);
 
   useLayoutEffect(() => {
     const hasDetail = Boolean(selectedSkill);
@@ -256,7 +247,6 @@ export function SkillsPage() {
                   onRetry={reloadContent}
                   onManageAgents={handleManageAgents}
                   onCopyToProject={selectedSkill.scope === 'project' ? handleCopyToProject : undefined}
-                  onRepairSource={handleRepairSource}
                   onConfigureGitCredentials={() => navigate('/settings?section=git')}
                 />
               </ResizablePanel>

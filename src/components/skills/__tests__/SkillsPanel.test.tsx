@@ -103,7 +103,6 @@ const mocks = vi.hoisted(() => ({
   skillDialogState: {
     openDelete: vi.fn(),
     openAdd: vi.fn(),
-    openRepairSource: vi.fn(),
     openManageAgents: vi.fn(),
   },
   updateWorkflowState: { phase: 'closed', context: null as SkillLocationRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
@@ -239,7 +238,6 @@ vi.mock('../SkillsSection', () => ({
   SkillsSection: ({
     skills,
     updatingSkills,
-    onRepairSource,
     onManageAgents,
     onCheckUpdates,
     onPrepareUpdate,
@@ -249,7 +247,6 @@ vi.mock('../SkillsSection', () => ({
   }: {
     skills: Array<{ name: string; scope: 'global' | 'project' }>;
     updatingSkills: Map<string, string>;
-    onRepairSource?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onManageAgents?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onCheckUpdates?: () => Promise<boolean>;
     onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
@@ -267,13 +264,6 @@ vi.mock('../SkillsSection', () => ({
           <span data-testid={`duplicate-location:${skill.scope}:${skill.name}`}>
             {duplicateLocationSkillNames?.has(skill.name) ? 'duplicate' : 'single'}
           </span>
-          <button
-            type="button"
-            data-testid={`repair:${skill.scope}:${skill.name}`}
-            onClick={() => onRepairSource?.(skill)}
-          >
-            repair
-          </button>
           <button
             type="button"
             data-testid={`manage:${skill.scope}:${skill.name}`}
@@ -344,7 +334,6 @@ describe('SkillsPanel', () => {
     };
     mocks.skillDialogState.openDelete.mockClear();
     mocks.skillDialogState.openAdd.mockClear();
-    mocks.skillDialogState.openRepairSource.mockClear();
     mocks.skillDialogState.openManageAgents.mockClear();
   });
 
@@ -372,26 +361,6 @@ describe('SkillsPanel', () => {
     expect(mocks.skillsDataState.fetchAuditForSkills).not.toHaveBeenCalled();
   });
 
-  it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {
-    mocks.skillsDataState.snapshots = {
-      'native/global': snapshot([makeSkill('toolkit')]),
-    };
-
-    render(<SkillsPanel compact={false} />);
-
-    await waitFor(() => {
-      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
-    });
-
-    document.querySelector<HTMLButtonElement>('[data-testid="repair:global:toolkit"]')?.click();
-
-    expect(mocks.skillDialogState.openRepairSource).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'toolkit', scope: 'global' }),
-      nativeGlobal,
-    );
-    expect(mocks.skillDialogState.openAdd).not.toHaveBeenCalled();
-  });
-
   it('opens Agent management with the selected operation context', async () => {
     mocks.skillsDataState.snapshots = {
       'native/global': snapshot([makeSkill('toolkit')]),
@@ -417,7 +386,7 @@ describe('SkillsPanel', () => {
 
     render(<SkillsPanel compact={false} />);
 
-    expect(screen.getByTestId('repair:global:cached')).toBeDefined();
+    expect(screen.getByTestId('phase:global:cached')).toBeDefined();
   });
 
   it('projects an executing update into the matching list row', () => {
@@ -630,8 +599,8 @@ describe('SkillsPanel', () => {
     fireEvent.click(screen.getByTestId('filter-agent:cursor'));
 
     await waitFor(() => {
-      expect(screen.queryByTestId('repair:global:global-skill')).toBeNull();
-      expect(screen.getByTestId('repair:project:project-skill')).toBeDefined();
+      expect(screen.queryByTestId('phase:global:global-skill')).toBeNull();
+      expect(screen.getByTestId('phase:project:project-skill')).toBeDefined();
     });
   });
 
@@ -649,8 +618,8 @@ describe('SkillsPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('selected-agent').textContent).toBe('all');
-      expect(screen.getByTestId('repair:global:matched')).toBeDefined();
-      expect(screen.queryByTestId('repair:global:unrelated')).toBeNull();
+      expect(screen.getByTestId('phase:global:matched')).toBeDefined();
+      expect(screen.queryByTestId('phase:global:unrelated')).toBeNull();
     });
   });
 
@@ -787,7 +756,7 @@ describe('SkillsPanel', () => {
     render(<SkillsPanel compact={false} />);
     fireEvent.click(screen.getByTestId('filter-agent:codex'));
     await waitFor(() => {
-      expect(screen.queryByTestId('repair:global:cursor-skill')).toBeNull();
+      expect(screen.queryByTestId('phase:global:cursor-skill')).toBeNull();
     });
     fireEvent.click(screen.getByTestId('check:global'));
 

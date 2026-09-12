@@ -10,7 +10,7 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 | [产品行为与交互](./product.md) | 用户看到的核心概念、页面能力、用户工作流、反馈规则、Agent 筛选交互和产品限制 | 用户可见能力、交互语义或产品限制变化 |
 | [Agent 模型](./agent-model.md) | Agent 注册表、Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组和安装初始选择 | Agent 模型、解析规则或选择语义变化 |
 | [Environment、Skill 位置与项目管理](./environments-and-projects.md) | 应用所在系统、Windows 与 WSL 切换、全局 Skill、项目 Skill、已添加项目、路径解析和跨文件系统访问 | Windows/WSL 切换、全局或项目行为、已添加项目、路径或文件访问规则变化 |
-| [Skill 生命周期](./skill-lifecycle.md) | 来源、发现、安装、读取、更新、来源修复、管理 Agent、复制和移除 | Skill 从来源进入本地后的业务流程变化 |
+| [Skill 生命周期](./skill-lifecycle.md) | 来源、发现、安装、读取、更新、管理 Agent、复制和移除 | Skill 从来源进入本地后的业务流程变化 |
 | [更新检查](./update-checking.md) | 远端版本比较、缓存、重试、限流、凭据和状态文件 | 远端版本比较或检查策略变化 |
 | [系统架构](./architecture.md) | 系统边界、应用内部结构、进程与窗口、IPC 契约、平台适配、数据归属和安全保证 | 顶层模块、典型调用方向、窗口、传输接口、平台实现或数据归属变化 |
 | [测试与验证规范](./testing.md) | 测试类型、覆盖范围、测试夹具、跨平台规则和断言原则 | 测试架构、平台测试能力、测试夹具或验证策略变化 |
@@ -28,7 +28,7 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 | 修改用户可见功能、页面交互或 Agent 筛选 | [产品行为与交互](./product.md)，再按涉及概念进入对应主文档 |
 | 修改 Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组或安装初始选择 | [Agent 模型](./agent-model.md) |
 | 修改应用所在系统、Windows/WSL 切换、全局或项目行为、已添加项目、路径解析或跨文件系统访问 | [Environment、Skill 位置与项目管理](./environments-and-projects.md) |
-| 修改来源、发现、安装、更新、来源修复、管理 Agent、复制或移除 | [Skill 生命周期](./skill-lifecycle.md)；涉及远端检查时增加[更新检查](./update-checking.md)，涉及写入机制时增加[执行与恢复](./execution-and-recovery.md) |
+| 修改来源、发现、安装、更新、管理 Agent、复制或移除 | [Skill 生命周期](./skill-lifecycle.md)；涉及远端检查时增加[更新检查](./update-checking.md)，涉及写入机制时增加[执行与恢复](./execution-and-recovery.md) |
 | 修改路由、跨窗口通信、Tauri 命令、WSL 传输或顶层依赖 | [系统架构](./architecture.md) |
 | 新增或修改测试、测试夹具、平台适配器验证或 E2E | [测试与验证规范](./testing.md)；修改 CI 命令时增加[贡献指南](../CONTRIBUTING.md) |
 | 跟踪 `skills` CLI 版本变化 | [skills CLI 参考与兼容](./skills-cli-reference.md)，再按变化类型进入受影响的领域主文档 |

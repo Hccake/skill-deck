@@ -11,7 +11,6 @@ import {
   Globe,
   Pencil,
   Trash2,
-  Wrench,
 } from 'lucide-react';
 import { cn, toTitleCase } from '@/lib/utils';
 import { formatSkillCardDate, isOpenableUrl, useCardActivation } from '@/lib/skill-card-presentation';
@@ -24,17 +23,6 @@ import {
   SkillCardShell,
 } from '@/components/skills/card/SkillCardPrimitives';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { AgentId, InstalledSkill, InstalledSkillLocation } from '@/bindings';
 import {
@@ -43,7 +31,6 @@ import {
   isSkillUpdateActive,
   resolveEvidenceFailureNextStepI18nKey,
   resolveEvidenceFailureReasonI18nKey,
-  resolveSkillMaintenanceAction,
   resolveSkillUpdatePhaseI18nKey,
   resolveUpdateHintI18nKey,
   resolveUpdateStatusLabelI18nKey,
@@ -108,7 +95,6 @@ interface SkillCardProps {
   onDelete?: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
-  onRepairSource?: (skill: InstalledSkill) => void;
 }
 
 export const SkillCard = memo(function SkillCard({
@@ -123,25 +109,17 @@ export const SkillCard = memo(function SkillCard({
   onDelete,
   onCopyToProject,
   onManageAgents,
-  onRepairSource,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
   const effectiveAgents = Array.from(new Set(skill.associatedAgents));
   const scopeIcon = displayScope === 'global' ? Globe : Folder;
   const ScopeIcon = scopeIcon;
   const deletedUpstream = isDeletedUpstream(skill);
-  const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
   const canShowUpdateAction = skill.hasUpdate === true
     && skill.canRunUpdate !== false
     && !deletedUpstream
     && !updateStatus
     && Boolean(onUpdate);
-  const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall' && Boolean(onUpdate);
-  const canShowRepairAction = (maintenanceAction === 'repair-source' || deletedUpstream)
-    && Boolean(onRepairSource);
-  const repairActionTitle = deletedUpstream
-    ? t('skills.updatePlan.deletedUpstreamActionRepair')
-    : t('skills.actions.repairSource');
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
   const hasCommittedUpdateConclusion = hasCommittedUpdateComparison(skill);
   const rawStatusLabelKey = resolveUpdateStatusLabelI18nKey(
@@ -377,51 +355,6 @@ export const SkillCard = memo(function SkillCard({
               }}
             >
               <ArrowUpCircle className="size-4" aria-hidden="true" />
-            </Button>
-          ) : null}
-          {canShowDirectReinstallAction ? (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 cursor-pointer text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                  aria-label={t('skills.actions.reinstall')}
-                  title={t('skills.actions.reinstall')}
-                  disabled={writeBlocked}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Wrench className="size-3.5" aria-hidden="true" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent onClick={(event) => event.stopPropagation()}>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t('skills.reinstallConfirm.title')}</AlertDialogTitle>
-                  <AlertDialogDescription>{t('skills.reinstallConfirm.description')}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => onUpdate?.(skill.name)}>
-                    {t('skills.reinstallConfirm.confirm')}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : null}
-          {canShowRepairAction ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-              aria-label={repairActionTitle}
-              title={repairActionTitle}
-              disabled={writeBlocked}
-              onClick={(event) => {
-                event.stopPropagation();
-                onRepairSource?.(skill);
-              }}
-            >
-              <Wrench className="size-3.5" aria-hidden="true" />
             </Button>
           ) : null}
           {displayScope === 'project' && onCopyToProject ? (

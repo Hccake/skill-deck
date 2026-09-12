@@ -3,20 +3,9 @@ import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
-import { Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
+import { Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   CopyablePath,
@@ -29,7 +18,6 @@ import type { InstalledSkill, InstalledSkillLocation, SourceUpdateCheckInfo, Upd
 import {
   hasIncompleteUpdateCheck,
   resolveEvidenceFailureReasonI18nKey,
-  resolveSkillMaintenanceAction,
   isSkillUpdateActive,
   resolveSkillUpdatePhaseI18nKey,
   type SkillUpdateDisplayStatus,
@@ -58,7 +46,6 @@ interface SkillDetailPanelProps {
   onRetry: () => void;
   onManageAgents: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
-  onRepairSource?: (skill: InstalledSkill) => void;
   /** 打开 Git 凭据设置。路由归页面所有，面板保持无路由依赖。 */
   onConfigureGitCredentials?: () => void;
 }
@@ -78,7 +65,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onRetry,
   onManageAgents,
   onCopyToProject,
-  onRepairSource,
   onConfigureGitCredentials,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
@@ -133,10 +119,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     onCopyToProject?.(skill);
   }, [onCopyToProject, skill]);
 
-  const handleRepairSource = useCallback(() => {
-    onRepairSource?.(skill);
-  }, [onRepairSource, skill]);
-
   const handleCheckUpdates = useCallback(async () => {
     if (!onCheckUpdates) return;
 
@@ -179,13 +161,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     || skill.updateStatus === 'cannotCheck'
     || skill.canCheckForUpdates === false;
   const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false && !isDeletedUpstream;
-  const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
-  const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall';
-  const canShowRepairAction = (maintenanceAction === 'repair-source' || isDeletedUpstream) && Boolean(onRepairSource);
-  const repairActionTitle = isDeletedUpstream
-    ? t('skills.updatePlan.deletedUpstreamActionRepair')
-    : t('skills.actions.repairSource');
-
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">
       {/* 沉浸式滚动文档流 (Scrollable Document Area) */}
@@ -224,46 +199,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       >
                         <ArrowUpCircle className="h-4 w-4" />
                       </Button>
-                  ) : null}
-                  {canShowDirectReinstallAction ? (
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
-                          title={t('skills.actions.reinstall')}
-                          disabled={writeBlocked}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <Wrench className="h-4 w-4" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{t('skills.reinstallConfirm.title')}</AlertDialogTitle>
-                          <AlertDialogDescription>{t('skills.reinstallConfirm.description')}</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                          <AlertDialogAction onClick={handleUpdate}>
-                            {t('skills.reinstallConfirm.confirm')}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  ) : null}
-                  {canShowRepairAction ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
-                      title={repairActionTitle}
-                      disabled={writeBlocked}
-                      onClick={handleRepairSource}
-                    >
-                      <Wrench className="h-4 w-4" />
-                    </Button>
                   ) : null}
                   {!isUpdateInProgress && onCheckUpdates && skill.canCheckForUpdates === true ? (
                     showCheckDone ? (

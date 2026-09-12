@@ -532,6 +532,120 @@ describe('skills data store', () => {
     expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['removal and reinstallation', true],
+    ['installation over the existing Skill', false],
+  ])('discards an old version warning after %s while retaining other updates', async (_, removeFirst) => {
+    const installed = skill({
+      gitRef: null,
+      skillPath: 'skills/toolkit',
+      hasUpdate: false,
+      updateStatus: null,
+      updateReason: null,
+    });
+    const reviewer = skill({
+      name: 'reviewer',
+      path: '/skills/reviewer',
+      canonicalPath: '/canonical/reviewer',
+      source: 'reviewer/repo',
+      skillPath: 'skills/reviewer',
+      hasUpdate: false,
+      updateStatus: null,
+      updateReason: null,
+    });
+    setSkills([installed, reviewer]);
+    mocks.checkUpdates.mockResolvedValueOnce({
+      outcome: 'completed',
+      sources: [],
+      skills: [
+        updateInfo('toolkit', {
+          source: 'owner/repo',
+          status: 'cannotCheck',
+          reason: 'missingRemoteHash',
+          capability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' },
+        }),
+        updateInfo('reviewer', { status: 'updateAvailable', hasUpdate: true }),
+      ],
+    });
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+
+    if (removeFirst) {
+      mocks.listSkills.mockResolvedValueOnce({ skills: [reviewer], agents: [], pathExists: true });
+      await useSkillsDataStore.getState().syncSkills(context, {
+        origin: 'selfMutation',
+        mutatedSkillNames: ['toolkit'],
+        invalidateUpdates: true,
+      });
+    }
+    mocks.listSkills.mockResolvedValue({ skills: [installed, reviewer], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshWorkspace(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: ['toolkit'],
+      invalidateUpdates: true,
+    });
+    await useSkillsDataStore.getState().refreshContext(context);
+
+    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'toolkit', hasUpdate: false, updateStatus: null, updateReason: null,
+        }),
+        expect.objectContaining({
+          name: 'reviewer', hasUpdate: true, updateStatus: 'updateAvailable',
+        }),
+      ]),
+    );
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['automatic', 'force'] as const)('ignores a late %s check from before installation', async (mode) => {
+    const installed = skill({
+      hasUpdate: false,
+      updateStatus: null,
+      updateReason: null,
+      skillPath: 'skills/toolkit',
+    });
+    setSkills([installed]);
+    const pending = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValueOnce(pending.promise);
+    const checking = mode === 'automatic'
+      ? useSkillsDataStore.getState().activateAutomaticChecks(context)
+      : useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
+
+    mocks.listSkills.mockResolvedValue({ skills: [installed], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshWorkspace(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: ['toolkit'],
+      invalidateUpdates: true,
+    });
+    pending.resolve({
+      outcome: 'completed',
+      sources: [],
+      skills: [updateInfo('toolkit', {
+        source: 'owner/repo',
+        status: 'cannotCheck',
+        reason: 'missingRemoteHash',
+        capability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' },
+      })],
+    });
+    await checking;
+    await useSkillsDataStore.getState().refreshContext(context);
+
+    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
+      hasUpdate: false, updateStatus: null, updateReason: null,
+    });
+
+    mocks.checkUpdates.mockResolvedValueOnce({
+      outcome: 'completed',
+      sources: [],
+      skills: [updateInfo('toolkit', { source: 'owner/repo', status: 'updateAvailable', hasUpdate: true })],
+    });
+    await useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
+    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
+      hasUpdate: true, updateStatus: 'updateAvailable', updateReason: null,
+    });
+  });
+
   it('targets an unrelated external change observed during a self-mutation refresh', async () => {
     const toolkit = skill({ name: 'toolkit', gitRef: 'main', skillPath: 'skills/toolkit' });
     const reviewer = skill({

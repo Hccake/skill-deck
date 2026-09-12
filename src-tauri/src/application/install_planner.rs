@@ -7,8 +7,8 @@ use crate::application::agent_selection::{
     InstallAgentSelectionSnapshot,
 };
 use crate::application::install::{
-    InstallFuture, InstallOperation, InstallPlanner, InstallPreview, InstallPreviewOutcome,
-    InstallRequest, InstallSkillPreview,
+    InstallFuture, InstallPlanner, InstallPreview, InstallPreviewOutcome, InstallRequest,
+    InstallSkillPreview,
 };
 use crate::application::installed_skill_resolver::SkillDirectoryName;
 #[cfg(test)]
@@ -75,12 +75,11 @@ where
 {
     fn preview<'a>(
         &'a self,
-        operation: InstallOperation,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>> {
         Box::pin(async move {
-            match self.build(operation, request, payloads, false).await? {
+            match self.build(request, payloads, false).await? {
                 BuiltInstallOutcome::Ready(built) => Ok(InstallPreviewOutcome::Ready {
                     preview: built.preview,
                 }),
@@ -93,13 +92,11 @@ where
 
     fn rebuild<'a>(
         &'a self,
-        operation: InstallOperation,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
         Box::pin(async move {
-            let BuiltInstallOutcome::Ready(built) =
-                self.build(operation, request, payloads, true).await?
+            let BuiltInstallOutcome::Ready(built) = self.build(request, payloads, true).await?
             else {
                 return Err(AppError::StaleTarget);
             };
@@ -152,7 +149,6 @@ where
 {
     async fn build(
         &self,
-        operation: InstallOperation,
         request: &InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
         include_plan: bool,
@@ -173,9 +169,6 @@ where
             if let Some(host) = redirected_download_host {
                 return Err(AppError::DirectDownloadRedirectConfirmationRequired { host });
             }
-        }
-        if operation != InstallOperation::Install && uses_direct_download {
-            return Err(AppError::DirectDownloadUnsupportedOperation);
         }
         let catalog = build_agent_selection_catalog(
             &request.context,
@@ -347,7 +340,7 @@ where
             candidate_digests,
         ))?;
         let token = issue_preview_token(PreviewTokenDraft {
-            kind: operation.mutation_kind(),
+            kind: crate::core::mutation::MutationKind::Install,
             request,
             revisions: facts.revisions.clone(),
             observed_state_digest,
@@ -413,7 +406,7 @@ where
         };
         let plan = include_plan.then(|| {
             assemble_plan(MutationPlanDraft {
-                kind: operation.mutation_kind(),
+                kind: crate::core::mutation::MutationKind::Install,
                 payloads: payloads
                     .into_iter()
                     .map(ValidatedSkillPayload::into_lease)
@@ -1116,54 +1109,19 @@ mod tests {
         let fixture = MultiSkillInstallFixture::new().await;
         let preview = fixture
             .planner
-            .preview(
-                InstallOperation::Install,
-                &fixture.request,
-                fixture.leases().await,
-            )
+            .preview(&fixture.request, fixture.leases().await)
             .await
             .unwrap();
         let (token, plan) = fixture
             .planner
-            .rebuild(
-                InstallOperation::Install,
-                &fixture.request,
-                fixture.leases().await,
-            )
+            .rebuild(&fixture.request, fixture.leases().await)
             .await
             .unwrap();
-        let InstallPreviewOutcome::Ready {
-            preview: repair_preview,
-        } = fixture
-            .planner
-            .preview(
-                InstallOperation::Repair,
-                &fixture.request,
-                fixture.leases().await,
-            )
-            .await
-            .unwrap()
-        else {
-            panic!("expected ready repair preview");
-        };
-        let (repair_token, repair_plan) = fixture
-            .planner
-            .rebuild(
-                InstallOperation::Repair,
-                &fixture.request,
-                fixture.leases().await,
-            )
-            .await
-            .unwrap();
-
         let InstallPreviewOutcome::Ready { preview } = preview else {
             panic!("expected ready preview");
         };
         assert_eq!(preview.token, token);
         assert_eq!(plan.kind, MutationKind::Install);
-        assert_eq!(repair_preview.token, repair_token);
-        assert_eq!(repair_plan.kind, MutationKind::Repair);
-        assert_ne!(preview.token, repair_preview.token);
         assert_eq!(preview.skills.len(), 2);
         assert_eq!(plan.payloads.len(), 2);
         assert_eq!(plan.units.len(), 2);
@@ -1201,11 +1159,7 @@ mod tests {
 
         fixture
             .planner
-            .preview(
-                InstallOperation::Install,
-                &fixture.request,
-                fixture.leases().await,
-            )
+            .preview(&fixture.request, fixture.leases().await)
             .await
             .unwrap();
 
@@ -1321,7 +1275,6 @@ mod tests {
         assert!(matches!(
             planner
                 .preview(
-                    InstallOperation::Install,
                     &request,
                     vec![manager.pin_verified(&handle).await.unwrap()],
                 )
@@ -1334,11 +1287,7 @@ mod tests {
         ));
 
         let result = planner
-            .rebuild(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await;
         let error = match result {
             Err(error) => error,
@@ -1480,11 +1429,7 @@ mod tests {
         };
 
         let unacknowledged = planner
-            .rebuild(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await;
         assert!(matches!(
             unacknowledged,
@@ -1497,34 +1442,14 @@ mod tests {
         };
 
         let (_, plan) = planner
-            .rebuild(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await
             .unwrap();
         assert!(plan.units[0].lock_mutation.is_none());
 
-        let repair = planner
-            .preview(
-                InstallOperation::Repair,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
-            .await;
-        assert!(matches!(
-            repair,
-            Err(AppError::DirectDownloadUnsupportedOperation)
-        ));
-
         fs::create_dir_all(canonical_root.join("demo")).unwrap();
         let conflict_preview = planner
-            .preview(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .preview(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await
             .unwrap();
         let InstallPreviewOutcome::Ready { preview } = conflict_preview else {
@@ -1537,11 +1462,7 @@ mod tests {
         );
 
         let conflict = planner
-            .rebuild(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await;
         assert!(matches!(
             conflict,
@@ -1663,19 +1584,11 @@ mod tests {
         };
 
         let preview = planner
-            .preview(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .preview(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await
             .unwrap();
         let (token, plan) = planner
-            .rebuild(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await
             .unwrap();
 
@@ -1915,11 +1828,7 @@ mod tests {
         };
 
         let (_, plan) = planner
-            .rebuild(
-                InstallOperation::Install,
-                &request,
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
+            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await
             .unwrap();
 

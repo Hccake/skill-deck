@@ -39,9 +39,6 @@ export function parseInstallError(
     case 'directDownloadFailed':
       return { message: t(`addSkill.source.error.downloadFailure.${error.data.reason}`) };
 
-    case 'directDownloadUnsupportedOperation':
-      return { message: t('addSkill.source.error.downloadUnsupportedOperation') };
-
     case 'directDownloadConflict':
       return {
         message: t('addSkill.source.error.downloadConflict', { target: error.data.target }),

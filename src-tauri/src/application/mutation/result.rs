@@ -251,14 +251,6 @@ impl ErrorReport {
                     .insert("reason".to_string(), reason.code().to_string());
                 report
             }
-            AppError::DirectDownloadUnsupportedOperation => {
-                let mut report = Self::new(OperationErrorCode::Validation);
-                report.parameters.insert(
-                    "reason".to_string(),
-                    "direct-download-unsupported-operation".to_string(),
-                );
-                report
-            }
             AppError::DirectDownloadConflict { target } => {
                 let mut report = Self::new(OperationErrorCode::Validation);
                 report

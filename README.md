@@ -38,7 +38,7 @@
 ## ✨ Core capabilities
 
 - **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, Well-known URLs, raw `SKILL.md` files, and ZIP/tar archives
-- **Browse and maintain** — Read installed Skill content, check and apply updates, and select a new source when the saved source no longer works; private GitHub sources can reuse local Git credentials for update checks
+- **Browse and maintain** — Read installed Skill content and check or apply updates; keep Skills whose sources are unavailable, or remove them before installing from another source; private GitHub sources can reuse local Git credentials for update checks
 - **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects; use built-in agent definitions or add your own
 - **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions
 
@@ -121,7 +121,7 @@ npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 
 ### 3. Confirm and install
 
-Select the Skills, target agents, and installation mode, review the change preview, and run the installation. Cross-host download redirects require explicit confirmation. Direct downloads are one-time, new-install sources and do not provide update, reinstall, or source-repair actions afterward. After installation, the selected agents can read the Skill; you can continue reading and managing agents from the Skills workspace.
+Select the Skills, target agents, and installation mode, review the change preview, and run the installation. Cross-host download redirects require explicit confirmation. Direct downloads are one-time, new-install sources and do not provide updates; remove the installed Skill before installing it again. After installation, the selected agents can read the Skill; you can continue reading and managing agents from the Skills workspace.
 
 ---
 

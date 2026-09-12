@@ -62,7 +62,6 @@ const mocks = vi.hoisted(() => ({
     manageAgentsSkill: null,
     copySkill: null as InstalledSkill | null,
     copyContext: null as SkillLocationRef | null,
-    repairSourceTarget: null,
     openCopyToProject: vi.fn(),
     closeCopyToProject: vi.fn(),
     executeCopy: vi.fn(),

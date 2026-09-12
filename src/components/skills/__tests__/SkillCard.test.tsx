@@ -787,61 +787,7 @@ describe('SkillCard', () => {
     vi.useRealTimers();
   });
 
-  it('shows repair source action for missing skill path metadata', () => {
-    const onRepairSource = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <SkillCard
-          skill={{
-            ...makeSkill({
-              hasUpdate: false,
-              canRunUpdate: false,
-              canCheckForUpdates: false,
-              source: 'owner/repo',
-              sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missing-skill-path',
-            }),
-            updateStatus: 'cannotCheck',
-          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
-          displayScope="global"
-          onRepairSource={onRepairSource}
-        />
-      </TooltipProvider>
-    );
-
-    const repairAction = screen.getByTitle('skills.actions.repairSource');
-
-    fireEvent.click(repairAction);
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
-  });
-
-  it('shows repair source action for the typed missing source reason', () => {
-    render(
-      <TooltipProvider>
-        <SkillCard
-          skill={makeSkill({
-            hasUpdate: false,
-            canRunUpdate: false,
-            updateReason: 'missingSource',
-            source: 'owner/repo',
-            sourceUrl: 'https://github.com/owner/repo',
-          })}
-          displayScope="global"
-          onRepairSource={vi.fn()}
-        />
-      </TooltipProvider>
-    );
-
-    expect(screen.getByText('skills.card.sourceIncomplete')).toBeTruthy();
-    expect(screen.getByTitle('skills.actions.repairSource')).toBeTruthy();
-  });
-
-  it('uses direct reinstall for missing version metadata', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
+  it('keeps delete as the only maintenance action for missing version metadata', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -857,29 +803,17 @@ describe('SkillCard', () => {
             updateStatus: 'cannotCheck',
           } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
-          onUpdate={onUpdate}
-          onRepairSource={onRepairSource}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
         />
       </TooltipProvider>
     );
 
-    const reinstallAction = screen.getByTitle('skills.actions.reinstall');
-
-    fireEvent.click(reinstallAction);
-
-    expect(onUpdate).not.toHaveBeenCalled();
-    expect(screen.getByText('skills.reinstallConfirm.title')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'skills.reinstallConfirm.confirm' }));
-
-    expect(onUpdate).toHaveBeenCalledWith('toolkit');
-    expect(onRepairSource).not.toHaveBeenCalled();
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+    expect(screen.getByTitle('skills.actions.delete')).toBeTruthy();
   });
 
   it('shows upstream-deleted state without ordinary update action', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
     render(
       <TooltipProvider>
         <SkillCard
@@ -895,8 +829,8 @@ describe('SkillCard', () => {
             updateStatus: 'deletedUpstream',
           } as InstalledSkill & { updateStatus?: 'deletedUpstream' }}
           displayScope="global"
-          onUpdate={onUpdate}
-          onRepairSource={onRepairSource}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
         />
       </TooltipProvider>
     );
@@ -905,11 +839,7 @@ describe('SkillCard', () => {
     expect(screen.queryByText('skills.updateStatusLabel.deletedUpstream')).toBeNull();
     expect(screen.queryByText('skills.updateHint.deletedUpstream')).toBeNull();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-
-    fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
-    expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByTitle('skills.actions.delete')).toBeTruthy();
   });
 
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {

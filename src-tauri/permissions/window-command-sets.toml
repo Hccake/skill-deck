@@ -7,9 +7,7 @@ permissions = [
   "allow-execute-lifecycle-action",
   "allow-get-active-mutation",
   "allow-get-install-agent-selection",
-  "allow-install-skills",
   "allow-list-environment-projects",
-  "allow-preview-install",
   "allow-request-cancel-active-mutation",
   "allow-search-discover-skills"
 ]
@@ -97,5 +95,7 @@ identifier = "install-wizard-commands"
 description = "Application commands available to the install wizard"
 permissions = [
   "shared-business-commands",
-  "allow-confirm-install-agent-selection"
+  "allow-confirm-install-agent-selection",
+  "allow-install-skills",
+  "allow-preview-install"
 ]

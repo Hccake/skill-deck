@@ -16,7 +16,6 @@ import { SkillsSection } from './SkillsSection';
 import { CompactSkillList } from './CompactSkillList';
 import { CrossStorageWarningBanner } from './CrossStorageWarningBanner';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
-import { RepairSourceDialog } from './RepairSourceDialog';
 import { ManageLibraryApplicationDialog } from './ManageLibraryApplicationDialog';
 import { GlobalEmptyState, ProjectEmptyState, SkillFilterEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -126,7 +125,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   // 分栏视图需要知道详情属于哪一行，卡片据此显示选中态。
   const openAdd = useSkillDialogStore((s) => s.openAdd);
-  const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
 
@@ -299,14 +297,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const handleAddProject = useCallback(() => {
     openAdd(selectedContext, projectPath);
   }, [openAdd, projectPath, selectedContext]);
-
-  const handleRepairGlobal = useCallback((skill: InstalledSkill) => {
-    openRepairSource(skill, selectedGlobalContext);
-  }, [openRepairSource, selectedGlobalContext]);
-
-  const handleRepairProject = useCallback((skill: InstalledSkill) => {
-    openRepairSource(skill, selectedContext, projectPath);
-  }, [openRepairSource, projectPath, selectedContext]);
 
   const handleCopyToProject = useCallback((skill: InstalledSkill) => {
     openCopyToProject(skill, selectedContext);
@@ -504,7 +494,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               onDelete={handleDeleteProject}
               onCopyToProject={handleCopyToProject}
               onManageAgents={handleManageAgentsProject}
-              onRepairSource={handleRepairProject}
               onAdd={handleAddProject}
               onCheckUpdates={handleCheckProjectUpdates}
               emptyState={projectEmptyState}
@@ -534,7 +523,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             onPrepareUpdate={handlePrepareGlobalUpdate}
             onDelete={handleDeleteGlobal}
             onManageAgents={handleManageAgentsGlobal}
-            onRepairSource={handleRepairGlobal}
             onAdd={handleAddGlobal}
             onCheckUpdates={handleCheckGlobalUpdates}
             emptyState={globalEmptyState}
@@ -548,7 +536,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       )}
 
       <DeleteSkillDialog />
-      <RepairSourceDialog />
       <ManageLibraryApplicationDialog
         open={manageLibraries !== null}
         context={manageLibraries?.context ?? null}

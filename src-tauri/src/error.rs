@@ -235,9 +235,6 @@ pub enum AppError {
     #[error("Direct download failed: {reason:?}")]
     DirectDownloadFailed { reason: DirectDownloadFailureReason },
 
-    #[error("Direct download sources only support new installs")]
-    DirectDownloadUnsupportedOperation,
-
     #[error("Direct download cannot replace an existing target: {target}")]
     DirectDownloadConflict { target: String },
 

@@ -13,7 +13,7 @@ use crate::application::copy::{
     CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
 };
 use crate::application::install::{
-    InstallFuture, InstallOperation, InstallPreviewOutcome, InstallRequest, InstallService,
+    InstallFuture, InstallPreviewOutcome, InstallRequest, InstallService,
 };
 use crate::application::install_planner::ConcreteInstallPlanner;
 use crate::application::installed_skill_payload::InstalledSkillPayloadAcquirer;
@@ -679,15 +679,12 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     };
     let InstallPreviewOutcome::Ready {
         preview: install_preview,
-    } = install
-        .preview(InstallOperation::Install, &install_request)
-        .await?
+    } = install.preview(&install_request).await?
     else {
         panic!("expected ready install preview");
     };
     let installed = install
         .execute(
-            InstallOperation::Install,
             &install_request,
             install_preview.token,
             CancellationSignal::default(),
@@ -1594,15 +1591,12 @@ async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<()
     );
     let InstallPreviewOutcome::Ready {
         preview: install_preview,
-    } = install
-        .preview(InstallOperation::Install, &install_request)
-        .await?
+    } = install.preview(&install_request).await?
     else {
         panic!("expected ready direct install preview");
     };
     let installed = install
         .execute(
-            InstallOperation::Install,
             &install_request,
             install_preview.token,
             CancellationSignal::default(),
@@ -2103,7 +2097,7 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
     let InstallPreviewOutcome::Ready {
         preview: stale_preview,
     } = install
-        .preview(InstallOperation::Install, &request)
+        .preview(&request)
         .await
         .expect("preview direct download")
     else {
@@ -2113,18 +2107,13 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
     fs::remove_dir_all(project_path.join(".agents/skills/alpha")).unwrap();
     assert!(matches!(
         install
-            .execute(
-                InstallOperation::Install,
-                &request,
-                stale_preview.token,
-                CancellationSignal::default(),
-            )
+            .execute(&request, stale_preview.token, CancellationSignal::default(),)
             .await,
         Err(AppError::StaleContext)
     ));
 
     let InstallPreviewOutcome::Ready { preview } = install
-        .preview(InstallOperation::Install, &request)
+        .preview(&request)
         .await
         .expect("refresh direct-download preview")
     else {
@@ -2135,12 +2124,7 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
         .iter()
         .all(|skill| skill.blocking_reasons.is_empty()));
     let response = install
-        .execute(
-            InstallOperation::Install,
-            &request,
-            preview.token,
-            CancellationSignal::default(),
-        )
+        .execute(&request, preview.token, CancellationSignal::default())
         .await
         .expect("execute direct-download batch");
     assert_eq!(response.units.len(), 2);
@@ -2541,19 +2525,14 @@ mod update_lifecycle {
                     acknowledge_redirect: true,
                 };
                 let preview_outcome = install
-                    .preview(InstallOperation::Install, &request)
+                    .preview(&request)
                     .await
                     .expect("preview lifecycle install");
                 let InstallPreviewOutcome::Ready { preview } = preview_outcome else {
                     panic!("expected ready lifecycle install preview");
                 };
                 let installed = install
-                    .execute(
-                        InstallOperation::Install,
-                        &request,
-                        preview.token,
-                        CancellationSignal::default(),
-                    )
+                    .execute(&request, preview.token, CancellationSignal::default())
                     .await
                     .expect("execute lifecycle install");
                 assert_succeeded(&installed.units);

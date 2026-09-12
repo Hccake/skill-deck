@@ -30,20 +30,15 @@ vi.mock('../SkillCard', () => ({
     skill,
     updateStatus,
     onUpdate,
-    onRepairSource,
   }: {
     skill: InstalledSkill;
     updateStatus?: 'acquiring' | 'validating' | 'updating' | 'done' | 'failed';
     onUpdate?: (skillName: string) => void;
-    onRepairSource?: (skill: InstalledSkill) => void;
   }) => (
     <div data-testid={`skill-card:${skill.scope}:${skill.name}`}>
       <span data-testid={`status:${skill.scope}:${skill.name}`}>{updateStatus ?? 'idle'}</span>
       <button type="button" data-testid={`update:${skill.scope}:${skill.name}`} onClick={() => onUpdate?.(skill.name)}>
         update
-      </button>
-      <button type="button" data-testid={`repair:${skill.scope}:${skill.name}`} onClick={() => onRepairSource?.(skill)}>
-        repair
       </button>
     </div>
   ),
@@ -924,29 +919,6 @@ describe('SkillsSection', () => {
     expect(screen.queryByText('skills.checkUpdates')).toBeNull();
   });
 
-  it('passes repair source actions to skill cards', () => {
-    const onRepairSource = vi.fn();
-
-    render(
-      <SkillsSection
-        title="Project"
-        skills={[makeSkill('project', { hasUpdate: false, updateReason: 'missing-skill-path' })]}
-        scope="project"
-        projectPath="D:\\Code\\project-a"
-        updatingSkills={new Map()}
-        onSkillClick={vi.fn()}
-        onPrepareUpdate={vi.fn(async () => true)}
-        onDelete={vi.fn()}
-        onRepairSource={onRepairSource}
-        onAdd={vi.fn()}
-      />
-    );
-
-    fireEvent.click(screen.getByTestId('repair:project:toolkit'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project', name: 'toolkit' }));
-  });
-
   it('delegates update-all preview to the page-level update workflow owner', async () => {
     const onPrepareUpdate = vi.fn(async () => true);
 
@@ -1092,7 +1064,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
-        onRepairSource={vi.fn()}
         onAdd={vi.fn()}
       />
     );

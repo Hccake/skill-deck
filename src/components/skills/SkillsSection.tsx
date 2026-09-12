@@ -12,9 +12,7 @@ import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
 import type { AgentId, InstalledSkill, InstalledSkillLocation, LibraryApplicationSummary, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
-  buildUpdatePlan,
   isSkillUpdateActive,
-  resolveSkillMaintenanceAction,
   resolveEvidenceFailureReasonI18nKey,
   resolveUpdateStatusLabelI18nKey,
   hasIncompleteUpdateCheck,
@@ -22,7 +20,6 @@ import {
   providerCooldownDeadline,
   type SkillUpdateDisplayStatus,
   type SkillListItem,
-  type UpdatePlan,
 } from '@/stores/skills-utils';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
@@ -59,7 +56,6 @@ interface SkillsSectionProps {
   onDelete: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
-  onRepairSource?: (skill: InstalledSkill) => void;
   onAdd: () => void;
   onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   emptyState?: React.ReactNode;
@@ -86,7 +82,6 @@ export const SkillsSection = memo(function SkillsSection({
   onDelete,
   onCopyToProject,
   onManageAgents,
-  onRepairSource,
   onAdd,
   onCheckUpdates,
   emptyState,
@@ -142,11 +137,13 @@ export const SkillsSection = memo(function SkillsSection({
       }
     }
   }
-  const updatePlanPreview = useMemo(
-    () => buildUpdatePlan(skills, scope, scope === 'project' ? projectPath : undefined),
-    [projectPath, scope, skills]
+  const updatableSkillNames = useMemo(
+    () => skills
+      .filter((skill) => skill.hasUpdate === true && skill.canRunUpdate !== false)
+      .map((skill) => skill.name),
+    [skills],
   );
-  const updatesCount = updatePlanPreview.updatableCount;
+  const updatesCount = updatableSkillNames.length;
   const incompleteTotal = incompleteCheckCount + updateCheckFailureCount;
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
   const latestFailure = latestFailureSkill?.updateEvidence?.lastAttempt?.failure ?? null;
@@ -248,29 +245,18 @@ export const SkillsSection = memo(function SkillsSection({
     showCheckDone();
   }, [onCheckUpdates, showCheckDone]);
 
-  const openPreparedUpdatePlan = useCallback(async (nextPlan: UpdatePlan, batch: boolean) => {
-    if (nextPlan.updatableCount === 0) return;
-    const skillNames = nextPlan.groups.flatMap((group) => group.skillNames);
+  const openPreparedUpdatePlan = useCallback(async (skillNames: string[], batch: boolean) => {
+    if (skillNames.length === 0) return;
     await onPrepareUpdate(skillNames, batch);
   }, [onPrepareUpdate]);
 
   const handleOpenUpdatePlan = useCallback(() => {
-    void openPreparedUpdatePlan(updatePlanPreview, true);
-  }, [openPreparedUpdatePlan, updatePlanPreview]);
+    void openPreparedUpdatePlan(updatableSkillNames, true);
+  }, [openPreparedUpdatePlan, updatableSkillNames]);
 
   const handleUpdateSkill = useCallback(async (skillName: string) => {
-    const skill = skills.find((candidate) => candidate.name === skillName);
-    if (skill && resolveSkillMaintenanceAction(skill) === 'direct-reinstall') {
-      await onPrepareUpdate([skillName], false);
-      return;
-    }
-    const nextPlan = buildUpdatePlan(
-      skills.filter((skill) => skill.name === skillName),
-      scope,
-      scope === 'project' ? projectPath : undefined,
-    );
-    await openPreparedUpdatePlan(nextPlan, false);
-  }, [onPrepareUpdate, openPreparedUpdatePlan, projectPath, scope, skills]);
+    await openPreparedUpdatePlan([skillName], false);
+  }, [openPreparedUpdatePlan]);
 
   return (
     <>
@@ -468,7 +454,6 @@ export const SkillsSection = memo(function SkillsSection({
                     onDelete={onDelete}
                     onCopyToProject={onCopyToProject}
                     onManageAgents={onManageAgents}
-                    onRepairSource={onRepairSource}
                   />
                 );
               })}

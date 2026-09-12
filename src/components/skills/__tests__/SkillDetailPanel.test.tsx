@@ -454,87 +454,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
-  it('shows repair source action for missing skill path metadata', () => {
-    const onRepairSource = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <SkillDetailPanel
-          skill={{
-            ...makeSkill({
-              hasUpdate: false,
-              canRunUpdate: false,
-              canCheckForUpdates: false,
-              source: 'owner/repo',
-              sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missing-skill-path',
-            }),
-            updateStatus: 'cannotCheck',
-          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
-          content="# Brainstorming"
-          loading={false}
-          agentDisplayNames={new Map()}
-          onClose={vi.fn()}
-          onUpdate={vi.fn()}
-          onDelete={vi.fn()}
-          onRetry={vi.fn()}
-          onManageAgents={vi.fn()}
-          onRepairSource={onRepairSource}
-        />
-      </TooltipProvider>
-    );
-
-    fireEvent.click(screen.getByTitle('skills.actions.repairSource'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'brainstorming' }));
-  });
-
-  it('uses direct reinstall for missing version metadata', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <SkillDetailPanel
-          skill={{
-            ...makeSkill({
-              hasUpdate: false,
-              canRunUpdate: true,
-              canCheckForUpdates: false,
-              source: 'owner/repo',
-              sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missingRemoteHash',
-            }),
-            updateStatus: 'cannotCheck',
-          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
-          content="# Brainstorming"
-          loading={false}
-          agentDisplayNames={new Map()}
-          onClose={vi.fn()}
-          onUpdate={onUpdate}
-          onDelete={vi.fn()}
-          onRetry={vi.fn()}
-          onManageAgents={vi.fn()}
-          onRepairSource={onRepairSource}
-        />
-      </TooltipProvider>
-    );
-
-    fireEvent.click(screen.getByTitle('skills.actions.reinstall'));
-
-    expect(onUpdate).not.toHaveBeenCalled();
-    expect(screen.getByText('skills.reinstallConfirm.title')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'skills.reinstallConfirm.confirm' }));
-
-    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
-    expect(onRepairSource).not.toHaveBeenCalled();
-  });
-
   it('shows upstream-deleted state without ordinary update action', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -553,11 +473,10 @@ describe('SkillDetailPanel', () => {
           loading={false}
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
-          onUpdate={onUpdate}
+          onUpdate={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
-          onRepairSource={onRepairSource}
         />
       </TooltipProvider>
     );
@@ -565,11 +484,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.getByText('skills.updateStatus.deletedUpstream')).toBeTruthy();
     expect(screen.getByText('skills.updateReason.deletedUpstream')).toBeTruthy();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-
-    fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'brainstorming' }));
-    expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByTitle('skills.actions.delete')).toBeTruthy();
   });
 
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
