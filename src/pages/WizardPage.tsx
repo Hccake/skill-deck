@@ -21,6 +21,7 @@ import { globalContext } from '@/lib/context';
 import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
+import { projectWorkspace } from '@/stores/projects';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
 import {
   confirmInstallAgentSelection,
@@ -44,7 +45,6 @@ type InstallResults = NonNullable<WizardState['installResults']>;
 
 function createInitialState(params: {
   entryPoint: EntryPoint;
-  scope: 'global' | 'project';
   projectPath?: string;
   context: SkillLocationRef;
   environmentName?: string;
@@ -52,6 +52,9 @@ function createInitialState(params: {
   prefillSkillName?: string;
 }): WizardState {
   const steps = getStepFlow(params.entryPoint);
+  const context = params.entryPoint === 'discovery'
+    ? globalContext(params.context.environment)
+    : params.context;
 
   // Discovery 入口：拼接 source@skillName 格式，让 SourceStep 的 @skill 语法预选逻辑自动生效
   let source = params.prefillSource ?? '';
@@ -62,9 +65,9 @@ function createInitialState(params: {
   return {
     step: steps[0],
     entryPoint: params.entryPoint,
-    scope: params.scope,
-    projectPath: params.projectPath,
-    context: params.context,
+    scope: context.scope.scope,
+    projectPath: context.scope.scope === 'project' ? params.projectPath : undefined,
+    context,
     environmentName: params.environmentName,
     sourceInput: source,
     source: '',
@@ -103,7 +106,6 @@ export function WizardPage() {
       ?? globalContext({ kind: 'native' });
     return {
       entryPoint: (searchParams.get('entryPoint') ?? 'skills-panel') as EntryPoint,
-      scope: context.scope.scope,
       projectPath: searchParams.get('projectPath') ?? undefined,
       context,
       environmentName: searchParams.get('environmentName') ?? undefined,
@@ -115,6 +117,15 @@ export function WizardPage() {
   const [state, setState] = useState<WizardState>(() =>
     createInitialState(wizardParams)
   );
+
+  useEffect(() => {
+    if (wizardParams.entryPoint !== 'discovery') return;
+    void projectWorkspace.execute({
+      kind: 'ensureLoaded',
+      environment: wizardParams.context.environment,
+    });
+  }, [wizardParams.context.environment, wizardParams.entryPoint]);
+
   const notifiedInstallResultsRef = useRef<InstallResults | null>(null);
   const notificationInFlightRef = useRef<{
     results: InstallResults;

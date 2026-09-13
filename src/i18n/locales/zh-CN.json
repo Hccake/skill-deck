@@ -1595,7 +1595,8 @@
       "global": "全局",
       "globalHint": "安装到全局位置 · {{path}}",
       "environmentGlobalHint": "安装到 {{environment}} 的全局位置",
-      "localProjects": "项目"
+      "localProjects": "项目",
+      "noProjects": "当前环境尚未添加项目。可以前往 Skills 页面添加项目。"
     },
     "mode": {
       "title": "安装方式",

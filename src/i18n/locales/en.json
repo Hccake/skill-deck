@@ -1595,7 +1595,8 @@
       "global": "Global",
       "globalHint": "Install globally · {{path}}",
       "environmentGlobalHint": "Install globally in {{environment}}",
-      "localProjects": "Projects"
+      "localProjects": "Projects",
+      "noProjects": "No projects have been added in this environment. Add a project on the Skills page."
     },
     "mode": {
       "title": "Installation Method",

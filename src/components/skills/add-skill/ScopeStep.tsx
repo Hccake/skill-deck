@@ -6,6 +6,7 @@ import { getSharedSkillDirectory } from '@/lib/agentTargets';
 import type { SkillLocationRef, InstalledSkillLocation } from '@/bindings';
 import type { WizardState } from './types';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { registeredProjectDisplayName } from '@/lib/projects/presentation';
 import { environmentRefDisplayName } from '@/lib/environments/presentation';
@@ -28,7 +29,12 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
   const { t } = useTranslation();
   const environment = state.context.environment;
   const environmentLabel = environmentRefDisplayName(environment, state.environmentName, t);
-  const { projects: environmentProjects } = useProjectWorkspace(environment);
+  const {
+    projects: environmentProjects,
+    hasCompleteSnapshot,
+    error,
+    refresh,
+  } = useProjectWorkspace(environment);
 
   const globalOption: ScopeOption = {
     scope: 'global' as InstalledSkillLocation,
@@ -59,11 +65,12 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
     ? 'global'
     : `project:${state.context.scope.scope === 'project' ? state.context.scope.project_id : ''}`;
 
-  const renderRow = (option: ScopeOption, isSelected: boolean) => {
+  const renderRow = (option: ScopeOption) => {
     const Icon = option.icon;
     const value = option.context.scope.scope === 'global'
       ? 'global'
       : `project:${option.context.scope.project_id}`;
+    const isSelected = selectedValue === value;
     const id = `scope-${value.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     return (
       <Label
@@ -131,22 +138,38 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
       >
         {/* 全局安装：独立的组 */}
         <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          {renderRow(globalOption, state.scope === 'global')}
+          {renderRow(globalOption)}
         </div>
 
         {/* 项目级安装：带细线分割的列表组 */}
-        {projectOptions.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pl-1">
-              {t('addSkill.scopeSelect.localProjects')}
-            </h3>
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden divide-y divide-border">
-              {projectOptions.map((option) =>
-                renderRow(option, state.scope === 'project' && state.projectPath === option.projectPath)
-              )}
-            </div>
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pl-1">
+            {t('addSkill.scopeSelect.localProjects')}
+          </h3>
+          <div className="rounded-xl border bg-card shadow-sm overflow-hidden divide-y divide-border">
+            {error ? (
+              <div role="alert" className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+                <p className="text-muted-foreground">{t('context.projectsLoadError')}</p>
+                <Button variant="link" size="sm" onClick={() => void refresh()}>
+                  {t('context.environmentRetry')}
+                </Button>
+              </div>
+            ) : null}
+            {!hasCompleteSnapshot ? (
+              error ? null : (
+                <p role="status" className="px-4 py-3 text-sm text-muted-foreground">
+                  {t('common.loading')}
+                </p>
+              )
+            ) : projectOptions.length > 0 ? (
+              projectOptions.map(renderRow)
+            ) : (
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                {t('addSkill.scopeSelect.noProjects')}
+              </p>
+            )}
           </div>
-        )}
+        </div>
       </RadioGroup>
     </div>
   );

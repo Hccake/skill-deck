@@ -79,7 +79,6 @@ describe('MainLayout project catalog lifecycle', () => {
         setCrossStorageWarning: vi.fn(),
       },
       environment: {
-        isAvailable: () => true,
         revision: () => 1,
         ensureAvailable: async () => undefined,
       },
