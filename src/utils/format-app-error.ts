@@ -149,6 +149,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('libraries.updateStatus.nameChangeBlocked');
     case 'upstreamSkillDeleted':
       return t('libraries.updateStatus.deletedUpstream');
+    case 'configurationWriteUnconfirmed':
+      return t('mutation.result.errors.configurationWriteUnconfirmed');
     case 'executionFailed':
     case 'restoreFailed':
     case 'recoveryRequired':

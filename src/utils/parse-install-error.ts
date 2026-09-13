@@ -341,6 +341,9 @@ export function parseInstallError(
     case 'selfCopy':
       return { message: t('addSkill.error.selfCopy') };
 
+    case 'configurationWriteUnconfirmed':
+      return { message: t('mutation.result.errors.configurationWriteUnconfirmed') };
+
     case 'executionFailed':
     case 'restoreFailed':
     case 'recoveryRequired':

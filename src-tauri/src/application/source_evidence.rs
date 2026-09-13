@@ -1577,6 +1577,7 @@ fn finish_detection(
                 discard_pending_paths(&mut state, operation_key);
             }
             Err(error @ AppError::MutationCancelled)
+            | Err(error @ AppError::InvalidProxySettings { .. })
             | Err(error @ AppError::WellKnownScopeNotFound { .. }) => return Err(error),
             Err(error) => {
                 record_failure(
@@ -3629,9 +3630,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_and_scope_errors_are_not_persisted_as_source_failures() {
+    async fn cancellation_scope_and_proxy_configuration_failures_are_not_persisted_as_source_failures(
+    ) {
         for error in [
             AppError::MutationCancelled,
+            AppError::InvalidProxySettings {
+                code: "configurationUnavailable".into(),
+            },
             AppError::WellKnownScopeNotFound {
                 scope_path: "/team".to_string(),
                 root_url: "https://example.com".to_string(),
@@ -3648,7 +3653,9 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(AppError::MutationCancelled | AppError::WellKnownScopeNotFound { .. })
+                Err(AppError::MutationCancelled
+                    | AppError::WellKnownScopeNotFound { .. }
+                    | AppError::InvalidProxySettings { .. })
             ));
             let state = coordinator.inner.state.lock().unwrap();
             assert!(state.attempts.is_empty());

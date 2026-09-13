@@ -28,7 +28,7 @@ import type {
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
-  NetworkProxySettings, ProxyConnectionTestResult,
+  NetworkProxySettings, ProxyConnectionTestResult, ProxySettingsSnapshot,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
   SourceSelectionIntent,
   ExecuteAddLibrarySkillsRequest, LibraryAddPreview, LibraryAddResponse,
@@ -66,7 +66,7 @@ export type {
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
-  NetworkProxySettings, ProxyConnectionTestResult,
+  NetworkProxySettings, ProxyConnectionTestResult, ProxySettingsSnapshot,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
   ExecuteAddLibrarySkillsRequest, LibraryAddPreview, LibraryAddResponse,
   PreviewAddLibrarySkillsRequest, LibraryId, LibraryWorkspaceSnapshot, SkillLibraryDetail,
@@ -364,8 +364,8 @@ export async function saveConfig(config: SkillDeckConfig): Promise<void> {
   unwrap(await commands.saveConfig(config));
 }
 
-export async function getProxySettings(): Promise<NetworkProxySettings> {
-  return unwrap(await commands.getProxySettings());
+export async function getProxySettings(reload = false): Promise<ProxySettingsSnapshot> {
+  return unwrap(await commands.getProxySettings(reload));
 }
 
 export async function saveProxySettings(

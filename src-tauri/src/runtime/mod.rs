@@ -19,6 +19,7 @@ use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::skill_libraries::{LibraryUsageProvider, SkillLibraryModule};
 use crate::application::wellknown_access::WellKnownAccess;
 use crate::application::wsl_source_access::WslSourceAccess;
+use crate::core::app_config::ConfigStore;
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::GithubTokenProvider;
 use crate::environment::native::acquire::NativePayloadSessionStorage;
@@ -84,8 +85,8 @@ struct RuntimeNetworkServices {
 }
 
 impl RuntimeNetworkServices {
-    fn new(settings: crate::models::NetworkProxySettings) -> Self {
-        let proxy_settings = Arc::new(ProxySettingsStore::new(settings));
+    fn new(config: Arc<ConfigStore>) -> Self {
+        let proxy_settings = Arc::new(ProxySettingsStore::from_config(config));
         let http = HttpTransport::new(proxy_settings.clone());
         let discovery = DiscoveryGateway::new(http.clone());
         let wellknown = Arc::new(wellknown::RuntimeWellKnownAccess::new(http.clone()));
@@ -117,6 +118,7 @@ impl RuntimeNetworkServices {
 }
 
 pub struct RuntimeServiceGraph {
+    config: Arc<ConfigStore>,
     wsl: Arc<WslRuntime>,
     agents: ManagedAgentRegistry,
     projects: Arc<ProjectMigrationRegistry>,
@@ -160,9 +162,10 @@ impl RuntimeServiceGraph {
         agents: ManagedAgentRegistry,
         worker_artifact_directory: Option<std::path::PathBuf>,
     ) -> Result<Self, AppError> {
-        let config = crate::core::read_config()?;
-        let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
-        let network_services = RuntimeNetworkServices::new(config.network_proxy);
+        let config = Arc::new(ConfigStore::open(crate::core::get_config_path()?));
+        let wsl_integration_enabled =
+            cfg!(target_os = "windows") && config.config().wsl_integration_enabled;
+        let network_services = RuntimeNetworkServices::new(config.clone());
         let http = network_services.http_client();
         let download = download::RuntimeDownloadAccess::new(http.clone());
         let git_source = network_services.git_source();
@@ -331,6 +334,7 @@ impl RuntimeServiceGraph {
             }),
         );
         Ok(Self {
+            config,
             wsl,
             agents,
             projects,
@@ -447,10 +451,8 @@ impl RuntimeServiceGraph {
         &self.agent_selection_targets
     }
 
-    pub(crate) fn activate_network_settings(&self, settings: crate::models::NetworkProxySettings) {
-        self.network_services
-            .proxy_settings
-            .replace_settings(settings);
+    pub(crate) fn config(&self) -> &ConfigStore {
+        &self.config
     }
 
     pub(crate) fn source_discovery(&self) -> &SourceDiscoveryService {
@@ -525,11 +527,14 @@ fn build_payload_session_manager(
 
 #[cfg(test)]
 mod tests {
-    use super::RuntimeNetworkServices;
+    use super::{ConfigStore, RuntimeNetworkServices};
+    use std::sync::Arc;
 
     #[test]
     fn runtime_network_services_inject_one_shared_http_pool() {
-        let services = RuntimeNetworkServices::new(crate::models::NetworkProxySettings::default());
+        let services = RuntimeNetworkServices::new(Arc::new(ConfigStore::from_proxy_settings(
+            Default::default(),
+        )));
 
         let discovery_http = services.http_client();
         let source_http = services.http_client();

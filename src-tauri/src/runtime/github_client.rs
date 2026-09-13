@@ -14,7 +14,9 @@ use crate::core::{
     GithubTreeSnapshot, GithubTreeSnapshotEntry,
 };
 use crate::models::{NetworkProxySettings, ProxyMode};
-use crate::runtime::http_transport::{HttpGetRequest, HttpResponse, HttpTransport};
+use crate::runtime::http_transport::{
+    HttpGetRequest, HttpResponse, HttpTransport, HttpTransportError,
+};
 use crate::runtime::proxy_settings::ProxySettingsStore;
 
 const RATE_LIMIT_FALLBACK_MS: u64 = 5 * 60 * 1_000;
@@ -127,12 +129,12 @@ impl GithubApiClient {
         let token = self.token_provider.token();
         let mut response = match self.send_request(&url, validation, token.as_deref()).await {
             Ok(response) => response,
-            Err(_) => return GithubTreeFetchOutcome::Failed(GithubTreeFailure::Network),
+            Err(error) => return github_transport_failure(error),
         };
         if response.status == reqwest::StatusCode::UNAUTHORIZED && token.is_some() {
             response = match self.send_request(&url, validation, None).await {
                 Ok(response) => response,
-                Err(_) => return GithubTreeFetchOutcome::Failed(GithubTreeFailure::Network),
+                Err(error) => return github_transport_failure(error),
             };
         }
         let status = response.status;
@@ -241,6 +243,13 @@ impl GithubApiClient {
             HttpGetRequest::new(url, Duration::from_secs(30), 10 * 1024 * 1024).headers(headers);
         self.http.get(request).await
     }
+}
+
+fn github_transport_failure(error: HttpTransportError) -> GithubTreeFetchOutcome {
+    GithubTreeFetchOutcome::Failed(match error {
+        HttpTransportError::Settings(_) => GithubTreeFailure::ProxyConfiguration,
+        _ => GithubTreeFailure::Network,
+    })
 }
 
 fn github_headers() -> HeaderMap {
@@ -354,6 +363,30 @@ fn get_github_env_token() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn proxy_configuration_failure_is_distinct_from_a_github_network_failure() {
+        let client = super::GithubApiClient {
+            http: crate::runtime::http_transport::HttpTransport::new(std::sync::Arc::new(
+                crate::runtime::proxy_settings::ProxySettingsStore::new(
+                    crate::models::NetworkProxySettings {
+                        mode: crate::models::ProxyMode::Custom,
+                        custom_proxy_url: None,
+                        ..Default::default()
+                    },
+                ),
+            )),
+            api_base: "http://127.0.0.1:9".into(),
+            token_provider: std::sync::Arc::new(super::EmptyGithubTokenProvider),
+        };
+        let result = client.fetch_tree("owner/repo", "HEAD", None).await;
+        assert!(matches!(
+            result,
+            crate::core::GithubTreeFetchOutcome::Failed(
+                crate::core::GithubTreeFailure::ProxyConfiguration
+            )
+        ));
+    }
+
     use std::collections::VecDeque;
     use std::net::SocketAddr;
     use std::sync::atomic::{AtomicBool, Ordering};

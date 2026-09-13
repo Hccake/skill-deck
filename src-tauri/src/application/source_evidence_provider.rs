@@ -202,6 +202,11 @@ impl RuntimeSourceEvidenceDetector {
                 None,
                 false,
             )),
+            GithubTreeFetchOutcome::Failed(GithubTreeFailure::ProxyConfiguration) => {
+                Err(AppError::InvalidProxySettings {
+                    code: "configurationUnavailable".into(),
+                })
+            }
             GithubTreeFetchOutcome::Failed(
                 GithubTreeFailure::AuthenticationRequired
                 | GithubTreeFailure::NotFoundOrUnauthorized
@@ -261,7 +266,9 @@ impl RuntimeSourceEvidenceDetector {
                     .snapshots
                     .find(&acquisition_key, &ref_revision, self.payloads.as_ref())
                     .map(|discovery| (discovery, ref_revision)),
-                Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+                Err(
+                    error @ (AppError::MutationCancelled | AppError::InvalidProxySettings { .. }),
+                ) => return Err(error),
                 Err(error) => return Ok(git_failure(error)),
             }
         } else {
@@ -290,7 +297,10 @@ impl RuntimeSourceEvidenceDetector {
                 .await;
                 let discovery = match discovery {
                     Ok(discovery) => discovery,
-                    Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+                    Err(
+                        error @ (AppError::MutationCancelled
+                        | AppError::InvalidProxySettings { .. }),
+                    ) => return Err(error),
                     Err(error) => return Ok(git_failure(error)),
                 };
                 let snapshot = self
@@ -379,7 +389,9 @@ impl RuntimeSourceEvidenceDetector {
             .await
         {
             Ok(evidence) => evidence,
-            Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+            Err(error @ (AppError::MutationCancelled | AppError::InvalidProxySettings { .. })) => {
+                return Err(error)
+            }
             Err(error @ AppError::WellKnownScopeNotFound { .. }) => return Err(error),
             Err(_) => {
                 return Ok(failure(

@@ -146,6 +146,7 @@ async fn test_wsl_git(
         let proxy = settings.wsl_git_proxy(&distro, TEST_GIT_URL);
         let workspace = workspace.clone();
         async move {
+            let proxy = proxy?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(AppError::GitTimeout {

@@ -161,18 +161,12 @@ fn build_error_progress(
     }
 }
 
-fn normalize_clone_timeout_secs(value: u64) -> u64 {
+pub(crate) fn normalize_clone_timeout_secs(value: u64) -> u64 {
     if value == 0 {
         DEFAULT_CLONE_TIMEOUT_SECS
     } else {
         value.clamp(MIN_CLONE_TIMEOUT_SECS, MAX_CLONE_TIMEOUT_SECS)
     }
-}
-
-pub(crate) fn resolve_clone_timeout_secs() -> u64 {
-    crate::core::read_config()
-        .map(|config| normalize_clone_timeout_secs(config.git_clone_timeout_secs.into()))
-        .unwrap_or(DEFAULT_CLONE_TIMEOUT_SECS)
 }
 
 fn clone_env_pairs() -> [(&'static str, &'static str); 4] {

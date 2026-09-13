@@ -21,8 +21,7 @@ use crate::core::mutation::CancellationSignal;
 use crate::core::plugin_manifest::get_relative_plugin_search_dirs;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::{
-    resolve_clone_timeout_secs, select_discovered_skills, DiscoverOptions, DiscoveryDocument,
-    DiscoveryInventory,
+    select_discovered_skills, DiscoverOptions, DiscoveryDocument, DiscoveryInventory,
 };
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
@@ -240,7 +239,7 @@ impl RuntimeWslSourceAccess {
         let sessions = self.sessions.clone();
         let settings = self.settings.clone();
         let proxy_distro = distro_name.to_string();
-        let git_timeout = Duration::from_secs(resolve_clone_timeout_secs());
+        let git_timeout = Duration::from_secs(self.settings.clone_timeout_secs());
         self.environments
             .with_session(distro_name, move |session| {
                 let workspace = workspace.clone();
@@ -262,7 +261,7 @@ impl RuntimeWslSourceAccess {
                     };
                     let proxy = match &acquisition {
                         WslAcquisitionSource::Git { url, .. } => {
-                            settings.wsl_git_proxy(&proxy_distro, url)
+                            settings.wsl_git_proxy(&proxy_distro, url)?
                         }
                         WslAcquisitionSource::Local { .. } => None,
                     };
@@ -639,19 +638,27 @@ mod tests {
         });
 
         assert_eq!(
-            policy.wsl_git_proxy("Ubuntu", "https://github.com/owner/repo.git"),
+            policy
+                .wsl_git_proxy("Ubuntu", "https://github.com/owner/repo.git")
+                .expect("valid proxy settings"),
             Some("http://ubuntu.proxy:7890".to_string())
         );
         assert_eq!(
-            policy.wsl_git_proxy("Debian", "http://github.com/owner/repo.git"),
+            policy
+                .wsl_git_proxy("Debian", "http://github.com/owner/repo.git")
+                .expect("valid proxy settings"),
             Some("https://debian.proxy:7890".to_string())
         );
         assert_eq!(
-            policy.wsl_git_proxy("Ubuntu", "git@github.com:owner/repo.git"),
+            policy
+                .wsl_git_proxy("Ubuntu", "git@github.com:owner/repo.git")
+                .expect("valid proxy settings"),
             None
         );
         assert_eq!(
-            policy.wsl_git_proxy("Fedora", "https://github.com/owner/repo.git"),
+            policy
+                .wsl_git_proxy("Fedora", "https://github.com/owner/repo.git")
+                .expect("valid proxy settings"),
             None
         );
     }

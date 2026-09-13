@@ -64,6 +64,67 @@ pub struct NetworkProxySettings {
     pub wsl_git: std::collections::BTreeMap<String, WslGitProxySettings>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[specta(tag = "kind", rename_all = "camelCase")]
+pub enum ProxySettingsTarget {
+    All,
+    Http,
+    NativeGit,
+    WslGit { distro: Option<String> },
+}
+
+impl ProxySettingsTarget {
+    pub(crate) fn includes(&self, target: &Self) -> bool {
+        self == &Self::All
+            || self == target
+            || matches!(
+                (self, target),
+                (Self::WslGit { distro: None }, Self::WslGit { .. })
+            )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum ProxySettingsIssueCode {
+    InvalidFormat,
+    UnsupportedFormat,
+    InvalidProxyUrl,
+    UnreadableDocument,
+    InvalidDocument,
+    WriteUnconfirmed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ProxySettingsIssue {
+    pub target: ProxySettingsTarget,
+    pub code: ProxySettingsIssueCode,
+    pub using_previous: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ProxySettingsSnapshot {
+    pub settings: NetworkProxySettings,
+    pub issues: Vec<ProxySettingsIssue>,
+    pub config_path: Option<String>,
+    pub repairable: bool,
+}
+
+impl ProxySettingsSnapshot {
+    pub(crate) fn is_available(&self, target: &ProxySettingsTarget) -> bool {
+        !self.issues.iter().any(|issue| {
+            !issue.using_previous
+                && (issue.target.includes(target) || target.includes(&issue.target))
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxySettingsValidationError {
     code: &'static str,

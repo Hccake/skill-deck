@@ -27,7 +27,6 @@ pub mod library_membership;
 pub mod library_update;
 pub mod manage_agents;
 pub mod mutation;
-pub mod network_settings;
 pub mod payload_session;
 pub mod planning_facts;
 pub mod recovery;

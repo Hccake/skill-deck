@@ -887,7 +887,13 @@
       "saveError": "Proxy settings could not be saved. Review the values and try again.",
       "testError": "The connection test could not finish. Review the proxy settings and try again.",
       "errors": {
-        "invalidProxyUrl": "Enter an HTTP or HTTPS proxy URL with a port."
+        "invalidProxyUrl": "Enter an HTTP or HTTPS proxy URL with a port.",
+        "invalidFormat": "A configuration field has an invalid format.",
+        "unsupportedFormat": "This proxy configuration format is not supported by the current version.",
+        "unreadableDocument": "The configuration file could not be read. Check its path and permissions.",
+        "invalidDocument": "The configuration file is damaged or has an invalid structure.",
+        "writeUnconfirmed": "The file may have been written, but saving could not be confirmed. Active connections are unchanged. Reload and review the settings.",
+        "configurationUnavailable": "Proxy configuration for this connection is invalid. Repair it in Proxy Settings."
       },
       "test": {
         "targets": {
@@ -917,7 +923,14 @@
           "wsl_unavailable": "The selected WSL distribution is unavailable."
         },
         "wslProxyHint": "This test is using a WSL Git proxy. If WSL cannot reach this URL, change it or select Keep existing connection method."
-      }
+      },
+      "configurationIssueTitle": "Proxy settings need attention",
+      "affectedRequestsPaused": "Affected network operations are paused. Review the settings and save them again.",
+      "usingPrevious": "Affected operations continue using the last valid settings.",
+      "reviewBeforeRepair": "Review the settings below. Saving will replace the proxy configuration in the file.",
+      "documentRepairRequired": "The configuration file cannot be safely changed. Repair the file, then reload the settings.",
+      "reload": "Reload settings",
+      "fileChanged": "Another operation changed the configuration file. Reload it and review your draft before saving again."
     },
     "agents": {
       "title": "Agents",
@@ -1427,7 +1440,8 @@
         "recoveryRequired": "Review the recovery data before continuing.",
         "configurationReadOnly": "The configuration is newer than this app and is read-only.",
         "configurationCorrupted": "The configuration could not be read safely.",
-        "libraryRecoveryIncomplete": "Skill Library recovery is incomplete. Restore access to this Environment and try again."
+        "libraryRecoveryIncomplete": "Skill Library recovery is incomplete. Restore access to this Environment and try again.",
+        "configurationWriteUnconfirmed": "The configuration write could not be confirmed. The application is still using its previous settings. Reload the configuration to check the result."
       },
       "fallbacks": {
         "symlinkUnavailable": "Copied because a symbolic link was unavailable.",

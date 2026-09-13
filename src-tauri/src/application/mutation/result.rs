@@ -51,6 +51,7 @@ pub enum OperationErrorCode {
     LibraryRecoveryIncomplete,
     ConfigurationReadOnly,
     ConfigurationCorrupted,
+    ConfigurationWriteUnconfirmed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -402,6 +403,9 @@ impl ErrorReport {
                 Self::with_details(OperationErrorCode::RestoreFailed, false, message)
             }
             AppError::ConfigurationReadOnly => Self::new(OperationErrorCode::ConfigurationReadOnly),
+            AppError::ConfigurationWriteUnconfirmed => {
+                Self::new(OperationErrorCode::ConfigurationWriteUnconfirmed)
+            }
             AppError::ConfigurationCorrupted { message }
             | AppError::Yaml { message }
             | AppError::Json { message } => {

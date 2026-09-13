@@ -444,6 +444,9 @@ pub enum AppError {
     #[error("Configuration is corrupted: {message}")]
     ConfigurationCorrupted { message: String },
 
+    #[error("Configuration write could not be confirmed; reload the document before continuing")]
+    ConfigurationWriteUnconfirmed,
+
     #[error(
         "Agent runtime changed before mutation (registry {expected_registry_revision} -> {actual_registry_revision}, environment {expected_environment_revision} -> {actual_environment_revision})"
     )]

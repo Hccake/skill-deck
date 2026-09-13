@@ -5,7 +5,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProxySettingsPage } from '../ProxySettingsPage';
-import type { NetworkProxySettings } from '@/hooks/useTauriApi';
+import type { NetworkProxySettings, ProxySettingsSnapshot } from '@/hooks/useTauriApi';
 import {
   UnsavedChangesContext,
   type UnsavedChangesRegistration,
@@ -37,6 +37,10 @@ const directSettings: NetworkProxySettings = {
   nativeGit: { behavior: 'useExistingGitConfig' },
   wslGit: {},
 };
+
+function snapshot(settings: NetworkProxySettings = directSettings): ProxySettingsSnapshot {
+  return { settings, issues: [], configPath: '/settings/config.json', repairable: true };
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -88,13 +92,105 @@ describe('ProxySettingsPage', () => {
       environments: [],
       runtimeByEnvironment: {},
     });
-    mockGetProxySettings.mockResolvedValue(directSettings);
+    mockGetProxySettings.mockResolvedValue(snapshot(directSettings));
     mockSaveProxySettings.mockImplementation(async (settings) => settings);
     mockTestProxyConnection.mockResolvedValue({
       onlineServices: { status: 'succeeded', elapsedMs: 12, reasonCode: null },
       nativeGit: { status: 'failed', elapsedMs: 24, reasonCode: 'git_network' },
       wslGitByDistro: {},
     });
+  });
+
+  it('shows unavailable stored settings and can repair them by explicitly saving the displayed defaults', async () => {
+    mockGetProxySettings.mockResolvedValue({
+      settings: directSettings,
+      issues: [{ target: { kind: 'nativeGit' }, code: 'invalidFormat', usingPrevious: false }],
+      configPath: '/settings/config.json',
+      repairable: true,
+    });
+    render(<ProxySettingsPage />);
+
+    expect(await screen.findByText('settings.proxy.configurationIssueTitle')).toBeDefined();
+    expect(screen.getByText('settings.proxy.affectedRequestsPaused')).toBeDefined();
+    const saveButton = screen.getByRole('button', { name: 'settings.proxy.save' });
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(mockSaveProxySettings).toHaveBeenCalledWith(directSettings));
+    await waitFor(() => expect(screen.queryByText('settings.proxy.configurationIssueTitle')).toBeNull());
+  });
+
+  it('keeps the previous connection visible and exposes an explicit reload action', async () => {
+    mockGetProxySettings.mockResolvedValue({
+      settings: { ...directSettings, mode: 'custom', customProxyUrl: 'http://127.0.0.1:7890' },
+      issues: [{ target: { kind: 'http' }, code: 'invalidProxyUrl', usingPrevious: true }],
+      configPath: '/settings/config.json',
+      repairable: true,
+    });
+    render(<ProxySettingsPage />);
+
+    expect(await screen.findByText('settings.proxy.usingPrevious')).toBeDefined();
+    expect((screen.getByLabelText('settings.proxy.httpProxyAddress') as HTMLInputElement).value).toBe('http://127.0.0.1:7890');
+    fireEvent.click(screen.getByRole('button', { name: 'settings.proxy.reload' }));
+    await waitFor(() => expect(mockGetProxySettings).toHaveBeenLastCalledWith(true));
+  });
+
+  it('prevents saving over an unreadable document and shows its configuration path', async () => {
+    mockGetProxySettings.mockResolvedValue({
+      settings: directSettings,
+      issues: [{ target: { kind: 'all' }, code: 'invalidDocument', usingPrevious: false }],
+      configPath: '/settings/config.json',
+      repairable: false,
+    });
+    render(<ProxySettingsPage />);
+
+    expect(await screen.findByText('/settings/config.json')).toBeDefined();
+    expect(screen.getByText('settings.proxy.documentRepairRequired')).toBeDefined();
+    await choose('settings.proxy.httpConnectionMode', /settings\.proxy\.mode\.custom/);
+    expect((screen.getByRole('button', { name: 'settings.proxy.save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mockSaveProxySettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps an edited draft when reloading a configuration changed on disk', async () => {
+    mockGetProxySettings.mockResolvedValue(snapshot({
+      ...directSettings, mode: 'custom', customProxyUrl: 'http://127.0.0.1:7890',
+    }));
+    render(<ProxySettingsPage />);
+    const address = await screen.findByLabelText('settings.proxy.httpProxyAddress');
+    fireEvent.change(address, { target: { value: 'http://127.0.0.1:7891' } });
+    mockGetProxySettings.mockResolvedValue(snapshot({
+      ...directSettings, mode: 'custom', customProxyUrl: 'http://127.0.0.1:7892',
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.proxy.reload' }));
+
+    expect(await screen.findByDisplayValue('http://127.0.0.1:7891')).toBeDefined();
+    expect(screen.queryByDisplayValue('http://127.0.0.1:7892')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.proxy.save' }));
+    await waitFor(() => expect(mockSaveProxySettings).toHaveBeenCalledWith({
+      ...directSettings, mode: 'custom', customProxyUrl: 'http://127.0.0.1:7891',
+    }));
+  });
+
+  it('preserves the repair notice and draft when a save is not confirmed', async () => {
+    mockGetProxySettings.mockResolvedValue({
+      ...snapshot(),
+      issues: [{ target: { kind: 'http' }, code: 'invalidFormat', usingPrevious: false }],
+    });
+    mockSaveProxySettings.mockRejectedValue({
+      kind: 'configurationWriteUnconfirmed',
+    });
+    render(<ProxySettingsPage />);
+    await screen.findByText('settings.proxy.configurationIssueTitle');
+    await choose('settings.proxy.httpConnectionMode', /settings\.proxy\.mode\.custom/);
+    fireEvent.change(screen.getByLabelText('settings.proxy.httpProxyAddress'), {
+      target: { value: 'http://127.0.0.1:7891' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.proxy.save' }));
+
+    expect(await screen.findByText('settings.proxy.errors.writeUnconfirmed')).toBeDefined();
+    expect(screen.getByDisplayValue('http://127.0.0.1:7891')).toBeDefined();
+    expect(screen.getByText('settings.proxy.configurationIssueTitle')).toBeDefined();
+    expect(screen.queryByText('settings.proxy.saved')).toBeNull();
   });
 
   it('uses flat Environment sections with Select controls for every connection method', async () => {
@@ -239,7 +335,7 @@ describe('ProxySettingsPage', () => {
 
   it('shows WSL proxy guidance only for a proxied network failure', async () => {
     setWindowsAndUbuntu();
-    mockGetProxySettings.mockResolvedValue({
+    mockGetProxySettings.mockResolvedValue(snapshot({
       ...directSettings,
       wslGit: {
         Ubuntu: {
@@ -248,7 +344,7 @@ describe('ProxySettingsPage', () => {
           scope: 'githubOnly',
         },
       },
-    });
+    }));
     mockTestProxyConnection.mockResolvedValue({
       onlineServices: { status: 'succeeded', elapsedMs: 1, reasonCode: null },
       nativeGit: { status: 'succeeded', elapsedMs: 1, reasonCode: null },
@@ -275,14 +371,14 @@ describe('ProxySettingsPage', () => {
   });
 
   it('resets connection results when an active proxy address changes', async () => {
-    mockGetProxySettings.mockResolvedValue({
+    mockGetProxySettings.mockResolvedValue(snapshot({
       ...directSettings,
       nativeGit: {
         behavior: 'useProxy',
         proxyUrl: 'http://127.0.0.1:7890',
         scope: 'githubOnly',
       },
-    });
+    }));
     render(<ProxySettingsPage />);
     const address = await screen.findByDisplayValue('http://127.0.0.1:7890');
     fireEvent.click(screen.getByRole('button', { name: 'settings.proxy.testConnection' }));
@@ -301,14 +397,14 @@ describe('ProxySettingsPage', () => {
       nativeGit: { status: 'succeeded'; elapsedMs: number; reasonCode: null };
       wslGitByDistro: Record<string, never>;
     }>();
-    mockGetProxySettings.mockResolvedValue({
+    mockGetProxySettings.mockResolvedValue(snapshot({
       ...directSettings,
       nativeGit: {
         behavior: 'useProxy',
         proxyUrl: 'http://127.0.0.1:7890',
         scope: 'githubOnly',
       },
-    });
+    }));
     mockTestProxyConnection.mockReturnValue(pending.promise);
     render(<ProxySettingsPage />);
     const address = await screen.findByDisplayValue('http://127.0.0.1:7890');
@@ -327,8 +423,8 @@ describe('ProxySettingsPage', () => {
   });
 
   it('keeps the newest load result when an earlier language-bound load finishes later', async () => {
-    const older = deferred<typeof directSettings>();
-    const newer = deferred<typeof directSettings>();
+    const older = deferred<ProxySettingsSnapshot>();
+    const newer = deferred<ProxySettingsSnapshot>();
     mockGetProxySettings
       .mockReturnValueOnce(older.promise)
       .mockReturnValueOnce(newer.promise);
@@ -336,31 +432,31 @@ describe('ProxySettingsPage', () => {
 
     mockT = (key: string) => `new:${key}`;
     rendered.rerender(<ProxySettingsPage />);
-    await act(async () => newer.resolve({
+    await act(async () => newer.resolve(snapshot({
       ...directSettings,
       nativeGit: {
         behavior: 'useProxy',
         proxyUrl: 'http://127.0.0.1:7891',
         scope: 'githubOnly',
       },
-    }));
+    })));
     expect(await screen.findByDisplayValue('http://127.0.0.1:7891')).toBeDefined();
 
-    await act(async () => older.resolve(directSettings));
+    await act(async () => older.resolve(snapshot(directSettings)));
     expect(screen.getByDisplayValue('http://127.0.0.1:7891')).toBeDefined();
   });
 
   it('does not overwrite edits made while an earlier save is pending', async () => {
     const user = userEvent.setup();
     const pending = deferred<typeof directSettings>();
-    mockGetProxySettings.mockResolvedValue({
+    mockGetProxySettings.mockResolvedValue(snapshot({
       ...directSettings,
       nativeGit: {
         behavior: 'useProxy',
         proxyUrl: 'http://127.0.0.1:7890',
         scope: 'githubOnly',
       },
-    });
+    }));
     mockSaveProxySettings.mockReturnValue(pending.promise);
     render(<ProxySettingsPage />);
     const address = await screen.findByDisplayValue('http://127.0.0.1:7890');
@@ -385,14 +481,14 @@ describe('ProxySettingsPage', () => {
   it('does not show an earlier save failure after the draft changes', async () => {
     const user = userEvent.setup();
     const pending = deferred<typeof directSettings>();
-    mockGetProxySettings.mockResolvedValue({
+    mockGetProxySettings.mockResolvedValue(snapshot({
       ...directSettings,
       nativeGit: {
         behavior: 'useProxy',
         proxyUrl: 'http://127.0.0.1:7890',
         scope: 'githubOnly',
       },
-    });
+    }));
     mockSaveProxySettings.mockReturnValue(pending.promise);
     render(<ProxySettingsPage />);
     const address = await screen.findByDisplayValue('http://127.0.0.1:7890');
@@ -488,7 +584,7 @@ describe('ProxySettingsPage', () => {
   it('shows a retry action when settings cannot be loaded', async () => {
     mockGetProxySettings
       .mockRejectedValueOnce(new Error('unavailable'))
-      .mockResolvedValueOnce(directSettings);
+      .mockResolvedValueOnce(snapshot(directSettings));
     render(<ProxySettingsPage />);
 
     expect((await screen.findByRole('alert')).textContent).toContain('settings.proxy.loadError');

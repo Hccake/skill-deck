@@ -887,7 +887,13 @@
       "saveError": "无法保存代理设置，请检查填写内容后重试。",
       "testError": "连接测试未能完成，请检查代理设置后重试。",
       "errors": {
-        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。"
+        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。",
+        "invalidFormat": "配置字段的格式无效。",
+        "unsupportedFormat": "当前版本不支持这份代理配置的格式。",
+        "unreadableDocument": "无法读取配置文件，请检查路径和访问权限。",
+        "invalidDocument": "配置文件内容损坏或结构不完整。",
+        "writeUnconfirmed": "文件可能已写入，但保存结果尚未确认。当前连接方式保持不变，请重新读取配置后检查。",
+        "configurationUnavailable": "此连接方式的代理配置无效，请到代理设置中修复。"
       },
       "test": {
         "targets": {
@@ -917,7 +923,14 @@
           "wsl_unavailable": "所选 WSL 发行版当前不可用。"
         },
         "wslProxyHint": "当前测试使用了 WSL Git 代理。如果该地址无法从 WSL 访问，请更换地址，或将连接方式改为“保持原有连接方式”。"
-      }
+      },
+      "configurationIssueTitle": "代理设置需要修复",
+      "affectedRequestsPaused": "相关网络操作已暂停，请检查设置后重新保存。",
+      "usingPrevious": "相关操作继续使用上一次有效设置。",
+      "reviewBeforeRepair": "请检查下方设置；保存后将用它们替换文件中的代理配置。",
+      "documentRepairRequired": "配置文件无法安全修改。请先修复文件，再重新读取配置。",
+      "reload": "重新读取配置",
+      "fileChanged": "配置文件已被其他操作修改。请重新读取配置，检查当前草稿后再保存。"
     },
     "agents": {
       "title": "Agents",
@@ -1427,7 +1440,8 @@
         "recoveryRequired": "继续前请先检查恢复数据。",
         "configurationReadOnly": "配置版本高于当前应用，现以只读方式打开。",
         "configurationCorrupted": "无法安全读取配置。",
-        "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。"
+        "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。",
+        "configurationWriteUnconfirmed": "配置的保存结果尚未确认。应用继续使用原设置，请重新读取配置后检查。"
       },
       "fallbacks": {
         "symlinkUnavailable": "由于符号链接不可用，已改为复制。",

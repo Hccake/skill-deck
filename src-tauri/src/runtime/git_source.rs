@@ -4,8 +4,7 @@ use std::time::{Duration, Instant};
 use crate::application::git_transport::GitSourceTransport;
 use crate::core::mutation::CancellationSignal;
 use crate::core::{
-    clone_repo_with_progress_options, probe_remote_ref_revision_options,
-    resolve_clone_timeout_secs, CloneProgress, CloneResult,
+    clone_repo_with_progress_options, probe_remote_ref_revision_options, CloneProgress, CloneResult,
 };
 use crate::error::AppError;
 use crate::runtime::proxy_settings::ProxySettingsStore;
@@ -33,7 +32,7 @@ impl ProcessGitTransport {
         cancellation: CancellationSignal,
         timeout: Duration,
     ) -> Result<String, AppError> {
-        let proxy = self.settings.native_git_proxy(url);
+        let proxy = self.settings.native_git_proxy(url)?;
         probe_remote_ref_revision_options(url, git_ref, cancellation, proxy.as_deref(), timeout)
     }
 }
@@ -46,10 +45,10 @@ impl GitSourceTransport for ProcessGitTransport {
         on_progress: &(dyn Fn(CloneProgress) + Send + Sync),
         cancellation: CancellationSignal,
     ) -> Result<CloneResult, AppError> {
-        let timeout_secs = resolve_clone_timeout_secs();
+        let timeout_secs = self.settings.clone_timeout_secs();
         let started_at = Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
-        let proxy = self.settings.native_git_proxy(url);
+        let proxy = self.settings.native_git_proxy(url)?;
         clone_repo_with_progress_options(
             url,
             git_ref,
@@ -75,7 +74,7 @@ impl GitSourceTransport for ProcessGitTransport {
             url,
             git_ref,
             cancellation,
-            Duration::from_secs(resolve_clone_timeout_secs()),
+            Duration::from_secs(self.settings.clone_timeout_secs()),
         )
     }
 }
@@ -102,19 +101,22 @@ mod tests {
         assert_eq!(
             transport
                 .settings
-                .native_git_proxy("http://example.com/repo.git"),
+                .native_git_proxy("http://example.com/repo.git")
+                .expect("valid proxy settings"),
             Some("http://proxy.example:7890".to_string())
         );
         assert_eq!(
             transport
                 .settings
-                .native_git_proxy("https://example.com/repo.git"),
+                .native_git_proxy("https://example.com/repo.git")
+                .expect("valid proxy settings"),
             Some("http://proxy.example:7890".to_string())
         );
         assert_eq!(
             transport
                 .settings
-                .native_git_proxy("git@example.com:repo.git"),
+                .native_git_proxy("git@example.com:repo.git")
+                .expect("valid proxy settings"),
             None
         );
     }
@@ -129,7 +131,9 @@ mod tests {
         });
 
         assert_eq!(
-            existing.native_git_proxy("https://example.com/repo.git"),
+            existing
+                .native_git_proxy("https://example.com/repo.git")
+                .expect("valid proxy settings"),
             None
         );
     }

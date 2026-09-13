@@ -3,6 +3,7 @@ pub enum GithubTreeFailure {
     AuthenticationRequired,
     NotFoundOrUnauthorized,
     Network,
+    ProxyConfiguration,
     SourceUnavailable,
 }
 

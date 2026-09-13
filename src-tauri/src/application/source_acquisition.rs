@@ -232,7 +232,9 @@ where
     let well_known_error = well_known_failure.into_error();
     if matches!(
         well_known_error,
-        AppError::MutationCancelled | AppError::WellKnownScopeNotFound { .. }
+        AppError::MutationCancelled
+            | AppError::WellKnownScopeNotFound { .. }
+            | AppError::InvalidProxySettings { .. }
     ) || !allows_direct_download
     {
         return Err(well_known_error);
@@ -240,7 +242,9 @@ where
     let well_known_reason = source_acquisition_failure_reason(&well_known_error);
     match download().await {
         Ok(result) => Ok(result),
-        Err(AppError::MutationCancelled) => Err(AppError::MutationCancelled),
+        Err(error @ (AppError::MutationCancelled | AppError::InvalidProxySettings { .. })) => {
+            Err(error)
+        }
         Err(download_error) => {
             log::warn!(
                 "{environment_label} Well-known and direct download acquisition failed: well-known={well_known_error}; download={download_error}"
@@ -925,6 +929,33 @@ fn executable_mode(_metadata: &fs::Metadata) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn proxy_configuration_failure_does_not_attempt_a_download_fallback() {
+        let attempted = std::cell::Cell::new(false);
+        let result = super::attempt_wellknown_then_download(
+            async {
+                Err::<(), _>(
+                    crate::application::wellknown_access::WellKnownFetchError::unproven(
+                        crate::error::AppError::InvalidProxySettings {
+                            code: "configurationUnavailable".into(),
+                        },
+                    ),
+                )
+            },
+            || async {
+                attempted.set(true);
+                Ok(())
+            },
+            "Native",
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidProxySettings { .. })
+        ));
+        assert!(!attempted.get());
+    }
+
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};

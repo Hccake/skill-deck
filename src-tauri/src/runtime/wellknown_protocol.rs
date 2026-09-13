@@ -636,6 +636,7 @@ async fn download_legacy_entry(
             Err(error) if network_request_was_cancelled(&error) => {
                 return Err(AppError::MutationCancelled);
             }
+            Err(HttpTransportError::Settings(error)) => return Err(error.into()),
             _ => {
                 if file_path.eq_ignore_ascii_case("SKILL.md") {
                     skill_ok = false;
@@ -774,6 +775,7 @@ async fn fetch_index(
             Err(error) if network_request_was_cancelled(&error) => {
                 return Err(AppError::MutationCancelled);
             }
+            Err(HttpTransportError::Settings(error)) => return Err(error.into()),
             Err(error) => {
                 log::warn!("Well-known index request failed: {error}");
                 transport_failure
@@ -838,12 +840,14 @@ async fn fetch_index(
 }
 
 fn map_network_error(error: HttpTransportError, message: &str) -> AppError {
-    if network_request_was_cancelled(&error) {
-        AppError::MutationCancelled
-    } else {
-        log::warn!("{message}: {error}");
-        AppError::WellKnownSourceFailed {
-            reason: source_failure_reason_from_http_error(&error),
+    match error {
+        HttpTransportError::Settings(error) => error.into(),
+        error if network_request_was_cancelled(&error) => AppError::MutationCancelled,
+        error => {
+            log::warn!("{message}: {error}");
+            AppError::WellKnownSourceFailed {
+                reason: source_failure_reason_from_http_error(&error),
+            }
         }
     }
 }
@@ -858,9 +862,8 @@ fn source_failure_reason_from_http_error(
             reason: "timeout", ..
         } => SourceAcquisitionFailureReason::Timeout,
         HttpTransportError::ResponseTooLarge => SourceAcquisitionFailureReason::LimitExceeded,
-        HttpTransportError::Settings(_) | HttpTransportError::Request { .. } => {
-            SourceAcquisitionFailureReason::Network
-        }
+        HttpTransportError::Settings(_) => SourceAcquisitionFailureReason::Unavailable,
+        HttpTransportError::Request { .. } => SourceAcquisitionFailureReason::Network,
     }
 }
 
@@ -890,6 +893,30 @@ fn network_request_was_cancelled(error: &HttpTransportError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn proxy_configuration_failure_stops_wellknown_candidate_requests() {
+        let http = crate::runtime::http_transport::HttpTransport::new(std::sync::Arc::new(
+            crate::runtime::proxy_settings::ProxySettingsStore::new(
+                crate::models::NetworkProxySettings {
+                    mode: crate::models::ProxyMode::Custom,
+                    custom_proxy_url: None,
+                    ..Default::default()
+                },
+            ),
+        ));
+        let error = super::fetch_wellknown_skills_with_client(
+            &http,
+            "http://127.0.0.1:9/skills",
+            &crate::core::mutation::CancellationSignal::default(),
+        )
+        .await
+        .expect_err("invalid proxy configuration");
+        assert!(matches!(
+            error,
+            crate::error::AppError::InvalidProxySettings { .. }
+        ));
+    }
+
     use super::*;
     use crate::models::{NetworkProxySettings, ProxyMode};
     use crate::runtime::proxy_settings::ProxySettingsStore;
