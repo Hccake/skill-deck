@@ -594,7 +594,8 @@ fn staged_directory_link_matches(_link: &Path, _target: &Path) -> Result<bool, A
 #[cfg(unix)]
 fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
     let from = fs::canonicalize(from).ok()?;
-    let to = fs::canonicalize(to).ok()?;
+    // 目标目录项可能在本次事务中被替换，链接必须继续指向该目录项。
+    let to = fs::canonicalize(to.parent()?).ok()?.join(to.file_name()?);
     let from_components = from.components().collect::<Vec<_>>();
     let to_components = to.components().collect::<Vec<_>>();
     let common = from_components

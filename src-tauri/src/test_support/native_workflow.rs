@@ -1403,6 +1403,19 @@ async fn native_scope_version_election_survives_a_continuous_product_workflow() 
         .expect("native Scope version-election workflow");
 }
 
+#[cfg(test)]
+#[tokio::test]
+async fn native_scope_version_election_installs_direct_symlinks_over_library_links() {
+    let temp = tempfile::tempdir().expect("direct symlink install fixture");
+    run_native_scope_version_election_workflow_at(
+        temp.path(),
+        &["minimax-code"],
+        InstallMode::Symlink,
+    )
+    .await
+    .expect("direct symlink install over applied library links");
+}
+
 #[cfg(all(test, unix))]
 #[tokio::test]
 async fn native_scope_version_election_recognizes_library_links_across_path_aliases() {
@@ -1414,19 +1427,43 @@ async fn native_scope_version_election_recognizes_library_links_across_path_alia
     fs::create_dir(&physical_root).expect("physical root");
     symlink(&physical_root, &logical_root).expect("logical root alias");
 
-    run_native_scope_version_election_workflow_at(&logical_root)
+    run_native_scope_version_election_workflow_at(&logical_root, &[], InstallMode::Copy)
         .await
         .expect("native Scope version-election workflow through a path alias");
+}
+
+#[cfg(all(test, unix))]
+#[tokio::test]
+async fn native_scope_version_election_installs_direct_symlinks_across_path_aliases() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("direct symlink path alias fixture");
+    let physical_root = temp.path().join("physical");
+    let logical_root = temp.path().join("logical");
+    fs::create_dir(&physical_root).expect("physical root");
+    symlink(&physical_root, &logical_root).expect("logical root alias");
+
+    run_native_scope_version_election_workflow_at(
+        &logical_root,
+        &["minimax-code"],
+        InstallMode::Symlink,
+    )
+    .await
+    .expect("direct symlink install over library links through a path alias");
 }
 
 #[cfg(test)]
 async fn run_native_scope_version_election_workflow() -> Result<(), AppError> {
     let temp = tempfile::tempdir()?;
-    run_native_scope_version_election_workflow_at(temp.path()).await
+    run_native_scope_version_election_workflow_at(temp.path(), &[], InstallMode::Copy).await
 }
 
 #[cfg(test)]
-async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<(), AppError> {
+async fn run_native_scope_version_election_workflow_at(
+    root: &Path,
+    direct_agent_ids: &[&str],
+    direct_install_mode: InstallMode,
+) -> Result<(), AppError> {
     let project_path = root.join("project");
     let projects_path = root.join("state/projects.json");
     let global_lock_path = root.join("state/global-lock.json");
@@ -1565,8 +1602,8 @@ async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<()
         &selection_facts.eve_targets,
         &selection_facts.resolved_context.skill_root,
         &targets,
-        &[],
-        InstallMode::Copy,
+        direct_agent_ids,
+        direct_install_mode.clone(),
     )
     .await;
     let install_request = InstallRequest {
@@ -1605,7 +1642,14 @@ async fn run_native_scope_version_election_workflow_at(root: &Path) -> Result<()
     assert_succeeded(&installed.units);
     assert_payload_tree(&canonical, "direct")?;
     assert_resolves_to(&agent_a_entry, &first_member)?;
-    assert_resolves_to(&agent_b_entry, &first_member)?;
+    if direct_agent_ids.contains(&agent_b.as_str()) {
+        assert_payload_tree(&agent_b_entry, "direct")?;
+        if direct_install_mode == InstallMode::Symlink {
+            assert_resolves_to(&agent_b_entry, &canonical)?;
+        }
+    } else {
+        assert_resolves_to(&agent_b_entry, &first_member)?;
+    }
 
     let manage = ManageAgentsService::new(
         facts.clone(),
