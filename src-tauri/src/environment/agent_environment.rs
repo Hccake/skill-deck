@@ -87,6 +87,33 @@ pub struct EveProjectTargets {
     pub subagents: Vec<String>,
 }
 
+impl EveProjectTargets {
+    /// 使用 Worker 返回的目录名称构造 WSL 路径，保留实际大小写。
+    pub fn install_targets(self, project_path: &str) -> Vec<crate::models::InstallTargetInfo> {
+        if !self.has_eve {
+            return Vec::new();
+        }
+        let project_path = project_path.trim_end_matches('/');
+        std::iter::once(None)
+            .chain(self.subagents.into_iter().map(Some))
+            .map(|subagent| {
+                let normalized = subagent.as_deref().map(crate::core::skill::sanitize_name);
+                let path = match &subagent {
+                    Some(name) => format!("{project_path}/agent/subagents/{name}/skills"),
+                    None => format!("{project_path}/agent/skills"),
+                };
+                crate::models::InstallTargetInfo {
+                    target_id: crate::core::eve::eve_target_id(normalized.as_deref()),
+                    agent: crate::core::builtin_agent_catalog::eve_agent_id(),
+                    display_name: crate::core::eve::eve_target_label(subagent.as_deref()),
+                    subagent,
+                    path,
+                }
+            })
+            .collect()
+    }
+}
+
 pub async fn inspect_eve_project(
     workspace: &WslWorkspace,
     project_path: &str,
@@ -1223,6 +1250,21 @@ fn join_posix(base: &str, child: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wsl_eve_install_targets_use_posix_paths_and_actual_directory_names() {
+        let targets = super::EveProjectTargets {
+            has_eve: true,
+            subagents: vec!["Research Team".into()],
+        }
+        .install_targets("/home/alice/My Project");
+        assert_eq!(targets[0].path, "/home/alice/My Project/agent/skills");
+        assert_eq!(
+            targets[1].path,
+            "/home/alice/My Project/agent/subagents/Research Team/skills"
+        );
+        assert_eq!(targets[1].target_id, "eve:research-team");
+    }
+
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::sync::{Arc, Mutex};

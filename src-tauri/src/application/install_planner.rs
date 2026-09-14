@@ -1798,6 +1798,12 @@ mod tests {
             crate::application::skill_libraries::LibraryId::parse("lib-1"),
             "demo",
             locator(&library_target),
+            target_resolver
+                .resolve_environment(&EnvironmentRef::Native, &[locator(&library_target)], None)
+                .await
+                .unwrap()
+                .remove(0)
+                .key,
         );
         let library_candidates =
             crate::application::library_candidates::LibraryCandidateSnapshot::new(

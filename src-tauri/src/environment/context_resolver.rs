@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+use serde::Serialize;
+use specta::Type;
+
 use crate::core::projects::ProjectsStore;
 use crate::core::{get_config_path, skill_lock};
 use crate::environment::types::{
@@ -21,12 +24,104 @@ pub struct ResolvedContext {
     pub lock: ResourceLocator,
 }
 
+/// 仅供界面缩短安装路径；执行仍使用原有目标标识与物理身份。
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ScopePathBase {
+    pub logical_root: ResourceLocator,
+    pub physical_root: Option<ResourceLocator>,
+    pub path_style: DisplayPathStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum DisplayPathStyle {
+    Posix,
+    Windows,
+}
+
 impl ResolvedContext {
     pub fn context_root(&self) -> &str {
         self.project
             .as_ref()
             .map(|project| project.native_path.as_str())
             .unwrap_or(self.home.native_path.as_str())
+    }
+
+    pub(crate) async fn resolved_root(
+        &self,
+        targets: &dyn crate::environment::planning::TargetFactResolver,
+    ) -> Result<ResourceLocator, AppError> {
+        use crate::environment::types::same_environment_identity;
+
+        let logical_root = ResourceLocator {
+            environment: self.context.environment.clone(),
+            native_path: self.context_root().to_string(),
+        };
+        // 通过虚拟子路径观察父目录的实际身份，不创建目录或探针文件。
+        const PROBE: &str = ".skill-deck-path-base";
+        let facts = targets
+            .resolve(&self.context, &[logical_root.join_child(PROBE)], None)
+            .await?;
+        let [fact] = facts.as_slice() else {
+            return Err(AppError::StaleTarget);
+        };
+        if !same_environment_identity(&fact.destination.environment, &self.context.environment) {
+            return Err(AppError::StaleEnvironment);
+        }
+        if fact.key.normalized_final_child_name != PROBE {
+            return Err(AppError::PathNotFound {
+                path: logical_root.native_path,
+            });
+        }
+        let native_path = match &self.context.environment {
+            EnvironmentRef::Native => std::path::Path::new(&fact.destination.native_path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().into_owned()),
+            EnvironmentRef::Wsl { .. } => {
+                fact.destination
+                    .native_path
+                    .rsplit_once('/')
+                    .map(|(parent, _)| {
+                        if parent.is_empty() {
+                            "/".into()
+                        } else {
+                            parent.into()
+                        }
+                    })
+            }
+        }
+        .ok_or(AppError::StaleTarget)?;
+        Ok(ResourceLocator {
+            environment: self.context.environment.clone(),
+            native_path,
+        })
+    }
+
+    pub async fn path_base(
+        &self,
+        targets: &dyn crate::environment::planning::TargetFactResolver,
+    ) -> ScopePathBase {
+        use crate::environment::types::display_locator;
+
+        ScopePathBase {
+            logical_root: display_locator(&ResourceLocator {
+                environment: self.context.environment.clone(),
+                native_path: self.context_root().to_string(),
+            }),
+            physical_root: self
+                .resolved_root(targets)
+                .await
+                .ok()
+                .map(|root| display_locator(&root)),
+            path_style: if cfg!(windows) && self.context.environment == EnvironmentRef::Native {
+                DisplayPathStyle::Windows
+            } else {
+                DisplayPathStyle::Posix
+            },
+        }
     }
 }
 
@@ -182,6 +277,93 @@ mod tests {
     };
     use crate::environment::wsl::WslSession;
     use crate::error::AppError;
+
+    #[tokio::test]
+    async fn path_base_resolves_project_aliases_without_creating_files() {
+        use crate::environment::planning::RuntimeTargetFactResolver;
+        use crate::environment::types::display_locator;
+        use crate::environment::wsl::WslRuntime;
+        use std::sync::Arc;
+
+        let temp = tempfile::tempdir().unwrap();
+        let actual = temp.path().join("project");
+        let alias = temp.path().join("alias");
+        std::fs::create_dir(&actual).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&actual, &alias).unwrap();
+        #[cfg(windows)]
+        junction::create(&actual, &alias).unwrap();
+        let resolved = ContextResolver::resolve_native_from(
+            SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Project {
+                    project_id: "app".into(),
+                },
+            },
+            temp.path().join("home"),
+            temp.path().join("lock.json"),
+            vec![project("app", &alias.to_string_lossy())],
+        )
+        .unwrap();
+        let targets = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
+
+        let base = resolved.path_base(&targets).await;
+
+        assert_eq!(base.logical_root.native_path, alias.to_string_lossy());
+        let expected = crate::environment::types::ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: std::fs::canonicalize(&actual)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        };
+        assert_eq!(base.physical_root, Some(display_locator(&expected)));
+        assert_eq!(std::fs::read_dir(actual).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn path_base_retains_selected_wsl_home_when_projection_is_unavailable() {
+        use crate::environment::planning::{
+            ResolvedTargetFact, TargetFactFuture, TargetFactResolver,
+        };
+        use crate::environment::types::ResourceLocator;
+
+        struct Unavailable;
+        impl TargetFactResolver for Unavailable {
+            fn resolve<'a>(
+                &'a self,
+                _: &'a SkillLocationRef,
+                _: &'a [ResourceLocator],
+                _: Option<crate::core::mutation::CancellationSignal>,
+            ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
+                Box::pin(async { Err(AppError::StaleEnvironment) })
+            }
+        }
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".into(),
+        };
+        let resolved = ContextResolver::resolve_wsl_from_projects(
+            SkillLocationRef {
+                environment: environment.clone(),
+                scope: SkillLocation::Global,
+            },
+            &wsl_session(None),
+            vec![],
+        )
+        .unwrap();
+
+        let base = resolved.path_base(&Unavailable).await;
+
+        assert_eq!(
+            base.logical_root,
+            ResourceLocator {
+                environment,
+                native_path: "/home/alice".into()
+            }
+        );
+        assert_eq!(base.physical_root, None);
+        assert_eq!(base.path_style, super::DisplayPathStyle::Posix);
+    }
 
     fn project(id: &str, native_path: &str) -> RegisteredProject {
         RegisteredProject {

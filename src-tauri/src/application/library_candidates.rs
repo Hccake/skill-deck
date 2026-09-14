@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use crate::application::installed_skill_resolver::SkillDirectoryName;
 use crate::application::library_application::{LibraryApplicationBackend, LibraryMemberIdentity};
-use crate::application::skill_libraries::{LibraryCatalog, LibraryId};
+use crate::application::skill_libraries::{LibraryCatalog, LibraryId, SkillLibraryRepository};
 use crate::core::agent_definition::AgentId;
 use crate::environment::planning::{ResolvedTargetFact, TargetFactResolver};
+use crate::environment::runtime::PhysicalTargetKey;
 use crate::environment::types::{
     same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
 };
@@ -18,6 +19,7 @@ pub(crate) struct LibraryVersionCandidate {
     library_id: LibraryId,
     member_name: String,
     physical_locator: ResourceLocator,
+    physical_key: PhysicalTargetKey,
 }
 
 impl LibraryVersionCandidate {
@@ -26,11 +28,13 @@ impl LibraryVersionCandidate {
         library_id: LibraryId,
         member_name: impl Into<String>,
         locator: ResourceLocator,
+        physical_key: PhysicalTargetKey,
     ) -> Self {
         Self {
             library_id,
             member_name: member_name.into(),
             physical_locator: locator,
+            physical_key,
         }
     }
 
@@ -39,6 +43,7 @@ impl LibraryVersionCandidate {
             library_id: member.library_id.clone(),
             member_name: member.member_name.clone(),
             physical_locator: fact.destination,
+            physical_key: fact.key,
         }
     }
 
@@ -52,6 +57,21 @@ impl LibraryVersionCandidate {
 
     pub(crate) fn locator(&self) -> &ResourceLocator {
         &self.physical_locator
+    }
+
+    pub(crate) fn matches_target(&self, target: &ResolvedTargetFact) -> bool {
+        use crate::environment::planning::TargetEntryKind;
+
+        match target.entry_kind {
+            TargetEntryKind::Directory => target.key == self.physical_key,
+            TargetEntryKind::Symlink | TargetEntryKind::Junction | TargetEntryKind::BrokenLink => {
+                target
+                    .link_target_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.matches(&self.physical_locator))
+            }
+            _ => false,
+        }
     }
 }
 
@@ -167,6 +187,17 @@ impl LibraryCatalogMemberIndex {
 
     pub(crate) fn contains_identity(&self, member: &LibraryMemberIdentity) -> bool {
         self.all_by_identity.contains_key(member)
+    }
+
+    pub(crate) fn known_members_for(
+        &self,
+        skills: &BTreeSet<SkillDirectoryName>,
+    ) -> Vec<LibraryCatalogMember> {
+        self.all_by_identity
+            .iter()
+            .filter(|(_, name)| skills.contains(*name))
+            .map(|(member, _)| member.clone())
+            .collect()
     }
 
     pub(crate) fn members_for(
@@ -430,7 +461,10 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
                 .iter()
                 .map(|skill| grouped.get(skill).cloned().unwrap_or_default())
                 .collect::<Vec<_>>();
-            let members = member_groups.iter().flatten().cloned().collect::<Vec<_>>();
+            let members = index.known_members_for(&skills.iter().cloned().collect());
+            let recognized = index
+                .recognized_members(&members)
+                .map_err(candidate_configuration_error)?;
             let candidate_index = ResolvedLibraryCandidateIndex::load(
                 self.repository.as_ref(),
                 self.targets.as_ref(),
@@ -442,12 +476,15 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
                 .iter()
                 .zip(member_groups)
                 .map(|(skill, members)| {
-                    let candidates = candidate_index.candidates_for(&members)?;
+                    let ordered = candidate_index.candidates_for(&members)?;
+                    let recognized = candidate_index.candidates_for(
+                        recognized.get(skill).map(Vec::as_slice).unwrap_or_default(),
+                    )?;
                     let candidates = LibraryCandidateSet::for_skill(
                         &context.environment,
                         skill,
-                        candidates.clone(),
-                        candidates,
+                        recognized,
+                        ordered,
                     )
                     .map_err(candidate_configuration_error)?;
                     LibraryCandidateSnapshot::new(
@@ -467,6 +504,83 @@ pub(crate) struct ResolvedLibraryCandidateIndex {
 }
 
 impl ResolvedLibraryCandidateIndex {
+    pub(crate) async fn load_known<T: TargetFactResolver + ?Sized>(
+        repository: &dyn SkillLibraryRepository,
+        targets: &T,
+        environment: &EnvironmentRef,
+        skills: &BTreeSet<SkillDirectoryName>,
+    ) -> Result<Self, AppError> {
+        if skills.is_empty() {
+            return Ok(Self {
+                by_member: BTreeMap::new(),
+            });
+        }
+        let catalog = repository.load(environment).await?;
+        Self::from_catalog(repository, targets, environment, skills, &catalog).await
+    }
+
+    pub(crate) async fn from_catalog<T: TargetFactResolver + ?Sized>(
+        repository: &dyn SkillLibraryRepository,
+        targets: &T,
+        environment: &EnvironmentRef,
+        skills: &BTreeSet<SkillDirectoryName>,
+        catalog: &LibraryCatalog,
+    ) -> Result<Self, AppError> {
+        let index =
+            LibraryCatalogMemberIndex::build(catalog).map_err(candidate_configuration_error)?;
+        let members = index.known_members_for(skills);
+        let mut roots = BTreeMap::new();
+        let mut destinations = Vec::with_capacity(members.len());
+        for member in &members {
+            let root = match roots.get(&member.library_id) {
+                Some(root) => root,
+                None => {
+                    let root = repository
+                        .resolve_collection(environment, &member.library_id)
+                        .await?
+                        .root;
+                    roots.entry(member.library_id.clone()).or_insert(root)
+                }
+            };
+            let name = SkillDirectoryName::try_from(member.member_name.as_str())?;
+            destinations.push(root.join_child(name.as_ref()));
+        }
+        let resolved = if destinations.is_empty() {
+            Vec::new()
+        } else {
+            targets
+                .resolve_environment(environment, &destinations, None)
+                .await?
+        };
+        if resolved.len() != members.len() {
+            return Err(AppError::StaleTarget);
+        }
+        Ok(Self {
+            by_member: members
+                .into_iter()
+                .zip(resolved)
+                .map(|(member, fact)| {
+                    let candidate = LibraryVersionCandidate::from_resolved_fact(&member, fact);
+                    (member, candidate)
+                })
+                .collect(),
+        })
+    }
+
+    pub(crate) fn owner(
+        &self,
+        skill: &SkillDirectoryName,
+        target: &ResolvedTargetFact,
+    ) -> Option<&LibraryVersionCandidate> {
+        self.by_member.values().find(|candidate| {
+            SkillDirectoryName::try_from(candidate.member_name.as_str())
+                .ok()
+                .as_ref()
+                == Some(skill)
+                && candidate.matches_target(target)
+        })
+    }
+
     pub(crate) async fn load<T: TargetFactResolver + ?Sized>(
         repository: &dyn LibraryApplicationBackend,
         targets: &T,
@@ -573,6 +687,32 @@ mod tests {
         RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()))
     }
 
+    fn candidate_key(name: &str) -> PhysicalTargetKey {
+        use crate::environment::runtime::{ExecutionBackend, PhysicalParentIdentity};
+        PhysicalTargetKey {
+            backend: if cfg!(windows) {
+                ExecutionBackend::NativeWindows
+            } else {
+                ExecutionBackend::NativeUnix
+            },
+            physical_parent: if cfg!(windows) {
+                PhysicalParentIdentity::Windows {
+                    volume_serial: 1,
+                    file_id: 10,
+                }
+            } else {
+                PhysicalParentIdentity::Unix {
+                    device: 1,
+                    inode: 10,
+                }
+            },
+            normalized_final_child_name: SkillDirectoryName::try_from(name)
+                .unwrap()
+                .as_ref()
+                .to_string(),
+        }
+    }
+
     #[derive(Clone)]
     struct CountingTargets {
         inner: RuntimeTargetFactResolver,
@@ -603,6 +743,7 @@ mod tests {
                 environment: native.clone(),
                 native_path: "/libraries/library-one/skills/other".to_string(),
             },
+            candidate_key("other"),
         );
         assert!(matches!(
             LibraryCandidateSet::for_skill(&native, &skill, vec![wrong_skill], Vec::new(),),
@@ -618,6 +759,7 @@ mod tests {
                 },
                 native_path: "/libraries/library-one/skills/demo".to_string(),
             },
+            candidate_key("demo"),
         );
         assert!(matches!(
             LibraryCandidateSet::for_skill(&native, &skill, vec![wrong_environment], Vec::new(),),
@@ -634,6 +776,7 @@ mod tests {
                 environment: EnvironmentRef::Native,
                 native_path: "/libraries/first/skills/demo".to_string(),
             },
+            candidate_key("demo"),
         );
         let second = LibraryVersionCandidate::new(
             LibraryId::parse("second"),
@@ -642,6 +785,7 @@ mod tests {
                 environment: EnvironmentRef::Native,
                 native_path: "/libraries/second/skills/demo".to_string(),
             },
+            candidate_key("demo"),
         );
 
         assert_eq!(
@@ -665,6 +809,7 @@ mod tests {
                 environment: EnvironmentRef::Native,
                 native_path: "/libraries/library-one/skills/CE:Review".to_string(),
             },
+            candidate_key("CE:Review"),
         );
         let second = LibraryVersionCandidate::new(
             library_id,
@@ -673,6 +818,7 @@ mod tests {
                 environment: EnvironmentRef::Native,
                 native_path: "/libraries/library-one/skills/ce-review".to_string(),
             },
+            candidate_key("ce-review"),
         );
 
         assert_eq!(
@@ -756,6 +902,13 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         let index = LibraryCatalogMemberIndex::build(&catalog).unwrap();
+
+        assert_eq!(
+            index.known_members_for(&BTreeSet::from([
+                SkillDirectoryName::try_from("demo").unwrap()
+            ])),
+            vec![retired.clone()],
+        );
 
         assert!(index
             .members_for(std::slice::from_ref(&library_id))
@@ -1113,6 +1266,43 @@ mod tests {
 
         assert_eq!(snapshots.len(), 2);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn repository_source_recognizes_unapplied_and_retired_members() {
+        let temp = tempfile::tempdir().unwrap();
+        for library in ["active", "retired"] {
+            std::fs::create_dir_all(temp.path().join(library).join("skills/demo")).unwrap();
+        }
+        let catalog = serde_json::from_value(serde_json::json!({
+            "schemaVersion": LIBRARY_SCHEMA_VERSION,
+            "libraries": [
+                {"id":"active", "name":"Active", "skills":[{
+                    "name":"demo", "description":"Demo", "sourceRecord":{}, "contentManifestHash":"old"
+                }], "retiredSkills":[]},
+                {"id":"retired", "name":"Retired", "skills":[], "retiredSkills":[{
+                    "retirementId":"retirement-one", "retiredAt":"2026-09-14T00:00:00Z",
+                    "member":{"name":"demo", "description":"Demo", "sourceRecord":{}, "contentManifestHash":"old"}
+                }]}
+            ]
+        })).unwrap();
+        let repository = Arc::new(MemoryRepository {
+            record: LibraryApplicationRecord::empty(),
+            catalog,
+            locator_root: Some(temp.path().to_path_buf()),
+            locator_requests: Mutex::new(Vec::new()),
+        });
+        let source = RepositoryLibraryCandidateSource::new(repository, targets());
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let snapshot = source
+            .load_candidates(&context, &SkillDirectoryName::try_from("demo").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(snapshot.candidates().recognized().len(), 2);
+        assert!(snapshot.candidates().ordered().is_empty());
     }
 
     #[tokio::test]

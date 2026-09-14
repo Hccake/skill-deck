@@ -243,17 +243,18 @@ where
             .entry_snapshot(&source.resolved.lock_key)
             .value()
             .cloned();
+        let candidates = loaded.plan.direct_content_candidates(&loaded.catalog);
+        let (source_identity, source_hash) = self
+            .acquirer
+            .select_source(&request.source, &request.skill_name, &candidates)
+            .await?;
         let handle = self
             .acquirer
-            .acquire(
-                &request.source,
-                &request.skill_name,
-                loaded
-                    .plan
-                    .standard_fact()
-                    .map_err(|error| error.into_app_error())?,
-            )
+            .acquire(&request.source, &request.skill_name, &source_identity)
             .await?;
+        if handle.manifest_hash != source_hash {
+            return Err(AppError::StalePayload);
+        }
         let payload = self.payloads.pin_verified(&handle).await?;
         let source_snapshot = CopySourceSnapshot {
             source_context: request.source.clone(),
@@ -261,11 +262,7 @@ where
             revisions: loaded.facts.revisions.clone(),
             lock_entry: source_lock_entry,
             project_identity: self.comparator.capture_source(&loaded.facts).await?,
-            standard_identity: loaded
-                .plan
-                .standard_fact()
-                .map_err(|error| error.into_app_error())?
-                .clone(),
+            standard_identity: source_identity,
             agent_intents: source_selection.intents().to_vec(),
         };
         self.payloads
@@ -356,6 +353,26 @@ where
             AgentSelectionResolution::Ready(selection) => selection,
             AgentSelectionResolution::Stale => return Err(AppError::StaleContext),
         };
+        let mut source_facts = self
+            .targets
+            .resolve(
+                &request.source,
+                std::slice::from_ref(&snapshot.standard_identity.destination),
+                None,
+            )
+            .await?;
+        if source_facts.len() != 1 {
+            return Err(AppError::StaleTarget);
+        }
+        let source_identity = source_facts.remove(0);
+        if !loaded
+            .plan
+            .direct_content_candidates(&loaded.catalog)
+            .iter()
+            .any(|candidate| candidate.key == source_identity.key)
+        {
+            return Err(AppError::StaleTarget);
+        }
         let current = CopySourceSnapshot {
             source_context: request.source.clone(),
             skill_name: request.skill_name.clone(),
@@ -367,11 +384,7 @@ where
                 .value()
                 .cloned(),
             project_identity: self.comparator.capture_source(&loaded.facts).await?,
-            standard_identity: loaded
-                .plan
-                .standard_fact()
-                .map_err(|error| error.into_app_error())?
-                .clone(),
+            standard_identity: source_identity,
             agent_intents: selection.intents().to_vec(),
         };
 
@@ -1261,27 +1274,75 @@ pub(crate) fn compare_resolved_projects(
     left: &crate::environment::planning::ResolvedTargetFact,
     right: &crate::environment::planning::ResolvedTargetFact,
 ) -> Result<PhysicalIdentityComparison, AppError> {
+    if left.entry_kind != TargetEntryKind::Directory
+        || right.entry_kind != TargetEntryKind::Directory
+    {
+        return Err(AppError::StaleTarget);
+    }
     if left.key.backend != right.key.backend
         || !crate::environment::types::same_environment_identity(
             &left.destination.environment,
             &right.destination.environment,
         )
     {
-        return Ok(PhysicalIdentityComparison::Unknown);
+        // 项目事实已按实际存储归属解析，不同归属使用独立的身份命名空间。
+        return Ok(PhysicalIdentityComparison::Different);
     }
     if left.key == right.key {
         return Ok(PhysicalIdentityComparison::Same);
     }
-    let case_sensitive = !matches!(left.key.backend, ExecutionBackend::NativeWindows);
-    if crate::environment::runtime::physical_paths_overlap(
-        &left.destination,
-        &right.destination,
-        case_sensitive,
-    )? {
+    let left = copy_project_path_components(left)?;
+    let right = copy_project_path_components(right)?;
+    if left.starts_with(&right) || right.starts_with(&left) {
         Ok(PhysicalIdentityComparison::Same)
     } else {
         Ok(PhysicalIdentityComparison::Different)
     }
+}
+
+fn copy_project_path_components(fact: &ResolvedTargetFact) -> Result<Vec<String>, AppError> {
+    let path = &fact.destination.native_path;
+    let mut components = match &fact.destination.environment {
+        EnvironmentRef::Native => {
+            let path = std::path::Path::new(path);
+            if !path.is_absolute() {
+                return Err(AppError::StaleTarget);
+            }
+            path.components()
+                .map(|component| {
+                    if matches!(component, std::path::Component::ParentDir) {
+                        return Err(AppError::StaleTarget);
+                    }
+                    component
+                        .as_os_str()
+                        .to_str()
+                        .map(str::to_string)
+                        .ok_or(AppError::StaleTarget)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        EnvironmentRef::Wsl { .. } => {
+            if !path.starts_with('/') {
+                return Err(AppError::StaleTarget);
+            }
+            path.split('/')
+                .filter(|part| !part.is_empty())
+                .map(|part| {
+                    if matches!(part, "." | "..") {
+                        Err(AppError::StaleTarget)
+                    } else {
+                        Ok(part.to_string())
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    if matches!(fact.key.backend, ExecutionBackend::NativeWindows) {
+        for component in &mut components {
+            *component = component.to_lowercase();
+        }
+    }
+    Ok(components)
 }
 
 fn normalize_copy_metadata(source: Option<&Value>) -> Option<NormalizedCopyMetadata> {
@@ -1597,7 +1658,16 @@ mod tests {
     fn project_fact(path: &str, inode: u64, child: &str) -> ResolvedTargetFact {
         ResolvedTargetFact {
             key: PhysicalTargetKey {
+                #[cfg(windows)]
+                backend: ExecutionBackend::NativeWindows,
+                #[cfg(windows)]
+                physical_parent: PhysicalParentIdentity::Windows {
+                    volume_serial: 1,
+                    file_id: inode.into(),
+                },
+                #[cfg(not(windows))]
                 backend: ExecutionBackend::NativeUnix,
+                #[cfg(not(windows))]
                 physical_parent: PhysicalParentIdentity::Unix { device: 1, inode },
                 normalized_final_child_name: child.to_string(),
             },
@@ -1615,10 +1685,19 @@ mod tests {
 
     #[test]
     fn physical_project_comparison_blocks_equal_and_nested_but_allows_similar_paths() {
-        let source = project_fact("/work/app", 1, "app");
-        let same = project_fact("/work/app", 1, "app");
-        let nested = project_fact("/work/app/examples/demo", 1, "app/examples/demo");
-        let similar = project_fact("/work/application", 1, "application");
+        let root = tempdir().unwrap();
+        let fact = |relative: &str, parent| {
+            let path = root.path().join(relative);
+            project_fact(
+                path.to_str().unwrap(),
+                parent,
+                path.file_name().unwrap().to_str().unwrap(),
+            )
+        };
+        let source = fact("app", 1);
+        let same = fact("app", 1);
+        let nested = fact("app/examples/demo", 2);
+        let similar = fact("application", 1);
 
         assert_eq!(
             compare_resolved_projects(&source, &same).unwrap(),
@@ -1632,6 +1711,58 @@ mod tests {
             compare_resolved_projects(&source, &similar).unwrap(),
             PhysicalIdentityComparison::Different
         );
+    }
+
+    #[test]
+    fn physical_project_comparison_keeps_posix_names_and_storage_owners_distinct() {
+        let wsl_fact = |path: &str, inode, distro: &str| {
+            let mut fact = project_fact(path, inode, path.rsplit('/').next().unwrap());
+            fact.key.backend = ExecutionBackend::WslPosix {
+                distro_name: distro.into(),
+            };
+            fact.key.physical_parent = PhysicalParentIdentity::Wsl {
+                distro_name: distro.into(),
+                device: 1,
+                inode,
+            };
+            fact.destination.environment = EnvironmentRef::Wsl {
+                distro_name: distro.into(),
+            };
+            fact
+        };
+        let source = wsl_fact("/work/app", 1, "ubuntu");
+        for (candidate, expected) in [
+            (
+                wsl_fact("/work/app/examples", 2, "ubuntu"),
+                PhysicalIdentityComparison::Same,
+            ),
+            (
+                wsl_fact("/work", 3, "ubuntu"),
+                PhysicalIdentityComparison::Same,
+            ),
+            (
+                wsl_fact("/work/app\\examples", 1, "ubuntu"),
+                PhysicalIdentityComparison::Different,
+            ),
+            (
+                wsl_fact("/work/App", 1, "ubuntu"),
+                PhysicalIdentityComparison::Different,
+            ),
+            (
+                wsl_fact("/work/app", 1, "debian"),
+                PhysicalIdentityComparison::Different,
+            ),
+            (
+                project_fact(std::env::temp_dir().join("app").to_str().unwrap(), 1, "app"),
+                PhysicalIdentityComparison::Different,
+            ),
+        ] {
+            assert_eq!(
+                compare_resolved_projects(&source, &candidate).unwrap(),
+                expected,
+                "{candidate:?}"
+            );
+        }
     }
 
     #[test]
@@ -2103,7 +2234,11 @@ mod tests {
         let target_root = temp.path().join("target");
         let source_skill = source_root.join(".agents/skills/demo");
         fs::create_dir_all(&source_skill).unwrap();
-        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::write(
+            source_skill.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
         fs::create_dir_all(&target_root).unwrap();
 
         let source = context(EnvironmentRef::Native, "source");
@@ -2163,7 +2298,11 @@ mod tests {
         let target_root = temp.path().join("target");
         let source_skill = source_root.join(".agents/skills/demo");
         fs::create_dir_all(&source_skill).unwrap();
-        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::write(
+            source_skill.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
         let target_skill_root = target_root.join(".agents/skills");
         fs::create_dir_all(&target_skill_root).unwrap();
         let external_target = target_skill_root.join("demo");
@@ -2273,7 +2412,7 @@ mod tests {
         fs::create_dir_all(&canonical_path).unwrap();
         fs::write(
             canonical_path.join("SKILL.md"),
-            b"---\nname: demo\n---\nbody",
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
         )
         .unwrap();
         fs::create_dir_all(&agent_root).unwrap();
@@ -2314,16 +2453,26 @@ mod tests {
             environment: EnvironmentRef::Native,
             native_path: second_library.to_string_lossy().into_owned(),
         };
+        let library_facts = targets
+            .resolve_environment(
+                &EnvironmentRef::Native,
+                &[first_locator.clone(), second_locator.clone()],
+                None,
+            )
+            .await
+            .unwrap();
         let candidates = vec![
             LibraryVersionCandidate::new(
                 crate::application::skill_libraries::LibraryId::parse("first"),
                 "demo",
                 first_locator.clone(),
+                library_facts[0].key.clone(),
             ),
             LibraryVersionCandidate::new(
                 crate::application::skill_libraries::LibraryId::parse("second"),
                 "demo",
                 second_locator,
+                library_facts[1].key.clone(),
             ),
         ];
         let candidate_set = LibraryCandidateSet::new(candidates.clone(), candidates).unwrap();
@@ -2510,7 +2659,11 @@ mod tests {
         let broken_root = temp.path().join("broken");
         let source_skill = source_root.join(".agents/skills/demo");
         fs::create_dir_all(&source_skill).unwrap();
-        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::write(
+            source_skill.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
         fs::create_dir_all(&healthy_root).unwrap();
         fs::create_dir_all(&broken_root).unwrap();
 
@@ -2617,7 +2770,11 @@ mod tests {
         let second_root = temp.path().join("second");
         let source_skill = source_root.join(".agents/skills/demo");
         fs::create_dir_all(source_skill.join("scripts")).unwrap();
-        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::write(
+            source_skill.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
         fs::write(source_skill.join("scripts/run.sh"), b"#!/bin/sh\n").unwrap();
         fs::create_dir_all(&first_root).unwrap();
         fs::create_dir_all(&second_root).unwrap();
@@ -2707,7 +2864,7 @@ mod tests {
 
         fs::write(
             source_skill.join("SKILL.md"),
-            b"---\nname: demo\n---\nchanged",
+            b"---\nname: demo\ndescription: Demo\n---\nchanged",
         )
         .unwrap();
         let stale_payload_error = service
@@ -2722,7 +2879,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(stale_payload_error, AppError::StalePayload));
-        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::write(
+            source_skill.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
 
         let original_source_lock = facts
             .lock()
@@ -2849,7 +3010,7 @@ mod tests {
         fs::create_dir_all(source_root.join(".agents/skills/demo")).unwrap();
         fs::write(
             source_root.join(".agents/skills/demo/SKILL.md"),
-            b"---\nname: demo\n---\nbody",
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
         )
         .unwrap();
         fs::create_dir_all(&healthy_root).unwrap();
@@ -2957,7 +3118,11 @@ mod tests {
         let target_root = temp.path().join("target");
         let source_skill = source_root.join(".agents/skills/demo");
         fs::create_dir_all(&source_skill).unwrap();
-        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::write(
+            source_skill.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
         fs::create_dir_all(&target_root).unwrap();
 
         let source = context(EnvironmentRef::Native, "source");

@@ -268,11 +268,7 @@ async fn capture_wsl_base(
     let eve_targets = match resolved.project.as_ref() {
         Some(project) => {
             let snapshot = inspect_eve_project(&workspace, &project.native_path).await?;
-            if snapshot.has_eve {
-                crate::core::eve::eve_install_targets(&project.native_path, snapshot.subagents)
-            } else {
-                Vec::new()
-            }
+            snapshot.install_targets(&project.native_path)
         }
         None => Vec::new(),
     };

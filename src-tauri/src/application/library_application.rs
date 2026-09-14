@@ -652,84 +652,6 @@ where
         })
     }
 
-    pub async fn managed_skill_names(
-        &self,
-        context: SkillLocationRef,
-    ) -> Result<BTreeSet<String>, AppError> {
-        let record = self.repository.load_application(&context).await?;
-        let catalog = self.repository.load_catalog(&context).await?;
-        let member_index =
-            LibraryCatalogMemberIndex::build(&catalog).map_err(library_member_index_error)?;
-        let current = member_index
-            .members_for(&record.current.ordered_library_ids)
-            .map_err(library_member_index_error)?;
-        let desired_ids = record
-            .pending
-            .as_ref()
-            .map(|pending| pending.target_application.ordered_library_ids.as_slice())
-            .unwrap_or(&record.current.ordered_library_ids);
-        let target = member_index
-            .members_for(desired_ids)
-            .map_err(library_member_index_error)?;
-        let desired_members = target
-            .values()
-            .flatten()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let recognized = member_index
-            .recognized_members(&reconciliation_members(
-                &record.checkpoint,
-                record.pending.as_ref(),
-                &desired_members,
-            ))
-            .map_err(library_member_index_error)?;
-        let groups = merge_library_skill_groups(current, target, recognized.clone(), recognized);
-        if groups.is_empty() {
-            return Ok(BTreeSet::new());
-        }
-        let facts = self.facts.snapshot(&context).await?;
-        let destinations = groups
-            .iter()
-            .map(|group| {
-                facts
-                    .resolved_context
-                    .skill_root
-                    .join_child(group.directory_name.as_ref())
-            })
-            .collect::<Vec<_>>();
-        let target_facts = self.targets.resolve(&context, &destinations, None).await?;
-        if target_facts.len() != groups.len() {
-            return Err(AppError::StaleTarget);
-        }
-        ensure_library_link_targets_supported(target_facts.iter())?;
-        let candidate_members = library_group_members(&groups);
-        let candidate_index = ResolvedLibraryCandidateIndex::load(
-            self.repository.as_ref(),
-            &self.targets,
-            &context,
-            &candidate_members,
-        )
-        .await?;
-        let mut managed = BTreeSet::new();
-        for (group, fact) in groups.into_iter().zip(target_facts) {
-            let members = group.recognized_members;
-            let candidates = candidate_index.candidates_for(&members)?;
-            for candidate in candidates {
-                if fact
-                    .link_target_identity
-                    .as_ref()
-                    .is_some_and(|identity| identity.matches(candidate.locator()))
-                {
-                    managed.insert(candidate.member_name().to_string());
-                    break;
-                }
-            }
-        }
-        Ok(managed)
-    }
-
     pub async fn preview(
         &self,
         draft: LibraryApplicationDraft,
@@ -2221,24 +2143,35 @@ mod tests {
                             .and_then(|name| name.to_str())
                             .unwrap_or("target");
                         let parent = path.parent();
-                        let (name, entry_kind, link_target) =
-                            if destination.native_path == TEST_AGENT_ROOT {
-                                ("agent-root".to_string(), TargetEntryKind::Directory, None)
-                            } else if parent == Some(std::path::Path::new(TEST_AGENT_ROOT))
-                                || parent == Some(std::path::Path::new(TEST_LEGACY_ROOT))
-                            {
-                                (
-                                    format!("agent-skill-{skill_name}"),
-                                    self.agent_entry_kind,
-                                    self.agent_link_target.clone(),
-                                )
-                            } else {
-                                (
-                                    format!("canonical-skill-{skill_name}"),
-                                    self.primary_entry_kind,
-                                    None,
-                                )
-                            };
+                        let (name, entry_kind, link_target) = if path
+                            .starts_with(std::path::Path::new("/libraries"))
+                        {
+                            (
+                                format!(
+                                    "library-{}",
+                                    crate::application::mutation::plan::stable_digest(destination)
+                                        .unwrap()
+                                ),
+                                TargetEntryKind::Directory,
+                                None,
+                            )
+                        } else if destination.native_path == TEST_AGENT_ROOT {
+                            ("agent-root".to_string(), TargetEntryKind::Directory, None)
+                        } else if parent == Some(std::path::Path::new(TEST_AGENT_ROOT))
+                            || parent == Some(std::path::Path::new(TEST_LEGACY_ROOT))
+                        {
+                            (
+                                format!("agent-skill-{skill_name}"),
+                                self.agent_entry_kind,
+                                self.agent_link_target.clone(),
+                            )
+                        } else {
+                            (
+                                format!("canonical-skill-{skill_name}"),
+                                self.primary_entry_kind,
+                                None,
+                            )
+                        };
                         let link_target_identity = link_target.as_deref().and_then(|raw| {
                             crate::environment::planning::resolve_link_target_identity(
                                 destination,
@@ -4338,10 +4271,21 @@ mod tests {
 
     fn physical_key(name: &str) -> PhysicalTargetKey {
         PhysicalTargetKey {
-            backend: ExecutionBackend::NativeUnix,
-            physical_parent: PhysicalParentIdentity::Unix {
-                device: 1,
-                inode: 2,
+            backend: if cfg!(windows) {
+                ExecutionBackend::NativeWindows
+            } else {
+                ExecutionBackend::NativeUnix
+            },
+            physical_parent: if cfg!(windows) {
+                PhysicalParentIdentity::Windows {
+                    volume_serial: 1,
+                    file_id: 2,
+                }
+            } else {
+                PhysicalParentIdentity::Unix {
+                    device: 1,
+                    inode: 2,
+                }
             },
             normalized_final_child_name: name.to_string(),
         }

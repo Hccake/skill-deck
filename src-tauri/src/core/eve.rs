@@ -138,10 +138,14 @@ pub fn eve_install_targets(
     targets.extend(subagents.into_iter().map(|subagent| {
         let subagent = lock_subagent_value(Some(&subagent));
         InstallTargetInfo {
-            target_id: eve_target_id(Some(&subagent)),
+            target_id: eve_target_id(Some(&sanitize_name(&subagent))),
             agent: eve_agent_id(),
             display_name: eve_target_label(Some(&subagent)),
-            path: eve_skills_dir_for_target(project_path, Some(&subagent))
+            path: Path::new(project_path)
+                .join("agent")
+                .join("subagents")
+                .join(&subagent)
+                .join("skills")
                 .to_string_lossy()
                 .to_string(),
             subagent: Some(subagent),
@@ -367,6 +371,20 @@ mod tests {
                 .to_string_lossy()
                 .to_string()
         );
+    }
+
+    #[test]
+    fn eve_install_targets_keep_the_spelling_of_discovered_subagent_directories() {
+        let root = tempdir().unwrap();
+        let targets = eve_install_targets(&root.path().to_string_lossy(), ["Research Team".into()]);
+        assert_eq!(
+            Path::new(&targets[1].path),
+            root.path()
+                .join("agent/subagents")
+                .join("Research Team")
+                .join("skills")
+        );
+        assert_eq!(targets[1].target_id, "eve:research-team");
     }
 
     #[test]

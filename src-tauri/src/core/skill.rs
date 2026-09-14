@@ -117,8 +117,17 @@ pub enum InstalledSkillLocation {
     Project,
 }
 
-/// 已安装的 Skill 信息
-/// 对应 CLI: InstalledSkill (installer.ts:783-790)
+/// 当前 Scope 引用的库版本，用于定位到对应库成员。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct InstalledLibraryVersion {
+    pub library_id: String,
+    pub library_name: String,
+    pub skill_name: String,
+}
+
+/// 已安装的直接 Skill 信息。
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
@@ -132,6 +141,13 @@ pub struct InstalledSkill {
     /// 每次读取 Skill 时根据当前 runtime 和文件系统重新组装，不写入 skill-lock。
     /// 只包含当前已检测到并且实际能够读取该 Skill 的关联 Agent。
     pub associated_agents: Vec<AgentId>,
+    /// 当前 Scope 中实际被引用的同名库版本。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_versions: Option<Vec<InstalledLibraryVersion>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintenance_error: Option<AppError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison_fingerprint: Option<String>,
     // 来自 skill-lock.json 的元数据
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -191,6 +207,8 @@ impl InstalledSkill {
     /// 从 global lock entry 填充元数据
     pub fn with_lock_entry(mut self, entry: Option<&SkillLockEntry>) -> Self {
         if let Some(e) = entry {
+            self.comparison_fingerprint =
+                Some(normalize_global_lock_entry(e).comparison_fingerprint());
             self.source = Some(e.source.clone());
             self.source_url = normalize_global_lock_entry(e).source_url;
             self.installed_at = Some(e.installed_at.clone());
@@ -211,6 +229,7 @@ impl InstalledSkill {
     pub fn with_local_lock_entry(mut self, entry: Option<&LocalSkillLockEntry>) -> Self {
         if let Some(e) = entry {
             let metadata = normalize_local_lock_entry(e);
+            self.comparison_fingerprint = Some(metadata.comparison_fingerprint());
             self.source = Some(e.source.clone());
             self.source_url = metadata.source_url.clone();
             self.plugin_name = e.plugin_name.clone();
@@ -346,6 +365,9 @@ Content.
             scope: InstalledSkillLocation::Project,
             agents: Vec::new(),
             associated_agents: Vec::new(),
+            library_versions: None,
+            maintenance_error: None,
+            comparison_fingerprint: None,
             source: None,
             source_url: None,
             installed_at: None,
@@ -372,6 +394,16 @@ Content.
             skill.source_url.as_deref(),
             Some("git@github.com:owner/private-repo.git")
         );
+        let previous = serde_json::to_value(&skill).unwrap();
+        let mut updated_entry = entry.clone();
+        updated_entry.remote_hash = Some("new-upstream-revision".to_string());
+        let updated =
+            serde_json::to_value(skill.with_local_lock_entry(Some(&updated_entry))).unwrap();
+        assert!(previous["comparisonFingerprint"].is_string());
+        assert_ne!(
+            previous["comparisonFingerprint"],
+            updated["comparisonFingerprint"]
+        );
     }
 
     #[test]
@@ -397,6 +429,9 @@ Content.
             scope: InstalledSkillLocation::Project,
             agents: Vec::new(),
             associated_agents: Vec::new(),
+            library_versions: None,
+            maintenance_error: None,
+            comparison_fingerprint: None,
             source: None,
             source_url: None,
             installed_at: None,
@@ -421,42 +456,6 @@ Content.
 
         assert_eq!(skill.source_url, None);
         assert_eq!(skill.skill_path.as_deref(), Some("skills/demo/SKILL.md"));
-    }
-
-    #[test]
-    fn test_installed_skill_runtime_update_capabilities_can_be_stored() {
-        let skill = InstalledSkill {
-            name: "demo".to_string(),
-            description: "Demo".to_string(),
-            path: String::new(),
-            canonical_path: String::new(),
-            scope: InstalledSkillLocation::Global,
-            agents: Vec::new(),
-            associated_agents: Vec::new(),
-            source: None,
-            source_url: None,
-            installed_at: None,
-            updated_at: None,
-            has_update: Some(false),
-            can_run_update: Some(true),
-            can_check_for_updates: Some(false),
-            update_reason: Some("missing-skill-path".to_string()),
-            plugin_name: None,
-            git_ref: None,
-            skill_path: None,
-            default_available_agent_count: None,
-            private_adapted_agent_count: None,
-            duplicate_copy_count: None,
-            default_available_agents: None,
-            private_adapted_agents: None,
-            duplicate_copy_agents: None,
-            private_only_agents: None,
-            private_copy_agents: None,
-        };
-
-        assert_eq!(skill.can_run_update, Some(true));
-        assert_eq!(skill.can_check_for_updates, Some(false));
-        assert_eq!(skill.update_reason.as_deref(), Some("missing-skill-path"));
     }
 
     #[test]

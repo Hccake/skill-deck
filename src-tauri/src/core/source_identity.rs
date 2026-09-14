@@ -1,12 +1,15 @@
 use std::fmt;
 
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::core::NormalizedUpdateMetadata;
 use crate::error::AppError;
 use crate::models::{ParsedSource, SourceType};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub enum SourceProvider {
     Github,
     Gitlab,
@@ -14,13 +17,13 @@ pub enum SourceProvider {
     WellKnown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub enum NormalizedRef {
     Default,
     Named(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub struct RemoteSourceIdentity {
     provider: SourceProvider,
     authority: String,
@@ -172,9 +175,10 @@ impl SourceIdentity {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| metadata.source.clone());
-        let source = if source_type == SourceType::GitHub && !source.contains("://") {
+        let shorthand = !source.contains("://") && !source.contains('@');
+        let source = if source_type == SourceType::GitHub && shorthand {
             format!("https://github.com/{source}")
-        } else if source_type == SourceType::GitLab && !source.contains("://") {
+        } else if source_type == SourceType::GitLab && shorthand {
             format!("https://gitlab.com/{source}")
         } else {
             source
@@ -192,17 +196,32 @@ impl SourceIdentity {
                 "source does not have a remote Git identity",
             ));
         }
-        let location = parse_remote_location(&source)?;
+        let git_ref = if source_type == SourceType::WellKnown {
+            None
+        } else {
+            git_ref
+        };
+        let location = parse_remote_location(&source, source_type == SourceType::WellKnown)?;
         let provider = provider_for(&source_type, &location.authority);
+        let display = format!("{}/{}", location.authority, location.repository);
+        let repository = if provider == SourceProvider::WellKnown
+            || (provider != SourceProvider::Github && location.authority != "gitlab.com")
+        {
+            opaque_locator(&source, provider == SourceProvider::WellKnown)?
+        } else if provider == SourceProvider::Github {
+            location.repository.to_ascii_lowercase()
+        } else {
+            location.repository.clone()
+        };
         let remote = RemoteSourceIdentity {
             provider,
             authority: location.authority.clone(),
-            repository: location.repository.clone(),
+            repository: repository.clone(),
         };
         let transport = AcquisitionTransportIdentity {
             transport: location.transport,
             authority: location.authority.clone(),
-            repository: location.repository.clone(),
+            repository,
         };
         let normalized_ref = match git_ref
             .as_deref()
@@ -217,7 +236,7 @@ impl SourceIdentity {
             transport,
             normalized_ref,
             acquisition: AcquisitionDescriptor { source, git_ref },
-            display: format!("{}/{}", location.authority, location.repository),
+            display,
         })
     }
 
@@ -240,6 +259,12 @@ impl SourceIdentity {
     pub fn sanitized_display(&self) -> &str {
         &self.display
     }
+
+    pub fn key(&self) -> String {
+        let bytes = serde_json::to_vec(&(&self.remote, &self.normalized_ref))
+            .expect("source identity serializes deterministically");
+        format!("source-v2:{:x}", Sha256::digest(bytes))
+    }
 }
 
 struct RemoteLocation {
@@ -248,7 +273,30 @@ struct RemoteLocation {
     repository: String,
 }
 
-fn parse_remote_location(source: &str) -> Result<RemoteLocation, AppError> {
+fn opaque_locator(source: &str, wellknown: bool) -> Result<String, AppError> {
+    let normalized = match Url::parse(source) {
+        Ok(mut url) => {
+            if wellknown && !matches!(url.scheme(), "http" | "https") {
+                return Err(invalid_identity("Well-known sources require HTTP or HTTPS"));
+            }
+            url.set_fragment(None);
+            if wellknown && !url.path().trim_end_matches('/').ends_with("/index.json") {
+                url.set_query(None);
+                let path = url.path().trim_end_matches('/').to_string();
+                url.set_path(&path);
+            }
+            url.to_string()
+        }
+        Err(_) if !wellknown => source.to_string(),
+        Err(_) => return Err(invalid_identity("invalid Well-known index URL")),
+    };
+    Ok(format!(
+        "url-v2:{:x}",
+        Sha256::digest(normalized.as_bytes())
+    ))
+}
+
+fn parse_remote_location(source: &str, wellknown: bool) -> Result<RemoteLocation, AppError> {
     if let Some((user_host, repository)) = source.split_once(':') {
         if !user_host.contains("//") && user_host.contains('@') {
             let authority = user_host
@@ -270,6 +318,13 @@ fn parse_remote_location(source: &str) -> Result<RemoteLocation, AppError> {
         "ssh" => AcquisitionTransport::Ssh,
         _ => AcquisitionTransport::Git,
     };
+    if wellknown {
+        return Ok(RemoteLocation {
+            transport,
+            authority,
+            repository: url.path().trim_start_matches('/').to_string(),
+        });
+    }
     remote_location(transport, &authority, url.path())
 }
 
@@ -328,6 +383,61 @@ fn invalid_identity(reason: &str) -> AppError {
 mod tests {
     use super::*;
     use crate::core::parse_source;
+
+    fn wellknown(source: &str) -> SourceIdentity {
+        SourceIdentity::build(SourceType::WellKnown, source.to_string(), None).unwrap()
+    }
+
+    #[test]
+    fn wellknown_identity_preserves_request_semantics_without_exposing_secrets() {
+        let original = wellknown("https://example.com/Team/index.json?token=secret-one");
+        for different in [
+            "https://example.com/Team/index.json?token=secret-two",
+            "http://example.com/Team/index.json?token=secret-one",
+            "https://example.com:8443/Team/index.json?token=secret-one",
+            "https://example.com/team/index.json?token=secret-one",
+            "https://example.com/Team.git/index.json?token=secret-one",
+        ] {
+            assert_ne!(original.remote(), wellknown(different).remote());
+        }
+        assert_eq!(
+            original.remote(),
+            wellknown("https://EXAMPLE.com:443/Team/index.json?token=secret-one#section").remote()
+        );
+        let rendered = format!("{original:?} {}", original.sanitized_display());
+        assert!(!rendered.contains("secret-one"));
+        assert!(!rendered.contains("token="));
+        assert!(original.remote().repository().starts_with("url-v2:"));
+    }
+
+    #[test]
+    fn wellknown_root_and_scoped_inputs_do_not_forward_page_queries() {
+        for base in ["https://example.com/", "https://example.com/Team"] {
+            assert_eq!(
+                wellknown(base).remote(),
+                wellknown(&format!("{base}?page=2")).remote()
+            );
+        }
+        assert_ne!(
+            wellknown("https://example.com/Team").remote(),
+            wellknown("https://example.com/team").remote()
+        );
+    }
+
+    #[test]
+    fn ordinary_git_urls_do_not_merge_distinct_transports_or_queries() {
+        let identity =
+            |url: &str| SourceIdentity::build(SourceType::Git, url.to_string(), None).unwrap();
+        let first = identity("https://example.com/Tools.git?repo=one");
+        for second in [
+            "https://example.com/Tools.git?repo=two",
+            "http://example.com/Tools.git?repo=one",
+            "ssh://git@example.com/Tools.git",
+            "https://example.com/tools.git?repo=one",
+        ] {
+            assert_ne!(first.remote(), identity(second).remote());
+        }
+    }
 
     #[test]
     fn github_https_and_ssh_share_remote_identity_but_not_transport() {
@@ -400,6 +510,7 @@ mod tests {
         assert!(!rendered.contains("alice"));
         assert!(!rendered.contains("secret"));
         assert!(!rendered.contains("hidden"));
-        assert_eq!(identity.remote().repository(), "acme/tools");
+        assert!(identity.remote().repository().starts_with("url-v2:"));
+        assert_eq!(identity.sanitized_display(), "example.com/acme/tools");
     }
 }

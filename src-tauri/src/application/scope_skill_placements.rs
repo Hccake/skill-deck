@@ -1,12 +1,22 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::application::agent_selection::{AgentSelectionCatalog, DirectoryPlacementId};
+use crate::application::agent_selection::{
+    AgentSelectionCatalog, DirectoryContentKind, DirectoryPlacementId, SkillDirectoryAccess,
+};
 use crate::application::installed_skill_resolver::{
     InstalledSkillResolver, ResolvedInstalledSkill,
 };
+use crate::application::library_candidates::{
+    LibraryVersionCandidate, ResolvedLibraryCandidateIndex,
+};
+use crate::application::mutation::plan::stable_digest;
 use crate::application::planning_facts::ScopePlanningSnapshot;
 use crate::application::scope_skill_planning::ScopeSkillPlacementSet;
-use crate::environment::planning::TargetFactResolver;
+use crate::application::skill_entry_projection::{
+    observed_entry_kind, ObservedEntryReader, ObservedPhysicalEntry, ObservedPlannedEntry,
+};
+use crate::environment::planning::{TargetEntryKind, TargetFactResolver};
+use crate::environment::runtime::observed_entry_id;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 
@@ -14,6 +24,218 @@ use crate::error::AppError;
 pub struct ResolvedScopeSkillPlacements {
     pub resolved: ResolvedInstalledSkill,
     pub(crate) placements: ScopeSkillPlacementSet,
+    pub(crate) additional_observations: Vec<crate::environment::planning::ResolvedTargetFact>,
+    recorded_eve_targets: Option<Vec<String>>,
+}
+
+pub(crate) fn ambiguous_installed_source(path: &str) -> AppError {
+    AppError::CapabilityUnavailable {
+        capability: "installedSkillSourceAmbiguous".into(),
+        path: Some(path.into()),
+    }
+}
+
+pub(crate) fn eve_target_ids(subagents: Option<&[String]>) -> Result<Vec<String>, AppError> {
+    let Some(subagents) = subagents else {
+        return Ok(["eve:root".to_string()].into());
+    };
+    let mut ids = Vec::new();
+    let mut seen = BTreeSet::new();
+    for subagent in subagents {
+        let name = if subagent.is_empty() {
+            "root".into()
+        } else {
+            let name = InstalledSkillResolver::install_dir_name(subagent)?;
+            if name == "root" {
+                return Err(ambiguous_installed_source(subagent));
+            }
+            name
+        };
+        let id = format!("eve:{name}");
+        if !seen.insert(id.clone()) {
+            return Err(ambiguous_installed_source(subagent));
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+pub(crate) fn recorded_eve_target_ids(
+    name: &str,
+    document: &crate::core::lossless_lock::LosslessLockDocument,
+) -> Result<Option<Vec<String>>, AppError> {
+    use crate::core::local_lock::LocalSkillLockEntry;
+    let resolved = InstalledSkillResolver::resolve(name, document)?;
+    let Some(value) = document.entry_snapshot(&resolved.lock_key).value().cloned() else {
+        return Ok(None);
+    };
+    let Ok(entry) = serde_json::from_value::<LocalSkillLockEntry>(value) else {
+        return Ok(None);
+    };
+    if entry.source.trim().is_empty() || entry.source_type.trim().is_empty() {
+        return Ok(None);
+    }
+    let targets = eve_target_ids(entry.subagents.as_deref())?;
+    Ok(Some(targets))
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ObservedSkillPlacement {
+    pub id: DirectoryPlacementId,
+    pub entry: ObservedPlannedEntry,
+    pub content: DirectoryContentKind,
+    pub library: Option<LibraryVersionCandidate>,
+}
+
+impl ObservedSkillPlacement {
+    pub(crate) fn is_direct_directory(&self) -> bool {
+        self.library.is_none() && self.entry.fact.entry_kind == TargetEntryKind::Directory
+    }
+}
+
+impl ResolvedScopeSkillPlacements {
+    pub(crate) fn describe(
+        &self,
+        catalog: &AgentSelectionCatalog,
+        libraries: &ResolvedLibraryCandidateIndex,
+    ) -> Result<Vec<ObservedSkillPlacement>, AppError> {
+        let skill = crate::application::installed_skill_resolver::SkillDirectoryName::try_from(
+            self.resolved.skill_name.as_str(),
+        )?;
+        let mut placements = self
+            .placements
+            .facts()
+            .iter()
+            .filter(|(id, _)| match id {
+                DirectoryPlacementId::Standard => true,
+                DirectoryPlacementId::Option(id) => catalog.option(id).is_none_or(|option| {
+                    !option.placement.content.uses_eve_payload()
+                        || self.recorded_eve_targets.as_ref().is_some_and(|ids| {
+                            option.adapter_target_ids.iter().any(|id| ids.contains(id))
+                        })
+                }),
+            })
+            .map(|(id, fact)| {
+                let (content, readers) = match id {
+                    DirectoryPlacementId::Standard => (
+                        DirectoryContentKind::Original,
+                        catalog
+                            .snapshot()
+                            .agents
+                            .iter()
+                            .filter(|agent| {
+                                matches!(
+                                    agent.directory_access,
+                                    Some(
+                                        SkillDirectoryAccess::StandardOnly
+                                            | SkillDirectoryAccess::Both
+                                    )
+                                )
+                            })
+                            .map(|agent| ObservedEntryReader {
+                                agent_id: agent.id.clone(),
+                                display_name: agent.display_name.clone(),
+                                logical_target_id: "canonical".to_string(),
+                            })
+                            .collect(),
+                    ),
+                    DirectoryPlacementId::Option(option_id) => {
+                        let option = catalog.option(option_id).ok_or(AppError::StaleTarget)?;
+                        let mut readers = Vec::new();
+                        for agent_id in &option.public.agent_ids {
+                            let agent = catalog
+                                .snapshot()
+                                .agents
+                                .iter()
+                                .find(|agent| &agent.id == agent_id)
+                                .ok_or(AppError::StaleRegistry)?;
+                            let target_ids = if option.adapter_target_ids.is_empty() {
+                                vec![format!("agent:{}:private", agent_id.as_str())]
+                            } else {
+                                option.adapter_target_ids.clone()
+                            };
+                            for target_id in target_ids {
+                                readers.push(ObservedEntryReader {
+                                    agent_id: agent_id.clone(),
+                                    display_name: if option.placement.content.uses_eve_payload() {
+                                        option.public.display_name.clone()
+                                    } else {
+                                        agent.display_name.clone()
+                                    },
+                                    logical_target_id: target_id,
+                                });
+                            }
+                        }
+                        (option.placement.content.clone(), readers)
+                    }
+                };
+                Ok(ObservedSkillPlacement {
+                    id: id.clone(),
+                    content,
+                    library: libraries.owner(&skill, fact).cloned(),
+                    entry: ObservedPlannedEntry {
+                        public: ObservedPhysicalEntry {
+                            entry_id: observed_entry_id(&fact.key, &fact.fingerprint)?,
+                            display_path: fact.destination.clone(),
+                            kind: observed_entry_kind(fact.entry_kind),
+                            physical_target_key: stable_digest(&fact.key)?,
+                            readers,
+                            will_break_if_standard_removed: false,
+                        },
+                        fact: fact.clone(),
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let links = placements
+            .iter()
+            .filter(|placement| {
+                placement.library.is_none()
+                    && matches!(
+                        placement.entry.fact.entry_kind,
+                        TargetEntryKind::Symlink | TargetEntryKind::Junction
+                    )
+            })
+            .filter_map(|placement| {
+                placement
+                    .entry
+                    .fact
+                    .link_target_identity
+                    .clone()
+                    .map(|identity| (identity, placement.entry.public.readers.clone()))
+            })
+            .collect::<Vec<_>>();
+        for placement in placements
+            .iter_mut()
+            .filter(|placement| placement.is_direct_directory())
+        {
+            for (identity, readers) in &links {
+                if identity.matches(&placement.entry.fact.destination) {
+                    placement.entry.public.readers.extend(readers.clone());
+                }
+            }
+            placement.entry.public.readers.sort_by(|a, b| {
+                (&a.agent_id, &a.logical_target_id).cmp(&(&b.agent_id, &b.logical_target_id))
+            });
+            placement.entry.public.readers.dedup();
+        }
+        Ok(placements)
+    }
+}
+
+pub(crate) fn representative_direct_placement(
+    placements: &[ObservedSkillPlacement],
+) -> Option<&ObservedSkillPlacement> {
+    placements
+        .iter()
+        .filter(|placement| placement.is_direct_directory())
+        .min_by_key(|placement| {
+            (
+                placement.id != DirectoryPlacementId::Standard,
+                placement.content.uses_eve_payload(),
+                placement.entry.fact.destination.native_path.as_str(),
+            )
+        })
 }
 
 pub struct ScopeSkillPlacementResolver<T> {
@@ -37,31 +259,141 @@ where
         facts: &ScopePlanningSnapshot,
         catalog: &AgentSelectionCatalog,
     ) -> Result<ResolvedScopeSkillPlacements, AppError> {
-        let standard = catalog.standard();
-        if facts.resolved_context.context != *context || catalog.context() != context {
-            return Err(AppError::StaleContext);
-        }
-        let resolved_identity = InstalledSkillResolver::resolve(skill_name, &facts.lock_document)?;
-        let install_dir_name = &resolved_identity.install_dir_name;
-        let mut destinations = vec![standard.root.join_child(install_dir_name)];
-        let mut placement_ids = vec![DirectoryPlacementId::Standard];
-        for option in catalog.options() {
-            destinations.push(option.placement.root.join_child(install_dir_name));
-            placement_ids.push(option.placement.id.clone());
-        }
-        let resolved = self.targets.resolve(context, &destinations, None).await?;
-        if resolved.len() != destinations.len() || resolved.is_empty() {
-            return Err(AppError::StaleTarget);
-        }
-        let placement_facts = placement_ids
-            .into_iter()
-            .zip(resolved.iter().cloned())
-            .collect::<BTreeMap<_, _>>();
-        Ok(ResolvedScopeSkillPlacements {
-            resolved: resolved_identity,
-            placements: ScopeSkillPlacementSet::new(context.clone(), placement_facts),
-        })
+        observe_scope_skill_placements(&self.targets, context, skill_name, facts, catalog).await
     }
+}
+
+pub(crate) async fn observe_scope_skill_placements<T: TargetFactResolver + ?Sized>(
+    targets: &T,
+    context: &SkillLocationRef,
+    skill_name: &str,
+    facts: &ScopePlanningSnapshot,
+    catalog: &AgentSelectionCatalog,
+) -> Result<ResolvedScopeSkillPlacements, AppError> {
+    let standard = catalog.standard();
+    if facts.resolved_context.context != *context || catalog.context() != context {
+        return Err(AppError::StaleContext);
+    }
+    let resolved_identity = InstalledSkillResolver::resolve(skill_name, &facts.lock_document)?;
+    let install_dir_name = &resolved_identity.install_dir_name;
+    let mut destinations = vec![standard.root.join_child(install_dir_name)];
+    let mut placement_ids = vec![DirectoryPlacementId::Standard];
+    let recorded_eve = if facts.lock_schema == crate::core::lossless_lock::LockSchema::Project {
+        recorded_eve_target_ids(skill_name, &facts.lock_document)?
+    } else {
+        None
+    };
+    let mut single_files = Vec::new();
+    if let Some(ids) = &recorded_eve {
+        for id in ids {
+            let roots = catalog
+                .options()
+                .filter(|option| option.adapter_target_ids.contains(id))
+                .map(|option| &option.placement.physical_key)
+                .collect::<BTreeSet<_>>();
+            if roots.len() > 1 {
+                return Err(ambiguous_installed_source(skill_name));
+            }
+        }
+    }
+    for option in catalog.options() {
+        if option.placement.content.uses_eve_payload()
+            && recorded_eve
+                .as_ref()
+                .is_some_and(|ids| option.adapter_target_ids.iter().any(|id| ids.contains(id)))
+        {
+            single_files.push((
+                destinations.len(),
+                option
+                    .placement
+                    .root
+                    .join_child(&format!("{install_dir_name}.md")),
+            ));
+        }
+        destinations.push(option.placement.root.join_child(install_dir_name));
+        placement_ids.push(option.placement.id.clone());
+    }
+    destinations.extend(single_files.iter().map(|(_, path)| path.clone()));
+    let resolved = targets.resolve(context, &destinations, None).await?;
+    if resolved.len() != destinations.len() || resolved.is_empty() {
+        return Err(AppError::StaleTarget);
+    }
+    let additional_observations = resolved[placement_ids.len()..].to_vec();
+    for ((directory_index, _), file) in single_files.iter().zip(&additional_observations) {
+        if file.entry_kind != TargetEntryKind::Missing {
+            if resolved[*directory_index].entry_kind != TargetEntryKind::Missing {
+                return Err(ambiguous_installed_source(&file.destination.native_path));
+            }
+            return Err(AppError::CapabilityUnavailable {
+                capability: "eveSingleFile".into(),
+                path: Some(file.destination.native_path.clone()),
+            });
+        }
+    }
+    let placement_facts = placement_ids
+        .into_iter()
+        .zip(resolved.iter().cloned())
+        .collect::<BTreeMap<_, _>>();
+    if let Some(ids) = &recorded_eve {
+        let owned = |ids: &[String]| {
+            placement_facts
+                .iter()
+                .filter_map(|(id, fact)| {
+                    let DirectoryPlacementId::Option(id) = id else {
+                        return None;
+                    };
+                    catalog
+                        .option(id)
+                        .filter(|option| {
+                            option.adapter_target_ids.iter().any(|id| ids.contains(id))
+                        })
+                        .map(|_| fact)
+                })
+                .collect::<Vec<_>>()
+        };
+        let current = owned(ids);
+        if let Some(records) = facts
+            .lock_document
+            .root_snapshot("skills")
+            .value()
+            .and_then(serde_json::Value::as_object)
+        {
+            for name in records.keys() {
+                if name == &resolved_identity.lock_key
+                    || InstalledSkillResolver::install_dir_name(name)
+                        .ok()
+                        .as_deref()
+                        != Some(install_dir_name.as_str())
+                {
+                    continue;
+                }
+                let Some(ids) = recorded_eve_target_ids(name, &facts.lock_document)? else {
+                    continue;
+                };
+                if owned(&ids).iter().any(|other| {
+                    current.iter().any(|target| {
+                        other.key == target.key
+                            || other
+                                .link_target_identity
+                                .as_ref()
+                                .is_some_and(|identity| identity.matches(&target.destination))
+                            || target
+                                .link_target_identity
+                                .as_ref()
+                                .is_some_and(|identity| identity.matches(&other.destination))
+                    })
+                }) {
+                    return Err(ambiguous_installed_source(skill_name));
+                }
+            }
+        }
+    }
+    Ok(ResolvedScopeSkillPlacements {
+        resolved: resolved_identity,
+        placements: ScopeSkillPlacementSet::new(context.clone(), placement_facts),
+        additional_observations,
+        recorded_eve_targets: recorded_eve,
+    })
 }
 
 #[cfg(test)]
@@ -88,6 +420,7 @@ mod tests {
         EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
     };
     use crate::environment::wsl::WslRuntime;
+    use std::collections::BTreeSet;
     use std::path::Path;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -252,6 +585,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_placement_includes_readers_of_leaf_links() {
+        let temp = tempdir().unwrap();
+        let direct_root = temp.path().join("direct");
+        let linked_root = temp.path().join("linked");
+        std::fs::create_dir_all(direct_root.join("demo")).unwrap();
+        std::fs::create_dir_all(&linked_root).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(direct_root.join("demo"), linked_root.join("demo")).unwrap();
+        #[cfg(windows)]
+        junction::create(direct_root.join("demo"), linked_root.join("demo")).unwrap();
+        let mut facts = observer_facts();
+        facts.resolved_context.home.native_path = temp.path().to_string_lossy().into_owned();
+        facts.resolved_context.skill_root.native_path =
+            temp.path().join("standard").to_string_lossy().into_owned();
+        facts.agent_runtime.agents = [
+            observed_agent(
+                "direct",
+                "Direct",
+                AgentAdapter::Standard,
+                direct_root.to_str(),
+            ),
+            observed_agent(
+                "linked",
+                "Linked",
+                AgentAdapter::Standard,
+                linked_root.to_str(),
+            ),
+        ]
+        .into();
+        let context = &facts.resolved_context.context;
+        let targets = crate::environment::planning::RuntimeTargetFactResolver::new(Arc::new(
+            WslRuntime::default(),
+        ));
+        let catalog = build_agent_selection_catalog(
+            context,
+            &facts.agent_runtime,
+            &[],
+            &facts.resolved_context.skill_root,
+            &targets,
+        )
+        .await
+        .unwrap();
+        let libraries =
+            crate::native_workflow_integration_support::update_library_repository(temp.path());
+        let known = ResolvedLibraryCandidateIndex::load_known(
+            libraries.as_ref(),
+            &targets,
+            &context.environment,
+            &["demo".try_into().unwrap()].into(),
+        )
+        .await
+        .unwrap();
+        let observed = observe_scope_skill_placements(&targets, context, "demo", &facts, &catalog)
+            .await
+            .unwrap();
+        let placements = observed.describe(&catalog, &known).unwrap();
+        let direct = representative_direct_placement(&placements).unwrap();
+        assert_eq!(
+            direct
+                .entry
+                .public
+                .readers
+                .iter()
+                .map(|r| r.agent_id.as_str())
+                .collect::<BTreeSet<_>>(),
+            ["direct", "linked"].into()
+        );
+        assert_eq!(
+            placements
+                .iter()
+                .filter(|p| p.is_direct_directory())
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn catalog_observation_reuses_shared_overlap_and_eve_placements() {
         let mut facts = observer_facts();
         let (eve_id, eve) = observed_agent("eve", "Eve", AgentAdapter::Eve, None);
@@ -342,7 +752,11 @@ mod tests {
         let temp = tempdir().unwrap();
         let standard = temp.path().join("demo");
         std::fs::create_dir_all(standard.join("scripts")).unwrap();
-        std::fs::write(standard.join("SKILL.md"), b"demo").unwrap();
+        std::fs::write(
+            standard.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\nbody",
+        )
+        .unwrap();
         std::fs::write(standard.join("scripts/run.sh"), b"#!/bin/sh\n").unwrap();
         let manager = Arc::new(PayloadSessionManager::in_memory(
             PayloadSessionLimits {

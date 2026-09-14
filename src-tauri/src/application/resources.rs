@@ -38,6 +38,11 @@ pub trait ResourceContextSource: Send + Sync {
         &'a self,
         context: &'a SkillLocationRef,
     ) -> ResourceFuture<'a, Result<ResolvedResourceContext, AppError>>;
+
+    fn resolve_skill<'a>(
+        &'a self,
+        identity: &'a SkillIdentity,
+    ) -> ResourceFuture<'a, Result<ResourceLocator, AppError>>;
 }
 
 pub trait AuthorizedResourceOpener: Send + Sync {
@@ -75,17 +80,15 @@ where
     }
 
     pub async fn open_skill(&self, identity: &SkillIdentity) -> Result<(), AppError> {
-        let install_dir_name = validate_skill_name(&identity.skill_name)?;
-        let resolved = self.source.resolve(&identity.context).await?;
-        let target = resolved.canonical_skills_root.join_child(&install_dir_name);
+        validate_skill_name(&identity.skill_name)?;
+        let target = self.source.resolve_skill(identity).await?;
         let target = self.resolve_directory(&identity.context, target).await?;
         self.opener.open(target).await
     }
 
     pub async fn read_skill(&self, identity: &SkillIdentity) -> Result<String, AppError> {
-        let install_dir_name = validate_skill_name(&identity.skill_name)?;
-        let resolved = self.source.resolve(&identity.context).await?;
-        let target = resolved.canonical_skills_root.join_child(&install_dir_name);
+        validate_skill_name(&identity.skill_name)?;
+        let target = self.source.resolve_skill(identity).await?;
         let target = self.resolve_directory(&identity.context, target).await?;
         self.reader.read_skill(target).await
     }
@@ -145,6 +148,18 @@ mod tests {
     struct StaticSource;
 
     impl ResourceContextSource for StaticSource {
+        fn resolve_skill<'a>(
+            &'a self,
+            identity: &'a SkillIdentity,
+        ) -> ResourceFuture<'a, Result<ResourceLocator, AppError>> {
+            Box::pin(async move {
+                let context = self.resolve(&identity.context).await?;
+                Ok(context
+                    .canonical_skills_root
+                    .join_child(&validate_skill_name(&identity.skill_name)?))
+            })
+        }
+
         fn resolve<'a>(
             &'a self,
             context: &'a SkillLocationRef,

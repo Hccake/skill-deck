@@ -6,8 +6,7 @@ use specta::Type;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::environment::types::{
-    same_environment_identity, EnvironmentKey, EnvironmentRef, RegisteredProject, ResourceLocator,
-    SkillLocation, SkillLocationRef,
+    EnvironmentKey, EnvironmentRef, RegisteredProject, SkillLocation, SkillLocationRef,
 };
 use crate::error::AppError;
 
@@ -207,44 +206,6 @@ pub fn posix_relative_target(
     } else {
         relative.join("/")
     })
-}
-
-pub fn physical_paths_overlap(
-    left: &ResourceLocator,
-    right: &ResourceLocator,
-    case_sensitive: bool,
-) -> Result<bool, AppError> {
-    if !same_environment_identity(&left.environment, &right.environment) {
-        return Ok(false);
-    }
-    let left = normalized_path_components(&left.native_path, case_sensitive)?;
-    let right = normalized_path_components(&right.native_path, case_sensitive)?;
-    Ok(is_component_prefix(&left, &right) || is_component_prefix(&right, &left))
-}
-
-fn normalized_path_components(path: &str, case_sensitive: bool) -> Result<Vec<String>, AppError> {
-    let mut components = Vec::new();
-    for component in path.replace('\\', "/").split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                return Err(AppError::UnsafePath {
-                    path: path.to_string(),
-                    reason: "physical path is not normalized".to_string(),
-                });
-            }
-            value => components.push(if case_sensitive {
-                value.to_string()
-            } else {
-                value.to_lowercase()
-            }),
-        }
-    }
-    Ok(components)
-}
-
-fn is_component_prefix(left: &[String], right: &[String]) -> bool {
-    left.len() <= right.len() && left.iter().zip(right).all(|(left, right)| left == right)
 }
 
 pub fn context_snapshot_revision(
@@ -453,27 +414,6 @@ mod tests {
         let upper = physical_target_key(backend(), parent(10), "Skill", false).expect("upper");
         let lower = physical_target_key(backend(), parent(10), "skill", false).expect("lower");
         assert_eq!(upper, lower);
-    }
-
-    #[test]
-    fn physical_path_overlap_uses_component_and_environment_identity_rules() {
-        let locator = |environment, native_path: &str| ResourceLocator {
-            environment,
-            native_path: native_path.to_string(),
-        };
-        let native = locator(EnvironmentRef::Native, r"C:\Code\App");
-        let native_child = locator(EnvironmentRef::Native, r"c:\code\app\skills");
-        let native_sibling = locator(EnvironmentRef::Native, r"C:\Code\Application");
-        let wsl = locator(
-            EnvironmentRef::Wsl {
-                distro_name: "Ubuntu".to_string(),
-            },
-            "/mnt/c/Code/App",
-        );
-
-        assert!(physical_paths_overlap(&native, &native_child, false).expect("native overlap"));
-        assert!(!physical_paths_overlap(&native, &native_sibling, false).expect("native sibling"));
-        assert!(!physical_paths_overlap(&native, &wsl, false).expect("different Environment"));
     }
 
     #[test]

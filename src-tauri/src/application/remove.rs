@@ -29,7 +29,7 @@ use crate::core::agent_definition::AgentId;
 use crate::core::mutation::{CancellationSignal, MutationKind};
 use crate::environment::planning::TargetFactResolver;
 use crate::environment::runtime::ObservedEntryId;
-use crate::environment::types::SkillLocationRef;
+use crate::environment::types::{display_locator, ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
 use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLockMutation};
 
@@ -37,10 +37,13 @@ use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLo
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct RemovePreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_base: Option<crate::environment::context_resolver::ScopePathBase>,
     pub token: PreviewToken,
     pub context: SkillLocationRef,
     pub skill_name: String,
     pub standard: ObservedEntryKind,
+    pub standard_path: Option<ResourceLocator>,
     pub physical_entries: Vec<ObservedPhysicalEntry>,
     pub restores_library: bool,
 }
@@ -117,7 +120,7 @@ where
         let entries = plan
             .project_observed_entries()
             .map_err(|error| error.into_app_error())?;
-        remove_preview(
+        let mut preview = remove_preview(
             context,
             skill_name,
             &facts,
@@ -125,7 +128,9 @@ where
             &entries,
             &observed,
             &library_candidates,
-        )
+        )?;
+        preview.path_base = Some(facts.resolved_context.path_base(&self.targets).await);
+        Ok(preview)
     }
 
     pub async fn execute(
@@ -354,15 +359,23 @@ fn remove_preview(
     snapshot: &crate::application::scope_skill_placements::ResolvedScopeSkillPlacements,
     library_candidates: &LibraryCandidateSnapshot,
 ) -> Result<RemovePreview, AppError> {
+    let standard = plan
+        .standard_fact()
+        .map_err(|error| error.into_app_error())?;
+    let direct_keys = plan
+        .directories()
+        .iter()
+        .filter(|directory| {
+            matches!(
+                directory.observed(),
+                crate::application::scope_skill_planning::ObservedVersion::Direct
+            )
+        })
+        .map(|directory| directory.fact().key.clone())
+        .collect::<BTreeSet<_>>();
     let observed_state_digest = stable_digest(&(
-        &plan
-            .standard_fact()
-            .map_err(|error| error.into_app_error())?
-            .key,
-        &plan
-            .standard_fact()
-            .map_err(|error| error.into_app_error())?
-            .fingerprint,
+        &standard.key,
+        &standard.fingerprint,
         entries
             .iter()
             .map(|entry| (&entry.public.entry_id, &entry.fact.fingerprint))
@@ -408,15 +421,21 @@ fn remove_preview(
         planner_contract_version: 3,
     })?;
     Ok(RemovePreview {
+        path_base: None,
         token,
         context: context.clone(),
         skill_name: skill_name.to_string(),
         standard: crate::application::skill_entry_projection::observed_entry_kind(
-            plan.standard_fact()
-                .map_err(|error| error.into_app_error())?
-                .entry_kind,
+            standard.entry_kind,
         ),
-        physical_entries: entries.iter().map(|entry| entry.public.clone()).collect(),
+        standard_path: direct_keys
+            .contains(&standard.key)
+            .then(|| display_locator(&standard.destination)),
+        physical_entries: entries
+            .iter()
+            .filter(|entry| direct_keys.contains(&entry.fact.key))
+            .map(|entry| entry.public.clone())
+            .collect(),
         restores_library: !library_candidates.candidates().ordered().is_empty(),
     })
 }
@@ -534,6 +553,7 @@ mod tests {
     fn agent_entry_intent_rejects_unknown_entry() {
         let id = ObservedEntryId::parse("entry-v1-copy").unwrap();
         let preview = RemovePreview {
+            path_base: None,
             token: crate::application::mutation::plan::PreviewToken {
                 generation: "preview-v1-remove".to_string(),
                 registry_revision: "registry-1".to_string(),
@@ -549,6 +569,7 @@ mod tests {
             },
             skill_name: "demo".to_string(),
             standard: ObservedEntryKind::Directory,
+            standard_path: None,
             physical_entries: Vec::new(),
             restores_library: false,
         };
@@ -581,6 +602,16 @@ mod tests {
         .unwrap();
         let library_path = temp.path().join("libraries/lib-1/skills/demo");
         std::fs::create_dir_all(&library_path).unwrap();
+        std::fs::write(
+            library_path.join("SKILL.md"),
+            b"---\nname: demo\ndescription: Library\n---\nLibrary body\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(library_only_path.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&library_path, &library_only_path).unwrap();
+        #[cfg(windows)]
+        junction::create(&library_path, &library_only_path).unwrap();
         let context = SkillLocationRef {
             environment: EnvironmentRef::Native,
             scope: SkillLocation::Global,
@@ -610,7 +641,7 @@ mod tests {
             private_presence: None,
             legacy_paths: Vec::new(),
         };
-        let facts = ScopePlanningSnapshot {
+        let mut facts = ScopePlanningSnapshot {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: None,
@@ -664,6 +695,21 @@ mod tests {
             lock_document: LosslessLockDocument::empty(LockSchema::Global),
             eve_targets: Vec::new(),
         };
+        let library_agent_id = AgentId::parse("library-only").unwrap();
+        let mut library_agent = facts.agent_runtime.agents[&agent_id].clone();
+        library_agent.definition.id = library_agent_id.clone();
+        library_agent.definition.global.private_path = Some(PathSpec::home(".library-only/skills"));
+        library_agent.global.private_path = Some(
+            library_only_path
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        );
+        facts
+            .agent_runtime
+            .agents
+            .insert(library_agent_id, library_agent);
         let targets = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
         let resolved_targets = targets
             .resolve(
@@ -682,6 +728,12 @@ mod tests {
             crate::application::skill_libraries::LibraryId::parse("lib-1"),
             "demo",
             locator(&library_path),
+            targets
+                .resolve_environment(&EnvironmentRef::Native, &[locator(&library_path)], None)
+                .await
+                .unwrap()
+                .remove(0)
+                .key,
         );
         let library_candidates = LibraryCandidateSnapshot::new(
             "library-evidence-1",
@@ -704,6 +756,19 @@ mod tests {
 
         let preview = service.preview(&context, "demo").await.unwrap();
         assert!(preview.restores_library);
+        let serialized = serde_json::to_value(&preview).unwrap();
+        let standard = serialized
+            .get("standardPath")
+            .expect("actual common installation path");
+        assert_eq!(
+            std::fs::canonicalize(standard["nativePath"].as_str().unwrap()).unwrap(),
+            std::fs::canonicalize(&canonical_path).unwrap()
+        );
+        assert_eq!(
+            preview.physical_entries.len(),
+            1,
+            "library-only positions are preserved"
+        );
         service
             .execute(
                 &RemoveRequest {
