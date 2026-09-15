@@ -11,6 +11,16 @@ pub(crate) type WslSourceFuture<'a> =
     Pin<Box<dyn Future<Output = Result<FetchResult, AppError>> + Send + 'a>>;
 
 pub(crate) trait WslSourceAccess: Send + Sync {
+    fn probe_ref<'a>(
+        &'a self,
+        _distro_name: &'a str,
+        _source: &'a str,
+        _git_ref: Option<&'a str>,
+        _cancellation: CancellationSignal,
+    ) -> Pin<Box<dyn Future<Output = Result<String, AppError>> + Send + 'a>> {
+        Box::pin(async { Err(AppError::StaleEnvironment) })
+    }
+
     fn discover<'a>(
         &'a self,
         distro_name: &'a str,

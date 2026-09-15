@@ -9,11 +9,11 @@ use crate::application::wellknown_access::{
     extract_hostname, WellKnownFetchError, WellKnownFetchResult, WellKnownTrustMetadata,
 };
 use crate::core::mutation::CancellationSignal;
-use crate::error::AppError;
+use crate::error::{AppError, SourceAcquisitionFailureReason};
 use crate::runtime::http_transport::{HttpGetRequest, HttpTransport, HttpTransportError};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -25,6 +25,7 @@ const MAX_ARCHIVE_FILES: usize = 1000;
 const WELL_KNOWN_PATHS: &[&str] = &[".well-known/agent-skills", ".well-known/skills"];
 const INDEX_FILE: &str = "index.json";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const LEGACY_MEMBER_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -93,6 +94,10 @@ impl NormalizedWellKnownEntry {
 struct FetchedWellKnownIndex {
     index_url: String,
     entries: Vec<NormalizedWellKnownEntry>,
+    complete_skill_catalog: BTreeSet<String>,
+    catalog_complete: bool,
+    member_failures: BTreeMap<String, SourceAcquisitionFailureReason>,
+    redirected_hosts: BTreeSet<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +232,7 @@ fn validate_skill_entry(entry: &WellKnownSkillEntry) -> Result<(), AppError> {
         });
     }
 
+    let mut paths = BTreeSet::new();
     for file in &entry.files {
         if file.trim().is_empty() {
             return Err(AppError::InvalidSource {
@@ -249,6 +255,16 @@ fn validate_skill_entry(entry: &WellKnownSkillEntry) -> Result<(), AppError> {
                 value: format!("Path traversal not allowed: {file}"),
             });
         }
+        if file.contains(':')
+            || normalized
+                .split('/')
+                .any(|part| part.is_empty() || part == ".")
+            || !paths.insert(normalized.to_ascii_lowercase())
+        {
+            return Err(AppError::InvalidSource {
+                value: "Invalid or conflicting Well-known file path".to_string(),
+            });
+        }
     }
 
     Ok(())
@@ -257,69 +273,87 @@ fn validate_skill_entry(entry: &WellKnownSkillEntry) -> Result<(), AppError> {
 fn normalize_wellknown_index(
     raw: &serde_json::Value,
     index_url: &str,
-) -> Option<Vec<NormalizedWellKnownEntry>> {
+) -> Option<FetchedWellKnownIndex> {
     let object = raw.as_object()?;
     let skills = object.get("skills")?.as_array()?;
     let schema = object.get("$schema").and_then(|value| value.as_str());
-
-    if schema == Some(DISCOVERY_SCHEMA_V2) {
-        if skills.is_empty() {
-            return Some(Vec::new());
-        }
-        let mut entries = Vec::new();
-        for value in skills {
-            let object = value.as_object()?;
-            let name = object.get("name")?.as_str()?.to_string();
-            let description = object.get("description")?.as_str()?.to_string();
-            let entry_type = object.get("type")?.as_str()?.to_string();
-            let url = object.get("url")?.as_str()?;
-            let digest = object.get("digest")?.as_str()?.to_string();
-
-            if validate_skill_name(&name).is_err()
-                || description.trim().is_empty()
-                || description.len() > 1024
-                || !matches!(entry_type.as_str(), "skill-md" | "archive")
-                || !is_valid_sha256_digest(&digest)
-            {
-                continue;
-            }
-
-            let artifact_url = Url::parse(index_url).ok()?.join(url).ok()?.to_string();
-            entries.push(NormalizedWellKnownEntry::V2 {
-                name,
-                entry_type,
-                artifact_url,
-                digest,
-            });
-        }
-        return (!entries.is_empty()).then_some(entries);
-    }
-
-    if schema.is_some() {
+    if schema.is_some_and(|schema| schema != DISCOVERY_SCHEMA_V2) {
         return None;
     }
-
-    if skills.is_empty() {
-        return Some(Vec::new());
-    }
-
-    let base_url = index_url
-        .trim_end_matches(&format!("/{INDEX_FILE}"))
-        .to_string();
-    let mut entries = Vec::new();
+    let base = Url::parse(index_url).ok()?;
+    let mut catalog = FetchedWellKnownIndex {
+        index_url: index_url.to_string(),
+        entries: Vec::new(),
+        complete_skill_catalog: BTreeSet::new(),
+        catalog_complete: true,
+        member_failures: BTreeMap::new(),
+        redirected_hosts: BTreeSet::new(),
+    };
     for value in skills {
-        let entry: WellKnownSkillEntry = serde_json::from_value(value.clone()).ok()?;
-        if validate_skill_entry(&entry).is_err() {
-            return None;
+        let Some(name) = value
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| validate_skill_name(name).is_ok())
+        else {
+            catalog.catalog_complete = false;
+            continue;
+        };
+        if !catalog.complete_skill_catalog.insert(name.to_string()) {
+            catalog.entries.retain(|entry| entry.name() != name);
+            catalog.member_failures.insert(
+                name.to_string(),
+                SourceAcquisitionFailureReason::InvalidContent,
+            );
+            continue;
         }
-        entries.push(NormalizedWellKnownEntry::Legacy {
-            name: entry.name,
-            files: entry.files,
-            base_url: base_url.clone(),
-        });
+        let entry = (|| {
+            if schema == Some(DISCOVERY_SCHEMA_V2) {
+                let description = value.get("description")?.as_str()?;
+                let entry_type = value.get("type")?.as_str()?;
+                let digest = value.get("digest")?.as_str()?;
+                if description.trim().is_empty()
+                    || description.len() > 1024
+                    || !matches!(entry_type, "skill-md" | "archive")
+                    || !is_valid_sha256_digest(digest)
+                {
+                    return None;
+                }
+                let artifact = base.join(value.get("url")?.as_str()?).ok()?;
+                if !matches!(artifact.scheme(), "http" | "https") {
+                    return None;
+                }
+                Some(NormalizedWellKnownEntry::V2 {
+                    name: name.to_string(),
+                    entry_type: entry_type.to_string(),
+                    artifact_url: artifact.to_string(),
+                    digest: digest.to_string(),
+                })
+            } else {
+                let mut entry: WellKnownSkillEntry = serde_json::from_value(value.clone()).ok()?;
+                entry.files = entry
+                    .files
+                    .into_iter()
+                    .map(|path| path.replace('\\', "/"))
+                    .collect();
+                validate_skill_entry(&entry).ok()?;
+                Some(NormalizedWellKnownEntry::Legacy {
+                    name: entry.name,
+                    files: entry.files,
+                    base_url: base.join("./").ok()?.to_string(),
+                })
+            }
+        })();
+        match entry {
+            Some(entry) => catalog.entries.push(entry),
+            None => {
+                catalog.member_failures.insert(
+                    name.to_string(),
+                    SourceAcquisitionFailureReason::InvalidContent,
+                );
+            }
+        }
     }
-
-    (!entries.is_empty()).then_some(entries)
+    Some(catalog)
 }
 
 fn is_valid_sha256_digest(value: &str) -> bool {
@@ -433,6 +467,15 @@ pub(crate) async fn fetch_wellknown_skills_attempt_with_client(
     url: &str,
     cancellation: &CancellationSignal,
 ) -> Result<WellKnownFetchResult, WellKnownFetchError> {
+    fetch_selected_wellknown_skills_with_client(http, url, None, cancellation).await
+}
+
+pub(crate) async fn fetch_selected_wellknown_skills_with_client(
+    http: &HttpTransport,
+    url: &str,
+    skill_names: Option<&[String]>,
+    cancellation: &CancellationSignal,
+) -> Result<WellKnownFetchResult, WellKnownFetchError> {
     let operation_id = uuid::Uuid::new_v4().simple().to_string();
 
     let fetched_index = fetch_index(http, url, cancellation, &operation_id)
@@ -444,44 +487,72 @@ pub(crate) async fn fetch_wellknown_skills_attempt_with_client(
                 WellKnownFetchError::unproven(error)
             }
         })?;
-    materialize_fetched_index(http, fetched_index, cancellation, &operation_id)
-        .await
-        .map_err(WellKnownFetchError::catalog_established)
+    materialize_fetched_index(
+        http,
+        fetched_index,
+        skill_names,
+        cancellation,
+        &operation_id,
+    )
+    .await
+    .map_err(WellKnownFetchError::catalog_established)
 }
 
 async fn materialize_fetched_index(
     http: &HttpTransport,
-    fetched_index: FetchedWellKnownIndex,
+    mut fetched_index: FetchedWellKnownIndex,
+    skill_names: Option<&[String]>,
     cancellation: &CancellationSignal,
     operation_id: &str,
 ) -> Result<WellKnownFetchResult, AppError> {
+    if let Some(names) = skill_names {
+        fetched_index
+            .entries
+            .retain(|entry| names.iter().any(|name| name == entry.name()));
+        if !fetched_index.catalog_complete {
+            for name in names {
+                if !fetched_index.complete_skill_catalog.contains(name) {
+                    fetched_index
+                        .member_failures
+                        .insert(name.clone(), SourceAcquisitionFailureReason::InvalidContent);
+                }
+            }
+        }
+    }
+    if fetched_index.entries.is_empty() {
+        return Err(
+            if fetched_index.member_failures.is_empty() && fetched_index.catalog_complete {
+                AppError::NoSkillsFound
+            } else {
+                AppError::WellKnownSourceFailed {
+                    reason: SourceAcquisitionFailureReason::InvalidContent,
+                }
+            },
+        );
+    }
     let entries = fetched_index.entries;
 
-    if entries.is_empty() {
-        return Err(AppError::NoSkillsFound);
-    }
-
-    let temp_path = tempfile::TempDir::new()?.keep();
+    let temp = tempfile::TempDir::new()?;
+    let temp_path = temp.path();
     let mut trust_metadata = HashMap::new();
-    let mut redirected_download_host = None;
+    let mut redirected_download_hosts = fetched_index.redirected_hosts;
+    let mut member_failures = fetched_index.member_failures;
+    let index_host = extract_hostname(&fetched_index.index_url);
     let download = WellKnownDownloadContext {
         http,
-        temp_path: &temp_path,
+        temp_path,
         cancellation,
         operation_id,
     };
 
     for entry in &entries {
-        match entry {
+        let downloaded = match entry {
             NormalizedWellKnownEntry::Legacy {
                 name,
                 files,
                 base_url,
                 ..
-            } => {
-                let redirected = download_legacy_entry(&download, name, files, base_url).await?;
-                redirected_download_host = redirected_download_host.or(redirected);
-            }
+            } => download_legacy_entry(&download, name, files, base_url).await,
             NormalizedWellKnownEntry::V2 {
                 name,
                 entry_type,
@@ -489,9 +560,27 @@ async fn materialize_fetched_index(
                 digest,
                 ..
             } => {
-                let redirected =
-                    download_v2_entry(&download, name, entry_type, artifact_url, digest).await?;
-                redirected_download_host = redirected_download_host.or(redirected);
+                if extract_hostname(artifact_url) != index_host {
+                    if let Some(host) = extract_hostname(artifact_url) {
+                        redirected_download_hosts.insert(host);
+                    }
+                }
+                download_v2_entry(&download, name, entry_type, artifact_url, digest).await
+            }
+        };
+        match downloaded {
+            Ok(hosts) => redirected_download_hosts.extend(hosts),
+            Err(error @ (AppError::MutationCancelled | AppError::InvalidProxySettings { .. })) => {
+                return Err(error)
+            }
+            Err(error) => {
+                member_failures.insert(entry.name().to_string(), member_failure_reason(&error));
+                match fs::remove_dir_all(temp_path.join(entry.name())) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                continue;
             }
         }
         let digest = match entry {
@@ -503,10 +592,22 @@ async fn materialize_fetched_index(
         trust_metadata.insert(entry.name().to_string(), entry.trust_metadata(digest));
     }
 
+    if trust_metadata.is_empty() {
+        return Err(AppError::WellKnownSourceFailed {
+            reason: member_failures
+                .values()
+                .next()
+                .copied()
+                .unwrap_or(SourceAcquisitionFailureReason::InvalidContent),
+        });
+    }
+
     Ok(WellKnownFetchResult {
-        repo_path: temp_path,
+        repo_path: temp.keep(),
         trust_metadata,
-        redirected_download_host,
+        redirected_download_host: redirected_download_hosts.iter().next().cloned(),
+        redirected_download_hosts: redirected_download_hosts.into_iter().collect(),
+        member_failures,
     })
 }
 
@@ -519,9 +620,9 @@ pub(crate) async fn check_wellknown_updates_with_client(
     let operation_id = uuid::Uuid::new_v4().simple().to_string();
     let fetched = fetch_index(http, url, cancellation, &operation_id).await?;
     let complete_skill_catalog = fetched
-        .entries
+        .complete_skill_catalog
         .iter()
-        .map(|entry| entry.name().to_string())
+        .cloned()
         .collect::<Vec<_>>();
     let requested = skill_names
         .iter()
@@ -535,10 +636,8 @@ pub(crate) async fn check_wellknown_updates_with_client(
         operation_id: &operation_id,
     };
     let mut digests = HashMap::new();
+    let mut member_failures = fetched.member_failures;
     for entry in &fetched.entries {
-        if !requested.contains(entry.name()) {
-            continue;
-        }
         match entry {
             NormalizedWellKnownEntry::V2 { name, digest, .. } => {
                 digests.insert(name.clone(), digest.clone());
@@ -549,10 +648,33 @@ pub(crate) async fn check_wellknown_updates_with_client(
                 base_url,
                 ..
             } => {
-                download_legacy_entry(&download, name, files, base_url).await?;
-                digests.insert(
-                    name.clone(),
-                    compute_legacy_skill_digest(&temp.path().join(name))?,
+                if !requested.contains(name.as_str()) {
+                    continue;
+                }
+                match download_legacy_entry(&download, name, files, base_url).await {
+                    Ok(_) => {
+                        digests.insert(
+                            name.clone(),
+                            compute_legacy_skill_digest(&temp.path().join(name))?,
+                        );
+                    }
+                    Err(
+                        error @ (AppError::MutationCancelled
+                        | AppError::InvalidProxySettings { .. }),
+                    ) => return Err(error),
+                    Err(error) => {
+                        member_failures.insert(name.clone(), member_failure_reason(&error));
+                    }
+                }
+            }
+        }
+    }
+    if !fetched.catalog_complete {
+        for name in requested {
+            if !fetched.complete_skill_catalog.contains(name) {
+                member_failures.insert(
+                    name.to_string(),
+                    SourceAcquisitionFailureReason::InvalidContent,
                 );
             }
         }
@@ -562,6 +684,8 @@ pub(crate) async fn check_wellknown_updates_with_client(
             index_url: fetched.index_url,
             complete_skill_catalog,
             digests,
+            catalog_complete: fetched.catalog_complete,
+            member_failures,
         },
     )
 }
@@ -606,25 +730,49 @@ async fn download_legacy_entry(
     name: &str,
     files: &[String],
     base_url: &str,
-) -> Result<Option<String>, AppError> {
+) -> Result<BTreeSet<String>, AppError> {
+    let deadline = std::time::Instant::now() + LEGACY_MEMBER_TIMEOUT;
     let skill_dir = context.temp_path.join(name);
     fs::create_dir_all(&skill_dir)?;
 
-    let mut skill_ok = true;
-    let mut redirected_download_host = None;
+    let mut redirected_download_hosts = BTreeSet::new();
+    let mut total_bytes = 0_u64;
+    if files.len() > MAX_ARCHIVE_FILES {
+        return Err(AppError::WellKnownSourceFailed {
+            reason: SourceAcquisitionFailureReason::LimitExceeded,
+        });
+    }
 
     for file_path in files {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(AppError::WellKnownSourceFailed {
+                reason: SourceAcquisitionFailureReason::Timeout,
+            });
+        }
         if context.cancellation.is_cancelled() {
             return Err(AppError::MutationCancelled);
         }
-        let file_url = format!("{base_url}/{name}/{file_path}");
+        let mut file_url = Url::parse(base_url)
+            .and_then(|base| base.join(&format!("{name}/")))
+            .map_err(|_| AppError::WellKnownSourceFailed {
+                reason: SourceAcquisitionFailureReason::InvalidContent,
+            })?;
+        file_url
+            .path_segments_mut()
+            .map_err(|_| AppError::WellKnownSourceFailed {
+                reason: SourceAcquisitionFailureReason::InvalidContent,
+            })?
+            .pop_if_empty()
+            .extend(file_path.split('/'));
+        let file_url = file_url.to_string();
 
         let response = match context
             .http
             .get(
                 HttpGetRequest::new(
                     &file_url,
-                    REQUEST_TIMEOUT,
+                    REQUEST_TIMEOUT.min(remaining),
                     MAX_ARCHIVE_UNPACKED_BYTES as usize,
                 )
                 .operation_id(context.operation_id)
@@ -637,25 +785,32 @@ async fn download_legacy_entry(
                 return Err(AppError::MutationCancelled);
             }
             Err(HttpTransportError::Settings(error)) => return Err(error.into()),
-            _ => {
-                if file_path.eq_ignore_ascii_case("SKILL.md") {
-                    skill_ok = false;
-                    break;
-                }
-                continue;
+            Ok(response) => {
+                return Err(AppError::WellKnownSourceFailed {
+                    reason: source_failure_reason_from_status(response.status.as_u16()),
+                })
             }
+            Err(error) => return Err(map_network_error(error, "无法下载 Well-known 成员文件")),
         };
+        total_bytes = total_bytes.saturating_add(response.body.len() as u64);
+        if total_bytes > MAX_ARCHIVE_UNPACKED_BYTES {
+            return Err(AppError::WellKnownSourceFailed {
+                reason: SourceAcquisitionFailureReason::LimitExceeded,
+            });
+        }
 
-        redirected_download_host = redirected_download_host.or_else(|| {
-            crate::application::source_acquisition::redirected_host(
-                &file_url,
-                response.final_url.as_str(),
-            )
-        });
+        if let Some(host) = crate::application::source_acquisition::redirected_host(
+            &file_url,
+            response.final_url.as_str(),
+        ) {
+            redirected_download_hosts.insert(host);
+        }
         let target_path = skill_dir.join(file_path);
 
         if !target_path.starts_with(&skill_dir) {
-            continue;
+            return Err(AppError::WellKnownSourceFailed {
+                reason: SourceAcquisitionFailureReason::InvalidContent,
+            });
         }
 
         if let Some(parent) = target_path.parent() {
@@ -665,11 +820,23 @@ async fn download_legacy_entry(
         fs::write(&target_path, &response.body)?;
     }
 
-    if !skill_ok {
-        let _ = fs::remove_dir_all(&skill_dir);
+    if std::time::Instant::now() >= deadline {
+        return Err(AppError::WellKnownSourceFailed {
+            reason: SourceAcquisitionFailureReason::Timeout,
+        });
     }
 
-    Ok(redirected_download_host)
+    Ok(redirected_download_hosts)
+}
+
+fn member_failure_reason(error: &AppError) -> SourceAcquisitionFailureReason {
+    match error {
+        AppError::WellKnownSourceFailed { reason } => *reason,
+        AppError::InvalidSource { .. }
+        | AppError::InvalidSkillMd { .. }
+        | AppError::DirectDownloadFailed { .. } => SourceAcquisitionFailureReason::InvalidContent,
+        _ => SourceAcquisitionFailureReason::Unavailable,
+    }
 }
 
 async fn download_v2_entry(
@@ -678,7 +845,7 @@ async fn download_v2_entry(
     entry_type: &str,
     artifact_url: &str,
     digest: &str,
-) -> Result<Option<String>, AppError> {
+) -> Result<BTreeSet<String>, AppError> {
     let response = context
         .http
         .get(
@@ -710,7 +877,9 @@ async fn download_v2_entry(
             Ok(crate::application::source_acquisition::redirected_host(
                 artifact_url,
                 response.final_url.as_str(),
-            ))
+            )
+            .into_iter()
+            .collect())
         }
         "archive" => {
             let format = detect_archive_format(&bytes, artifact_url, "");
@@ -723,7 +892,9 @@ async fn download_v2_entry(
             Ok(crate::application::source_acquisition::redirected_host(
                 artifact_url,
                 response.final_url.as_str(),
-            ))
+            )
+            .into_iter()
+            .collect())
         }
         other => Err(AppError::InvalidSource {
             value: format!("Unsupported well-known entry type: {other}"),
@@ -794,7 +965,13 @@ async fn fetch_index(
             Err(_) => continue,
         };
 
-        if let Some(entries) = normalize_wellknown_index(&raw, resp.final_url.as_str()) {
+        if let Some(mut catalog) = normalize_wellknown_index(&raw, resp.final_url.as_str()) {
+            if let Some(host) = crate::application::source_acquisition::redirected_host(
+                url,
+                resp.final_url.as_str(),
+            ) {
+                catalog.redirected_hosts.insert(host);
+            }
             if let Some(scope) = &plan.scope {
                 if candidate_index >= scope.scoped_candidate_count {
                     return Err(AppError::WellKnownScopeNotFound {
@@ -802,18 +979,12 @@ async fn fetch_index(
                         root_url: scope.root_url.clone(),
                     });
                 }
-                if entries.is_empty() {
-                    empty_scoped_catalog = Some(FetchedWellKnownIndex {
-                        index_url: resp.final_url.to_string(),
-                        entries,
-                    });
+                if catalog.complete_skill_catalog.is_empty() && catalog.catalog_complete {
+                    empty_scoped_catalog = Some(catalog);
                     continue;
                 }
             }
-            return Ok(FetchedWellKnownIndex {
-                index_url: resp.final_url.to_string(),
-                entries,
-            });
+            return Ok(catalog);
         }
     }
 
@@ -925,6 +1096,171 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
+    fn direct_http() -> HttpTransport {
+        HttpTransport::new(Arc::new(ProxySettingsStore::new(NetworkProxySettings {
+            mode: ProxyMode::Direct,
+            ..Default::default()
+        })))
+    }
+
+    #[tokio::test]
+    async fn selected_member_download_does_not_request_an_unselected_artifact() {
+        use crate::application::wellknown_access::WellKnownAccess;
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/index.json", server.server_addr());
+        let content = "---\nname: chosen\ndescription: Chosen\n---\n";
+        let worker = thread::spawn(move || {
+            let mut paths = Vec::new();
+            for _ in 0..3 {
+                let Some(request) = server.recv_timeout(Duration::from_secs(2)).unwrap() else {
+                    break;
+                };
+                paths.push(request.url().to_string());
+                let (status, body) = match request.url() {
+                    "/index.json" => (200, serde_json::json!({
+                        "$schema": DISCOVERY_SCHEMA_V2,
+                        "skills": [
+                            {"name":"chosen","description":"Chosen","type":"skill-md","url":"chosen.md","digest":compute_digest(content.as_bytes())},
+                            {"name":"other","description":"Other","type":"skill-md","url":"broken.md","digest":compute_digest(b"other")}
+                        ]
+                    }).to_string()),
+                    "/chosen.md" => (200, content.to_string()),
+                    _ => (404, "missing".to_string()),
+                };
+                request
+                    .respond(tiny_http::Response::from_string(body).with_status_code(status))
+                    .unwrap();
+            }
+            paths
+        });
+        let access = crate::runtime::wellknown::RuntimeWellKnownAccess::new(direct_http());
+        let result = access
+            .fetch_selected(
+                &url,
+                &["chosen".to_string()],
+                &CancellationSignal::default(),
+            )
+            .await;
+        let paths = worker.join().unwrap();
+        let fetched = result.expect("an unrelated broken artifact must not block selected content");
+        assert!(fetched.repo_path.join("chosen/SKILL.md").is_file());
+        fs::remove_dir_all(fetched.repo_path).unwrap();
+        assert_eq!(paths, vec!["/index.json", "/chosen.md"]);
+    }
+
+    #[tokio::test]
+    async fn invalid_named_index_member_is_not_reported_as_deleted() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/index.json", server.server_addr());
+        let worker = thread::spawn(move || {
+            let request = server
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            request.respond(tiny_http::Response::from_string(serde_json::json!({
+                "$schema": DISCOVERY_SCHEMA_V2,
+                "skills": [
+                    {"name":"good","description":"Good","type":"skill-md","url":"good/SKILL.md","digest":format!("sha256:{}", "0".repeat(64))},
+                    {"name":"bad","description":"Bad","type":"skill-md","url":"bad/SKILL.md","digest":"invalid"}
+                ]
+            }).to_string())).unwrap();
+        });
+        let evidence = check_wellknown_updates_with_client(
+            &direct_http(),
+            &url,
+            &["good".into(), "bad".into()],
+            &CancellationSignal::default(),
+        )
+        .await
+        .unwrap();
+        worker.join().unwrap();
+        assert!(evidence.catalog_complete);
+        assert!(evidence.complete_skill_catalog.contains(&"bad".to_string()));
+        assert_eq!(
+            evidence.member_failures.get("bad"),
+            Some(&crate::error::SourceAcquisitionFailureReason::InvalidContent)
+        );
+        assert!(evidence.digests.contains_key("good"));
+    }
+
+    #[tokio::test]
+    async fn legacy_download_requires_every_declared_file() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/index.json", server.server_addr());
+        let worker = thread::spawn(move || {
+            for _ in 0..3 {
+                let Some(request) = server.recv_timeout(Duration::from_secs(2)).unwrap() else {
+                    break;
+                };
+                let (status, body) = match request.url() {
+                    "/index.json" => (
+                        200,
+                        r#"{"skills":[{"name":"legacy","description":"Legacy","files":["SKILL.md","scripts/run.sh"]}]}"#,
+                    ),
+                    "/legacy/SKILL.md" => (200, "---\nname: legacy\ndescription: Legacy\n---\n"),
+                    _ => (404, "missing"),
+                };
+                request
+                    .respond(tiny_http::Response::from_string(body).with_status_code(status))
+                    .unwrap();
+            }
+        });
+        let result = fetch_wellknown_skills_with_client(
+            &direct_http(),
+            &url,
+            &CancellationSignal::default(),
+        )
+        .await;
+        worker.join().unwrap();
+        if let Ok(fetched) = &result {
+            fs::remove_dir_all(&fetched.repo_path).unwrap();
+        }
+        assert!(
+            result.is_err(),
+            "incomplete legacy content must not be published"
+        );
+    }
+
+    #[tokio::test]
+    async fn queried_legacy_index_uses_the_index_parent_for_file_urls() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/catalog/index.json?channel=stable",
+            server.server_addr()
+        );
+        let worker = thread::spawn(move || {
+            for _ in 0..2 {
+                let request = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap()
+                    .unwrap();
+                let (status, body) = match request.url() {
+                    "/catalog/index.json?channel=stable" => (
+                        200,
+                        r#"{"skills":[{"name":"legacy","description":"Legacy","files":["SKILL.md"]}]}"#,
+                    ),
+                    "/catalog/legacy/SKILL.md" => {
+                        (200, "---\nname: legacy\ndescription: Legacy\n---\n")
+                    }
+                    _ => (404, "wrong resource URL"),
+                };
+                request
+                    .respond(tiny_http::Response::from_string(body).with_status_code(status))
+                    .unwrap();
+            }
+        });
+        let result = fetch_wellknown_skills_with_client(
+            &direct_http(),
+            &url,
+            &CancellationSignal::default(),
+        )
+        .await;
+        worker.join().unwrap();
+        let fetched = result.expect("query must not become part of the resource directory");
+        assert!(fetched.repo_path.join("legacy/SKILL.md").is_file());
+        fs::remove_dir_all(fetched.repo_path).unwrap();
+    }
+
     #[test]
     fn persisted_index_url_is_requested_directly() {
         let index_url = "https://example.com/catalog/index.json";
@@ -949,14 +1285,14 @@ mod tests {
         .expect("legacy index should normalize");
 
         assert!(matches!(
-            &entries[0],
+            &entries.entries[0],
             NormalizedWellKnownEntry::Legacy { name, files, .. }
                 if name == "legacy" && files == &vec!["SKILL.md".to_string()]
         ));
     }
 
     #[test]
-    fn test_legacy_index_rejects_all_entries_when_any_entry_invalid() {
+    fn test_legacy_index_isolates_an_invalid_member() {
         let raw: serde_json::Value = serde_json::from_str(
             r#"{
                 "skills": [
@@ -972,7 +1308,10 @@ mod tests {
             "https://example.com/.well-known/agent-skills/index.json",
         );
 
-        assert!(entries.is_none());
+        let index = entries.expect("valid catalogue identities remain available");
+        assert_eq!(index.entries.len(), 1);
+        assert!(index.catalog_complete);
+        assert!(index.member_failures.contains_key("bad"));
     }
 
     #[test]
@@ -999,7 +1338,7 @@ mod tests {
         .expect("v2 index should normalize");
 
         assert!(matches!(
-            &entries[0],
+            &entries.entries[0],
             NormalizedWellKnownEntry::V2 {
                 name,
                 entry_type,
@@ -1034,7 +1373,10 @@ mod tests {
             "https://example.com/.well-known/agent-skills/index.json",
         );
 
-        assert!(entries.is_none());
+        let index = entries.expect("invalid digest is a member error");
+        assert!(index.entries.is_empty());
+        assert!(index.catalog_complete);
+        assert!(index.member_failures.contains_key("demo"));
     }
 
     #[test]
@@ -1059,7 +1401,9 @@ mod tests {
             "https://example.com/.well-known/agent-skills/index.json",
         );
 
-        assert!(entries.is_none());
+        let index = entries.expect("catalogue completeness is retained");
+        assert!(index.entries.is_empty());
+        assert!(!index.catalog_complete);
     }
 
     #[test]

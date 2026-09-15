@@ -10,9 +10,7 @@ use crate::application::agent_intent::AgentTargetFallbackPreview;
 use crate::application::mutation::coordinator::MutationUnitObserver;
 use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{MutationPlan, PreviewToken};
-use crate::application::mutation::planning::{
-    validate_exact_preview, validate_same_scope_revisions, PreviewScopeRevisions,
-};
+use crate::application::mutation::planning::validate_exact_preview;
 use crate::application::mutation::result::{
     ErrorReport, MutationUnitResult, MutationUnitStatus, OperationErrorCode,
 };
@@ -23,11 +21,9 @@ use crate::application::resources::SkillIdentity;
 use crate::application::skill_changes::ValidatedSkillPayload;
 use crate::application::skill_entry_projection::ObservedEntryReader;
 use crate::application::skill_source::{
-    validate_saved_payloads, AcquiredSavedSkillSource, SavedPayloadCandidate, SavedSkillSource,
-    SavedSkillSourceAcquisition, SavedSkillSourceGroup, SkillSourceModule,
+    AcquiredSavedSkillSource, SavedSkillSource, SavedSkillSourceAcquisition, SavedSkillSourceGroup,
+    SkillSourceModule,
 };
-#[cfg(test)]
-use crate::application::source_evidence::RemoteSnapshotId;
 use crate::application::source_evidence::{EvidenceAttempt, EvidenceFreshness};
 use crate::application::update_planner::LocalUpdateInspection;
 #[cfg(test)]
@@ -68,7 +64,7 @@ pub enum UpdateCheckReasonCode {
     DeletedUpstream,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct CheckUpdateCapability {
@@ -91,6 +87,12 @@ pub struct SkillUpdateInfo {
     pub source_url: Option<String>,
     pub skill_path: Option<String>,
     pub freshness: EvidenceFreshness,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<AppError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -121,6 +123,8 @@ pub struct UpdateCheckRequest {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct SourceUpdateCheckInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<crate::core::source_identity::SourceProvider>,
     pub source: String,
     pub requested_ref: Option<String>,
     pub resolved_ref: Option<String>,
@@ -129,6 +133,10 @@ pub struct SourceUpdateCheckInfo {
     pub expires_at_epoch_ms: Option<u64>,
     pub freshness: EvidenceFreshness,
     pub last_attempt: Option<EvidenceAttempt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<AppError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -215,21 +223,88 @@ pub struct UpdateExecutionRequest {
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub struct UpdatePreview {
-    pub token: PreviewToken,
+pub struct UpdatePreparationIssue {
+    pub skill_name: String,
+    pub error: AppError,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct PreparedUpdatePreview {
+    pub sources: Vec<UpdateSourcePreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_base: Option<crate::environment::context_resolver::ScopePathBase>,
     pub skills: Vec<UpdateSkillPreview>,
+    pub blocked: Vec<UpdatePreparationIssue>,
+    pub redirected_download_hosts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct UpdateSourcePreview {
+    pub source_key: String,
+    pub source_display: String,
+    pub ref_display: String,
+    pub skill_names: Vec<String>,
+    pub error: Option<AppError>,
+}
+
+pub struct PreparedUpdate {
+    pub request: UpdateRequest,
+    pub preview: PreparedUpdatePreview,
+    items: Vec<PreparedUpdateItem>,
+    sources: Vec<UpdateSourceResult>,
+    source_by_skill: std::collections::BTreeMap<String, String>,
+}
+
+struct PreparedUpdateItem {
+    name: String,
+    source_result_id: String,
+    handle: crate::application::payload_session::AcquiredPayloadHandle,
+    plan: MutationPlan,
+}
+
+impl PreparedUpdate {
+    pub fn expires_at_epoch_ms(&self) -> Option<u64> {
+        self.items
+            .iter()
+            .map(|item| item.handle.expires_at_epoch_ms)
+            .min()
+    }
+
+    pub fn expire_payloads(&mut self, now: u64) {
+        self.items.retain(|item| {
+            if item.handle.expires_at_epoch_ms > now {
+                return true;
+            }
+            // 保留确认时允许的覆盖选择；过期只撤销该项的执行内容。
+            self.preview.blocked.push(UpdatePreparationIssue {
+                skill_name: item.name.clone(),
+                error: AppError::StalePayload,
+            });
+            false
+        });
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateSkillPreview {
+    pub linked_targets: Vec<UpdateLinkedTargetPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_key: Option<String>,
     pub skill_name: String,
     pub source_display: String,
     pub ref_display: String,
     pub adapter_targets: Vec<ObservedEntryReader>,
     pub capability: CheckUpdateCapability,
     pub clean_copy_count: usize,
+    pub targets: Vec<UpdateTargetPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preserved_targets: Option<Vec<UpdateTargetPreview>>,
     pub overwrite_private_entries: Vec<UpdateConflictCopyPreview>,
     pub blocking_reasons: Vec<OperationErrorCode>,
     pub fallback_forecasts: Vec<AgentTargetFallbackPreview>,
@@ -239,8 +314,39 @@ pub struct UpdateSkillPreview {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateConflictCopyPreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_standard: Option<bool>,
     pub entry_id: ObservedEntryId,
     pub readers: Vec<ObservedEntryReader>,
+    pub display_path: crate::environment::types::ResourceLocator,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct UpdateTargetPreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selectable_entry_id: Option<ObservedEntryId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_standard: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::application::skill_entry_projection::ObservedEntryKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_target: Option<crate::environment::types::ResourceLocator>,
+    pub display_path: crate::environment::types::ResourceLocator,
+    pub readers: Vec<ObservedEntryReader>,
+    pub restoring: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct UpdateLinkedTargetPreview {
+    pub display_path: crate::environment::types::ResourceLocator,
+    pub readers: Vec<ObservedEntryReader>,
+    pub is_standard: bool,
+    pub target_path: crate::environment::types::ResourceLocator,
+    pub target_copy_entry_id: Option<ObservedEntryId>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -274,7 +380,7 @@ pub struct UpdateSourceResult {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub enum UpdateWarningCode {
-    PreservedConflictingCopy,
+    SkippedCopy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -286,7 +392,7 @@ pub enum UpdateWarningCode {
 )]
 pub enum UpdateCoverage {
     Updated,
-    PreservedConflicts,
+    UpdatedWithSkippedCopies,
     NotUpdated { error: ErrorReport },
 }
 
@@ -304,6 +410,8 @@ pub enum UpdateOutcome {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateSkillResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_copy_paths: Option<Vec<crate::environment::types::ResourceLocator>>,
     pub skill_identity: SkillIdentity,
     pub source_result_id: String,
     pub mutation: Option<MutationUnitResult>,
@@ -315,10 +423,10 @@ pub struct UpdateSkillResult {
 pub type UpdateFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait UpdatePlanner: Send + Sync {
-    fn inspect<'a>(
+    fn inspect_items<'a>(
         &'a self,
         request: &'a UpdateRequest,
-    ) -> UpdateFuture<'a, Result<LocalUpdateInspection, AppError>>;
+    ) -> UpdateFuture<'a, Vec<(String, Result<LocalUpdateInspection, AppError>)>>;
 
     fn build<'a>(
         &'a self,
@@ -372,355 +480,479 @@ where
         }
     }
 
-    pub async fn preview(&self, request: &UpdateRequest) -> Result<UpdatePreview, AppError> {
+    pub async fn prepare(
+        &self,
+        request: &UpdateRequest,
+        cancellation: CancellationSignal,
+    ) -> Result<PreparedUpdate, AppError> {
         validate_update_request(request)?;
-        preview_from_inspection(self.planner.inspect(request).await?)
-    }
-
-    #[cfg(test)]
-    pub async fn execute(
-        &self,
-        execution: &UpdateExecutionRequest,
-        expected_token: PreviewToken,
-        cancellation: CancellationSignal,
-    ) -> Result<UpdateResponse, AppError> {
-        self.execute_with_stage_observer(execution, expected_token, cancellation, |_| {})
+        let inspections = self
+            .planner
+            .inspect_items(request)
             .await
-    }
-
-    #[cfg(test)]
-    pub async fn execute_with_stage_observer<F>(
-        &self,
-        execution: &UpdateExecutionRequest,
-        expected_token: PreviewToken,
-        cancellation: CancellationSignal,
-        observe_stage: F,
-    ) -> Result<UpdateResponse, AppError>
-    where
-        F: Fn(UpdateExecutionProgress) + Send + Sync,
-    {
-        self.execute_with_confirmation_and_stage_observer(
-            execution,
-            expected_token,
-            cancellation,
-            false,
-            observe_stage,
-        )
-        .await
-    }
-
-    pub async fn execute_with_confirmation_and_stage_observer<F>(
-        &self,
-        execution: &UpdateExecutionRequest,
-        expected_token: PreviewToken,
-        cancellation: CancellationSignal,
-        acknowledge_redirect: bool,
-        observe_stage: F,
-    ) -> Result<UpdateResponse, AppError>
-    where
-        F: Fn(UpdateExecutionProgress) + Send + Sync,
-    {
-        validate_update_request(&execution.request)?;
-        validate_conflict_decisions(execution)?;
-        let initial = self.planner.inspect(&execution.request).await?;
-        let initial_subjects = initial.subjects.clone();
-        validate_exact_preview(&expected_token, &initial.token)?;
-        let saved = initial
-            .source_candidates
+            .into_iter()
+            .map(|(name, result)| {
+                let result = result.and_then(|inspection| {
+                    for skill in &inspection.source_candidates {
+                        SourceIdentity::from_metadata(&skill.metadata())?;
+                    }
+                    Ok(inspection)
+                });
+                (name, result)
+            })
+            .collect::<Vec<_>>();
+        let saved = inspections
             .iter()
+            .filter_map(|(_, item)| item.as_ref().ok())
+            .flat_map(|item| item.source_candidates.iter())
             .map(|skill| SavedSkillSource {
                 name: skill.name.clone(),
                 metadata: skill.metadata(),
             })
-            .collect();
-        let acquisitions = self
-            .skill_source
-            .acquire_saved_skills(
-                &execution.request.context.environment,
-                saved,
-                cancellation.clone(),
-            )
-            .await?;
-        let source_by_skill = acquisitions
+            .collect::<Vec<_>>();
+        let groups = crate::application::skill_source::group_saved_skills(
+            &request.context.environment,
+            saved,
+        )?;
+        let executable_names = inspections
             .iter()
-            .flat_map(|acquisition| {
-                acquisition
-                    .skill_names
-                    .iter()
-                    .map(|skill_name| (skill_name.clone(), acquisition.source_result_id.clone()))
+            .filter_map(|(_, item)| item.as_ref().ok())
+            .flat_map(|item| &item.skills)
+            .filter(|skill| skill.blocking_reasons.is_empty())
+            .map(|skill| skill.skill_name.as_str())
+            .collect::<BTreeSet<_>>();
+        let acquisition_groups = groups
+            .iter()
+            .cloned()
+            .filter_map(|mut group| {
+                group
+                    .skills
+                    .retain(|skill| executable_names.contains(skill.name.as_str()));
+                (!group.skills.is_empty()).then_some(group)
             })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        if !acknowledge_redirect {
-            if let Some(host) = acquisitions.iter().find_map(|acquisition| {
-                acquisition
+            .collect::<Vec<_>>();
+        let acquisitions = if acquisition_groups.is_empty() {
+            Vec::new()
+        } else {
+            match self
+                .skill_source
+                .acquire_saved_groups(&acquisition_groups, cancellation.clone())
+                .await
+            {
+                Ok(sources) => sources,
+                Err(AppError::MutationCancelled) => acquisition_groups
+                    .iter()
+                    .map(|group| SavedSkillSourceAcquisition {
+                        source_result_id: group.source_result_id.clone(),
+                        source: group.source.clone(),
+                        skill_names: group
+                            .skills
+                            .iter()
+                            .map(|skill| skill.name.clone())
+                            .collect(),
+                        result: Err(AppError::MutationCancelled),
+                    })
+                    .collect(),
+                Err(error) => return Err(error),
+            }
+        };
+        let source_previews = groups
+            .iter()
+            .map(|group| {
+                let identity = SourceIdentity::from_metadata(&group.skills[0].metadata)?;
+                let acquired = acquisitions.iter().find(|source| {
+                    group
+                        .skills
+                        .iter()
+                        .any(|skill| source.skill_names.contains(&skill.name))
+                });
+                Ok(UpdateSourcePreview {
+                    source_key: acquired.map_or_else(
+                        || group.source_result_id.clone(),
+                        |source| source.source_result_id.clone(),
+                    ),
+                    source_display: group.source.clone(),
+                    ref_display: match identity.normalized_ref() {
+                        NormalizedRef::Named(value) => value.clone(),
+                        NormalizedRef::Default => String::new(),
+                    },
+                    skill_names: group
+                        .skills
+                        .iter()
+                        .map(|skill| skill.name.clone())
+                        .collect(),
+                    error: acquired
+                        .and_then(|source| source.result.as_ref().err())
+                        .cloned(),
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let mut prepared = PreparedUpdate {
+            request: request.clone(),
+            preview: PreparedUpdatePreview {
+                sources: source_previews,
+                path_base: inspections.iter().find_map(|(_, item)| {
+                    item.as_ref()
+                        .ok()
+                        .and_then(|inspection| inspection.path_base.clone())
+                }),
+                skills: Vec::new(),
+                blocked: Vec::new(),
+                redirected_download_hosts: Vec::new(),
+            },
+            items: Vec::new(),
+            sources: Vec::new(),
+            source_by_skill: groups
+                .iter()
+                .flat_map(|source| {
+                    source.skills.iter().map(|skill| {
+                        (
+                            skill.name.clone(),
+                            acquisitions
+                                .iter()
+                                .find(|acquired| acquired.skill_names.contains(&skill.name))
+                                .map_or_else(
+                                    || source.source_result_id.clone(),
+                                    |acquired| acquired.source_result_id.clone(),
+                                ),
+                        )
+                    })
+                })
+                .collect(),
+        };
+        let mut hosts = BTreeSet::new();
+        for source in &acquisitions {
+            if let Ok(content) = &source.result {
+                hosts.extend(content.redirected_download_hosts.iter().cloned());
+            }
+            prepared.sources.push(UpdateSourceResult {
+                id: source.source_result_id.clone(),
+                source: source.source.clone(),
+                status: if source.result.is_ok() {
+                    UpdateSourceStatus::Acquired
+                } else {
+                    UpdateSourceStatus::Failed
+                },
+                error: source
                     .result
                     .as_ref()
-                    .ok()
-                    .and_then(|acquired| acquired.redirected_download_host.clone())
-            }) {
-                return Err(AppError::DirectDownloadRedirectConfirmationRequired { host });
-            }
+                    .err()
+                    .cloned()
+                    .map(|error| ErrorReport::from_app_error(error, Some(request.context.clone()))),
+            });
         }
-        observe_stage(UpdateExecutionProgress {
-            stage: UpdateExecutionStage::Validating,
-            subject: None,
-            current: None,
-            total: None,
-        });
-        let latest = self.planner.inspect(&execution.request).await?;
-        let latest_subjects = latest.subjects.clone();
-        let mut sources = Vec::with_capacity(acquisitions.len());
-        let mut skills = Vec::with_capacity(execution.request.skill_names.len());
-        let mut executable_names = Vec::new();
-        let selected = execution
-            .overwrite_private_entries
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let latest_by_name = latest
-            .skills
-            .iter()
-            .map(|skill| (skill.skill_name.as_str(), skill))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let initial_by_name = initial
-            .skills
-            .iter()
-            .map(|skill| (skill.skill_name.as_str(), skill))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let drifted_names = execution
-            .request
-            .skill_names
-            .iter()
-            .filter(|name| {
-                initial_by_name
-                    .get(name.as_str())
-                    .zip(latest_by_name.get(name.as_str()))
-                    .is_none_or(|(initial, latest)| {
-                        initial.agent_observed_digest != latest.agent_observed_digest
-                    })
-            })
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        validate_same_scope_revisions(
-            &PreviewScopeRevisions::from(&initial.token),
-            &PreviewScopeRevisions::from(&latest.token),
-        )?;
-        let mut candidates = Vec::new();
-        for acquisition in &acquisitions {
-            let Ok(acquired) = &acquisition.result else {
-                continue;
-            };
-            for (skill_name, handle) in &acquired.payloads {
-                if !drifted_names.contains(skill_name) {
-                    candidates.push(SavedPayloadCandidate {
-                        source_result_id: acquisition.source_result_id.clone(),
-                        discovery_session: acquired.facts.discovery_session.clone(),
-                        skill_name: skill_name.clone(),
-                        handle: handle.clone(),
-                    });
+        prepared.preview.redirected_download_hosts = hosts.into_iter().collect();
+        for (name, inspection) in inspections {
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            let outcome = async {
+                let inspection = inspection?;
+                let mut preview = previews_from_inspection(inspection.clone())?
+                    .into_iter()
+                    .next()
+                    .ok_or(AppError::StaleTarget)?;
+                preview.source_key = prepared.source_by_skill.get(&name).cloned();
+                if preview.blocking_reasons == [OperationErrorCode::NoUpdateTargets] {
+                    return Ok((preview, None));
                 }
+                if !preview.blocking_reasons.is_empty() {
+                    return Err(AppError::StaleTarget);
+                }
+                let source = acquisitions
+                    .iter()
+                    .find(|source| source.skill_names.contains(&name))
+                    .ok_or(AppError::StalePayload)?;
+                let content = source.result.as_ref().map_err(Clone::clone)?;
+                let payload = content
+                    .validate_member(self.payloads.as_ref(), &request.context.environment, &name)
+                    .await?;
+                let handle = payload.handle().clone();
+                let execution = UpdateExecutionRequest {
+                    request: UpdateRequest {
+                        context: request.context.clone(),
+                        skill_names: vec![name.clone()],
+                    },
+                    overwrite_private_entries: inspection
+                        .skills
+                        .iter()
+                        .flat_map(|skill| skill.clean_copies.iter().chain(&skill.conflicts))
+                        .map(|entry| entry.entry_id.clone())
+                        .collect(),
+                };
+                let (token, plan) = self.planner.build(&execution, vec![payload]).await?;
+                validate_exact_preview(&inspection.token, &token)?;
+                Ok::<_, AppError>((
+                    preview,
+                    Some(PreparedUpdateItem {
+                        name: name.clone(),
+                        source_result_id: source.source_result_id.clone(),
+                        handle: handle.clone(),
+                        plan,
+                    }),
+                ))
+            }
+            .await;
+            match outcome {
+                Ok((preview, item)) => {
+                    prepared.preview.skills.push(preview);
+                    if let Some(item) = item {
+                        prepared.items.push(item);
+                    }
+                }
+                Err(error) => prepared.preview.blocked.push(UpdatePreparationIssue {
+                    skill_name: name,
+                    error,
+                }),
             }
         }
-        let validation = validate_saved_payloads(
-            self.payloads.as_ref(),
-            &execution.request.context.environment,
-            candidates,
-        )
-        .await;
-        for acquisition in acquisitions {
-            match acquisition.result {
-                Ok(acquired) => {
-                    sources.push(UpdateSourceResult {
-                        id: acquisition.source_result_id.clone(),
-                        source: acquisition.source,
-                        status: UpdateSourceStatus::Acquired,
-                        error: None,
-                    });
-                    for (skill_name, error) in acquired.skill_errors {
-                        skills.push(not_updated_skill(
-                            &execution.request.context,
-                            skill_name,
-                            acquisition.source_result_id.clone(),
-                            ErrorReport::from_app_error(
-                                error,
-                                Some(execution.request.context.clone()),
-                            ),
-                        ));
-                    }
-                    for (skill_name, _handle) in acquired.payloads {
-                        if drifted_names.contains(&skill_name) {
-                            skills.push(not_updated_skill(
-                                &execution.request.context,
-                                skill_name,
-                                acquisition.source_result_id.clone(),
-                                ErrorReport::from_app_error(
-                                    AppError::StaleTarget,
-                                    Some(execution.request.context.clone()),
-                                ),
-                            ));
+        // 共享的只读观察可以复用；同一物理位置涉及写入时，仍阻断相互竞争的 Skill。
+        let mut owners = std::collections::BTreeMap::<_, (BTreeSet<String>, bool)>::new();
+        let mut collisions = BTreeSet::new();
+        for item in &prepared.items {
+            for entry in item
+                .plan
+                .units
+                .iter()
+                .flat_map(|unit| unit.primary_entry.iter().chain(&unit.additional_entries))
+            {
+                let (names, has_write) = owners.entry(entry.key.clone()).or_default();
+                let writes = !matches!(
+                    entry.action,
+                    crate::application::mutation::plan::PreparedEntryAction::Keep
+                );
+                if (*has_write || writes) && names.iter().any(|name| name != &item.name) {
+                    collisions.extend(names.iter().cloned());
+                    collisions.insert(item.name.clone());
+                }
+                names.insert(item.name.clone());
+                *has_write |= writes;
+            }
+        }
+        let mut valid = Vec::new();
+        for item in prepared.items {
+            let error = if collisions.contains(&item.name) {
+                Some(AppError::StaleTarget)
+            } else {
+                self.payloads.pin_verified(&item.handle).await.err()
+            };
+            if let Some(error) = error {
+                prepared
+                    .preview
+                    .skills
+                    .retain(|skill| skill.skill_name != item.name);
+                prepared.preview.blocked.push(UpdatePreparationIssue {
+                    skill_name: item.name,
+                    error,
+                });
+            } else {
+                valid.push(item);
+            }
+        }
+        prepared.items = valid;
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        Ok(prepared)
+    }
+
+    pub async fn execute_prepared<F>(
+        &self,
+        prepared: PreparedUpdate,
+        overwrite: &[ObservedEntryId],
+        cancellation: CancellationSignal,
+        observe: F,
+    ) -> Result<UpdateResponse, AppError>
+    where
+        F: Fn(UpdateExecutionProgress) + Send + Sync,
+    {
+        use crate::application::mutation::plan::PreparedEntryAction;
+        let selected = overwrite.iter().cloned().collect::<BTreeSet<_>>();
+        let selectable = prepared
+            .preview
+            .skills
+            .iter()
+            .flat_map(|skill| {
+                skill
+                    .targets
+                    .iter()
+                    .filter_map(|target| target.selectable_entry_id.clone())
+                    .chain(
+                        skill
+                            .overwrite_private_entries
+                            .iter()
+                            .map(|entry| entry.entry_id.clone()),
+                    )
+            })
+            .collect::<BTreeSet<_>>();
+        if selected.len() != overwrite.len() || !selected.is_subset(&selectable) {
+            return Err(AppError::StaleTarget);
+        }
+        let mut results = prepared
+            .preview
+            .blocked
+            .iter()
+            .map(|issue| {
+                not_updated_skill(
+                    &prepared.request.context,
+                    issue.skill_name.clone(),
+                    prepared
+                        .source_by_skill
+                        .get(&issue.skill_name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    ErrorReport::from_app_error(
+                        issue.error.clone(),
+                        Some(prepared.request.context.clone()),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let total = u32::try_from(prepared.items.len()).unwrap_or(u32::MAX);
+        results.extend(
+            prepared
+                .preview
+                .skills
+                .iter()
+                .filter(|skill| skill.blocking_reasons == [OperationErrorCode::NoUpdateTargets])
+                .map(|skill| {
+                    not_updated_skill(
+                        &prepared.request.context,
+                        skill.skill_name.clone(),
+                        prepared
+                            .source_by_skill
+                            .get(&skill.skill_name)
+                            .cloned()
+                            .unwrap_or_default(),
+                        ErrorReport::new(OperationErrorCode::NoUpdateTargets),
+                    )
+                }),
+        );
+        for (index, mut item) in prepared.items.into_iter().enumerate() {
+            let skipped_paths = prepared
+                .preview
+                .skills
+                .iter()
+                .filter(|skill| skill.skill_name == item.name)
+                .flat_map(|skill| {
+                    skill
+                        .targets
+                        .iter()
+                        .filter_map(|target| {
+                            target
+                                .selectable_entry_id
+                                .as_ref()
+                                .map(|id| (id, &target.display_path))
+                        })
+                        .chain(
+                            skill
+                                .overwrite_private_entries
+                                .iter()
+                                .map(|entry| (&entry.entry_id, &entry.display_path)),
+                        )
+                })
+                .filter(|(id, _)| !selected.contains(id))
+                .map(|(_, path)| path.clone())
+                .collect::<Vec<_>>();
+            let result = async {
+                if cancellation.is_cancelled() {
+                    return Err(AppError::MutationCancelled);
+                }
+                observe(UpdateExecutionProgress {
+                    stage: UpdateExecutionStage::Validating,
+                    subject: Some(item.name.clone()),
+                    current: Some(index as u32),
+                    total: Some(total),
+                });
+                self.payloads.pin_verified(&item.handle).await?;
+                let mut preserved = false;
+                for unit in &mut item.plan.units {
+                    for entry in unit
+                        .primary_entry
+                        .iter_mut()
+                        .chain(&mut unit.additional_entries)
+                    {
+                        let expected = unit
+                            .expected_targets
+                            .iter()
+                            .find(|expected| expected.key == entry.key)
+                            .ok_or(AppError::StaleTarget)?;
+                        let id = crate::environment::runtime::observed_entry_id(
+                            &expected.key,
+                            &expected.fingerprint,
+                        )?;
+                        if selectable.contains(&id) && !selected.contains(&id) {
+                            entry.action = PreparedEntryAction::Keep;
+                            preserved = true;
                         }
                     }
                 }
-                Err(error) => {
-                    let report =
-                        ErrorReport::from_app_error(error, Some(execution.request.context.clone()));
-                    sources.push(UpdateSourceResult {
-                        id: acquisition.source_result_id.clone(),
-                        source: acquisition.source,
-                        status: UpdateSourceStatus::Failed,
-                        error: Some(report.clone()),
-                    });
-                    for skill_name in acquisition.skill_names {
-                        skills.push(UpdateSkillResult {
-                            skill_identity: SkillIdentity {
-                                context: execution.request.context.clone(),
-                                skill_name,
-                            },
-                            source_result_id: acquisition.source_result_id.clone(),
-                            mutation: None,
-                            coverage: UpdateCoverage::NotUpdated {
-                                error: report.clone(),
-                            },
-                            warnings: Vec::new(),
-                            retryable: report.retryable,
-                        });
-                    }
-                }
-            }
-        }
-
-        for failed in validation.failed {
-            skills.push(not_updated_skill(
-                &execution.request.context,
-                failed.skill_name,
-                failed.source_result_id,
-                ErrorReport::from_app_error(failed.error, Some(execution.request.context.clone())),
-            ));
-        }
-        let mut payloads = validation
-            .validated
-            .into_iter()
-            .map(|validated| validated.payload)
-            .collect();
-
-        let prepared = crate::application::skill_changes::compare_update_subjects(
-            &initial_subjects,
-            &latest_subjects,
-            payloads,
-        )?;
-        for skill_name in prepared.stale_skill_names {
-            if !skills
-                .iter()
-                .any(|result| result.skill_identity.skill_name == skill_name)
-            {
-                let source_result_id = source_by_skill
-                    .get(&skill_name)
-                    .cloned()
-                    .unwrap_or_default();
-                skills.push(not_updated_skill(
-                    &execution.request.context,
-                    skill_name,
-                    source_result_id,
-                    ErrorReport::from_app_error(
-                        AppError::StaleTarget,
-                        Some(execution.request.context.clone()),
-                    ),
-                ));
-            }
-        }
-        payloads = prepared
-            .ready
-            .into_iter()
-            .map(|prepared| prepared.payload)
-            .collect();
-        executable_names.extend(payloads.iter().map(|payload| payload.name().to_string()));
-
-        if !executable_names.is_empty() {
-            let successful_request = UpdateRequest {
-                context: execution.request.context.clone(),
-                skill_names: executable_names.clone(),
-            };
-            let mut overwrite_private_entries = execution.overwrite_private_entries.clone();
-            for skill_name in &executable_names {
-                if let Some(inspection) = latest_by_name.get(skill_name.as_str()) {
-                    overwrite_private_entries.extend(
-                        inspection
-                            .clean_copies
-                            .iter()
-                            .map(|entry| entry.entry_id.clone()),
+                let has_write = item
+                    .plan
+                    .units
+                    .iter()
+                    .flat_map(|unit| unit.primary_entry.iter().chain(&unit.additional_entries))
+                    .any(|entry| !matches!(entry.action, PreparedEntryAction::Keep));
+                if !has_write {
+                    let mut result = not_updated_skill(
+                        &prepared.request.context,
+                        item.name.clone(),
+                        item.source_result_id.clone(),
+                        ErrorReport::new(OperationErrorCode::NoUpdateTargets),
                     );
+                    result.skipped_copy_paths =
+                        (!skipped_paths.is_empty()).then_some(skipped_paths);
+                    return Ok(result);
                 }
-            }
-            overwrite_private_entries.sort();
-            overwrite_private_entries.dedup();
-            let successful_execution = UpdateExecutionRequest {
-                request: successful_request,
-                overwrite_private_entries,
-            };
-            let (actual_token, plan) = self.planner.build(&successful_execution, payloads).await?;
-            validate_same_scope_revisions(
-                &PreviewScopeRevisions::from(&latest.token),
-                &PreviewScopeRevisions::from(&actual_token),
-            )?;
-            let total = u32::try_from(plan.units.len()).unwrap_or(u32::MAX);
-            observe_stage(UpdateExecutionProgress {
-                stage: UpdateExecutionStage::Updating,
-                subject: None,
-                current: Some(0),
-                total: Some(total),
-            });
-            let unit_observer: MutationUnitObserver<'_> = Arc::new(|progress| {
-                observe_stage(UpdateExecutionProgress {
+                observe(UpdateExecutionProgress {
                     stage: UpdateExecutionStage::Updating,
-                    subject: Some(progress.skill_name),
-                    current: Some(progress.current),
-                    total: Some(progress.total),
+                    subject: Some(item.name.clone()),
+                    current: Some(index as u32),
+                    total: Some(total),
                 });
-            });
-            let mutations = self
-                .executor
-                .execute_with_observer(plan, cancellation, unit_observer)
-                .await;
-            let mut mutation_by_skill = mutations
-                .into_iter()
-                .map(|result| (result.skill_name.clone(), result))
-                .collect::<std::collections::BTreeMap<_, _>>();
-            for skill_name in executable_names {
-                let inspection = latest_by_name.get(skill_name.as_str());
-                let preserved = inspection.is_some_and(|inspection| {
-                    inspection
-                        .conflicts
-                        .iter()
-                        .any(|entry| !selected.contains(&entry.entry_id))
+                let observer: MutationUnitObserver<'_> = Arc::new(|progress| {
+                    observe(UpdateExecutionProgress {
+                        stage: UpdateExecutionStage::Updating,
+                        subject: Some(progress.skill_name),
+                        current: Some((index as u32).saturating_add(progress.current)),
+                        total: Some(total),
+                    })
                 });
-                let mutation = mutation_by_skill.remove(&skill_name);
+                let mutation = self
+                    .executor
+                    .execute_with_observer(item.plan, cancellation.clone(), observer)
+                    .await
+                    .into_iter()
+                    .find(|result| result.skill_name == item.name);
                 let (coverage, warnings, retryable) =
-                    update_coverage(mutation.as_ref(), preserved, &execution.request.context);
-                skills.push(UpdateSkillResult {
+                    update_coverage(mutation.as_ref(), preserved, &prepared.request.context);
+                Ok::<_, AppError>(UpdateSkillResult {
+                    skipped_copy_paths: (!skipped_paths.is_empty()).then_some(skipped_paths),
                     skill_identity: SkillIdentity {
-                        context: execution.request.context.clone(),
-                        skill_name: skill_name.clone(),
+                        context: prepared.request.context.clone(),
+                        skill_name: item.name.clone(),
                     },
-                    source_result_id: source_by_skill
-                        .get(&skill_name)
-                        .cloned()
-                        .unwrap_or_default(),
+                    source_result_id: item.source_result_id.clone(),
                     mutation,
                     coverage,
                     warnings,
                     retryable,
-                });
+                })
             }
+            .await;
+            results.push(result.unwrap_or_else(|error| {
+                not_updated_skill(
+                    &prepared.request.context,
+                    item.name,
+                    item.source_result_id,
+                    ErrorReport::from_app_error(error, Some(prepared.request.context.clone())),
+                )
+            }));
         }
-        skills.sort_by(|left, right| {
-            left.skill_identity
-                .skill_name
-                .cmp(&right.skill_identity.skill_name)
-        });
-        let outcome = update_outcome(&skills);
+        let outcome = update_outcome(&results);
         Ok(UpdateResponse {
-            sources,
-            skills,
+            sources: prepared.sources,
+            skills: results,
             outcome,
         })
     }
@@ -733,6 +965,7 @@ fn not_updated_skill(
     report: ErrorReport,
 ) -> UpdateSkillResult {
     UpdateSkillResult {
+        skipped_copy_paths: None,
         skill_identity: SkillIdentity {
             context: context.clone(),
             skill_name,
@@ -768,8 +1001,8 @@ fn update_coverage(
     if mutation.status == MutationUnitStatus::Succeeded {
         return if preserved {
             (
-                UpdateCoverage::PreservedConflicts,
-                vec![UpdateWarningCode::PreservedConflictingCopy],
+                UpdateCoverage::UpdatedWithSkippedCopies,
+                vec![UpdateWarningCode::SkippedCopy],
                 mutation.retryable,
             )
         } else {
@@ -804,14 +1037,21 @@ pub fn validate_update_request(request: &UpdateRequest) -> Result<(), AppError> 
     Ok(())
 }
 
-fn preview_from_inspection(inspection: LocalUpdateInspection) -> Result<UpdatePreview, AppError> {
+fn previews_from_inspection(
+    inspection: LocalUpdateInspection,
+) -> Result<Vec<UpdateSkillPreview>, AppError> {
     let display_by_name = inspection
         .source_candidates
         .iter()
         .map(|skill| {
             let identity = SourceIdentity::from_metadata(&skill.metadata())?;
             let ref_display = match identity.normalized_ref() {
-                NormalizedRef::Default => "HEAD".to_string(),
+                _ if identity.remote().provider()
+                    == &crate::core::source_identity::SourceProvider::WellKnown =>
+                {
+                    String::new()
+                }
+                NormalizedRef::Default => String::new(),
                 NormalizedRef::Named(value) => value.clone(),
             };
             Ok((
@@ -820,54 +1060,72 @@ fn preview_from_inspection(inspection: LocalUpdateInspection) -> Result<UpdatePr
                     skill.capability(),
                     identity.sanitized_display().to_string(),
                     ref_display,
+                    identity.key(),
                 ),
             ))
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, AppError>>()?;
-    let skills = inspection
+    inspection
         .skills
         .into_iter()
         .map(|skill| {
-            let (capability, source_display, ref_display) = display_by_name
+            let (capability, source_display, ref_display, source_key) = display_by_name
                 .get(&skill.skill_name)
                 .cloned()
                 .ok_or(AppError::StaleContext)?;
+            let location = |id: &ObservedEntryId| skill.locations.iter().find(|location| &location.entry_id == id);
+            let selectable_ids = skill.automatic_entries.iter().filter(|entry| {
+                entry.kind == crate::application::skill_entry_projection::ObservedEntryKind::Directory
+                    && !skill.locations.iter().any(|location| location.entry_id == entry.entry_id && location.is_standard)
+            }).chain(&skill.conflicts).map(|entry| entry.entry_id.clone()).collect::<BTreeSet<_>>();
+            let target_preview = |entry: crate::application::skill_entry_projection::ObservedPhysicalEntry| {
+                let display = location(&entry.entry_id);
+                UpdateTargetPreview {
+                    selectable_entry_id: selectable_ids.contains(&entry.entry_id).then(|| entry.entry_id.clone()),
+                    is_standard: Some(display.is_some_and(|location| location.is_standard)),
+                    kind: Some(display.map_or(entry.kind, |location| location.kind)),
+                    link_target: display.and_then(|location| location.link_target.clone()),
+                    display_path: display.map_or(entry.display_path, |location| location.path.clone()),
+                    readers: display.map_or(entry.readers, |location| location.readers.clone()),
+                    restoring: entry.kind == crate::application::skill_entry_projection::ObservedEntryKind::Missing,
+                }
+            };
+            let linked_targets = skill.locations.iter().filter_map(|display| {
+                let target = display.linked_entry.as_ref()?;
+                Some(UpdateLinkedTargetPreview {
+                    display_path: display.path.clone(), readers: display.readers.clone(),
+                    is_standard: display.is_standard,
+                    target_path: location(target).map(|target| target.path.clone())
+                        .or_else(|| display.link_target.clone())?,
+                    target_copy_entry_id: selectable_ids.contains(target).then(|| target.clone()),
+                })
+            }).collect();
             Ok(UpdateSkillPreview {
+                linked_targets,
+                source_key: Some(source_key),
                 capability,
                 source_display,
                 ref_display,
                 adapter_targets: skill.adapter_targets,
                 skill_name: skill.skill_name,
                 clean_copy_count: skill.clean_copies.len(),
+                targets: skill.automatic_entries.into_iter().map(target_preview).collect(),
+                preserved_targets: (!skill.preserved_entries.is_empty()).then(|| skill.preserved_entries.into_iter().map(target_preview).collect()),
                 overwrite_private_entries: skill
                     .conflicts
                     .into_iter()
                     .map(|entry| UpdateConflictCopyPreview {
+                        is_standard: Some(location(&entry.entry_id).is_some_and(|location| location.is_standard)),
+                        display_path: location(&entry.entry_id).map_or(entry.display_path, |location| location.path.clone()),
+                        readers: location(&entry.entry_id).map_or(entry.readers, |location| location.readers.clone()),
                         entry_id: entry.entry_id,
-                        readers: entry.readers,
                     })
                     .collect(),
                 blocking_reasons: skill.blocking_reasons,
                 fallback_forecasts: Vec::new(),
             })
         })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    Ok(UpdatePreview {
-        token: inspection.token,
-        skills,
-    })
-}
-
-fn validate_conflict_decisions(execution: &UpdateExecutionRequest) -> Result<(), AppError> {
-    let mut entries = BTreeSet::new();
-    if execution
-        .overwrite_private_entries
-        .iter()
-        .any(|entry| !entries.insert(entry))
-    {
-        return Err(AppError::StalePayload);
-    }
-    Ok(())
+        .collect()
 }
 
 fn update_outcome(skills: &[UpdateSkillResult]) -> UpdateOutcome {
@@ -919,18 +1177,17 @@ fn validation(message: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::application::mutation::executor::MutationPlanExecutor;
     use crate::application::mutation::plan::MutationPlan;
+    use crate::application::payload_session::DiscoverySessionHandle;
     use crate::application::payload_session::PayloadPlanningMetadata;
     use crate::application::payload_session::{PayloadSessionLimits, PayloadSessionManager};
-    use crate::application::source_evidence::SourceSnapshotFacts;
     use crate::core::mutation::CancellationSignal;
     use crate::core::skill_payload::build_skill_payload;
-    use crate::core::source_identity::NormalizedRef;
     use crate::environment::runtime::ContextSnapshotRevision;
     use crate::environment::types::{EnvironmentRef, SkillLocation};
     use crate::error::AppError;
@@ -968,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn update_preview_counts_clean_copies_without_exposing_their_entries() {
+    fn update_preview_exposes_locations_without_internal_target_identity() {
         fn observed_entry(
             id: &str,
             path: &str,
@@ -1003,16 +1260,25 @@ mod tests {
             observed_entry("entry-v1-clean-one", "/agents/clean-one"),
             observed_entry("entry-v1-clean-two", "/agents/clean-two"),
         ];
+        inspection.skills[0].automatic_entries = inspection.skills[0].clean_copies.clone();
         inspection.skills[0].conflicts =
             vec![observed_entry("entry-v1-conflict", "/agents/conflict")];
 
-        let preview = serde_json::to_value(preview_from_inspection(inspection).unwrap()).unwrap();
-        let skill = &preview["skills"][0];
+        let preview = serde_json::to_value(previews_from_inspection(inspection).unwrap()).unwrap();
+        let skill = &preview[0];
 
         assert_eq!(skill["cleanCopyCount"], serde_json::json!(2));
         assert!(skill.get("cleanCopies").is_none());
-        assert!(!skill.to_string().contains("entry-v1-clean"));
-        assert!(!skill.to_string().contains("/agents/clean"));
+        assert_eq!(
+            skill["targets"][0]["selectableEntryId"],
+            "entry-v1-clean-one"
+        );
+        assert!(!skill.to_string().contains("credential-secret"));
+        assert_eq!(skill["targets"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            skill["targets"][0]["displayPath"]["nativePath"],
+            "/agents/clean-one"
+        );
         assert_eq!(
             skill["overwritePrivateEntries"].as_array().unwrap().len(),
             1
@@ -1022,10 +1288,11 @@ mod tests {
             serde_json::json!("entry-v1-conflict")
         );
         let serialized = skill["overwritePrivateEntries"][0].to_string();
-        assert!(!serialized.contains("nativePath"));
-        assert!(!serialized.contains("displayPath"));
+        assert_eq!(
+            skill["overwritePrivateEntries"][0]["displayPath"]["nativePath"],
+            "/agents/conflict"
+        );
         assert!(!serialized.contains("physicalTargetKey"));
-        assert!(!serialized.contains("/agents/conflict"));
         assert!(!serialized.contains("credential-secret"));
         assert!(serialized.contains("Codex"));
     }
@@ -1073,8 +1340,8 @@ mod tests {
             },
         ];
 
-        let preview = serde_json::to_value(preview_from_inspection(inspection).unwrap()).unwrap();
-        let skill = &preview["skills"][0];
+        let preview = serde_json::to_value(previews_from_inspection(inspection).unwrap()).unwrap();
+        let skill = &preview[0];
 
         assert_eq!(
             skill["sourceDisplay"],
@@ -1088,7 +1355,10 @@ mod tests {
         let serialized = preview.to_string();
         assert!(!serialized.contains("secret-token"));
         assert!(!serialized.contains("sourceUrl"));
-        assert!(!serialized.contains("/agents/private"));
+        assert_eq!(
+            skill["overwritePrivateEntries"][0]["displayPath"]["nativePath"],
+            "/agents/private"
+        );
         assert!(!serialized.contains("credential-secret"));
     }
 
@@ -1126,6 +1396,102 @@ mod tests {
                 }] }
             })
         );
+    }
+
+    fn update_test_plan(
+        request: &UpdateRequest,
+        payloads: Vec<ValidatedSkillPayload>,
+        token: &PreviewToken,
+        keep_entries: bool,
+    ) -> MutationPlan {
+        use crate::application::mutation::plan::{
+            ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation, RuntimeRevisions,
+        };
+        use crate::application::mutation::planning::{
+            assemble_plan, MutationPlanDraft, MutationUnitDraft, PreparedMutationEntries,
+        };
+        use crate::environment::runtime::{
+            EntryFingerprint, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
+        };
+        let units = payloads
+            .iter()
+            .zip(&request.skill_names)
+            .map(|(payload, name)| {
+                let key = PhysicalTargetKey {
+                    backend: if cfg!(windows) {
+                        ExecutionBackend::NativeWindows
+                    } else {
+                        ExecutionBackend::NativeUnix
+                    },
+                    physical_parent: if cfg!(windows) {
+                        PhysicalParentIdentity::Windows {
+                            volume_serial: 1,
+                            file_id: 2,
+                        }
+                    } else {
+                        PhysicalParentIdentity::Unix {
+                            device: 1,
+                            inode: 2,
+                        }
+                    },
+                    normalized_final_child_name: name.clone(),
+                };
+                let fingerprint = EntryFingerprint(format!("entry-{name}"));
+                MutationUnitDraft {
+                    id: format!("update:{name}"),
+                    skill_name: name.clone(),
+                    source: None,
+                    target: request.context.clone(),
+                    expected_revisions: RuntimeRevisions {
+                        registry: token.registry_revision.clone(),
+                        environment: token.environment_revision.clone(),
+                        context: token.context_revision.clone(),
+                    },
+                    entries: PreparedMutationEntries {
+                        primary: Some(PreparedEntryMutation {
+                            key: key.clone(),
+                            destination: crate::environment::types::ResourceLocator {
+                                environment: request.context.environment.clone(),
+                                native_path: std::env::temp_dir()
+                                    .join("skill-deck-update-test")
+                                    .join(name)
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            },
+                            action: if keep_entries {
+                                PreparedEntryAction::Keep
+                            } else {
+                                PreparedEntryAction::Replace {
+                                    payload_id: payload.manifest().payload_id().clone(),
+                                    requested_mode: crate::models::InstallMode::Copy,
+                                }
+                            },
+                            reader_agent_ids: Vec::new(),
+                        }),
+                        additional: Vec::new(),
+                        expected_targets: vec![ExpectedTargetEntry {
+                            key,
+                            fingerprint,
+                            expected_content_manifest_hash: None,
+                        }],
+                    },
+                    lock_mutation: None,
+                }
+            })
+            .collect();
+        assemble_plan(MutationPlanDraft {
+            kind: crate::core::mutation::MutationKind::Update,
+            payloads: payloads
+                .into_iter()
+                .map(|payload| {
+                    (
+                        payload.manifest().payload_id().clone(),
+                        payload.into_lease(),
+                    )
+                })
+                .collect(),
+            units,
+        })
     }
 
     struct Planner {
@@ -1172,7 +1538,7 @@ mod tests {
     async fn acquired_update_source(
         manager: &PayloadSessionManager,
         skill_name: &str,
-    ) -> (SourceSnapshotFacts, AcquiredPayloadHandle) {
+    ) -> (DiscoverySessionHandle, AcquiredPayloadHandle) {
         let source = tempdir().unwrap();
         let skill = source.path().join(skill_name);
         fs::create_dir_all(&skill).unwrap();
@@ -1194,16 +1560,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let facts = SourceSnapshotFacts {
-            discovery_session: discovery,
-            snapshot_id: RemoteSnapshotId::new(
-                NormalizedRef::Named("main".to_string()),
-                "main",
-                "revision-1",
-            ),
-            complete_skill_path_catalog: Default::default(),
-        };
-        (facts, handle)
+        (discovery, handle)
     }
 
     fn locked_update_skill(name: &str, source_url: &str) -> LockedUpdateSkill {
@@ -1223,116 +1580,307 @@ mod tests {
         }
     }
 
-    fn update_subject_snapshot(
-        names: &[(&str, &str)],
-    ) -> crate::application::update_subjects::UpdateSubjectSnapshot {
-        crate::application::update_subjects::UpdateSubjectSnapshot {
-            environment: EnvironmentRef::Native,
-            resolution_revision: crate::application::skill_paths::RootResolutionRevision::for_test(
-                "collection-v1",
-            ),
-            document_revision: crate::application::collection_records::DocumentRevision::for_test(
-                "document-v1",
-            ),
-            subjects: names
-                .iter()
-                .map(
-                    |(name, source_revision)| crate::application::update_subjects::UpdateSubject {
-                        skill_name: (*name).to_string(),
-                        source_record_revision:
-                            crate::application::collection_records::SourceRecordRevision::for_test(
-                                source_revision,
-                            ),
-                        target_revision: crate::application::skill_paths::TargetRevision::for_test(
-                            &format!("target-{name}"),
-                        ),
-                        content_revision:
-                            crate::application::skill_paths::ContentRevision::missing_for_test(),
-                        projection:
-                            crate::application::collection_records::RecordProjection::Available(
-                                locked_update_skill(name, "https://github.com/owner/repo.git")
-                                    .metadata(),
-                            ),
-                    },
-                )
-                .collect(),
-        }
-    }
-
     impl UpdatePlanner for Planner {
-        fn inspect<'a>(
+        fn inspect_items<'a>(
             &'a self,
-            _request: &'a UpdateRequest,
-        ) -> UpdateFuture<'a, Result<LocalUpdateInspection, AppError>> {
+            request: &'a UpdateRequest,
+        ) -> UpdateFuture<'a, Vec<(String, Result<LocalUpdateInspection, AppError>)>> {
             Box::pin(async move {
-                Ok(LocalUpdateInspection {
-                    token: self.token.clone(),
-                    source_candidates: vec![LockedUpdateSkill {
-                        name: "demo".to_string(),
-                        lock_key: "demo".to_string(),
-                        source: "owner/repo".to_string(),
-                        source_type: "github".to_string(),
-                        source_url: Some("https://github.com/owner/repo.git".to_string()),
-                        ref_name: Some("main".to_string()),
-                        skill_path: "skills/demo".to_string(),
-                        remote_hash: Some("old".to_string()),
-                        computed_hash: None,
-                        installed_at: None,
-                        subagents: None,
-                        well_known_digest: None,
-                    }],
-                    skills: vec![
-                        crate::application::update_planner::LocalUpdateSkillInspection {
-                            skill_name: "demo".to_string(),
-                            agent_observed_digest: "demo-agent-observed".to_string(),
-                            adapter_targets: Vec::new(),
-                            clean_copies: Vec::new(),
-                            conflicts: Vec::new(),
-                            blocking_reasons: Vec::new(),
-                        },
-                    ],
-                    subjects: update_subject_snapshot(&[("demo", "source-demo")]),
-                })
+                request
+                    .skill_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            Ok(LocalUpdateInspection {
+                                path_base: None,
+                                token: self.token.clone(),
+                                source_candidates: vec![locked_update_skill(
+                                    name,
+                                    "https://github.com/owner/repo.git",
+                                )],
+                                skills: vec![
+                                    crate::application::update_planner::LocalUpdateSkillInspection {
+                                        locations: Vec::new(),
+                                        skill_name: name.clone(),
+                                        adapter_targets: Vec::new(),
+                                        automatic_entries: Vec::new(),
+                    preserved_entries: Vec::new(),
+                                        clean_copies: Vec::new(),
+                                        conflicts: Vec::new(),
+                                        blocking_reasons: Vec::new(),
+                                    },
+                                ],
+                            }),
+                        )
+                    })
+                    .collect()
             })
         }
 
         fn build<'a>(
             &'a self,
-            _execution: &'a UpdateExecutionRequest,
+            execution: &'a UpdateExecutionRequest,
             payloads: Vec<ValidatedSkillPayload>,
         ) -> UpdateFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
             self.rebuilds.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
                 Ok((
                     self.token.clone(),
-                    MutationPlan {
-                        kind: crate::core::mutation::MutationKind::Update,
-                        operation_id: "update-1".to_string(),
-                        payloads: payloads
-                            .into_iter()
-                            .map(|payload| {
-                                let id = payload.manifest().payload_id().clone();
-                                (id, payload.into_lease())
-                            })
-                            .collect(),
-                        units: Vec::new(),
-                    },
+                    update_test_plan(&execution.request, payloads, &self.token, false),
                 ))
             })
         }
     }
 
-    struct Acquirer(Arc<AtomicUsize>);
+    #[test]
+    fn cancellation_and_window_replacement_cannot_publish_late_results() {
+        use crate::application::update_preparation::{PreparedUpdates, UpdatePreparations};
 
-    impl SkillSourceModule for Acquirer {
-        fn acquire_saved_groups<'a>(
-            &'a self,
-            _groups: &'a [UpdateAcquisitionGroup],
-            _cancellation: CancellationSignal,
-        ) -> UpdateFuture<'a, Result<Vec<UpdateSourceAcquisition>, AppError>> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Ok(Vec::new()) })
+        let prepared = || {
+            PreparedUpdates::Direct(PreparedUpdate {
+                request: UpdateRequest {
+                    context: SkillLocationRef {
+                        environment: EnvironmentRef::Native,
+                        scope: SkillLocation::Global,
+                    },
+                    skill_names: vec!["demo".into()],
+                },
+                preview: PreparedUpdatePreview {
+                    sources: Vec::new(),
+                    path_base: None,
+                    skills: Vec::new(),
+                    blocked: Vec::new(),
+                    redirected_download_hosts: Vec::new(),
+                },
+                items: Vec::new(),
+                sources: Vec::new(),
+                source_by_skill: Default::default(),
+            })
+        };
+        let registry = UpdatePreparations::default();
+        let id = uuid::Uuid::new_v4().to_string();
+        let cancelled = registry.begin(id.clone(), "main").unwrap();
+        registry.cancel(&id, "main").unwrap();
+        assert!(cancelled.cancellation.is_cancelled());
+
+        let replacement = registry.begin(id.clone(), "main").unwrap();
+        assert_eq!(
+            cancelled.publish(prepared()),
+            Err(AppError::MutationCancelled)
+        );
+        assert!(!replacement.cancellation.is_cancelled());
+        assert_eq!(
+            registry.cancel(&id, "other-window"),
+            Err(AppError::StaleContext)
+        );
+        replacement.publish(prepared()).unwrap();
+        assert!(matches!(
+            registry.take(&id, "other-window"),
+            Err(AppError::StalePayload)
+        ));
+        assert!(matches!(
+            registry.take(&id, "main"),
+            Ok(PreparedUpdates::Direct(_))
+        ));
+        assert!(matches!(
+            registry.take(&id, "main"),
+            Err(AppError::StalePayload)
+        ));
+
+        let old_window_operation = registry
+            .begin(uuid::Uuid::new_v4().to_string(), "main")
+            .unwrap();
+        let current_window_operation = registry
+            .begin(uuid::Uuid::new_v4().to_string(), "main")
+            .unwrap();
+        assert!(old_window_operation.cancellation.is_cancelled());
+        assert_eq!(
+            old_window_operation.publish(prepared()),
+            Err(AppError::MutationCancelled)
+        );
+        assert!(!current_window_operation.cancellation.is_cancelled());
+        registry.close_window("main");
+        assert!(current_window_operation.cancellation.is_cancelled());
+        assert_eq!(
+            current_window_operation.publish(prepared()),
+            Err(AppError::MutationCancelled)
+        );
+    }
+
+    #[tokio::test]
+    async fn expiry_releases_only_the_expired_member_and_executes_other_content() {
+        let now = Arc::new(AtomicU64::new(1_000));
+        let clock = now.clone();
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            move || clock.load(Ordering::SeqCst),
+        ));
+        let (alpha_source, alpha) = acquired_update_source(&manager, "alpha").await;
+        now.store(1_050, Ordering::SeqCst);
+        let (beta_source, beta) = acquired_update_source(&manager, "beta").await;
+        let planner = Planner {
+            token: update_test_token(),
+            rebuilds: Arc::new(AtomicUsize::new(0)),
+        };
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let mut items = Vec::new();
+        for (name, source, handle) in [
+            ("alpha", alpha_source, alpha),
+            ("beta", beta_source, beta.clone()),
+        ] {
+            let payload = ValidatedSkillPayload::validate(
+                handle.clone(),
+                &source,
+                &context.environment,
+                name,
+                manager.pin_verified(&handle).await.unwrap(),
+            )
+            .await
+            .unwrap();
+            let execution = UpdateExecutionRequest {
+                request: UpdateRequest {
+                    context: context.clone(),
+                    skill_names: vec![name.into()],
+                },
+                overwrite_private_entries: Vec::new(),
+            };
+            let (_, plan) = planner.build(&execution, vec![payload]).await.unwrap();
+            items.push(PreparedUpdateItem {
+                name: name.into(),
+                source_result_id: "source-1".into(),
+                handle,
+                plan,
+            });
         }
+        let selected = ObservedEntryId::parse("entry-v1-alpha-private").unwrap();
+        let mut skills = previews_from_inspection(inspection(update_test_token(), "old")).unwrap();
+        skills.truncate(1);
+        skills[0].skill_name = "alpha".into();
+        skills[0].overwrite_private_entries = vec![UpdateConflictCopyPreview {
+            is_standard: Some(false),
+            entry_id: selected.clone(),
+            readers: Vec::new(),
+            display_path: crate::environment::types::ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: "/agents/private".to_string(),
+            },
+        }];
+        let mut prepared = PreparedUpdate {
+            request: UpdateRequest {
+                context,
+                skill_names: vec!["alpha".into(), "beta".into()],
+            },
+            preview: PreparedUpdatePreview {
+                sources: Vec::new(),
+                path_base: None,
+                skills,
+                blocked: Vec::new(),
+                redirected_download_hosts: Vec::new(),
+            },
+            items,
+            sources: Vec::new(),
+            source_by_skill: Default::default(),
+        };
+        now.store(1_101, Ordering::SeqCst);
+        prepared.expire_payloads(1_101);
+        assert_eq!(prepared.items.len(), 1);
+        assert_eq!(prepared.preview.blocked[0].skill_name, "alpha");
+        assert_eq!(manager.cleanup().await.unwrap(), 1);
+        assert!(manager.pin_verified(&beta).await.is_ok());
+        let executions = Arc::new(AtomicUsize::new(0));
+        let service = UpdateService::new(
+            manager,
+            planner,
+            FailingAcquirer,
+            ResultExecutor {
+                calls: executions.clone(),
+                expected_payload_count: 1,
+                results: vec![mutation_result("beta", MutationUnitStatus::Succeeded)],
+            },
+        );
+        let result = service
+            .execute_prepared(prepared, &[selected], CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(result.outcome, UpdateOutcome::Partial);
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert!(result
+            .skills
+            .iter()
+            .find(|skill| skill.skill_identity.skill_name == "beta")
+            .unwrap()
+            .mutation
+            .as_ref()
+            .is_some_and(|mutation| mutation.status == MutationUnitStatus::Succeeded));
+    }
+
+    #[tokio::test]
+    async fn prepared_update_executes_without_reacquiring_or_replanning() {
+        let manager = update_test_manager();
+        let (discovery_session, handle) = acquired_update_source(&manager, "demo").await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let builds = Arc::new(AtomicUsize::new(0));
+        let executed = Arc::new(AtomicUsize::new(0));
+        let service = UpdateService::new(
+            manager,
+            Planner {
+                token: update_test_token(),
+                rebuilds: builds.clone(),
+            },
+            FixedAcquirer {
+                calls: calls.clone(),
+                expected_group_count: 1,
+                acquisitions: Mutex::new(Some(vec![UpdateSourceAcquisition {
+                    source_result_id: "source-1".into(),
+                    source: "owner/repo".into(),
+                    skill_names: vec!["demo".into()],
+                    result: Ok(AcquiredUpdateSource {
+                        discovery_session,
+                        payloads: vec![("demo".into(), handle)],
+                        skill_errors: Vec::new(),
+                        redirected_download_hosts: Vec::new(),
+                        _leases: Vec::new(),
+                    }),
+                }])),
+            },
+            ResultExecutor {
+                calls: executed.clone(),
+                expected_payload_count: 1,
+                results: vec![mutation_result("demo", MutationUnitStatus::Succeeded)],
+            },
+        );
+        let request = UpdateRequest {
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
+            },
+            skill_names: vec!["demo".into()],
+        };
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert_eq!(prepared.preview.skills.len(), 1);
+        assert!(prepared.preview.blocked.is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        assert_eq!(executed.load(Ordering::SeqCst), 0);
+        let response = service
+            .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(response.outcome, UpdateOutcome::Succeeded);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        assert_eq!(executed.load(Ordering::SeqCst), 1);
     }
 
     struct FailingAcquirer;
@@ -1387,41 +1935,63 @@ mod tests {
         }
     }
 
-    struct SequencedPlanner {
-        inspections: Mutex<Vec<LocalUpdateInspection>>,
+    struct PreparedPlanner {
+        keep_entries: bool,
+        fail_inspection: Option<String>,
+        invalid_source: Option<String>,
         builds: Arc<AtomicUsize>,
         build_token: PreviewToken,
     }
 
-    impl UpdatePlanner for SequencedPlanner {
-        fn inspect<'a>(
+    impl UpdatePlanner for PreparedPlanner {
+        fn inspect_items<'a>(
             &'a self,
-            _request: &'a UpdateRequest,
-        ) -> UpdateFuture<'a, Result<LocalUpdateInspection, AppError>> {
-            Box::pin(async move { Ok(self.inspections.lock().unwrap().remove(0)) })
+            request: &'a UpdateRequest,
+        ) -> UpdateFuture<'a, Vec<(String, Result<LocalUpdateInspection, AppError>)>> {
+            Box::pin(async move {
+                request
+                    .skill_names
+                    .iter()
+                    .map(|name| {
+                        let result = if self.fail_inspection.as_ref() == Some(name) {
+                            Err(AppError::Io {
+                                message: "associated target unavailable".into(),
+                            })
+                        } else {
+                            let mut value = inspection(update_test_token(), "old");
+                            value.source_candidates.retain(|skill| &skill.name == name);
+                            for skill in &mut value.source_candidates {
+                                skill.source_url =
+                                    Some(format!("https://github.com/{}/repo.git", skill.name));
+                                if self.invalid_source.as_ref() == Some(&skill.name) {
+                                    skill.source_type = "git".into();
+                                    skill.source_url = Some("http://".into());
+                                }
+                            }
+                            value.skills.retain(|skill| &skill.skill_name == name);
+                            Ok(value)
+                        };
+                        (name.clone(), result)
+                    })
+                    .collect()
+            })
         }
 
         fn build<'a>(
             &'a self,
-            _execution: &'a UpdateExecutionRequest,
+            execution: &'a UpdateExecutionRequest,
             payloads: Vec<ValidatedSkillPayload>,
         ) -> UpdateFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
             self.builds.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
                 Ok((
                     self.build_token.clone(),
-                    MutationPlan {
-                        kind: crate::core::mutation::MutationKind::Update,
-                        operation_id: "update-1".to_string(),
-                        payloads: payloads
-                            .into_iter()
-                            .map(|payload| {
-                                let id = payload.manifest().payload_id().clone();
-                                (id, payload.into_lease())
-                            })
-                            .collect(),
-                        units: Vec::new(),
-                    },
+                    update_test_plan(
+                        &execution.request,
+                        payloads,
+                        &self.build_token,
+                        self.keep_entries,
+                    ),
                 ))
             })
         }
@@ -1487,6 +2057,7 @@ mod tests {
 
     fn inspection(token: PreviewToken, alpha_hash: &str) -> LocalUpdateInspection {
         LocalUpdateInspection {
+            path_base: None,
             token,
             source_candidates: vec![
                 LockedUpdateSkill {
@@ -1498,403 +2069,225 @@ mod tests {
             skills: vec![
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "alpha".to_string(),
-                    agent_observed_digest: "alpha-agent-observed".to_string(),
+                    locations: Vec::new(),
                     adapter_targets: Vec::new(),
+                    automatic_entries: Vec::new(),
+                    preserved_entries: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
                 },
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "beta".to_string(),
-                    agent_observed_digest: "beta-agent-observed".to_string(),
+                    locations: Vec::new(),
                     adapter_targets: Vec::new(),
+                    automatic_entries: Vec::new(),
+                    preserved_entries: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
                 },
             ],
-            subjects: update_subject_snapshot(&[("alpha", alpha_hash), ("beta", "old")]),
+        }
+    }
+
+    async fn beta_acquisition(manager: &PayloadSessionManager) -> UpdateSourceAcquisition {
+        let (discovery_session, handle) = acquired_update_source(manager, "beta").await;
+        UpdateSourceAcquisition {
+            source_result_id: "beta-source".into(),
+            source: "beta/repo".into(),
+            skill_names: vec!["beta".into()],
+            result: Ok(AcquiredUpdateSource {
+                discovery_session,
+                payloads: vec![("beta".into(), handle)],
+                skill_errors: Vec::new(),
+                redirected_download_hosts: Vec::new(),
+                _leases: Vec::new(),
+            }),
         }
     }
 
     #[tokio::test]
-    async fn matching_scope_revisions_do_not_override_per_skill_drift() {
+    async fn preparation_blocks_a_bad_association_but_keeps_an_independent_skill_ready() {
         let manager = update_test_manager();
-        let source = tempdir().unwrap();
-        for name in ["alpha", "beta"] {
-            let root = source.path().join(name);
-            fs::create_dir_all(&root).unwrap();
-            fs::write(
-                root.join("SKILL.md"),
-                format!("---\nname: {name}\ndescription: {name}\n---\n"),
-            )
-            .unwrap();
-        }
-        let discovery = manager
-            .discover(EnvironmentRef::Native, "source")
-            .await
-            .unwrap();
-        let mut payloads = Vec::new();
-        for name in ["alpha", "beta"] {
-            payloads.push((
-                name.to_string(),
-                manager
-                    .acquire_payload_with_metadata(
-                        &discovery,
-                        format!("skills/{name}"),
-                        build_skill_payload(&source.path().join(name)).unwrap(),
-                        update_payload_metadata(name),
-                    )
-                    .await
-                    .unwrap(),
-            ));
-        }
-        let token = update_test_token();
-        let facts = SourceSnapshotFacts {
-            discovery_session: discovery,
-            snapshot_id: RemoteSnapshotId::new(
-                NormalizedRef::Named("main".to_string()),
-                "main",
-                "revision-1",
-            ),
-            complete_skill_path_catalog: Default::default(),
-        };
-        let calls = Arc::new(AtomicUsize::new(0));
-        let builds = Arc::new(AtomicUsize::new(0));
+        let acquisition = beta_acquisition(&manager).await;
         let executed = Arc::new(AtomicUsize::new(0));
         let service = UpdateService::new(
-            Arc::clone(&manager),
-            SequencedPlanner {
-                inspections: Mutex::new(vec![
-                    inspection(token.clone(), "old"),
-                    inspection(
-                        PreviewToken {
-                            generation: "preview-latest".to_string(),
-                            ..token.clone()
-                        },
-                        "changed",
-                    ),
-                ]),
-                builds: Arc::clone(&builds),
-                build_token: PreviewToken {
-                    generation: "rebuilt".to_string(),
-                    ..token.clone()
-                },
+            manager,
+            PreparedPlanner {
+                keep_entries: false,
+                fail_inspection: Some("alpha".into()),
+                invalid_source: None,
+                builds: Arc::new(AtomicUsize::new(0)),
+                build_token: update_test_token(),
             },
             FixedAcquirer {
-                calls: Arc::clone(&calls),
+                acquisitions: Mutex::new(Some(vec![acquisition])),
+                calls: Arc::new(AtomicUsize::new(0)),
                 expected_group_count: 1,
-                acquisitions: Mutex::new(Some(vec![UpdateSourceAcquisition {
-                    source_result_id: "source-1".to_string(),
-                    source: "owner/repo".to_string(),
-                    skill_names: vec!["alpha".to_string(), "beta".to_string()],
-                    result: Ok(AcquiredUpdateSource {
-                        facts,
-                        payloads,
-                        skill_errors: Vec::new(),
-                        redirected_download_host: None,
-                    }),
-                }])),
             },
             ResultExecutor {
-                calls: Arc::clone(&executed),
-                expected_payload_count: 1,
+                calls: executed.clone(),
                 results: vec![mutation_result("beta", MutationUnitStatus::Succeeded)],
-            },
-        );
-
-        let stages = Arc::new(Mutex::new(Vec::new()));
-        let observed_stages = Arc::clone(&stages);
-        let response = service
-            .execute_with_stage_observer(
-                &UpdateExecutionRequest {
-                    request: UpdateRequest {
-                        context: SkillLocationRef {
-                            environment: EnvironmentRef::Native,
-                            scope: SkillLocation::Global,
-                        },
-                        skill_names: vec!["alpha".to_string(), "beta".to_string()],
-                    },
-                    overwrite_private_entries: Vec::new(),
-                },
-                token,
-                CancellationSignal::default(),
-                move |stage| observed_stages.lock().unwrap().push(stage),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(builds.load(Ordering::SeqCst), 1);
-        assert_eq!(executed.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            *stages.lock().unwrap(),
-            vec![
-                UpdateExecutionProgress {
-                    stage: UpdateExecutionStage::Validating,
-                    subject: None,
-                    current: None,
-                    total: None,
-                },
-                UpdateExecutionProgress {
-                    stage: UpdateExecutionStage::Updating,
-                    subject: None,
-                    current: Some(0),
-                    total: Some(0),
-                },
-            ]
-        );
-        assert!(matches!(
-            response
-                .skills
-                .iter()
-                .find(|skill| skill.skill_identity.skill_name == "alpha")
-                .unwrap()
-                .coverage,
-            UpdateCoverage::NotUpdated { .. }
-        ));
-        assert_eq!(
-            response
-                .skills
-                .iter()
-                .find(|skill| skill.skill_identity.skill_name == "beta")
-                .unwrap()
-                .coverage,
-            UpdateCoverage::Updated
-        );
-        assert_eq!(response.outcome, UpdateOutcome::Partial);
-    }
-
-    #[tokio::test]
-    async fn scope_revision_change_after_acquisition_aborts_before_plan_build() {
-        let manager = update_test_manager();
-        let token = update_test_token();
-        let acquire_calls = Arc::new(AtomicUsize::new(0));
-        let builds = Arc::new(AtomicUsize::new(0));
-        let executor_calls = Arc::new(AtomicUsize::new(0));
-        let service = UpdateService::new(
-            Arc::clone(&manager),
-            SequencedPlanner {
-                inspections: Mutex::new(vec![
-                    inspection(token.clone(), "old"),
-                    inspection(
-                        PreviewToken {
-                            registry_revision: "registry-2".to_string(),
-                            ..token.clone()
-                        },
-                        "old",
-                    ),
-                ]),
-                builds: Arc::clone(&builds),
-                build_token: token.clone(),
-            },
-            FixedAcquirer {
-                calls: Arc::clone(&acquire_calls),
-                expected_group_count: 1,
-                acquisitions: Mutex::new(Some(Vec::new())),
-            },
-            ResultExecutor {
-                calls: Arc::clone(&executor_calls),
-                expected_payload_count: 0,
-                results: Vec::new(),
-            },
-        );
-
-        let result = service
-            .execute(
-                &UpdateExecutionRequest {
-                    request: UpdateRequest {
-                        context: SkillLocationRef {
-                            environment: EnvironmentRef::Native,
-                            scope: SkillLocation::Global,
-                        },
-                        skill_names: vec!["alpha".to_string(), "beta".to_string()],
-                    },
-                    overwrite_private_entries: Vec::new(),
-                },
-                token,
-                CancellationSignal::default(),
-            )
-            .await;
-
-        assert!(matches!(result, Err(AppError::StaleRegistry)));
-        assert_eq!(acquire_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(builds.load(Ordering::SeqCst), 0);
-        assert_eq!(executor_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn scope_revision_change_after_plan_build_aborts_before_execution() {
-        let manager = update_test_manager();
-        let (facts, alpha_handle) = acquired_update_source(&manager, "alpha").await;
-        let token = update_test_token();
-        let mut initial = inspection(token.clone(), "old");
-        initial.source_candidates.truncate(1);
-        initial.skills.truncate(1);
-        let acquire_calls = Arc::new(AtomicUsize::new(0));
-        let builds = Arc::new(AtomicUsize::new(0));
-        let executor_calls = Arc::new(AtomicUsize::new(0));
-        let service = UpdateService::new(
-            Arc::clone(&manager),
-            SequencedPlanner {
-                inspections: Mutex::new(vec![initial.clone(), initial]),
-                builds: Arc::clone(&builds),
-                build_token: PreviewToken {
-                    environment_revision: "environment-2".to_string(),
-                    ..token.clone()
-                },
-            },
-            FixedAcquirer {
-                calls: Arc::clone(&acquire_calls),
-                expected_group_count: 1,
-                acquisitions: Mutex::new(Some(vec![UpdateSourceAcquisition {
-                    source_result_id: "source-1".to_string(),
-                    source: "owner/repo".to_string(),
-                    skill_names: vec!["alpha".to_string()],
-                    result: Ok(AcquiredUpdateSource {
-                        facts,
-                        payloads: vec![("alpha".to_string(), alpha_handle)],
-                        skill_errors: Vec::new(),
-                        redirected_download_host: None,
-                    }),
-                }])),
-            },
-            ResultExecutor {
-                calls: Arc::clone(&executor_calls),
                 expected_payload_count: 1,
-                results: Vec::new(),
             },
         );
-
-        let result = service
-            .execute(
-                &UpdateExecutionRequest {
-                    request: UpdateRequest {
-                        context: SkillLocationRef {
-                            environment: EnvironmentRef::Native,
-                            scope: SkillLocation::Global,
-                        },
-                        skill_names: vec!["alpha".to_string()],
-                    },
-                    overwrite_private_entries: Vec::new(),
-                },
-                token,
-                CancellationSignal::default(),
-            )
-            .await;
-
-        assert!(matches!(result, Err(AppError::StaleEnvironment)));
-        assert_eq!(acquire_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(builds.load(Ordering::SeqCst), 1);
-        assert_eq!(executor_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn mixed_source_failure_keeps_the_other_source_executable_in_one_coordinator_run() {
-        let manager = update_test_manager();
-        let (facts, alpha_handle) = acquired_update_source(&manager, "alpha").await;
-        let token = update_test_token();
-        let inspection = LocalUpdateInspection {
-            token: token.clone(),
-            source_candidates: vec![
-                locked_update_skill("alpha", "https://github.com/owner/alpha.git"),
-                locked_update_skill("beta", "https://github.com/owner/beta.git"),
-            ],
-            skills: vec![
-                crate::application::update_planner::LocalUpdateSkillInspection {
-                    skill_name: "alpha".to_string(),
-                    agent_observed_digest: "alpha-agent-observed".to_string(),
-                    adapter_targets: Vec::new(),
-                    clean_copies: Vec::new(),
-                    conflicts: Vec::new(),
-                    blocking_reasons: Vec::new(),
-                },
-                crate::application::update_planner::LocalUpdateSkillInspection {
-                    skill_name: "beta".to_string(),
-                    agent_observed_digest: "beta-agent-observed".to_string(),
-                    adapter_targets: Vec::new(),
-                    clean_copies: Vec::new(),
-                    conflicts: Vec::new(),
-                    blocking_reasons: Vec::new(),
-                },
-            ],
-            subjects: update_subject_snapshot(&[("alpha", "old"), ("beta", "old")]),
+        let request = UpdateRequest {
+            context: mutation_result("beta", MutationUnitStatus::Succeeded).target,
+            skill_names: vec!["alpha".into(), "beta".into()],
         };
-        let acquire_calls = Arc::new(AtomicUsize::new(0));
-        let builds = Arc::new(AtomicUsize::new(0));
-        let executor_calls = Arc::new(AtomicUsize::new(0));
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert_eq!(prepared.preview.skills[0].skill_name, "beta");
+        assert_eq!(prepared.preview.blocked[0].skill_name, "alpha");
+        assert_eq!(executed.load(Ordering::SeqCst), 0);
+        let response = service
+            .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(response.outcome, UpdateOutcome::Partial);
+        assert_eq!(executed.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn prepared_update_with_only_kept_entries_does_not_reach_the_executor() {
+        let manager = update_test_manager();
+        let acquisition = beta_acquisition(&manager).await;
+        let executed = Arc::new(AtomicUsize::new(0));
         let service = UpdateService::new(
-            Arc::clone(&manager),
-            SequencedPlanner {
-                inspections: Mutex::new(vec![inspection.clone(), inspection]),
-                builds: Arc::clone(&builds),
-                build_token: PreviewToken {
-                    generation: "rebuilt".to_string(),
-                    ..token.clone()
-                },
+            manager,
+            PreparedPlanner {
+                keep_entries: true,
+                fail_inspection: None,
+                invalid_source: None,
+                builds: Arc::new(AtomicUsize::new(0)),
+                build_token: update_test_token(),
             },
             FixedAcquirer {
-                calls: Arc::clone(&acquire_calls),
-                expected_group_count: 2,
-                acquisitions: Mutex::new(Some(vec![
-                    UpdateSourceAcquisition {
-                        source_result_id: "source-1".to_string(),
-                        source: "owner/alpha".to_string(),
-                        skill_names: vec!["alpha".to_string()],
-                        result: Ok(AcquiredUpdateSource {
-                            facts,
-                            payloads: vec![("alpha".to_string(), alpha_handle)],
-                            skill_errors: Vec::new(),
-                            redirected_download_host: None,
-                        }),
-                    },
-                    UpdateSourceAcquisition {
-                        source_result_id: "source-2".to_string(),
-                        source: "owner/beta".to_string(),
-                        skill_names: vec!["beta".to_string()],
-                        result: Err(AppError::GitCloneFailed {
-                            message: "unavailable".to_string(),
-                        }),
-                    },
-                ])),
+                acquisitions: Mutex::new(Some(vec![acquisition])),
+                calls: Arc::new(AtomicUsize::new(0)),
+                expected_group_count: 1,
             },
             ResultExecutor {
-                calls: Arc::clone(&executor_calls),
+                calls: executed.clone(),
+                results: vec![mutation_result("beta", MutationUnitStatus::Succeeded)],
                 expected_payload_count: 1,
-                results: vec![mutation_result("alpha", MutationUnitStatus::Succeeded)],
             },
         );
-
-        let response = service
-            .execute(
-                &UpdateExecutionRequest {
-                    request: UpdateRequest {
-                        context: SkillLocationRef {
-                            environment: EnvironmentRef::Native,
-                            scope: SkillLocation::Global,
-                        },
-                        skill_names: vec!["alpha".to_string(), "beta".to_string()],
-                    },
-                    overwrite_private_entries: Vec::new(),
+        let prepared = service
+            .prepare(
+                &UpdateRequest {
+                    context: mutation_result("beta", MutationUnitStatus::Succeeded).target,
+                    skill_names: vec!["beta".into()],
                 },
-                token,
                 CancellationSignal::default(),
             )
             .await
             .unwrap();
+        let response = service
+            .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(executed.load(Ordering::SeqCst), 0);
+        assert!(response.skills[0].mutation.is_none());
+        assert!(matches!(
+            response.skills[0].coverage,
+            UpdateCoverage::NotUpdated { .. }
+        ));
+    }
 
-        assert_eq!(acquire_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(builds.load(Ordering::SeqCst), 1);
-        assert_eq!(executor_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(response.outcome, UpdateOutcome::Partial);
-        assert_eq!(
-            response
-                .sources
-                .iter()
-                .map(|source| source.status)
-                .collect::<Vec<_>>(),
-            vec![UpdateSourceStatus::Acquired, UpdateSourceStatus::Failed]
+    #[tokio::test]
+    async fn changed_environment_during_plan_build_blocks_confirmation() {
+        let manager = update_test_manager();
+        let acquisition = beta_acquisition(&manager).await;
+        let executed = Arc::new(AtomicUsize::new(0));
+        let service = UpdateService::new(
+            manager,
+            PreparedPlanner {
+                keep_entries: false,
+                fail_inspection: None,
+                invalid_source: None,
+                builds: Arc::new(AtomicUsize::new(0)),
+                build_token: PreviewToken {
+                    environment_revision: "changed".into(),
+                    ..update_test_token()
+                },
+            },
+            FixedAcquirer {
+                acquisitions: Mutex::new(Some(vec![acquisition])),
+                calls: Arc::new(AtomicUsize::new(0)),
+                expected_group_count: 1,
+            },
+            ResultExecutor {
+                calls: executed.clone(),
+                results: Vec::new(),
+                expected_payload_count: 1,
+            },
         );
+        let request = UpdateRequest {
+            context: mutation_result("beta", MutationUnitStatus::Succeeded).target,
+            skill_names: vec!["beta".into()],
+        };
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert!(prepared.preview.skills.is_empty());
+        assert_eq!(
+            prepared.preview.blocked[0].error,
+            AppError::StaleEnvironment
+        );
+        assert_eq!(executed.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn mixed_source_failure_keeps_an_independent_source_executable() {
+        let manager = update_test_manager();
+        let beta = beta_acquisition(&manager).await;
+        let alpha = UpdateSourceAcquisition {
+            source_result_id: "alpha-source".into(),
+            source: "alpha/repo".into(),
+            skill_names: vec!["alpha".into()],
+            result: Err(AppError::GitCloneFailed {
+                message: "unavailable".into(),
+            }),
+        };
+        let executed = Arc::new(AtomicUsize::new(0));
+        let service = UpdateService::new(
+            manager,
+            PreparedPlanner {
+                keep_entries: false,
+                fail_inspection: None,
+                invalid_source: None,
+                builds: Arc::new(AtomicUsize::new(0)),
+                build_token: update_test_token(),
+            },
+            FixedAcquirer {
+                acquisitions: Mutex::new(Some(vec![alpha, beta])),
+                calls: Arc::new(AtomicUsize::new(0)),
+                expected_group_count: 2,
+            },
+            ResultExecutor {
+                calls: executed.clone(),
+                results: vec![mutation_result("beta", MutationUnitStatus::Succeeded)],
+                expected_payload_count: 1,
+            },
+        );
+        let request = UpdateRequest {
+            context: mutation_result("beta", MutationUnitStatus::Succeeded).target,
+            skill_names: vec!["alpha".into(), "beta".into()],
+        };
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        let response = service
+            .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(response.outcome, UpdateOutcome::Partial);
         assert_eq!(
             response
                 .skills
@@ -1902,26 +2295,9 @@ mod tests {
                 .find(|skill| skill.skill_identity.skill_name == "alpha")
                 .unwrap()
                 .source_result_id,
-            "source-1"
+            "alpha-source"
         );
-        assert_eq!(
-            response
-                .skills
-                .iter()
-                .find(|skill| skill.skill_identity.skill_name == "beta")
-                .unwrap()
-                .source_result_id,
-            "source-2"
-        );
-        assert!(matches!(
-            response
-                .skills
-                .iter()
-                .find(|skill| skill.skill_identity.skill_name == "beta")
-                .unwrap()
-                .coverage,
-            UpdateCoverage::NotUpdated { .. }
-        ));
+        assert_eq!(executed.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1935,7 +2311,7 @@ mod tests {
 
         assert_eq!(
             update_coverage(Some(&succeeded), true, &context).0,
-            UpdateCoverage::PreservedConflicts,
+            UpdateCoverage::UpdatedWithSkippedCopies,
         );
         assert!(matches!(
             update_coverage(Some(&failed), false, &context).0,
@@ -1963,6 +2339,7 @@ mod tests {
             Some(crate::error::RecoveryResourceId::parse("recovery-update").unwrap())
         );
         let result = UpdateSkillResult {
+            skipped_copy_paths: None,
             skill_identity: SkillIdentity {
                 context: context.clone(),
                 skill_name: "demo".to_string(),
@@ -1976,6 +2353,46 @@ mod tests {
         assert_eq!(update_outcome(&[result]), UpdateOutcome::Failed);
     }
 
+    #[tokio::test]
+    async fn malformed_source_is_blocked_before_grouping_other_members() {
+        let manager = update_test_manager();
+        let beta = beta_acquisition(&manager).await;
+        let service = UpdateService::new(
+            manager,
+            PreparedPlanner {
+                keep_entries: false,
+                fail_inspection: None,
+                invalid_source: Some("alpha".into()),
+                builds: Arc::new(AtomicUsize::new(0)),
+                build_token: update_test_token(),
+            },
+            FixedAcquirer {
+                acquisitions: Mutex::new(Some(vec![beta])),
+                calls: Arc::new(AtomicUsize::new(0)),
+                expected_group_count: 1,
+            },
+            ResultExecutor {
+                calls: Arc::new(AtomicUsize::new(0)),
+                results: Vec::new(),
+                expected_payload_count: 1,
+            },
+        );
+        let request = UpdateRequest {
+            context: mutation_result("beta", MutationUnitStatus::Succeeded).target,
+            skill_names: vec!["alpha".into(), "beta".into()],
+        };
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert_eq!(prepared.preview.skills[0].skill_name, "beta");
+        assert_eq!(prepared.preview.blocked[0].skill_name, "alpha");
+        assert!(matches!(
+            prepared.preview.blocked[0].error,
+            AppError::InvalidSource { .. }
+        ));
+    }
+
     #[test]
     fn earlier_success_and_later_cancellation_remain_partial() {
         let context = SkillLocationRef {
@@ -1986,6 +2403,7 @@ mod tests {
             ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
         let skills = vec![
             UpdateSkillResult {
+                skipped_copy_paths: None,
                 skill_identity: SkillIdentity {
                     context: context.clone(),
                     skill_name: "alpha".to_string(),
@@ -2005,62 +2423,6 @@ mod tests {
         ];
 
         assert_eq!(update_outcome(&skills), UpdateOutcome::Partial);
-    }
-
-    #[tokio::test]
-    async fn stale_preview_token_is_rejected_before_acquisition() {
-        let manager = Arc::new(PayloadSessionManager::in_memory(
-            PayloadSessionLimits {
-                ttl_ms: 60_000,
-                max_sessions: 4,
-                max_bytes: 1_000_000,
-            },
-            || 1_000,
-        ));
-        let token = PreviewToken {
-            generation: "preview-v1-demo".to_string(),
-            registry_revision: "registry-1".to_string(),
-            environment_revision: "environment-1".to_string(),
-            context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
-        };
-        let request = UpdateRequest {
-            context: SkillLocationRef {
-                environment: EnvironmentRef::Native,
-                scope: SkillLocation::Global,
-            },
-            skill_names: vec!["demo".to_string()],
-        };
-        let rebuilds = Arc::new(AtomicUsize::new(0));
-        let acquisitions = Arc::new(AtomicUsize::new(0));
-        let executions = Arc::new(AtomicUsize::new(0));
-        let service = UpdateService::new(
-            Arc::clone(&manager),
-            Planner {
-                token: token.clone(),
-                rebuilds: Arc::clone(&rebuilds),
-            },
-            Acquirer(Arc::clone(&acquisitions)),
-            Executor(Arc::clone(&executions)),
-        );
-        let preview = service.preview(&request).await.unwrap();
-        let serialized_preview = serde_json::to_value(&preview).unwrap();
-        assert!(serialized_preview["skills"][0].get("payload").is_none());
-        let execution = UpdateExecutionRequest {
-            request,
-            overwrite_private_entries: Vec::new(),
-        };
-        let mut changed_token = token;
-        changed_token.generation = "preview-v1-changed".to_string();
-
-        assert!(matches!(
-            service
-                .execute(&execution, changed_token, CancellationSignal::default())
-                .await,
-            Err(AppError::StaleContext)
-        ));
-        assert_eq!(acquisitions.load(Ordering::SeqCst), 0);
-        assert_eq!(rebuilds.load(Ordering::SeqCst), 0);
-        assert_eq!(executions.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -2096,15 +2458,12 @@ mod tests {
             Executor(Arc::new(AtomicUsize::new(0))),
         );
 
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
         let response = service
-            .execute(
-                &UpdateExecutionRequest {
-                    request,
-                    overwrite_private_entries: Vec::new(),
-                },
-                token,
-                CancellationSignal::default(),
-            )
+            .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
             .await
             .unwrap();
 
@@ -2149,18 +2508,18 @@ mod tests {
             Executor(Arc::new(AtomicUsize::new(0))),
         );
 
-        let response = service
-            .execute(
-                &UpdateExecutionRequest {
-                    request: UpdateRequest {
-                        context,
-                        skill_names: vec!["demo".to_string()],
-                    },
-                    overwrite_private_entries: Vec::new(),
+        let prepared = service
+            .prepare(
+                &UpdateRequest {
+                    context,
+                    skill_names: vec!["demo".to_string()],
                 },
-                token,
                 CancellationSignal::default(),
             )
+            .await
+            .unwrap();
+        let response = service
+            .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
             .await
             .unwrap();
 
@@ -2184,6 +2543,7 @@ mod tests {
         let cancelled =
             ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
         let skills = vec![UpdateSkillResult {
+            skipped_copy_paths: None,
             skill_identity: SkillIdentity {
                 context,
                 skill_name: "demo".to_string(),

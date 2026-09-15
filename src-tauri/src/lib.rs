@@ -38,6 +38,9 @@ mod native_workflow_integration_support;
 #[cfg(test)]
 #[path = "test_support/payload_storage.rs"]
 mod payload_storage_test_support;
+#[cfg(all(test, target_os = "windows"))]
+#[path = "test_support/wsl_update_workflow.rs"]
+mod wsl_update_workflow;
 
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
@@ -110,6 +113,13 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(builder.invoke_handler())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(runtime) = window.try_state::<RuntimeServiceGraph>() {
+                    runtime.update_preparations().close_window(window.label());
+                }
+            }
+        })
         .setup(move |app| {
             let payload_cache_root = app.path().app_cache_dir()?.join("payload-sessions");
             let recovery_root = app.path().app_local_data_dir()?.join("recovery");

@@ -1017,6 +1017,7 @@ impl WslWorkspace {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn map_path_to_windows(
         &self,
         path: String,

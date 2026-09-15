@@ -137,6 +137,19 @@ test("quality workflow separates portable formatting, static checks, and tests",
   assert.match(testCommands, /cargo test[^\n]*--locked[^\n]*--workspace/);
   assert.doesNotMatch(testCommands, /cargo (?:check|clippy)/);
 
+  const rustTestSteps = workflow.jobs["rust-test"].steps;
+  const pnpmSetup = rustTestSteps.findIndex((step) => step.uses?.startsWith("pnpm/action-setup@"));
+  const nodeSetup = rustTestSteps.findIndex((step) => step.uses?.startsWith("actions/setup-node@"));
+  const dependencyInstall = rustTestSteps.findIndex((step) => step.run === "pnpm install --frozen-lockfile");
+  const rustTests = rustTestSteps.findIndex((step) => (step.run ?? "").includes("cargo test"));
+  assert.ok(pnpmSetup >= 0, "Rust CLI interoperability tests require pnpm");
+  assert.ok(nodeSetup > pnpmSetup, "prepare Node and pnpm before installing the pinned CLI");
+  assert.ok(dependencyInstall > nodeSetup && dependencyInstall < rustTests);
+  assert.match(testCommands, /native_update_private_only_cli_installation_in_place[^\n]*--ignored/);
+  assert.match(testCommands, /grep[^\n]*native_update_private_only_cli_installation_in_place/);
+  assert.match(testCommands, /native_eve_update_restores_recorded_missing_installation[^\n]*--ignored/);
+  assert.match(testCommands, /grep[^\n]*native_eve_update_restores_recorded_missing_installation/);
+
   const clippyStep = workflow.jobs["rust-static"].steps.find((step) =>
     (step.run ?? "").includes("cargo clippy"),
   );

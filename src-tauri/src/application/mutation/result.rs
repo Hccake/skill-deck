@@ -27,6 +27,7 @@ pub enum MutationUnitStatus {
 #[specta(rename_all = "camelCase")]
 pub enum OperationErrorCode {
     Validation,
+    NoUpdateTargets,
     SkillPlacementTargetConflict,
     WellKnownScopeNotFound,
     EnvironmentUnavailable,

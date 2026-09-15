@@ -11,7 +11,7 @@ use crate::application::source_acquisition::{
 use crate::application::source_evidence::{
     EvidenceDetectionFailure, EvidenceDetectionOutcome, EvidenceDetectionRequest,
     EvidenceFailureReason, EvidenceFuture, RemoteEvidenceEntry, RemoteEvidenceObservation,
-    RemoteSnapshotId, SkillRevision, SourceEvidenceDetector, SourceSnapshotFacts,
+    RemoteSnapshotId, SkillRevision, SourceEvidenceDetector,
 };
 use crate::application::source_snapshot_reuse::{PayloadAcquisitionKey, SourceSnapshotReuseIndex};
 use crate::application::wellknown_access::WellKnownAccess;
@@ -173,9 +173,10 @@ impl RuntimeSourceEvidenceDetector {
                             snapshot.ref_revision,
                         ),
                         provider_validation: snapshot.validation,
+                        catalog_complete: true,
+                        member_failures: BTreeMap::new(),
                         complete_skill_path_catalog: catalog,
                         skill_revisions,
-                        snapshot_facts: None,
                     },
                 ))
             }
@@ -288,6 +289,8 @@ impl RuntimeSourceEvidenceDetector {
                     parsed,
                     source,
                     SourceDiscoveryPolicy {
+                        allow_empty_catalog: true,
+                        selected_skill_names: None,
                         full_depth: true,
                         internal_skill_visibility: InternalSkillVisibility::All,
                     },
@@ -301,6 +304,7 @@ impl RuntimeSourceEvidenceDetector {
                         error @ (AppError::MutationCancelled
                         | AppError::InvalidProxySettings { .. }),
                     ) => return Err(error),
+                    Err(error @ AppError::CapabilityUnavailable { .. }) => return Err(error),
                     Err(error) => return Ok(git_failure(error)),
                 };
                 let snapshot = self
@@ -316,61 +320,118 @@ impl RuntimeSourceEvidenceDetector {
             }
         };
 
-        let snapshot = self.payloads.source_snapshot(&discovery_session)?;
-        let catalog = snapshot
-            .skills()
-            .map(|skill| normalize_skill_folder_path(&skill.relative_path))
-            .collect::<BTreeSet<_>>();
-        let selected_paths = request
-            .requested_skill_paths
-            .iter()
-            .filter_map(|requested_path| {
-                snapshot
-                    .skills()
-                    .find(|skill| {
-                        normalize_skill_folder_path(&skill.relative_path) == *requested_path
-                    })
-                    .map(|skill| (requested_path.clone(), skill.relative_path.clone()))
-            })
-            .collect::<Vec<_>>();
-        let handles = SelectedPayloadAcquisitionService::new(self.payloads.clone())
-            .acquire(AcquireSelectedPayloadsRequest {
-                discovery_session: discovery_session.clone(),
-                skill_paths: selected_paths
-                    .iter()
-                    .map(|(_, relative_path)| relative_path.clone())
-                    .collect(),
-            })
-            .await?;
-        let mut skill_revisions = BTreeMap::new();
-        for ((skill_path, _), handle) in selected_paths.into_iter().zip(handles) {
-            let lease = self.payloads.pin_verified(&handle).await?;
-            let metadata = lease.planning_metadata();
-            if let Some(revision) = clone_skill_revision(
-                provider.clone(),
-                metadata.computed_hash.clone(),
-                metadata.upstream_revision.clone(),
-            ) {
-                skill_revisions.insert(skill_path, revision);
+        let result = async {
+            let selected = SelectedPayloadAcquisitionService::new(self.payloads.clone());
+            let mut member_failures = BTreeMap::new();
+            for path in &request.requested_skill_paths {
+                if let Err(error) = selected
+                    .ensure_saved_path(&discovery_session, path, cancellation.clone())
+                    .await
+                {
+                    if matches!(
+                        error,
+                        AppError::MutationCancelled
+                            | AppError::StaleEnvironment
+                            | AppError::EnvironmentUnavailable { .. }
+                    ) {
+                        return Err(error);
+                    }
+                    member_failures.insert(
+                        path.clone(),
+                        match error {
+                            AppError::CapabilityUnavailable { capability, .. } if capability == "sourceDirectoryLinks" => {
+                                crate::error::SourceAcquisitionFailureReason::DirectoryLinksUnsupported
+                            }
+                            AppError::PathNotFound { .. } => {
+                                crate::error::SourceAcquisitionFailureReason::NotFound
+                            }
+                            AppError::InvalidSkillMd { .. } | AppError::StalePayload => {
+                                crate::error::SourceAcquisitionFailureReason::InvalidContent
+                            }
+                            _ => crate::error::SourceAcquisitionFailureReason::Unavailable,
+                        },
+                    );
+                }
             }
-        }
+            let snapshot = self.payloads.source_snapshot(&discovery_session)?;
+            let catalog = snapshot
+                .skills()
+                .map(|skill| normalize_skill_folder_path(&skill.relative_path))
+                .collect::<BTreeSet<_>>();
+            let selected_paths = request
+                .requested_skill_paths
+                .iter()
+                .filter(|path| !member_failures.contains_key(*path))
+                .filter_map(|requested_path| {
+                    snapshot
+                        .skills()
+                        .find(|skill| {
+                            normalize_skill_folder_path(&skill.relative_path) == *requested_path
+                        })
+                        .map(|skill| (requested_path.clone(), skill.relative_path.clone()))
+                })
+                .collect::<Vec<_>>();
+            let mut skill_revisions = BTreeMap::new();
+            for (skill_path, relative_path) in selected_paths {
+                let acquired = async {
+                    let handle = selected
+                        .acquire(AcquireSelectedPayloadsRequest {
+                            discovery_session: discovery_session.clone(),
+                            skill_paths: vec![relative_path],
+                        })
+                        .await?
+                        .into_iter()
+                        .next()
+                        .ok_or(AppError::StalePayload)?;
+                    self.payloads.pin_verified(&handle).await
+                }
+                .await;
+                let lease = match acquired {
+                    Ok(lease) => lease,
+                    Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+                    Err(_) => {
+                        member_failures.insert(
+                            skill_path,
+                            crate::error::SourceAcquisitionFailureReason::InvalidContent,
+                        );
+                        continue;
+                    }
+                };
+                let metadata = lease.planning_metadata();
+                if let Some(revision) = clone_skill_revision(
+                    provider.clone(),
+                    metadata.computed_hash.clone(),
+                    metadata.upstream_revision.clone(),
+                ) {
+                    skill_revisions.insert(skill_path, revision);
+                }
+            }
 
-        let requested_ref = request.key.normalized_ref;
-        let resolved_ref = resolved_ref(&requested_ref);
-        let snapshot_id = RemoteSnapshotId::new(requested_ref, resolved_ref, ref_revision);
-        Ok(EvidenceDetectionOutcome::Modified(
-            RemoteEvidenceObservation {
-                snapshot_id: snapshot_id.clone(),
-                provider_validation: None,
-                complete_skill_path_catalog: catalog.clone(),
-                skill_revisions,
-                snapshot_facts: Some(SourceSnapshotFacts {
-                    discovery_session,
-                    snapshot_id,
-                    complete_skill_path_catalog: catalog,
-                }),
-            },
-        ))
+            let requested_ref = request.key.normalized_ref;
+            drop(snapshot);
+            let resolved_ref = resolved_ref(&requested_ref);
+            let snapshot_id = RemoteSnapshotId::new(requested_ref, resolved_ref, ref_revision);
+            self.snapshots.remember(
+                acquisition_key,
+                snapshot_id.commit_revision.clone(),
+                discovery_session.clone(),
+            );
+            Ok(EvidenceDetectionOutcome::Modified(
+                RemoteEvidenceObservation {
+                    snapshot_id: snapshot_id.clone(),
+                    provider_validation: None,
+                    catalog_complete: false,
+                    member_failures,
+                    complete_skill_path_catalog: catalog.clone(),
+                    skill_revisions,
+                },
+            ))
+        }
+        .await;
+        if let Err(error) = self.payloads.make_source_optional(&discovery_session).await {
+            log::warn!("Source retention cleanup will be retried: {error}");
+        }
+        result
     }
 
     async fn detect_wellknown(
@@ -422,18 +483,21 @@ impl RuntimeSourceEvidenceDetector {
             &evidence.index_url,
             &complete_skill_path_catalog,
             revision_projection,
+            evidence.catalog_complete,
+            &evidence.member_failures,
         ))?;
         Ok(EvidenceDetectionOutcome::Modified(
             RemoteEvidenceObservation {
                 snapshot_id: RemoteSnapshotId::new(
                     NormalizedRef::Default,
-                    evidence.index_url,
+                    "well-known-index",
                     revision,
                 ),
                 provider_validation: None,
+                catalog_complete: evidence.catalog_complete,
+                member_failures: evidence.member_failures,
                 complete_skill_path_catalog,
                 skill_revisions,
-                snapshot_facts: None,
             },
         ))
     }
@@ -1167,6 +1231,8 @@ mod tests {
                 "commit-v1",
             ),
             provider_validation: Some("tree-v1".into()),
+            catalog_complete: true,
+            member_failures: BTreeMap::new(),
             complete_skill_path_catalog: BTreeSet::from(["skills/alpha".into()]),
             skill_revisions: BTreeMap::from([(
                 "skills/alpha".into(),
@@ -1267,10 +1333,7 @@ mod tests {
             },
         ]);
         let detector = Arc::new(CountingDetector::new(github_detector(&fixture)));
-        let coordinator = SourceEvidenceCoordinator::with_snapshot_reuse(
-            detector.clone(),
-            Arc::new(SourceSnapshotReuseIndex::default()),
-        );
+        let coordinator = SourceEvidenceCoordinator::new(detector.clone());
 
         let main = coordinator
             .check(
@@ -1667,7 +1730,7 @@ mod tests {
             snapshots.clone(),
             git_transport.clone(),
         ));
-        let coordinator = SourceEvidenceCoordinator::with_snapshot_reuse(detector, snapshots);
+        let coordinator = SourceEvidenceCoordinator::new(detector);
         let request = |path: &str| EvidenceCheckRequest {
             environment: EnvironmentRef::Native,
             key: RemoteEvidenceKey::from_identity(&identity),
@@ -1798,6 +1861,8 @@ mod tests {
             expires_at_epoch_ms: 2,
             snapshot_id: facts.snapshot_id,
             provider_validation: facts.provider_validation,
+            catalog_complete: facts.catalog_complete,
+            member_failures: facts.member_failures,
             complete_skill_path_catalog: facts.complete_skill_path_catalog,
             skill_revisions: facts.skill_revisions,
         }

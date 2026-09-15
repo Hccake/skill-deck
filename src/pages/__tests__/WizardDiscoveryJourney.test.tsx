@@ -216,9 +216,9 @@ describe('Discovery installation with an independent window state', () => {
       request: expect.objectContaining({ context, skills: ['demo'] }),
       expectedToken: previewToken,
     });
-    expect(mocks.emit).toHaveBeenCalledExactlyOnceWith('wizard-result', {
+    await waitFor(() => expect(mocks.emit).toHaveBeenCalledExactlyOnceWith('wizard-result', {
       action: 'refresh', context, mutatedSkillNames: ['demo'],
-    });
+    }));
   });
 
   it('defaults to Global and can continue while projects are loading', async () => {

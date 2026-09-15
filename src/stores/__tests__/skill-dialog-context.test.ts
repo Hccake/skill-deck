@@ -88,6 +88,7 @@ describe('Skill dialog context capture', () => {
       context,
       skillName: 'toolkit',
       standard: 'directory',
+      standardPath: null,
       physicalEntries: [],
       restoresLibrary: false,
     });

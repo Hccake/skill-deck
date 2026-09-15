@@ -87,6 +87,7 @@ const removePreview = {
   context,
   skillName: skill.name,
   standard: 'directory',
+  standardPath: { environment: context.environment, nativePath: skill.canonicalPath },
   physicalEntries: [],
   restoresLibrary: false,
 } as RemovePreview;

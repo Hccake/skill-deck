@@ -51,6 +51,8 @@ pub mod source_snapshot_reuse;
 pub mod update;
 pub mod update_check;
 pub mod update_planner;
+pub mod update_preparation;
+pub mod update_records;
 pub mod update_subjects;
 pub(crate) mod wellknown_access;
 pub(crate) mod wsl_source_access;

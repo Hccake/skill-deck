@@ -6,6 +6,7 @@ pub mod atomic_document;
 pub mod directory;
 pub mod document;
 pub mod entry;
+pub mod git_ref;
 pub mod inspection;
 pub mod library;
 pub mod linux_mutation;

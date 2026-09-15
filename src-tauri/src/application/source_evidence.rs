@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::sync::{watch, Semaphore};
 
-use crate::application::payload_session::DiscoverySessionHandle;
 use crate::application::source_evidence_state::SourceEvidenceStateFile;
-use crate::application::source_snapshot_reuse::{PayloadAcquisitionKey, SourceSnapshotReuseIndex};
 use crate::core::mutation::CancellationSignal;
 use crate::core::source_identity::{
     AcquisitionDescriptor, AcquisitionTransportIdentity, NormalizedRef, RemoteSourceIdentity,
@@ -32,7 +30,7 @@ const TRANSIENT_BACKOFF_DELAYS_MS: [u64; 6] = [
 const PROVIDER_COOLDOWN_FALLBACK_MS: u64 = 5 * 60_000;
 const DIAGNOSTIC_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const SOURCE_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
-const PERSISTED_STATE_SCHEMA_VERSION: u32 = 1;
+const PERSISTED_STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +43,7 @@ pub enum SourceSuppressionWarningCode {
 pub struct RemoteEvidenceKey {
     pub remote: RemoteSourceIdentity,
     pub normalized_ref: NormalizedRef,
+    content_environment: Option<EnvironmentKey>,
 }
 
 impl RemoteEvidenceKey {
@@ -53,6 +52,7 @@ impl RemoteEvidenceKey {
         Self {
             remote,
             normalized_ref,
+            content_environment: None,
         }
     }
 
@@ -60,7 +60,17 @@ impl RemoteEvidenceKey {
         Self {
             remote: identity.remote().clone(),
             normalized_ref: identity.normalized_ref().clone(),
+            content_environment: None,
         }
+    }
+
+    fn in_environment(&self, environment: &EnvironmentKey) -> Self {
+        let mut key = self.clone();
+        key.content_environment = match self.remote.provider() {
+            SourceProvider::Git | SourceProvider::Gitlab => Some(environment.clone()),
+            SourceProvider::Github | SourceProvider::WellKnown => None,
+        };
+        key
     }
 }
 
@@ -87,7 +97,7 @@ impl ProviderThrottleKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SkillRevision {
     GitTreeOid(String),
     CliContentHash(String),
@@ -115,35 +125,14 @@ impl RemoteSnapshotId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SourceSnapshotFacts {
-    pub discovery_session: DiscoverySessionHandle,
-    pub snapshot_id: RemoteSnapshotId,
-    pub complete_skill_path_catalog: BTreeSet<String>,
-}
-
-impl PartialEq for SourceSnapshotFacts {
-    fn eq(&self, other: &Self) -> bool {
-        self.discovery_session.session_id == other.discovery_session.session_id
-            && self.discovery_session.environment == other.discovery_session.environment
-            && self.discovery_session.source_fingerprint
-                == other.discovery_session.source_fingerprint
-            && self.discovery_session.expires_at_epoch_ms
-                == other.discovery_session.expires_at_epoch_ms
-            && self.snapshot_id == other.snapshot_id
-            && self.complete_skill_path_catalog == other.complete_skill_path_catalog
-    }
-}
-
-impl Eq for SourceSnapshotFacts {}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteEvidenceObservation {
     pub snapshot_id: RemoteSnapshotId,
     pub provider_validation: Option<String>,
     pub complete_skill_path_catalog: BTreeSet<String>,
+    pub catalog_complete: bool,
+    pub member_failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
     pub skill_revisions: BTreeMap<String, SkillRevision>,
-    pub snapshot_facts: Option<SourceSnapshotFacts>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +142,8 @@ pub struct RemoteEvidenceEntry {
     pub snapshot_id: RemoteSnapshotId,
     pub provider_validation: Option<String>,
     pub complete_skill_path_catalog: BTreeSet<String>,
+    pub catalog_complete: bool,
+    pub member_failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
     pub skill_revisions: BTreeMap<String, SkillRevision>,
 }
 
@@ -202,10 +193,6 @@ impl EvidenceDetectionFailure {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "successful evidence carries the complete typed snapshot used by the coordinator"
-)]
 pub enum EvidenceDetectionOutcome {
     Modified(RemoteEvidenceObservation),
     NotModified,
@@ -286,7 +273,6 @@ pub struct SourceEvidenceCoordinator {
 struct SourceEvidenceCoordinatorInner {
     detector: Arc<dyn SourceEvidenceDetector>,
     detector_permits: Arc<Semaphore>,
-    snapshots: Option<Arc<SourceSnapshotReuseIndex>>,
     now: Arc<dyn Fn() -> u64 + Send + Sync>,
     state: Mutex<CoordinatorState>,
     state_file: Option<SourceEvidenceStateFile>,
@@ -316,16 +302,13 @@ struct EnvironmentEvidenceKey {
 
 impl EnvironmentEvidenceKey {
     fn new(environment: &EnvironmentRef, evidence: &RemoteEvidenceKey) -> Self {
-        Self {
-            environment: EnvironmentKey::from_ref(environment),
-            evidence: evidence.clone(),
-        }
+        Self::from_environment_key(EnvironmentKey::from_ref(environment), evidence.clone())
     }
 
     fn from_environment_key(environment: EnvironmentKey, evidence: RemoteEvidenceKey) -> Self {
         Self {
+            evidence: evidence.in_environment(&environment),
             environment,
-            evidence,
         }
     }
 }
@@ -441,6 +424,8 @@ struct PersistedRemoteEvidenceKey {
     authority: String,
     repository: String,
     normalized_ref: PersistedNormalizedRef,
+    #[serde(default)]
+    content_environment: Option<PersistedEnvironmentKey>,
 }
 
 impl From<&RemoteEvidenceKey> for PersistedRemoteEvidenceKey {
@@ -450,6 +435,7 @@ impl From<&RemoteEvidenceKey> for PersistedRemoteEvidenceKey {
             authority: value.remote.authority().to_string(),
             repository: value.remote.repository().to_string(),
             normalized_ref: (&value.normalized_ref).into(),
+            content_environment: value.content_environment.as_ref().map(Into::into),
         }
     }
 }
@@ -463,6 +449,7 @@ impl PersistedRemoteEvidenceKey {
                 self.repository,
             )?,
             normalized_ref: self.normalized_ref.into(),
+            content_environment: self.content_environment.map(Into::into),
         })
     }
 }
@@ -514,10 +501,10 @@ impl From<&EnvironmentEvidenceKey> for PersistedEnvironmentEvidenceKey {
 
 impl PersistedEnvironmentEvidenceKey {
     fn into_runtime(self) -> Result<EnvironmentEvidenceKey, AppError> {
-        Ok(EnvironmentEvidenceKey {
-            environment: self.environment.into(),
-            evidence: self.evidence.into_runtime()?,
-        })
+        Ok(EnvironmentEvidenceKey::from_environment_key(
+            self.environment.into(),
+            self.evidence.into_runtime()?,
+        ))
     }
 }
 
@@ -590,6 +577,8 @@ struct PersistedRemoteEvidenceEntry {
     snapshot_id: PersistedRemoteSnapshotId,
     provider_validation: Option<String>,
     complete_skill_path_catalog: BTreeSet<String>,
+    catalog_complete: bool,
+    member_failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
     skill_revisions: BTreeMap<String, PersistedSkillRevision>,
 }
 
@@ -604,6 +593,8 @@ impl From<&RemoteEvidenceEntry> for PersistedRemoteEvidenceEntry {
                 commit_revision: value.snapshot_id.commit_revision.clone(),
             },
             provider_validation: value.provider_validation.clone(),
+            catalog_complete: value.catalog_complete,
+            member_failures: value.member_failures.clone(),
             complete_skill_path_catalog: value.complete_skill_path_catalog.clone(),
             skill_revisions: value
                 .skill_revisions
@@ -625,6 +616,8 @@ impl From<PersistedRemoteEvidenceEntry> for RemoteEvidenceEntry {
                 commit_revision: value.snapshot_id.commit_revision,
             },
             provider_validation: value.provider_validation,
+            catalog_complete: value.catalog_complete,
+            member_failures: value.member_failures,
             complete_skill_path_catalog: value.complete_skill_path_catalog,
             skill_revisions: value
                 .skill_revisions
@@ -915,21 +908,17 @@ impl Drop for DetectionWaiter {
 
 impl SourceEvidenceCoordinator {
     #[cfg(test)]
-    pub fn with_snapshot_reuse(
-        detector: Arc<dyn SourceEvidenceDetector>,
-        snapshots: Arc<SourceSnapshotReuseIndex>,
-    ) -> Self {
-        Self::build(detector, Some(snapshots), || {
+    pub fn new(detector: Arc<dyn SourceEvidenceDetector>) -> Self {
+        Self::build(detector, || {
             chrono::Utc::now().timestamp_millis().max(0) as u64
         })
     }
 
-    pub fn with_snapshot_reuse_and_state_path(
+    pub fn with_state_path(
         detector: Arc<dyn SourceEvidenceDetector>,
-        snapshots: Arc<SourceSnapshotReuseIndex>,
         state_path: PathBuf,
     ) -> Result<Self, AppError> {
-        Self::build_with_state_path(detector, Some(snapshots), state_path, || {
+        Self::build_with_state_path(detector, state_path, || {
             chrono::Utc::now().timestamp_millis().max(0) as u64
         })
     }
@@ -939,16 +928,7 @@ impl SourceEvidenceCoordinator {
         detector: Arc<dyn SourceEvidenceDetector>,
         now: impl Fn() -> u64 + Send + Sync + 'static,
     ) -> Self {
-        Self::build(detector, None, now)
-    }
-
-    #[cfg(test)]
-    fn with_clock_and_snapshots(
-        detector: Arc<dyn SourceEvidenceDetector>,
-        snapshots: Arc<SourceSnapshotReuseIndex>,
-        now: impl Fn() -> u64 + Send + Sync + 'static,
-    ) -> Self {
-        Self::build(detector, Some(snapshots), now)
+        Self::build(detector, now)
     }
 
     #[cfg(test)]
@@ -957,20 +937,18 @@ impl SourceEvidenceCoordinator {
         state_path: PathBuf,
         now: impl Fn() -> u64 + Send + Sync + 'static,
     ) -> Result<Self, AppError> {
-        Self::build_with_state_path(detector, None, state_path, now)
+        Self::build_with_state_path(detector, state_path, now)
     }
 
     #[cfg(test)]
     fn build(
         detector: Arc<dyn SourceEvidenceDetector>,
-        snapshots: Option<Arc<SourceSnapshotReuseIndex>>,
         now: impl Fn() -> u64 + Send + Sync + 'static,
     ) -> Self {
         Self {
             inner: Arc::new(SourceEvidenceCoordinatorInner {
                 detector,
                 detector_permits: Arc::new(Semaphore::new(DETECTOR_CONCURRENCY_LIMIT)),
-                snapshots,
                 now: Arc::new(now),
                 state: Mutex::new(CoordinatorState::default()),
                 state_file: None,
@@ -981,7 +959,6 @@ impl SourceEvidenceCoordinator {
 
     fn build_with_state_path(
         detector: Arc<dyn SourceEvidenceDetector>,
-        snapshots: Option<Arc<SourceSnapshotReuseIndex>>,
         state_path: PathBuf,
         now: impl Fn() -> u64 + Send + Sync + 'static,
     ) -> Result<Self, AppError> {
@@ -992,7 +969,6 @@ impl SourceEvidenceCoordinator {
             inner: Arc::new(SourceEvidenceCoordinatorInner {
                 detector,
                 detector_permits: Arc::new(Semaphore::new(DETECTOR_CONCURRENCY_LIMIT)),
-                snapshots,
                 now,
                 state: Mutex::new(state),
                 state_file: Some(state_file),
@@ -1064,28 +1040,20 @@ impl SourceEvidenceCoordinator {
     pub fn record_acquisition(
         &self,
         key: RemoteEvidenceKey,
-        acquisition_key: PayloadAcquisitionKey,
-        facts: SourceSnapshotFacts,
+        environment: EnvironmentKey,
+        snapshot_id: RemoteSnapshotId,
         skill_revisions: BTreeMap<String, SkillRevision>,
     ) -> Result<(), AppError> {
-        if key.normalized_ref != facts.snapshot_id.requested_ref
-            || acquisition_key.normalized_ref != facts.snapshot_id.requested_ref
-            || skill_revisions
-                .keys()
-                .any(|path| !facts.complete_skill_path_catalog.contains(path))
-        {
+        let key = key.in_environment(&environment);
+        if key.normalized_ref != snapshot_id.requested_ref {
             return Err(AppError::StalePayload);
         }
         let checked_at = (self.inner.now)();
         let mut state = state(&self.inner)?;
-        let operation_key = EnvironmentEvidenceKey::from_environment_key(
-            acquisition_key.environment.clone(),
-            key.clone(),
-        );
+        let operation_key = EnvironmentEvidenceKey::from_environment_key(environment, key.clone());
         let skill_revisions = match state.evidence.get(&key) {
-            Some(previous) if previous.snapshot_id == facts.snapshot_id => {
+            Some(previous) if previous.snapshot_id == snapshot_id => {
                 let mut merged = previous.skill_revisions.clone();
-                merged.retain(|path, _| facts.complete_skill_path_catalog.contains(path));
                 merged.extend(skill_revisions);
                 merged
             }
@@ -1096,9 +1064,11 @@ impl SourceEvidenceCoordinator {
             RemoteEvidenceEntry {
                 checked_at_epoch_ms: checked_at,
                 expires_at_epoch_ms: checked_at.saturating_add(EVIDENCE_TTL_MS),
-                snapshot_id: facts.snapshot_id.clone(),
+                snapshot_id,
                 provider_validation: None,
-                complete_skill_path_catalog: facts.complete_skill_path_catalog.clone(),
+                catalog_complete: false,
+                member_failures: BTreeMap::new(),
+                complete_skill_path_catalog: skill_revisions.keys().cloned().collect(),
                 skill_revisions,
             },
         );
@@ -1114,13 +1084,6 @@ impl SourceEvidenceCoordinator {
         state.network_failure_counts.remove(&operation_key);
         drop(state);
         self.persist_current_state()?;
-        if let Some(snapshots) = &self.inner.snapshots {
-            snapshots.remember(
-                acquisition_key,
-                facts.snapshot_id.commit_revision,
-                facts.discovery_session,
-            );
-        }
         Ok(())
     }
 
@@ -1130,9 +1093,12 @@ impl SourceEvidenceCoordinator {
 
     pub async fn check(
         &self,
-        request: EvidenceCheckRequest,
+        mut request: EvidenceCheckRequest,
         cancellation: CancellationSignal,
     ) -> Result<EvidenceCheckResult, AppError> {
+        request.key = request
+            .key
+            .in_environment(&EnvironmentKey::from_ref(&request.environment));
         let evidence_key = request.key.clone();
         let operation_key = EnvironmentEvidenceKey::new(&request.environment, &request.key);
         let throttle_key = EnvironmentThrottleKey::new(&request.environment, &request.throttle_key);
@@ -1355,8 +1321,9 @@ fn evidence_covers_requested_paths(
 }
 
 fn evidence_covers_path(evidence: &RemoteEvidenceEntry, path: &str) -> bool {
-    !evidence.complete_skill_path_catalog.contains(path)
-        || evidence.skill_revisions.contains_key(path)
+    evidence.skill_revisions.contains_key(path)
+        || evidence.member_failures.contains_key(path)
+        || (evidence.catalog_complete && !evidence.complete_skill_path_catalog.contains(path))
 }
 
 async fn run_detection(
@@ -1369,7 +1336,6 @@ async fn run_detection(
 ) {
     let key = request.key.clone();
     let throttle_key = EnvironmentThrottleKey::new(&request.environment, &request.throttle_key);
-    let acquisition_transport_identity = request.acquisition_transport_identity.clone();
     let permit = tokio::select! {
         permit = inner.detector_permits.clone().acquire_owned() => permit,
         () = cancellation.cancelled() => {
@@ -1405,14 +1371,7 @@ async fn run_detection(
                             )
                             .await
                     };
-                finish_detection(
-                    &inner,
-                    &throttle_key,
-                    &key,
-                    &operation_key,
-                    &acquisition_transport_identity,
-                    outcome,
-                )
+                finish_detection(&inner, &throttle_key, &key, &operation_key, outcome)
             }
             Ok(None) => return,
             Err(error) => Err(error),
@@ -1461,7 +1420,6 @@ fn finish_detection(
     throttle_key: &EnvironmentThrottleKey,
     key: &RemoteEvidenceKey,
     operation_key: &EnvironmentEvidenceKey,
-    acquisition_transport_identity: &AcquisitionTransportIdentity,
     outcome: Result<EvidenceDetectionOutcome, AppError>,
 ) -> DetectionCompletion {
     let checked_at = (inner.now)();
@@ -1483,35 +1441,30 @@ fn finish_detection(
                     discard_pending_paths(&mut state, operation_key);
                     return Ok(());
                 }
-                if let Some(snapshot) = &observation.snapshot_facts {
-                    let matches_observation = snapshot.snapshot_id == observation.snapshot_id
-                        && snapshot.complete_skill_path_catalog
-                            == observation.complete_skill_path_catalog;
-                    if !matches_observation {
-                        record_failure(
-                            &mut state,
-                            throttle_key,
-                            operation_key,
-                            checked_at,
-                            EvidenceDetectionFailure::incomplete(
-                                "snapshot facts do not match provider evidence",
-                            ),
-                        );
-                        discard_pending_paths(&mut state, operation_key);
-                        return Ok(());
-                    }
+                let previous = state
+                    .evidence
+                    .get(key)
+                    .filter(|previous| previous.snapshot_id == observation.snapshot_id);
+                let mut skill_revisions = previous
+                    .map(|previous| previous.skill_revisions.clone())
+                    .unwrap_or_default();
+                let mut member_failures = previous
+                    .map(|previous| previous.member_failures.clone())
+                    .unwrap_or_default();
+                if observation.catalog_complete {
+                    skill_revisions
+                        .retain(|path, _| observation.complete_skill_path_catalog.contains(path));
+                    member_failures
+                        .retain(|path, _| observation.complete_skill_path_catalog.contains(path));
                 }
-                let skill_revisions = match state.evidence.get(key) {
-                    Some(previous) if previous.snapshot_id == observation.snapshot_id => {
-                        let mut merged = previous.skill_revisions.clone();
-                        merged.retain(|path, _| {
-                            observation.complete_skill_path_catalog.contains(path)
-                        });
-                        merged.extend(observation.skill_revisions);
-                        merged
-                    }
-                    _ => observation.skill_revisions,
-                };
+                for (path, revision) in observation.skill_revisions {
+                    member_failures.remove(&path);
+                    skill_revisions.insert(path, revision);
+                }
+                for (path, failure) in observation.member_failures {
+                    skill_revisions.remove(&path);
+                    member_failures.insert(path, failure);
+                }
                 state.evidence.insert(
                     key.clone(),
                     RemoteEvidenceEntry {
@@ -1519,6 +1472,8 @@ fn finish_detection(
                         expires_at_epoch_ms: checked_at.saturating_add(EVIDENCE_TTL_MS),
                         snapshot_id: observation.snapshot_id,
                         provider_validation: observation.provider_validation,
+                        catalog_complete: observation.catalog_complete,
+                        member_failures,
                         complete_skill_path_catalog: observation.complete_skill_path_catalog,
                         skill_revisions,
                     },
@@ -1532,19 +1487,6 @@ fn finish_detection(
                         failure: None,
                     },
                 );
-                if let (Some(snapshots), Some(snapshot)) =
-                    (&inner.snapshots, observation.snapshot_facts)
-                {
-                    snapshots.remember(
-                        PayloadAcquisitionKey::new(
-                            acquisition_transport_identity.clone(),
-                            snapshot.snapshot_id.requested_ref,
-                            &snapshot.discovery_session.environment,
-                        ),
-                        snapshot.snapshot_id.commit_revision,
-                        snapshot.discovery_session,
-                    );
-                }
             }
             Ok(EvidenceDetectionOutcome::NotModified) => {
                 if let Some(evidence) = state.evidence.get_mut(key) {
@@ -2021,6 +1963,8 @@ mod tests {
                 ref_revision,
             ),
             provider_validation: None,
+            catalog_complete: true,
+            member_failures: BTreeMap::new(),
             complete_skill_path_catalog: BTreeSet::from([
                 "skills/alpha".to_string(),
                 "skills/beta".to_string(),
@@ -2029,7 +1973,6 @@ mod tests {
                 .into_iter()
                 .map(|(path, revision)| (path.to_string(), revision))
                 .collect::<BTreeMap<_, _>>(),
-            snapshot_facts: None,
         })
     }
 
@@ -3764,6 +3707,8 @@ mod tests {
                             "revision-1",
                         ),
                         provider_validation: None,
+                        catalog_complete: true,
+                        member_failures: BTreeMap::new(),
                         complete_skill_path_catalog: self.catalog.clone(),
                         skill_revisions: paths
                             .into_iter()
@@ -3774,7 +3719,6 @@ mod tests {
                                 )
                             })
                             .collect(),
-                        snapshot_facts: None,
                     },
                 ))
             })
@@ -3962,6 +3906,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_member_failure_is_a_terminal_observation_not_an_unfinished_request() {
+        let EvidenceDetectionOutcome::Modified(mut observation) = modified("revision-1", []) else {
+            unreachable!()
+        };
+        observation.member_failures.insert(
+            "skills/beta".to_string(),
+            crate::error::SourceAcquisitionFailureReason::InvalidContent,
+        );
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Modified(observation),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network(
+                "unexpected extra request",
+            )),
+        ]));
+        let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
+        let result = coordinator
+            .check(
+                request_for_path("acme/tools", EvidenceCheckMode::Force, "skills/beta"),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detector.calls(), 1);
+        assert_eq!(
+            result.evidence.unwrap().member_failures["skills/beta"],
+            crate::error::SourceAcquisitionFailureReason::InvalidContent
+        );
+    }
+
+    #[test]
+    fn incomplete_catalog_does_not_prove_a_member_was_deleted() {
+        let EvidenceDetectionOutcome::Modified(observation) = modified("revision-1", []) else {
+            unreachable!()
+        };
+        let evidence = RemoteEvidenceEntry {
+            checked_at_epoch_ms: 1,
+            expires_at_epoch_ms: 100,
+            snapshot_id: observation.snapshot_id,
+            provider_validation: None,
+            complete_skill_path_catalog: BTreeSet::new(),
+            catalog_complete: false,
+            member_failures: BTreeMap::new(),
+            skill_revisions: BTreeMap::new(),
+        };
+        assert!(!evidence_covers_path(&evidence, "skills/unknown"));
+    }
+
+    #[tokio::test]
     async fn path_absent_from_a_complete_catalog_completes_without_revision() {
         let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Modified(
             RemoteEvidenceObservation {
@@ -3971,9 +3963,10 @@ mod tests {
                     "revision-1",
                 ),
                 provider_validation: None,
+                catalog_complete: true,
+                member_failures: BTreeMap::new(),
                 complete_skill_path_catalog: BTreeSet::from(["skills/alpha".to_string()]),
                 skill_revisions: BTreeMap::new(),
-                snapshot_facts: None,
             },
         )]));
         let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
@@ -4067,55 +4060,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn coordinator_registers_detector_snapshot_facts_for_reuse() {
-        let snapshots = Arc::new(SourceSnapshotReuseIndex::with_clock(|| 1_000));
-        let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Modified(
-            RemoteEvidenceObservation {
-                snapshot_id: RemoteSnapshotId::new(
-                    NormalizedRef::Named("main".to_string()),
-                    "refs/heads/main",
-                    "revision-1",
-                ),
-                provider_validation: None,
-                complete_skill_path_catalog: BTreeSet::from(["skills/alpha".to_string()]),
-                skill_revisions: BTreeMap::from([(
-                    "skills/alpha".to_string(),
-                    SkillRevision::CliContentHash("hash-a".to_string()),
-                )]),
-                snapshot_facts: Some(SourceSnapshotFacts {
-                    discovery_session: DiscoverySessionHandle {
-                        session_id: "session-1".to_string(),
-                        environment: EnvironmentRef::Native,
-                        source_fingerprint: "source-1".to_string(),
-                        expires_at_epoch_ms: 60_000,
-                    },
-                    snapshot_id: RemoteSnapshotId::new(
-                        NormalizedRef::Named("main".to_string()),
-                        "refs/heads/main",
-                        "revision-1",
-                    ),
-                    complete_skill_path_catalog: BTreeSet::from(["skills/alpha".to_string()]),
-                }),
-            },
-        )]));
-        let coordinator = SourceEvidenceCoordinator::with_clock_and_snapshots(
-            detector,
-            snapshots.clone(),
-            || 1_000,
-        );
-
-        coordinator
-            .check(
-                request("acme/tools", EvidenceCheckMode::Force),
-                CancellationSignal::default(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(snapshots.len(), 1);
-    }
-
-    #[tokio::test]
     async fn acquisition_refreshes_evidence_without_running_detector() {
         let detector = Arc::new(ScriptedDetector::new([]));
         let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
@@ -4126,21 +4070,12 @@ mod tests {
         coordinator
             .record_acquisition(
                 RemoteEvidenceKey::from_identity(&identity),
-                PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Native),
-                SourceSnapshotFacts {
-                    discovery_session: DiscoverySessionHandle {
-                        session_id: "session-1".to_string(),
-                        environment: EnvironmentRef::Native,
-                        source_fingerprint: "source-1".to_string(),
-                        expires_at_epoch_ms: 60_000,
-                    },
-                    snapshot_id: RemoteSnapshotId::new(
-                        NormalizedRef::Named("main".to_string()),
-                        "main",
-                        "revision-1",
-                    ),
-                    complete_skill_path_catalog: BTreeSet::from(["skills/alpha".to_string()]),
-                },
+                EnvironmentKey::Native,
+                RemoteSnapshotId::new(
+                    NormalizedRef::Named("main".to_string()),
+                    "main",
+                    "revision-1",
+                ),
                 BTreeMap::from([(
                     "skills/alpha".to_string(),
                     SkillRevision::CliContentHash("hash-a".to_string()),
@@ -4169,34 +4104,20 @@ mod tests {
         )
         .unwrap();
         let evidence_key = RemoteEvidenceKey::from_identity(&identity);
-        let acquisition_key =
-            PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Native);
-        let facts = |session_id: &str,
-                     commit_revision: &str,
-                     catalog: BTreeSet<String>|
-         -> SourceSnapshotFacts {
-            SourceSnapshotFacts {
-                discovery_session: DiscoverySessionHandle {
-                    session_id: session_id.to_string(),
-                    environment: EnvironmentRef::Native,
-                    source_fingerprint: format!("source-{session_id}"),
-                    expires_at_epoch_ms: 60_000,
-                },
-                snapshot_id: RemoteSnapshotId::new(
-                    NormalizedRef::Named("main".to_string()),
-                    "main",
-                    commit_revision,
-                ),
-                complete_skill_path_catalog: catalog,
-            }
+        let acquisition_key = EnvironmentKey::Native;
+        let snapshot = |commit_revision: &str| {
+            RemoteSnapshotId::new(
+                NormalizedRef::Named("main".to_string()),
+                "main",
+                commit_revision,
+            )
         };
-        let full_catalog = BTreeSet::from(["skills/alpha".to_string(), "skills/beta".to_string()]);
 
         coordinator
             .record_acquisition(
                 evidence_key.clone(),
                 acquisition_key.clone(),
-                facts("1", "revision-1", full_catalog.clone()),
+                snapshot("revision-1"),
                 BTreeMap::from([(
                     "skills/alpha".to_string(),
                     SkillRevision::CliContentHash("hash-a".to_string()),
@@ -4207,7 +4128,7 @@ mod tests {
             .record_acquisition(
                 evidence_key.clone(),
                 acquisition_key.clone(),
-                facts("2", "revision-1", full_catalog),
+                snapshot("revision-1"),
                 BTreeMap::from([(
                     "skills/beta".to_string(),
                     SkillRevision::CliContentHash("hash-b".to_string()),
@@ -4229,11 +4150,7 @@ mod tests {
             .record_acquisition(
                 evidence_key,
                 acquisition_key,
-                facts(
-                    "3",
-                    "revision-2",
-                    BTreeSet::from(["skills/beta".to_string()]),
-                ),
+                snapshot("revision-2"),
                 BTreeMap::from([(
                     "skills/beta".to_string(),
                     SkillRevision::CliContentHash("hash-b2".to_string()),
@@ -4242,7 +4159,7 @@ mod tests {
             .unwrap();
         let pruned = coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Automatic),
+                request_for_path("acme/tools", EvidenceCheckMode::Automatic, "skills/beta"),
                 CancellationSignal::default(),
             )
             .await
@@ -4257,6 +4174,61 @@ mod tests {
             )])
         );
         assert_eq!(detector.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn cli_content_evidence_is_not_reused_across_environments() {
+        let detector = Arc::new(ScriptedDetector::new([
+            modified(
+                "revision-1",
+                [(
+                    "skills/alpha",
+                    SkillRevision::CliContentHash("native-hash".to_string()),
+                )],
+            ),
+            modified(
+                "revision-1",
+                [(
+                    "skills/alpha",
+                    SkillRevision::CliContentHash("wsl-hash".to_string()),
+                )],
+            ),
+        ]));
+        let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
+        let identity = SourceIdentity::from_parsed(
+            &parse_source("https://example.com/acme/tools.git#main").unwrap(),
+        )
+        .unwrap();
+        let request = |environment| EvidenceCheckRequest {
+            environment,
+            key: RemoteEvidenceKey::from_identity(&identity),
+            throttle_key: ProviderThrottleKey::from_identity(&identity),
+            mode: EvidenceCheckMode::Automatic,
+            requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
+            acquisition: Arc::new(identity.acquisition().clone()),
+            acquisition_transport_identity: identity.acquisition_transport().clone(),
+        };
+        coordinator
+            .check(
+                request(EnvironmentRef::Native),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let wsl = coordinator
+            .check(
+                request(EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".to_string(),
+                }),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detector.calls(), 2);
+        assert_eq!(
+            wsl.evidence.unwrap().skill_revisions["skills/alpha"],
+            SkillRevision::CliContentHash("wsl-hash".to_string())
+        );
     }
 
     #[test]

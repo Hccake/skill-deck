@@ -336,7 +336,99 @@ impl WslPayloadSessionStorage {
     }
 }
 
+impl crate::application::payload_session::RetainedSourceCleanup for WslPayloadSessionStorage {
+    fn remove(&self) -> PayloadStorageFuture<'_, Result<(), AppError>> {
+        Box::pin(async move {
+            let source = self.source_binding()?;
+            let response = self
+                .workspace
+                .request_worker_control_for_generation(
+                    source.handle.generation,
+                    environment_protocol::Message::ReleaseSource {
+                        source_id: source.handle.id,
+                    },
+                    None,
+                    Duration::from_secs(35),
+                )
+                .await?;
+            match response {
+                environment_protocol::Message::SourceReleased { source_id }
+                    if source_id == source.handle.id =>
+                {
+                    Ok(())
+                }
+                message => Err(worker_response_error(message, "SourceReleased")),
+            }
+        })
+    }
+}
+
 impl PayloadSessionStorage for WslPayloadSessionStorage {
+    fn read_source_skill_md<'a>(
+        &'a self,
+        source_root: &'a str,
+        cancellation: CancellationSignal,
+    ) -> PayloadStorageFuture<'a, Result<Vec<u8>, AppError>> {
+        Box::pin(async move {
+            let source = self.source_binding()?;
+            let relative = relative_source_path(&source.root, source_root)?;
+            let response: environment_protocol::SourceScanResponse = self
+                .workspace
+                .request_worker_payload_for_generation(
+                    source.handle.generation,
+                    environment_protocol::Message::ScanSource {
+                        request: environment_protocol::SourceScanRequest {
+                            source_id: source.handle.id,
+                            roots: vec![environment_protocol::SourceScanRoot {
+                                relative_path: relative.into_bytes(),
+                                stat_only: false,
+                            }],
+                            mode: environment_protocol::SourceScanMode::SkillMetadata,
+                            per_file_limit: 256 * 1024,
+                            aggregate_limit: 1024 * 1024,
+                            deadline_millis: 30_000,
+                        },
+                    },
+                    3 * 1024 * 1024,
+                    Some(cancellation),
+                    Duration::from_secs(35),
+                )
+                .await?;
+            if response.entries.iter().any(|entry| {
+                entry.relative_path.is_empty()
+                    && (entry.error_code.is_some()
+                        || !matches!(
+                            entry.kind,
+                            environment_protocol::SourceEntryKind::Directory
+                                | environment_protocol::SourceEntryKind::Missing
+                        ))
+            }) {
+                return Err(AppError::InvalidSkillMd {
+                    message: "saved Skill directory is unavailable".into(),
+                });
+            }
+            let entry = response
+                .entries
+                .into_iter()
+                .find(|entry| entry.relative_path.eq_ignore_ascii_case(b"SKILL.md"))
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: format!("{source_root}/SKILL.md"),
+                })?;
+            if entry.truncated
+                || entry.error_code.is_some()
+                || !matches!(
+                    entry.kind,
+                    environment_protocol::SourceEntryKind::File
+                        | environment_protocol::SourceEntryKind::Symlink
+                )
+            {
+                return Err(AppError::InvalidSkillMd {
+                    message: "saved Skill metadata could not be read completely".into(),
+                });
+            }
+            Ok(entry.content_bytes)
+        })
+    }
     fn local_source(&self, key: &PayloadStorageKey) -> Result<PayloadLocalSource, AppError> {
         let handle = self.handle(key)?;
         Ok(PayloadLocalSource::WslManaged {

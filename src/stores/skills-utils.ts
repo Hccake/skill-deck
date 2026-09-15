@@ -1,7 +1,7 @@
 // src/stores/skills-utils.ts
 import i18n from '@/i18n';
-import { contextKey } from '@/lib/context';
 import type {
+  AppError,
   SkillLocationRef,
   EvidenceFailureReason,
   EvidenceFreshness,
@@ -15,6 +15,7 @@ import type {
 } from '@/bindings';
 
 export type SkillListItem = InstalledSkill & {
+  updateError?: AppError | null;
   updateStatus?: SkillUpdateCheckStatus | null;
   updateReason?: string | null;
   updateFreshness?: EvidenceFreshness | null;
@@ -37,9 +38,12 @@ export function hasCommittedUpdateComparison(
 }
 
 export interface UpdateCheckDisplaySnapshot {
-  outcome: UpdateCheckOutcome;
+  results?: SkillUpdateInfo[];
+  memberRequests?: Record<string, number>;
+  invalidatedAt?: Record<string, number>;
+  comparisonObservedAt?: Record<string, number>;
+  error?: AppError | null;
   sources: SourceUpdateCheckInfo[];
-  skillFreshness: Record<string, EvidenceFreshness>;
   checkedAt: number;
 }
 
@@ -78,116 +82,41 @@ interface MergeUpdateInfoOptions {
   sources?: SourceUpdateCheckInfo[];
 }
 
-/** 将 check_updates 结果合并到 skills 列表 */
+/** 比较结果只属于后端返回的安装基线。 */
 export function mergeUpdateInfo(
   skills: SkillListItem[],
   updates: SkillUpdateInfo[],
   options: MergeUpdateInfoOptions = {},
 ): SkillListItem[] {
-  const exactUpdateMap = new Map(updates.map((u) => [updateIdentityKey(u), u]));
-  const pathlessUpdateMap = new Map<string, SkillUpdateInfo[]>();
-  const nameOnlyUpdateMap = new Map<string, SkillUpdateInfo>();
-
-  for (const update of updates) {
-    const pathlessKey = updateIdentityKey(update, { includeSkillPath: false });
-    pathlessUpdateMap.set(pathlessKey, [...(pathlessUpdateMap.get(pathlessKey) ?? []), update]);
-    if (!hasStableUpdateIdentity(update)) {
-      nameOnlyUpdateMap.set(update.name, update);
-    }
-  }
-
-  const previousSkillMap = new Map(
-    (options.previousSkills ?? []).map((skill) => [updateIdentityKey(skill), skill]),
-  );
-
-  return skills.map((s) => {
-    const update = findUpdateForSkill(s, exactUpdateMap, pathlessUpdateMap, nameOnlyUpdateMap);
-    const previous = options.preserveUnmatched
-      ? previousSkillMap.get(updateIdentityKey(s))
-      : undefined;
-    const updateEvidence = update
-      ? findSourceUpdateInfo(update, options.sources ?? [])
-      : undefined;
-    const incompleteAttempt = update
-      && updateEvidence?.lastAttempt?.failure != null
-      && (
-        (update.status === 'cannotCheck' && update.reason === 'upstreamUnavailable')
-        || update.freshness === 'backingOff'
-        || update.freshness === 'coolingDown'
-        || update.freshness === 'unavailable'
-      );
-    const lastConfirmed = previous ?? s;
-    const hasConfirmedComparison = hasCommittedUpdateComparison(lastConfirmed);
+  const key = (skill: { name: string; comparisonFingerprint?: string | null }) =>
+    JSON.stringify([skill.name, skill.comparisonFingerprint ?? null]);
+  const byKey = new Map(updates.map((update) => [key(update), update]));
+  const previous = new Map((options.previousSkills ?? []).map((skill) => [key(skill), skill]));
+  const sources = new Map((options.sources ?? []).filter((source) => source.sourceKey).map((source) => [source.sourceKey, source]));
+  return skills.map((skill) => {
+    const update = byKey.get(key(skill));
+    const before = options.preserveUnmatched ? previous.get(key(skill)) ?? skill : skill;
+    const evidence = options.previousSkills
+      ? before.updateEvidence
+      : update?.sourceKey ? sources.get(update.sourceKey) : undefined;
+    const incomplete = Boolean(update && (update.error || evidence?.error || evidence?.lastAttempt?.failure || (
+      update.status === 'cannotCheck' && update.reason === 'upstreamUnavailable'
+    ) || ['backingOff', 'coolingDown', 'unavailable'].includes(update.freshness)));
+    const preserve = incomplete && hasCommittedUpdateComparison(before);
     return {
-      ...s,
-      skillPath: update?.skillPath ?? s.skillPath ?? null,
-      hasUpdate: incompleteAttempt && hasConfirmedComparison
-        ? lastConfirmed.hasUpdate
-        : update?.hasUpdate ?? previous?.hasUpdate ?? (options.preserveUnmatched ? s.hasUpdate : false),
-      updateStatus: incompleteAttempt && hasConfirmedComparison
-        ? lastConfirmed.updateStatus
-        : update?.status ?? previous?.updateStatus ?? s.updateStatus ?? null,
-      updateReason: incompleteAttempt && hasConfirmedComparison
-        ? lastConfirmed.updateReason ?? null
-        : update?.reason ?? previous?.updateReason ?? s.updateReason ?? null,
-      updateFreshness: update?.freshness ?? previous?.updateFreshness ?? s.updateFreshness ?? null,
-      updateEvidence: updateEvidence ?? previous?.updateEvidence ?? s.updateEvidence ?? null,
-      updateAttempt: incompleteAttempt
-        ? { outcome: 'notCompleted', reason: 'upstreamUnavailable', attemptedAt: Date.now() }
-        : update
-          ? { outcome: 'completed', reason: null, attemptedAt: Date.now() }
-          : previous?.updateAttempt ?? s.updateAttempt ?? null,
+      ...skill,
+      skillPath: update?.skillPath ?? skill.skillPath ?? null,
+      hasUpdate: preserve ? before.hasUpdate : update?.hasUpdate ?? (options.preserveUnmatched ? before.hasUpdate : false),
+      updateStatus: preserve ? before.updateStatus : update?.status ?? before.updateStatus ?? null,
+      updateReason: preserve ? before.updateReason : update?.reason ?? before.updateReason ?? null,
+      updateFreshness: update?.freshness ?? before.updateFreshness ?? null,
+      updateEvidence: evidence ?? before.updateEvidence ?? null,
+      updateError: update ? update.error ?? evidence?.error ?? null : before.updateError ?? null,
+      updateAttempt: update
+        ? { outcome: incomplete ? 'notCompleted' as const : 'completed' as const, reason: update.reason, attemptedAt: Date.now() }
+        : before.updateAttempt ?? null,
     };
   });
-}
-
-/** 更新检测结果的 scope 级缓存 — 避免频繁切换 scope 时重复网络请求 */
-export const updateInfoCache = new Map<string, {
-  results: SkillUpdateInfo[];
-  sources: SourceUpdateCheckInfo[];
-  checkedAt: number;
-  completeness: 'complete' | 'partial';
-  outcome: UpdateCheckOutcome;
-}>();
-
-/** 清除缓存中指定 skill 的 hasUpdate 标记 — 更新成功后调用，防止 syncSkills 恢复旧标记 */
-export function clearUpdateCacheForSkill(
-  skillName: string,
-  scope: InstalledSkillLocation,
-  projectPath?: string,
-  options: { clearCannotCheck?: boolean } = {},
-) {
-  const cacheKey = scope === 'project' ? projectPath : 'global';
-  if (!cacheKey) return;
-  const cached = updateInfoCache.get(cacheKey);
-  if (cached) {
-    cached.results = cached.results.map((r) =>
-      r.name === skillName && (r.hasUpdate || options.clearCannotCheck)
-        ? clearCachedUpdateResult(r)
-        : r
-    );
-  }
-}
-
-export function clearUpdateCacheForContextSkill(
-  skillName: string,
-  context: SkillLocationRef,
-  options: { clearCannotCheck?: boolean } = {},
-) {
-  const cached = updateInfoCache.get(contextKey(context));
-  if (!cached) return;
-  cached.results = cached.results.map((result) =>
-    result.name === skillName && (result.hasUpdate || options.clearCannotCheck)
-      ? clearCachedUpdateResult(result)
-      : result
-  );
-}
-
-function clearCachedUpdateResult(result: SkillUpdateInfo): SkillUpdateInfo {
-  if (result.status === 'deletedUpstream' || result.reason === 'deletedUpstream') {
-    return result;
-  }
-  return { ...result, hasUpdate: false, status: 'upToDate', reason: null };
 }
 
 /** i18n t() 的便捷包装 */
@@ -390,86 +319,4 @@ export interface AddDialogPrefill {
   scope?: InstalledSkillLocation;
   projectPath?: string;
   gitRef?: string | null;
-}
-
-function updateIdentityKey(
-  item: {
-    name: string;
-    source?: string | null;
-    sourceUrl?: string | null;
-    gitRef?: string | null;
-    skillPath?: string | null;
-  },
-  options: { includeSkillPath?: boolean } = {}
-): string {
-  const includeSkillPath = options.includeSkillPath ?? true;
-  return [
-    item.name,
-    item.sourceUrl ?? item.source ?? '',
-    item.gitRef ?? '',
-    includeSkillPath ? item.skillPath ?? '' : '',
-  ].join('::');
-}
-
-function hasStableUpdateIdentity(item: {
-  source?: string | null;
-  sourceUrl?: string | null;
-  gitRef?: string | null;
-  skillPath?: string | null;
-}): boolean {
-  return Boolean(item.sourceUrl || item.source || item.gitRef || item.skillPath);
-}
-
-function findUpdateForSkill(
-  skill: SkillListItem,
-  exactUpdateMap: Map<string, SkillUpdateInfo>,
-  pathlessUpdateMap: Map<string, SkillUpdateInfo[]>,
-  nameOnlyUpdateMap: Map<string, SkillUpdateInfo>
-): SkillUpdateInfo | undefined {
-  const exact = exactUpdateMap.get(updateIdentityKey(skill));
-  if (exact) return exact;
-
-  if (!skill.skillPath) {
-    const pathlessMatches = pathlessUpdateMap.get(updateIdentityKey(skill, { includeSkillPath: false })) ?? [];
-    if (pathlessMatches.length === 1) return pathlessMatches[0];
-  }
-
-  if (!hasStableUpdateIdentity(skill)) {
-    return nameOnlyUpdateMap.get(skill.name);
-  }
-
-  return undefined;
-}
-
-export function normalizeSourceIdentity(source: string | null | undefined): string | null {
-  const value = source?.trim();
-  if (!value) return null;
-  if (/^[^\s/:]+\/[^\s/]+$/.test(value)) {
-    return `github.com/${value.replace(/\.git$/i, '')}`.toLocaleLowerCase('en-US');
-  }
-  if (!value.includes('://') && value.includes('@') && value.includes(':')) {
-    const [, hostAndPath = value] = value.split('@');
-    return hostAndPath.replace(':', '/').replace(/\.git$/i, '').toLocaleLowerCase('en-US');
-  }
-  try {
-    const url = new URL(value);
-    return `${url.host}${url.pathname}`
-      .replace(/^\/+|\/+$/g, '')
-      .replace(/\.git$/i, '')
-      .toLocaleLowerCase('en-US');
-  } catch {
-    return value.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').toLocaleLowerCase('en-US');
-  }
-}
-
-function findSourceUpdateInfo(
-  update: SkillUpdateInfo,
-  sources: SourceUpdateCheckInfo[],
-): SourceUpdateCheckInfo | null {
-  const identity = normalizeSourceIdentity(update.sourceUrl ?? update.source);
-  if (!identity) return null;
-  return sources.find((source) => (
-    normalizeSourceIdentity(source.source) === identity
-    && (source.requestedRef ?? 'HEAD') === (update.gitRef ?? 'HEAD')
-  )) ?? null;
 }

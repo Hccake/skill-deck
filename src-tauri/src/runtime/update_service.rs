@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
@@ -16,7 +16,7 @@ use crate::application::source_acquisition::{
     SelectedPayloadAcquisitionService, SourceDiscoveryPolicy,
 };
 use crate::application::source_evidence::{
-    RemoteSnapshotId, SkillRevision, SourceEvidenceCoordinator, SourceSnapshotFacts,
+    RemoteSnapshotId, SkillRevision, SourceEvidenceCoordinator,
 };
 use crate::application::source_evidence_provider::RuntimeSourceEvidenceDetector;
 use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
@@ -26,9 +26,10 @@ use crate::application::update::{
 };
 use crate::application::update_check::UpdateCheckService;
 use crate::application::update_planner::ConcreteUpdatePlanner;
-use crate::application::update_subjects::{
-    InstalledUpdateSubjectProvider, LibraryUpdateSubjectProvider,
+use crate::application::update_records::{
+    InstalledUpdateRecordProvider, LibraryUpdateRecordProvider,
 };
+use crate::application::update_subjects::LibraryUpdateSubjectProvider;
 #[cfg(test)]
 use crate::application::wellknown_access::UnavailableWellKnownAccess;
 use crate::application::wellknown_access::WellKnownAccess;
@@ -63,11 +64,11 @@ enum RetainedSnapshotAction {
 }
 
 fn retained_snapshot_action(
-    environment: &EnvironmentRef,
+    _environment: &EnvironmentRef,
     retained_revision: Option<&str>,
     probe: Result<&str, &AppError>,
 ) -> RetainedSnapshotAction {
-    if !matches!(environment, EnvironmentRef::Native) || retained_revision.is_none() {
+    if retained_revision.is_none() {
         return RetainedSnapshotAction::Reacquire;
     }
     match probe {
@@ -77,10 +78,6 @@ fn retained_snapshot_action(
         Err(AppError::MutationCancelled) => RetainedSnapshotAction::Cancelled,
         Ok(_) | Err(_) => RetainedSnapshotAction::Reacquire,
     }
-}
-
-fn snapshot_reuse_eligible(environment: &EnvironmentRef) -> bool {
-    matches!(environment, EnvironmentRef::Native)
 }
 
 impl RuntimeSkillSourceModule {
@@ -128,36 +125,43 @@ impl RuntimeSkillSourceModule {
             return Err(AppError::MutationCancelled);
         }
         let provider = group.evidence_key.remote.provider();
-        let reusable = if snapshot_reuse_eligible(&group.environment) {
+        let reusable = if provider != &SourceProvider::WellKnown {
             self.snapshots.candidate(&group.key, self.payloads.as_ref())
         } else {
             None
         };
         let discovery_session = match reusable {
-            Some((_retained_revision, discovery)) if provider == &SourceProvider::WellKnown => {
-                discovery
-            }
             Some((retained_revision, discovery)) => {
                 let probe_source = group.descriptor.source().to_string();
                 let probe_ref = group.descriptor.git_ref().map(ToString::to_string);
                 let probe_cancellation = cancellation.clone();
                 let git_transport = Arc::clone(&self.git_transport);
-                let probed = tokio::task::spawn_blocking(move || {
-                    git_transport.probe_ref_revision(
-                        &probe_source,
-                        probe_ref.as_deref(),
-                        probe_cancellation,
-                    )
-                })
-                .await;
-                let action = match probed {
-                    Ok(result) => retained_snapshot_action(
-                        &group.environment,
-                        Some(&retained_revision),
-                        result.as_ref().map(String::as_str),
-                    ),
-                    Err(_) => RetainedSnapshotAction::Reacquire,
+                let probed = match &group.environment {
+                    EnvironmentRef::Native => tokio::task::spawn_blocking(move || {
+                        git_transport.probe_ref_revision(
+                            &probe_source,
+                            probe_ref.as_deref(),
+                            probe_cancellation,
+                        )
+                    })
+                    .await
+                    .map_err(|_| AppError::StaleEnvironment)?,
+                    EnvironmentRef::Wsl { distro_name } => {
+                        self.wsl_source
+                            .probe_ref(
+                                distro_name,
+                                &probe_source,
+                                probe_ref.as_deref(),
+                                probe_cancellation,
+                            )
+                            .await
+                    }
                 };
+                let action = retained_snapshot_action(
+                    &group.environment,
+                    Some(&retained_revision),
+                    probed.as_ref().map(String::as_str),
+                );
                 match action {
                     RetainedSnapshotAction::Reuse => discovery,
                     RetainedSnapshotAction::Cancelled => return Err(AppError::MutationCancelled),
@@ -169,106 +173,171 @@ impl RuntimeSkillSourceModule {
             }
             None => self.discover_group(group, cancellation.clone()).await?,
         };
-        if cancellation.is_cancelled() {
-            return Err(AppError::MutationCancelled);
-        }
-        let retained = self.payloads.source_snapshot(&discovery_session)?;
-        let catalog = retained
-            .skills()
-            .map(|skill| snapshot_skill_key(provider, &skill.skill_name, &skill.relative_path))
-            .collect::<BTreeSet<_>>();
-        let mut selected_paths = Vec::with_capacity(group.skills.len());
-        let mut selected_skills = Vec::with_capacity(group.skills.len());
-        let mut skill_errors = Vec::new();
-        for locked in &group.skills {
-            let available = retained.skills().find(|available| {
-                retained_skill_matches(
-                    provider,
-                    &locked.name,
-                    locked.skill_path(),
-                    &available.skill_name,
-                    &available.relative_path,
-                )
-            });
-            if let Some(available) = available {
-                selected_paths.push(available.relative_path.clone());
-                selected_skills.push(locked);
-                continue;
+        let result = async {
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
             }
-            if let Some(renamed) = retained.skills().find(|available| {
-                normalize_skill_folder_path(&available.relative_path)
-                    == normalize_skill_folder_path(locked.skill_path())
-            }) {
-                skill_errors.push((
-                    locked.name.clone(),
-                    AppError::UpstreamSkillNameChanged {
-                        expected_name: locked.name.clone(),
-                        actual_name: renamed.skill_name.clone(),
-                    },
-                ));
+            let selected = SelectedPayloadAcquisitionService::new(self.payloads.clone());
+            let mut skill_errors = Vec::new();
+            if provider != &SourceProvider::WellKnown {
+                for skill in &group.skills {
+                    if let Err(error) = selected
+                        .ensure_saved_path(
+                            &discovery_session,
+                            skill.skill_path(),
+                            cancellation.clone(),
+                        )
+                        .await
+                    {
+                        if error == AppError::MutationCancelled {
+                            return Err(error);
+                        }
+                        let error = if matches!(error, AppError::PathNotFound { .. }) {
+                            AppError::UpstreamSkillDeleted {
+                                skill_name: skill.name.clone(),
+                            }
+                        } else {
+                            error
+                        };
+                        skill_errors.push((skill.name.clone(), error));
+                    }
+                }
+            }
+            let retained = self.payloads.source_snapshot(&discovery_session)?;
+            let mut selected_paths = Vec::with_capacity(group.skills.len());
+            let mut selected_skills = Vec::with_capacity(group.skills.len());
+            for locked in &group.skills {
+                if skill_errors.iter().any(|(name, _)| name == &locked.name) {
+                    continue;
+                }
+                if let Some(reason) = retained.member_failure(&locked.name) {
+                    skill_errors.push((
+                        locked.name.clone(),
+                        AppError::WellKnownSourceFailed { reason },
+                    ));
+                    continue;
+                }
+                let available = retained.skills().find(|available| {
+                    retained_skill_matches(
+                        provider,
+                        &locked.name,
+                        locked.skill_path(),
+                        &available.skill_name,
+                        &available.relative_path,
+                    )
+                });
+                if let Some(available) = available {
+                    selected_paths.push(available.relative_path.clone());
+                    selected_skills.push(locked);
+                    continue;
+                }
+                if let Some(renamed) = retained.skills().find(|available| {
+                    normalize_skill_folder_path(&available.relative_path)
+                        == normalize_skill_folder_path(locked.skill_path())
+                }) {
+                    skill_errors.push((
+                        locked.name.clone(),
+                        AppError::UpstreamSkillNameChanged {
+                            expected_name: locked.name.clone(),
+                            actual_name: renamed.skill_name.clone(),
+                        },
+                    ));
+                } else {
+                    skill_errors.push((
+                        locked.name.clone(),
+                        AppError::UpstreamSkillDeleted {
+                            skill_name: locked.name.clone(),
+                        },
+                    ));
+                }
+            }
+            let mut handles = Vec::new();
+            let mut acquired_skills = Vec::new();
+            let mut leases = Vec::new();
+            let mut skill_revisions = BTreeMap::new();
+            for (locked, path) in selected_skills.into_iter().zip(selected_paths) {
+                let acquired = async {
+                    let handle = SelectedPayloadAcquisitionService::new(self.payloads.clone())
+                        .acquire(AcquireSelectedPayloadsRequest {
+                            discovery_session: discovery_session.clone(),
+                            skill_paths: vec![path],
+                        })
+                        .await?
+                        .into_iter()
+                        .next()
+                        .ok_or(AppError::StalePayload)?;
+                    let lease = self.payloads.pin_verified(&handle).await?;
+                    let revision = acquisition_skill_revision(provider, lease.planning_metadata())?;
+                    Ok::<_, AppError>((handle, lease, revision))
+                }
+                .await;
+                match acquired {
+                    Ok((handle, lease, revision)) => {
+                        skill_revisions.insert(
+                            snapshot_skill_key(provider, &locked.name, locked.skill_path()),
+                            revision,
+                        );
+                        acquired_skills.push(locked.name.clone());
+                        handles.push(handle);
+                        leases.push(Arc::new(lease));
+                    }
+                    Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+                    Err(error) => skill_errors.push((locked.name.clone(), error)),
+                }
+            }
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            let ref_revision = if provider == &SourceProvider::WellKnown {
+                crate::application::mutation::plan::stable_digest(&skill_revisions)?
             } else {
-                skill_errors.push((
-                    locked.name.clone(),
-                    AppError::UpstreamSkillDeleted {
-                        skill_name: locked.name.clone(),
-                    },
-                ));
-            }
-        }
-        let handles = if selected_paths.is_empty() {
-            Vec::new()
-        } else {
-            SelectedPayloadAcquisitionService::new(self.payloads.clone())
-                .acquire(AcquireSelectedPayloadsRequest {
-                    discovery_session: discovery_session.clone(),
-                    skill_paths: selected_paths,
-                })
-                .await?
-        };
-        if cancellation.is_cancelled() {
-            return Err(AppError::MutationCancelled);
-        }
-        if handles.len() != selected_skills.len() {
-            return Err(AppError::StalePayload);
-        }
-        let ref_revision = if provider == &SourceProvider::WellKnown {
-            discovery_session.source_fingerprint.clone()
-        } else {
-            source_ref_revision(self.payloads.as_ref(), &discovery_session).await?
-        };
-        let facts = SourceSnapshotFacts {
-            discovery_session,
-            snapshot_id: RemoteSnapshotId::new(
+                source_ref_revision(self.payloads.as_ref(), &discovery_session).await?
+            };
+            let snapshot_id = RemoteSnapshotId::new(
                 group.key.normalized_ref.clone(),
                 resolved_ref(&group.key.normalized_ref),
                 ref_revision,
-            ),
-            complete_skill_path_catalog: catalog,
-        };
-        let mut skill_revisions = BTreeMap::new();
-        for (locked, handle) in selected_skills.iter().zip(&handles) {
-            let lease = self.payloads.pin_verified(handle).await?;
-            skill_revisions.insert(
-                snapshot_skill_key(provider, &locked.name, locked.skill_path()),
-                acquisition_skill_revision(provider, lease.planning_metadata())?,
             );
+            if let Err(error) = self.evidence.record_acquisition(
+                group.evidence_key.clone(),
+                group.key.environment.clone(),
+                snapshot_id.clone(),
+                skill_revisions,
+            ) {
+                log::warn!("Could not persist acquired source evidence: {error}");
+            }
+            let redirected_download_hosts = retained.download_hosts();
+            drop(retained);
+            if provider == &SourceProvider::WellKnown {
+                if let Err(error) = self
+                    .payloads
+                    .release_source_snapshot(&discovery_session)
+                    .await
+                {
+                    log::warn!(
+                        "Prepared content retained; source cleanup will be retried: {error}"
+                    );
+                }
+            } else {
+                self.snapshots.remember(
+                    group.key.clone(),
+                    snapshot_id.commit_revision,
+                    discovery_session.clone(),
+                );
+            }
+            Ok(AcquiredUpdateSource {
+                discovery_session: discovery_session.clone(),
+                redirected_download_hosts,
+                _leases: leases,
+                payloads: acquired_skills.into_iter().zip(handles).collect(),
+                skill_errors,
+            })
         }
-        self.evidence.record_acquisition(
-            group.evidence_key.clone(),
-            group.key.clone(),
-            facts.clone(),
-            skill_revisions,
-        )?;
-        Ok(AcquiredUpdateSource {
-            facts,
-            redirected_download_host: retained.descriptor().redirected_download_host.clone(),
-            payloads: selected_skills
-                .into_iter()
-                .map(|skill| skill.name.clone())
-                .zip(handles)
-                .collect(),
-            skill_errors,
-        })
+        .await;
+        if let Err(error) = self.payloads.make_source_optional(&discovery_session).await {
+            log::warn!("Source retention cleanup will be retried: {error}");
+        }
+        result
     }
 
     async fn discover_group(
@@ -281,11 +350,20 @@ impl RuntimeSkillSourceModule {
             .descriptor
             .parsed_source(group.evidence_key.remote.provider());
         if group.evidence_key.remote.provider() == &SourceProvider::WellKnown {
+            let selected_names = group
+                .skills
+                .iter()
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>();
             return match &group.environment {
                 EnvironmentRef::Native => {
-                    let fetched = self.wellknown.fetch(&source, &cancellation).await.map_err(
-                        crate::application::wellknown_access::WellKnownFetchError::into_error,
-                    )?;
+                    let fetched = self
+                        .wellknown
+                        .fetch_selected(&source, &selected_names, &cancellation)
+                        .await
+                        .map_err(
+                            crate::application::wellknown_access::WellKnownFetchError::into_error,
+                        )?;
                     let root = fetched.repo_path.clone();
                     let owner = ManagedDownloadedDirectory::new(root.clone());
                     retain_discovered_source(
@@ -302,6 +380,8 @@ impl RuntimeSkillSourceModule {
                         RetainedSourceOptions {
                             trust_metadata: Some(fetched.trust_metadata),
                             redirected_download_host: fetched.redirected_download_host,
+                            redirected_download_hosts: fetched.redirected_download_hosts,
+                            member_failures: fetched.member_failures,
                             full_depth: true,
                             internal_skill_visibility: InternalSkillVisibility::All,
                             ..Default::default()
@@ -317,6 +397,8 @@ impl RuntimeSkillSourceModule {
                         parsed,
                         source,
                         SourceDiscoveryPolicy {
+                            allow_empty_catalog: true,
+                            selected_skill_names: Some(selected_names),
                             full_depth: true,
                             internal_skill_visibility: InternalSkillVisibility::All,
                         },
@@ -336,6 +418,8 @@ impl RuntimeSkillSourceModule {
             parsed,
             source,
             SourceDiscoveryPolicy {
+                allow_empty_catalog: true,
+                selected_skill_names: None,
                 full_depth: true,
                 internal_skill_visibility: InternalSkillVisibility::All,
             },
@@ -398,35 +482,37 @@ impl SkillSourceModule for RuntimeSkillSourceModule {
         cancellation: crate::core::mutation::CancellationSignal,
     ) -> UpdateFuture<'a, Result<Vec<UpdateSourceAcquisition>, AppError>> {
         Box::pin(async move {
-            let mut acquisitions = Vec::with_capacity(groups.len());
-            for group in groups {
-                let result = self.acquire_group(group, cancellation.clone()).await;
-                acquisitions.push(UpdateSourceAcquisition {
-                    source_result_id: group.source_result_id.clone(),
-                    source: group.source.clone(),
-                    skill_names: group
-                        .skills
-                        .iter()
-                        .map(|skill| skill.name.clone())
-                        .collect(),
-                    result,
-                });
-                if cancellation.is_cancelled() {
-                    for pending in &groups[acquisitions.len()..] {
-                        acquisitions.push(UpdateSourceAcquisition {
-                            source_result_id: pending.source_result_id.clone(),
-                            source: pending.source.clone(),
-                            skill_names: pending
+            use futures_util::StreamExt;
+            let jobs = groups
+                .iter()
+                .map(|group| {
+                    let cancellation = cancellation.clone();
+                    let source = self.clone();
+                    let owned_group = group.clone();
+                    Box::pin(async move {
+                        let result = tokio::spawn(async move {
+                            source.acquire_group(&owned_group, cancellation).await
+                        })
+                        .await
+                        .unwrap_or_else(|error| {
+                            Err(AppError::ExecutionFailed {
+                                message: error.to_string(),
+                            })
+                        });
+                        UpdateSourceAcquisition {
+                            source_result_id: group.source_result_id.clone(),
+                            source: group.source.clone(),
+                            skill_names: group
                                 .skills
                                 .iter()
                                 .map(|skill| skill.name.clone())
                                 .collect(),
-                            result: Err(AppError::MutationCancelled),
-                        });
-                    }
-                    break;
-                }
-            }
+                            result,
+                        }
+                    }) as UpdateFuture<'_, UpdateSourceAcquisition>
+                })
+                .collect::<Vec<_>>();
+            let acquisitions = futures_util::stream::iter(jobs).buffered(4).collect().await;
             Ok(acquisitions)
         })
     }
@@ -468,13 +554,11 @@ pub type RuntimeUpdateService = UpdateService<
 >;
 
 pub type RuntimeUpdateCheckService = UpdateCheckService<
-    InstalledUpdateSubjectProvider<RuntimePlanningFactSource, RuntimeTargetFactResolver>,
+    InstalledUpdateRecordProvider<RuntimePlanningFactSource, RuntimeTargetFactResolver>,
 >;
 
 pub type RuntimeLibraryUpdateCheckService =
-    crate::application::update_check::LibraryUpdateCheckService<
-        LibraryUpdateSubjectProvider<RuntimeTargetFactResolver>,
-    >;
+    crate::application::update_check::LibraryUpdateCheckService<LibraryUpdateRecordProvider>;
 
 pub type RuntimeLibraryUpdateService = crate::application::library_update::LibraryUpdateService<
     LibraryUpdateSubjectProvider<RuntimeTargetFactResolver>,
@@ -501,9 +585,8 @@ pub fn build_runtime_source_evidence_coordinator(
     let home = dirs::home_dir().ok_or_else(|| AppError::Path {
         message: "无法确定用户主目录，不能初始化更新检查状态".to_string(),
     })?;
-    SourceEvidenceCoordinator::with_snapshot_reuse_and_state_path(
+    SourceEvidenceCoordinator::with_state_path(
         detector,
-        snapshots,
         home.join(".skill-deck/state/update-check.json"),
     )
 }
@@ -512,21 +595,25 @@ pub fn build_runtime_update_check_service(
     environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     evidence: SourceEvidenceCoordinator,
+    libraries: Arc<dyn SkillLibraryRepository>,
 ) -> RuntimeUpdateCheckService {
     let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     UpdateCheckService::new(
-        InstalledUpdateSubjectProvider::new(facts, RuntimeTargetFactResolver::new(environments)),
+        InstalledUpdateRecordProvider::new(
+            facts,
+            RuntimeTargetFactResolver::new(environments),
+            libraries,
+        ),
         evidence,
     )
 }
 
 pub fn build_runtime_library_update_check_service(
     repository: Arc<dyn SkillLibraryRepository>,
-    targets: RuntimeTargetFactResolver,
     evidence: SourceEvidenceCoordinator,
 ) -> RuntimeLibraryUpdateCheckService {
     crate::application::update_check::LibraryUpdateCheckService::new(
-        LibraryUpdateSubjectProvider::new(repository, targets.clone()),
+        LibraryUpdateRecordProvider::new(repository),
         evidence,
     )
 }
@@ -553,12 +640,14 @@ pub fn build_runtime_update_service(
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
     skill_source: RuntimeSkillSourceModule,
+    libraries: Arc<dyn SkillLibraryRepository>,
 ) -> RuntimeUpdateService {
     let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     let planner = ConcreteUpdatePlanner::new(
         facts.clone(),
         RuntimeTargetFactResolver::new(environments.clone()),
         payloads.clone(),
+        libraries,
         || {
             chrono::Utc::now()
                 .format("%Y-%m-%dT%H:%M:%S%.3fZ")
@@ -638,7 +727,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_probe_or_wsl_snapshot_forces_environment_local_reacquisition() {
+    fn failed_probe_reacquires_the_source() {
         let probe_error = AppError::GitCloneFailed {
             message: "probe unavailable".to_string(),
         };
@@ -647,20 +736,6 @@ mod tests {
                 &EnvironmentRef::Native,
                 Some("revision-1"),
                 Err(&probe_error),
-            ),
-            RetainedSnapshotAction::Reacquire
-        );
-        assert!(snapshot_reuse_eligible(&EnvironmentRef::Native));
-        assert!(!snapshot_reuse_eligible(&EnvironmentRef::Wsl {
-            distro_name: "Ubuntu".to_string(),
-        },));
-        assert_eq!(
-            retained_snapshot_action(
-                &EnvironmentRef::Wsl {
-                    distro_name: "Ubuntu".to_string(),
-                },
-                Some("revision-1"),
-                Ok("revision-1"),
             ),
             RetainedSnapshotAction::Reacquire
         );

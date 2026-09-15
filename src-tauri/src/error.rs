@@ -37,7 +37,7 @@ pub enum AgentSelectionInvalidReason {
     ResultNotAllowed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub enum SourceAcquisitionFailureReason {
@@ -47,6 +47,7 @@ pub enum SourceAcquisitionFailureReason {
     Network,
     LimitExceeded,
     InvalidContent,
+    DirectoryLinksUnsupported,
     Unavailable,
 }
 
@@ -92,6 +93,7 @@ impl SourceAcquisitionFailureReason {
             Self::Network => "network",
             Self::LimitExceeded => "limitExceeded",
             Self::InvalidContent => "invalidContent",
+            Self::DirectoryLinksUnsupported => "directoryLinksUnsupported",
             Self::Unavailable => "unavailable",
         }
     }

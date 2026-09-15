@@ -1126,6 +1126,10 @@ fn unavailable(distro_name: &str, message: impl Into<String>) -> AppError {
 fn payload_control_error(distro_name: &str, code: &str, phase: &str) -> AppError {
     match code {
         "deadlineExceeded" => AppError::WslCommandTimedOut,
+        "sourceDirectoryLinks" if phase == "source" => AppError::CapabilityUnavailable {
+            capability: "sourceDirectoryLinks".into(),
+            path: None,
+        },
         "pathUnavailable" if phase == "pathMapping" => AppError::CapabilityUnavailable {
             capability: "wslPathMapping".to_string(),
             path: None,
@@ -1296,6 +1300,13 @@ mod tests {
                 capability: "wslPathMapping".to_string(),
                 path: None,
             }
+        );
+    }
+
+    #[test]
+    fn source_directory_link_error_preserves_the_support_limit() {
+        assert!(
+            matches!(payload_control_error("Ubuntu", "sourceDirectoryLinks", "source"), crate::error::AppError::CapabilityUnavailable { capability, .. } if capability == "sourceDirectoryLinks")
         );
     }
 

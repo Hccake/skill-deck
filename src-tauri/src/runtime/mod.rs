@@ -132,6 +132,7 @@ pub struct RuntimeServiceGraph {
     library_update_check: crate::runtime::update_service::RuntimeLibraryUpdateCheckService,
     library_update: RuntimeLibraryUpdateService,
     update: RuntimeUpdateService,
+    update_preparations: crate::application::update_preparation::UpdatePreparations,
     remove: RuntimeRemoveService,
     manage_agents: RuntimeManageAgentsService,
     copy: RuntimeCopyService,
@@ -241,7 +242,6 @@ impl RuntimeServiceGraph {
         let library_update_check =
             crate::runtime::update_service::build_runtime_library_update_check_service(
                 library_repository.clone(),
-                agent_selection_targets.clone(),
                 update_evidence.clone(),
             );
         let library_application = Arc::new(LibraryApplicationModule::with_recovery_status(
@@ -282,6 +282,7 @@ impl RuntimeServiceGraph {
             wsl.clone(),
             registry.clone(),
             update_evidence.clone(),
+            library_repository.clone(),
         );
         let skill_source = RuntimeSkillSourceModule::new(
             payloads.clone(),
@@ -293,7 +294,7 @@ impl RuntimeServiceGraph {
         );
         let library_update = build_runtime_library_update_service(
             payloads.clone(),
-            library_repository,
+            library_repository.clone(),
             agent_selection_targets.clone(),
             skill_source.clone(),
             skill_libraries.clone(),
@@ -304,6 +305,7 @@ impl RuntimeServiceGraph {
             registry.clone(),
             execution.clone(),
             skill_source,
+            library_repository.clone(),
         );
         let remove = build_runtime_remove_service(
             wsl.clone(),
@@ -318,7 +320,8 @@ impl RuntimeServiceGraph {
             execution.clone(),
             library_candidates.clone(),
         );
-        let resources = build_runtime_resource_service(wsl.clone(), registry.clone());
+        let resources =
+            build_runtime_resource_service(wsl.clone(), registry.clone(), library_repository);
         let copy = build_runtime_copy_service(
             payloads.clone(),
             wsl.clone(),
@@ -348,6 +351,7 @@ impl RuntimeServiceGraph {
             library_update_check,
             library_update,
             update,
+            update_preparations: Default::default(),
             remove,
             manage_agents,
             copy,
@@ -383,6 +387,12 @@ impl RuntimeServiceGraph {
 
     pub fn admission(&self) -> &RuntimeAdmissionCoordinator {
         self.admission.as_ref()
+    }
+
+    pub fn update_preparations(
+        &self,
+    ) -> &crate::application::update_preparation::UpdatePreparations {
+        &self.update_preparations
     }
 
     pub fn install_wizard(&self) -> &Arc<InstallWizardWorkflow> {

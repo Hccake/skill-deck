@@ -36,6 +36,7 @@ pub struct OpenedSource {
     pub id: u64,
     pub root: PathBuf,
     pub revision: Option<String>,
+    pub managed_bytes: u64,
 }
 
 #[derive(Debug)]
@@ -43,6 +44,7 @@ pub enum SourceError {
     InvalidManagedBase,
     InvalidLocalSource,
     InvalidRelativePath,
+    DirectoryLinksUnsupported,
     InvalidInventory,
     MissingSource,
     GitUnavailable {
@@ -74,12 +76,24 @@ where
         .into_iter()
         .map(|root| {
             let relative = PathBuf::from(OsString::from_vec(root.relative_path));
-            manager
-                .resolve(request.source_id, &relative)
-                .map(|path| SourceRoot {
-                    path,
-                    stat_only: root.stat_only,
-                })
+            let path = manager.resolve(request.source_id, &relative)?;
+            if request.mode == environment_protocol::SourceScanMode::SkillMetadata {
+                match environment_engine::directory::plain_descendant_directory(
+                    manager.root(request.source_id)?,
+                    &relative,
+                ) {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+                        return Err(SourceError::DirectoryLinksUnsupported)
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(SourceRoot {
+                path,
+                stat_only: root.stat_only,
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let response = scan_source_with_cancel(
@@ -89,6 +103,9 @@ where
                 environment_protocol::SourceScanMode::Recursive => EngineScanMode::Recursive,
                 environment_protocol::SourceScanMode::PriorityDirectories => {
                     EngineScanMode::PriorityDirectories
+                }
+                environment_protocol::SourceScanMode::SkillMetadata => {
+                    EngineScanMode::SkillMetadata
                 }
             },
             per_file_limit: request.per_file_limit,
@@ -191,7 +208,7 @@ impl SourceManager {
         if !root.is_dir() {
             return Err(SourceError::InvalidLocalSource);
         }
-        Ok(self.insert(root, None, None))
+        Ok(self.insert(root, None, None, 0))
     }
 
     pub async fn acquire_git(
@@ -230,6 +247,33 @@ impl SourceManager {
             let _ = std::fs::remove_dir_all(&managed_root);
             return Err(error);
         }
+        if let Some(reference) = options
+            .git_ref
+            .as_deref()
+            .filter(|reference| reference.starts_with("refs/"))
+        {
+            for arguments in [
+                vec!["fetch", "--depth", "1", "origin", reference],
+                vec!["checkout", "--detach", "FETCH_HEAD"],
+            ] {
+                let arguments = [
+                    vec!["-C".to_string(), repository.to_string_lossy().into_owned()],
+                    arguments.into_iter().map(str::to_string).collect(),
+                ]
+                .concat();
+                if let Err(error) = run_git(
+                    arguments,
+                    options.proxy.as_deref(),
+                    options.deadline,
+                    cancelled.clone(),
+                )
+                .await
+                {
+                    let _ = std::fs::remove_dir_all(&managed_root);
+                    return Err(error);
+                }
+            }
+        }
         let revision = run_git(
             vec![
                 "-C".to_string(),
@@ -255,6 +299,13 @@ impl SourceManager {
             id,
             root: repository.clone(),
             revision: Some(revision.clone()),
+            managed_bytes: match environment_engine::directory::size_no_follow(&managed_root) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&managed_root);
+                    return Err(error.into());
+                }
+            },
         };
         self.sources.insert(
             id,
@@ -330,11 +381,16 @@ impl SourceManager {
     pub fn release(&mut self, source_id: u64) -> Result<(), SourceError> {
         let source = self
             .sources
-            .remove(&source_id)
+            .get(&source_id)
             .ok_or(SourceError::MissingSource)?;
-        if let Some(cleanup_root) = source.cleanup_root {
-            std::fs::remove_dir_all(cleanup_root)?;
+        if let Some(cleanup_root) = &source.cleanup_root {
+            match std::fs::remove_dir_all(cleanup_root) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
         }
+        self.sources.remove(&source_id);
         Ok(())
     }
 
@@ -343,6 +399,7 @@ impl SourceManager {
         root: PathBuf,
         cleanup_root: Option<PathBuf>,
         revision: Option<String>,
+        managed_bytes: u64,
     ) -> OpenedSource {
         let id = self.allocate_id().expect("source handle space exhausted");
         self.sources.insert(
@@ -353,7 +410,12 @@ impl SourceManager {
                 revision: revision.clone(),
             },
         );
-        OpenedSource { id, root, revision }
+        OpenedSource {
+            id,
+            root,
+            revision,
+            managed_bytes,
+        }
     }
 
     fn allocate_id(&mut self) -> Result<u64, SourceError> {
@@ -376,25 +438,30 @@ pub async fn probe_git(
             stderr: "invalid Git probe request".to_string(),
         });
     }
+    let mut arguments = vec![
+        "ls-remote".to_string(),
+        "--exit-code".to_string(),
+        "--".to_string(),
+        options.url.clone(),
+    ];
+    arguments.extend(environment_engine::git_ref::remote_ref_patterns(
+        options.git_ref.as_deref(),
+    ));
     let output = run_git(
-        vec![
-            "ls-remote".to_string(),
-            "--exit-code".to_string(),
-            "--".to_string(),
-            options.url,
-            "HEAD".to_string(),
-        ],
+        arguments,
         options.proxy.as_deref(),
         options.deadline,
         cancelled,
     )
     .await?;
-    let revision = output
-        .stdout
-        .split(|byte| byte.is_ascii_whitespace())
-        .next()
-        .unwrap_or_default();
-    parse_revision(revision)
+    environment_engine::git_ref::resolve_remote_revision(
+        &String::from_utf8_lossy(&output.stdout),
+        options.git_ref.as_deref(),
+    )
+    .ok_or(SourceError::GitFailed {
+        exit_code: Some(2),
+        stderr: "requested ref not found".into(),
+    })
 }
 
 impl Drop for SourceManager {
@@ -419,7 +486,10 @@ fn git_clone_arguments(options: &GitSourceOptions, repository: &Path) -> Vec<Str
         "--progress".to_string(),
     ];
     if let Some(git_ref) = &options.git_ref {
-        arguments.extend(["--branch".to_string(), git_ref.clone()]);
+        arguments.extend([
+            "--branch".to_string(),
+            environment_engine::git_ref::clone_branch(git_ref).to_string(),
+        ]);
     }
     arguments.extend([
         "--".to_string(),

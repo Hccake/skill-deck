@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::application::library_application::{
     ApplyLibraryApplicationRequest, LibraryAgentOptions, LibraryApplicationDraft,
@@ -6,8 +6,7 @@ use crate::application::library_application::{
 };
 use crate::application::library_membership::LibraryMembershipOutcome;
 use crate::application::library_update::{
-    ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdateExecutionStage,
-    LibraryUpdatePreview,
+    LibraryUpdateExecutionStage, LibraryUpdateResponse, PreparedLibraryUpdatePreview,
 };
 use crate::application::skill_libraries::{
     ExecuteAddLibrarySkillsRequest, ExecuteRetireLibrarySkillRequest, LibraryAddPreview,
@@ -16,6 +15,7 @@ use crate::application::skill_libraries::{
     SkillLibraryDetail, UpdateLibrarySkillsRequest,
 };
 use crate::application::update::{UpdateCheckMode, UpdateCheckResponse};
+use crate::application::update_preparation::{PreparationTarget, PreparedUpdates};
 use crate::core::mutation::{CancellationSignal, MutationKind, MutationPhase};
 use crate::environment::types::EnvironmentRef;
 use crate::environment::types::SkillLocationRef;
@@ -131,30 +131,53 @@ pub async fn check_library_skill_updates(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn preview_library_skill_updates(
+pub async fn prepare_library_skill_updates(
+    operation_id: String,
     request: UpdateLibrarySkillsRequest,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<LibraryUpdatePreview, AppError> {
-    runtime.library_update().preview(&request).await
+) -> Result<PreparedLibraryUpdatePreview, AppError> {
+    let ticket = runtime
+        .update_preparations()
+        .begin(operation_id, window.label())?;
+    let prepared = runtime
+        .library_update()
+        .prepare(&request, ticket.cancellation.clone())
+        .await?;
+    let preview = prepared.preview.clone();
+    ticket.publish(PreparedUpdates::Library(prepared))?;
+    Ok(preview)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn update_library_skills(
-    request: ExecuteLibraryUpdateRequest,
+    operation_id: String,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<LibraryUpdateExecutionOutcome, AppError> {
+) -> Result<LibraryUpdateResponse, AppError> {
+    let PreparationTarget::Library(request) = runtime
+        .update_preparations()
+        .target(&operation_id, window.label())?
+    else {
+        return Err(AppError::StaleContext);
+    };
     let permit = runtime.admission().begin_library_mutation(
         MutationKind::ManageLibraries,
-        request.request.environment.clone(),
-        request.request.library_id.as_str().to_string(),
+        request.environment.clone(),
+        request.library_id.as_str().to_string(),
     )?;
-    permit.transition(MutationPhase::Acquiring, None, true);
+    let PreparedUpdates::Library(prepared) = runtime
+        .update_preparations()
+        .take(&operation_id, window.label())?
+    else {
+        return Err(AppError::StaleContext);
+    };
+    permit.transition(MutationPhase::Validating, None, true);
     let result = runtime
         .library_update()
-        .execute_with_stage_observer(&request, permit.cancellation(), |stage| {
+        .execute_prepared(prepared, permit.cancellation(), |stage| {
             let (phase, cancelable) = match stage {
-                LibraryUpdateExecutionStage::Acquiring => (MutationPhase::Acquiring, true),
                 LibraryUpdateExecutionStage::Validating => (MutationPhase::Validating, true),
                 LibraryUpdateExecutionStage::Committing => (MutationPhase::Committing, false),
             };

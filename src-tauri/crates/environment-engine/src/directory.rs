@@ -1,6 +1,62 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub fn plain_descendant_directory(
+    root: &std::path::Path,
+    relative: &std::path::Path,
+) -> std::io::Result<PathBuf> {
+    if !root.is_absolute()
+        || relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    let mut path = root.to_path_buf();
+    for component in std::iter::once(None).chain(relative.components().map(Some)) {
+        if let Some(component) = component {
+            path.push(component);
+        }
+        let metadata = std::fs::symlink_metadata(&path)?;
+        #[cfg(windows)]
+        let is_link = {
+            use std::os::windows::fs::MetadataExt;
+            metadata.file_attributes() & 0x400 != 0
+        };
+        #[cfg(not(windows))]
+        let is_link = metadata.file_type().is_symlink();
+        if is_link {
+            return Err(std::io::ErrorKind::Unsupported.into());
+        }
+        if !metadata.is_dir() {
+            return Err(std::io::ErrorKind::NotADirectory.into());
+        }
+    }
+    Ok(path)
+}
+
+pub fn size_no_follow(root: &std::path::Path) -> std::io::Result<u64> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut total = 0_u64;
+    while let Some(path) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&path)?;
+        #[cfg(windows)]
+        let is_link = {
+            use std::os::windows::fs::MetadataExt;
+            metadata.file_attributes() & 0x400 != 0
+        };
+        #[cfg(not(windows))]
+        let is_link = metadata.file_type().is_symlink();
+        total = total.saturating_add(metadata.len());
+        if metadata.is_dir() && !is_link {
+            for entry in std::fs::read_dir(path)? {
+                pending.push(entry?.path());
+            }
+        }
+    }
+    Ok(total)
+}
+
 #[cfg(target_os = "linux")]
 use std::fs;
 

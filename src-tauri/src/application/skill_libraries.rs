@@ -92,6 +92,10 @@ pub struct LibrarySkillSummary {
     /// Skill Deck 最近一次成功提交该成员本地内容的时间，不表示上游发布时间。
     /// 旧成员在下一次成功写入前为 `None`。
     pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_capability: Option<crate::application::update::CheckUpdateCapability>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -576,6 +580,10 @@ pub struct SkillLibraryModule {
 }
 
 impl SkillLibraryModule {
+    pub(crate) fn repository(&self) -> &dyn SkillLibraryRepository {
+        self.repository.as_ref()
+    }
+
     #[cfg(test)]
     pub fn new(repository: Arc<dyn SkillLibraryRepository>) -> Self {
         Self {
@@ -1425,6 +1433,14 @@ fn detail_from_record(
             .skills
             .into_iter()
             .map(|skill| {
+                let update_metadata =
+                    crate::application::collection_records::library_update_metadata(&skill).ok();
+                let comparison_fingerprint = update_metadata
+                    .as_ref()
+                    .map(|metadata| metadata.comparison_fingerprint());
+                let update_capability = update_metadata
+                    .as_ref()
+                    .map(crate::application::update::derive_update_capability_from_metadata);
                 let source =
                     serde_json::from_value::<LibrarySkillSourceRecord>(skill.source_record).ok();
                 LibrarySkillSummary {
@@ -1449,6 +1465,8 @@ fn detail_from_record(
                     plugin_name: source.as_ref().and_then(|value| value.plugin_name.clone()),
                     ref_name: source.as_ref().and_then(|value| value.ref_name.clone()),
                     updated_at: skill.updated_at,
+                    comparison_fingerprint,
+                    update_capability,
                 }
             })
             .collect(),

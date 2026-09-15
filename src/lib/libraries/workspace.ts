@@ -27,6 +27,7 @@ import {
 import { environmentKey } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
 import { runBusinessWrite } from '@/workflows/install-session-feedback';
+import { membershipNeedsAttention } from './membership';
 
 export type LibraryWorkspacePhase = 'idle' | 'loading' | 'ready' | 'writing' | 'error';
 export type LibraryDetailPhase = 'idle' | 'loading' | 'ready' | 'error';
@@ -48,7 +49,7 @@ export interface LibraryWorkspaceState {
     preview: LibraryRetirePreview;
   } | null;
   lastAddResults: LibraryAddSkillResult[];
-  membershipOutcome: LibraryMembershipOutcome | null;
+  membershipOutcomes: Partial<Record<LibraryId, LibraryMembershipOutcome>>;
   version: number;
 }
 
@@ -109,7 +110,7 @@ function emptyState(environment: EnvironmentRef): LibraryWorkspaceState {
     retryAdd: null,
     pendingRetire: null,
     lastAddResults: [],
-    membershipOutcome: null,
+    membershipOutcomes: {},
     version: 0,
   };
 }
@@ -183,6 +184,10 @@ export function createLibraryWorkspace(): LibraryWorkspace {
       detailPhase,
       detailError,
       catalogError: null,
+      membershipOutcomes: Object.fromEntries(Object.entries(current.membershipOutcomes).filter(
+        ([libraryId, outcome]) => membershipNeedsAttention(outcome)
+          && catalog.libraries.some((library) => library.id === libraryId),
+      )),
       pendingRetire: current.pendingRetire?.libraryId === selected
         ? current.pendingRetire
         : null,
@@ -330,6 +335,9 @@ export function createLibraryWorkspace(): LibraryWorkspace {
             phase: 'ready',
             catalog,
             selectedLibraryId,
+            membershipOutcomes: Object.fromEntries(Object.entries(current.membershipOutcomes).filter(
+              ([libraryId]) => catalog.libraries.some((library) => library.id === libraryId),
+            )),
             detail,
             detailPhase,
             detailError,
@@ -450,23 +458,43 @@ export function createLibraryWorkspace(): LibraryWorkspace {
             detailPhase: response.library ? 'ready' : current.detailPhase,
             detailError: response.membership.snapshotError ?? current.detailError,
             pendingRetire: null,
-            membershipOutcome: response.membership,
+            membershipOutcomes: { ...current.membershipOutcomes, [pending.libraryId]: response.membership },
             catalogError: refreshError,
           }));
           return { status: 'succeeded', snapshot };
         }
         if (command.kind === 'resumeMembership') {
-          const membershipOutcome = await resumeLibraryMembership(
+          let membershipOutcome = await resumeLibraryMembership(
             environment,
             command.libraryId,
           );
+          let detail = before.detail;
+          let detailPhase = before.detailPhase;
+          let detailError = before.detailError;
+          if (before.selectedLibraryId === command.libraryId) {
+            try {
+              detail = await getSkillLibrary(environment, command.libraryId);
+              detailPhase = 'ready';
+              detailError = null;
+            } catch (error) {
+              detailError = toAppError(error);
+              detailPhase = detail ? 'ready' : 'error';
+              membershipOutcome = {
+                ...membershipOutcome,
+                snapshotError: membershipOutcome.snapshotError ?? detailError,
+              };
+            }
+          }
           if (!currentGeneration(environment, generation)) {
             return { status: 'succeeded', snapshot: getSnapshot(environment) };
           }
           const snapshot = commit(environment, (current) => ({
             ...current,
             phase: 'ready',
-            membershipOutcome,
+            membershipOutcomes: { ...current.membershipOutcomes, [command.libraryId]: membershipOutcome },
+            detail,
+            detailPhase,
+            detailError,
             catalogError: null,
           }));
           return { status: 'succeeded', snapshot };
@@ -525,7 +553,7 @@ export function createLibraryWorkspace(): LibraryWorkspace {
               ? { request: retryRequest, error: retryError }
               : null,
             lastAddResults: response.results,
-            membershipOutcome: response.membership,
+            membershipOutcomes: { ...current.membershipOutcomes, [pending.request.libraryId]: response.membership },
             catalogError: refreshError,
           }));
           return { status: 'succeeded', snapshot };

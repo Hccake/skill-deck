@@ -8,18 +8,12 @@ const mocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
   listAgents: vi.fn(),
   checkUpdates: vi.fn(),
-  previewUpdate: vi.fn(),
-  updateSkill: vi.fn(),
-  updateSkillsBatch: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mocks.listSkills(...args),
   listAgents: (...args: unknown[]) => mocks.listAgents(...args),
   checkUpdates: (...args: unknown[]) => mocks.checkUpdates(...args),
-  previewUpdate: (...args: unknown[]) => mocks.previewUpdate(...args),
-  updateSkill: (...args: unknown[]) => mocks.updateSkill(...args),
-  updateSkillsBatch: (...args: unknown[]) => mocks.updateSkillsBatch(...args),
 }));
 
 const ubuntuGlobal: SkillLocationRef = {
@@ -33,12 +27,6 @@ const ubuntuProject: SkillLocationRef = {
 const debianGlobal: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Debian' },
   scope: { scope: 'global' },
-};
-const previewToken = {
-  generation: 'preview-1',
-  registryRevision: 'registry-1',
-  environmentRevision: 'environment-1',
-  contextRevision: 'context-1',
 };
 function skill(name: string, scope: 'global' | 'project' = 'global'): InstalledSkill {
   return {
@@ -77,44 +65,6 @@ describe('context-keyed Skill snapshots', () => {
     mocks.listAgents.mockResolvedValue(makeAgentRuntimeSnapshot([]));
     mocks.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
     mocks.checkUpdates.mockResolvedValue({ sources: [], skills: [] });
-    mocks.previewUpdate.mockResolvedValue({
-      token: previewToken,
-      skills: [{
-        skillName: 'toolkit',
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
-        overwritePrivateEntries: [{ entryId: 'entry-1' }],
-        blockingReasons: [],
-        fallbackForecasts: [],
-      }],
-    });
-    const unit = {
-      unitId: 'toolkit',
-      source: null,
-      target: ubuntuGlobal,
-      status: 'succeeded',
-      retryable: false,
-      lockCommitted: true,
-      actualMode: 'copy',
-      fallbackReason: null,
-      agentTargets: [],
-      warnings: [],
-      error: null,
-      recovery: null,
-    };
-    const response = {
-      sources: [{ id: 'source-1', source: 'owner/repo', status: 'acquired', error: null }],
-      skills: [{
-        skillIdentity: { context: ubuntuGlobal, skillName: 'toolkit' },
-        sourceResultId: 'source-1',
-        mutation: unit,
-        coverage: { kind: 'updated' },
-        warnings: [],
-        retryable: false,
-      }],
-      outcome: 'succeeded',
-    };
-    mocks.updateSkill.mockResolvedValue(response);
-    mocks.updateSkillsBatch.mockResolvedValue(response);
   });
 
   it('keeps concurrent environment results in independent snapshots', async () => {

@@ -5,6 +5,54 @@ use environment_engine::source_inventory::{
 };
 
 #[test]
+fn saved_skill_metadata_reads_only_its_root_and_prefers_the_exact_name() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("one/two/three/four/five/six/seven");
+    std::fs::create_dir_all(root.join("nested")).unwrap();
+    std::fs::write(root.join("skill.md"), b"lower").unwrap();
+    std::fs::write(root.join("nested/SKILL.md"), b"nested must not be read").unwrap();
+    let request = SourceInventoryRequest {
+        roots: vec![SourceRoot {
+            path: root.clone(),
+            stat_only: false,
+        }],
+        mode: SourceScanMode::SkillMetadata,
+        per_file_limit: 16,
+        aggregate_limit: 16,
+    };
+    let first = scan_source(&request).unwrap();
+    assert_eq!(first.entries.len(), 2);
+    assert_eq!(first.entries[1].content_bytes, b"lower");
+    std::fs::write(root.join("SKILL.md"), b"exact").unwrap();
+    assert_eq!(
+        scan_source(&request).unwrap().entries[1].content_bytes,
+        b"exact"
+    );
+}
+
+#[test]
+fn saved_skill_metadata_does_not_read_an_external_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("skill");
+    std::fs::create_dir(&root).unwrap();
+    let external = temp.path().join("external");
+    std::fs::write(&external, b"outside data").unwrap();
+    std::os::unix::fs::symlink(&external, root.join("SKILL.md")).unwrap();
+    let response = scan_source(&SourceInventoryRequest {
+        roots: vec![SourceRoot {
+            path: root,
+            stat_only: false,
+        }],
+        mode: SourceScanMode::SkillMetadata,
+        per_file_limit: 16,
+        aggregate_limit: 16,
+    })
+    .unwrap();
+    assert!(response.entries[1].content_bytes.is_empty());
+    assert!(response.entries[1].error.is_some());
+}
+
+#[test]
 fn recursive_inventory_reads_only_source_documents_and_prunes_dependency_trees() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("repo");

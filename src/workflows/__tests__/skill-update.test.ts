@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppError, SkillLocationRef, UpdatePreview, UpdateResponse } from '@/bindings';
+import type { AppError, SkillLocationRef, PreparedUpdatePreview, UpdateResponse } from '@/bindings';
 import { contextKey } from '@/lib/context';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
-  previewUpdate: vi.fn<() => Promise<UpdatePreview>>(),
-  updateSkill: vi.fn<() => Promise<UpdateResponse>>(),
-  updateSkillsBatch: vi.fn<() => Promise<UpdateResponse>>(),
+  prepareUpdate: vi.fn<() => Promise<PreparedUpdatePreview>>(),
+  cancelUpdatePreparation: vi.fn(async () => {}),
+  executeUpdate: vi.fn<() => Promise<UpdateResponse>>(),
   applyUpdateResult: vi.fn(),
   snapshots: {} as Record<string, unknown>,
   getInstallWizardSession: vi.fn(),
@@ -20,27 +20,27 @@ vi.mock('@/stores/skills-data', () => ({
 import { useSkillUpdateWorkflow } from '../skill-update';
 
 const context: SkillLocationRef = { environment: { kind: 'native' }, scope: { scope: 'global' } };
-const preview = (name = 'demo'): UpdatePreview => ({
-  token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' },
+const preview = (name = 'demo'): PreparedUpdatePreview => ({
+  sources: [], blocked: [], redirectedDownloadHosts: [],
   skills: [{
     skillName: name,
     sourceDisplay: 'github.com/backend/repo',
     refDisplay: 'release',
     adapterTargets: [],
+    targets: [{ displayPath: { environment: context.environment, nativePath: `/agents/${name}` }, readers: [], restoring: false }],
     capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
     cleanCopyCount: 0,
     overwritePrivateEntries: [],
     blockingReasons: [],
-    fallbackForecasts: [],
+    linkedTargets: [], fallbackForecasts: [],
   }],
 });
 
 describe('skill update workflow', () => {
   beforeEach(() => {
     useSkillUpdateWorkflow.getState().reset();
-    mocks.previewUpdate.mockReset();
-    mocks.updateSkill.mockReset();
-    mocks.updateSkillsBatch.mockReset();
+    mocks.prepareUpdate.mockReset();
+    mocks.executeUpdate.mockReset();
     mocks.applyUpdateResult.mockReset();
     mocks.snapshots = {};
     mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
@@ -61,31 +61,30 @@ describe('skill update workflow', () => {
         }],
       },
     };
-    mocks.previewUpdate.mockResolvedValue(preview('toolkit'));
+    mocks.prepareUpdate.mockResolvedValue(preview('toolkit'));
 
     await useSkillUpdateWorkflow.getState().open(context, ['toolkit'], false);
 
     expect(useSkillUpdateWorkflow.getState().preview).toEqual(preview('toolkit'));
-    expect(useSkillUpdateWorkflow.getState()).not.toHaveProperty('plan');
   });
 
   it('opens synchronously, freezes its request, and cancellation never executes', async () => {
-    let resolvePreview!: (value: UpdatePreview) => void;
-    mocks.previewUpdate.mockReturnValue(new Promise((resolve) => { resolvePreview = resolve; }));
+    let resolvePreview!: (value: PreparedUpdatePreview) => void;
+    mocks.prepareUpdate.mockReturnValue(new Promise((resolve) => { resolvePreview = resolve; }));
     const pending = useSkillUpdateWorkflow.getState().open(context, ['demo']);
     expect(useSkillUpdateWorkflow.getState()).toMatchObject({ phase: 'loadingPreview', context, skillNames: ['demo'] });
     useSkillUpdateWorkflow.getState().close();
     await useSkillUpdateWorkflow.getState().confirm();
-    expect(mocks.updateSkill).not.toHaveBeenCalled();
+    expect(mocks.executeUpdate).not.toHaveBeenCalled();
     resolvePreview(preview());
     await pending;
     expect(useSkillUpdateWorkflow.getState().phase).toBe('closed');
   });
 
   it('does not let an old preview overwrite the newer operation', async () => {
-    let first!: (value: UpdatePreview) => void;
-    mocks.previewUpdate.mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }));
-    mocks.previewUpdate.mockResolvedValueOnce(preview('newer'));
+    let first!: (value: PreparedUpdatePreview) => void;
+    mocks.prepareUpdate.mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }));
+    mocks.prepareUpdate.mockResolvedValueOnce(preview('newer'));
     const initial = useSkillUpdateWorkflow.getState().open(context, ['older']);
     await useSkillUpdateWorkflow.getState().open(context, ['newer']);
     first(preview('older'));
@@ -94,47 +93,53 @@ describe('skill update workflow', () => {
   });
 
   it('preserves conflicts unless explicitly selected', async () => {
-    mocks.previewUpdate.mockResolvedValue({ ...preview(), skills: [{ ...preview().skills[0]!, overwritePrivateEntries: [{ entryId: 'private-entry', readers: [] }] }] });
-    mocks.updateSkill.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
+    mocks.prepareUpdate.mockResolvedValue({ ...preview(), skills: [{ ...preview().skills[0]!, overwritePrivateEntries: [{ entryId: 'private-entry', readers: [], displayPath: { environment: context.environment, nativePath: '/agents/private-entry' } }] }] });
+    mocks.executeUpdate.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
     await useSkillUpdateWorkflow.getState().confirm();
-    expect(mocks.updateSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ overwritePrivateEntries: [] }),
-      expect.anything(),
-      false,
+    expect(mocks.executeUpdate).toHaveBeenCalledWith(
+      expect.any(String), [],
     );
   });
 
-  it('reuses the prepared update after confirming a redirected source host', async () => {
-    const redirect = {
-      kind: 'directDownloadRedirectConfirmationRequired',
-      data: { host: 'cdn.example.com' },
-    } satisfies AppError;
-    mocks.previewUpdate.mockResolvedValue(preview());
-    mocks.updateSkill
-      .mockRejectedValueOnce(redirect)
-      .mockResolvedValueOnce({ sources: [], skills: [], outcome: 'succeeded' });
+  it('selects matching copies by default and stops confirmation when every optional copy is unchecked', async () => {
+    const value = preview();
+    value.skills[0].targets = [{ ...value.skills[0].targets[0], selectableEntryId: 'clean-copy' }];
+    value.skills[0].overwritePrivateEntries = [{ entryId: 'different-copy', readers: [], displayPath: { environment: context.environment, nativePath: '/copy/different' } }];
+    mocks.prepareUpdate.mockResolvedValue(value);
+    mocks.executeUpdate.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
+    await useSkillUpdateWorkflow.getState().open(context, ['demo']);
+    expect(useSkillUpdateWorkflow.getState().selectedCopyEntries).toEqual(new Set(['clean-copy']));
+    useSkillUpdateWorkflow.getState().setCopySelected('clean-copy', false);
+    await useSkillUpdateWorkflow.getState().confirm();
+    expect(mocks.executeUpdate).not.toHaveBeenCalled();
+    useSkillUpdateWorkflow.getState().setCopySelected('different-copy', true);
+    await useSkillUpdateWorkflow.getState().confirm();
+    expect(mocks.executeUpdate).toHaveBeenCalledWith(expect.any(String), ['different-copy']);
+  });
+
+  it('shows all download hosts before the single execution confirmation', async () => {
+    mocks.prepareUpdate.mockResolvedValue({ ...preview(), redirectedDownloadHosts: ['cdn.example.com', 'assets.example.com'] });
+    mocks.executeUpdate.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
 
-    await useSkillUpdateWorkflow.getState().confirm();
     expect(useSkillUpdateWorkflow.getState()).toMatchObject({
       phase: 'ready',
-      executionError: redirect,
+      preview: { redirectedDownloadHosts: ['cdn.example.com', 'assets.example.com'] },
     });
-
+    expect(mocks.executeUpdate).not.toHaveBeenCalled();
     await useSkillUpdateWorkflow.getState().confirm();
-    expect(mocks.updateSkill).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.anything(),
-      true,
+    expect(mocks.executeUpdate).toHaveBeenLastCalledWith(
+      expect.any(String), [],
     );
+    expect(mocks.executeUpdate).toHaveBeenCalledOnce();
     expect(useSkillUpdateWorkflow.getState().phase).toBe('result');
   });
 
   it('applies the completed result through the snapshot facade without storing it there', async () => {
     const result: UpdateResponse = { sources: [], skills: [], outcome: 'succeeded' };
-    mocks.previewUpdate.mockResolvedValue(preview());
-    mocks.updateSkill.mockResolvedValue(result);
+    mocks.prepareUpdate.mockResolvedValue(preview());
+    mocks.executeUpdate.mockResolvedValue(result);
 
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
     await useSkillUpdateWorkflow.getState().confirm();
@@ -145,29 +150,29 @@ describe('skill update workflow', () => {
 
   it('sends only one execution request while confirmation is pending', async () => {
     let resolveUpdate!: (value: UpdateResponse) => void;
-    mocks.previewUpdate.mockResolvedValue(preview());
-    mocks.updateSkill.mockReturnValue(new Promise((resolve) => { resolveUpdate = resolve; }));
+    mocks.prepareUpdate.mockResolvedValue(preview());
+    mocks.executeUpdate.mockReturnValue(new Promise((resolve) => { resolveUpdate = resolve; }));
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
 
     const first = useSkillUpdateWorkflow.getState().confirm();
     const second = useSkillUpdateWorkflow.getState().confirm();
 
-    expect(mocks.updateSkill).toHaveBeenCalledTimes(1);
+    expect(mocks.executeUpdate).toHaveBeenCalledTimes(1);
     resolveUpdate({ sources: [], skills: [], outcome: 'succeeded' });
     await Promise.all([first, second]);
   });
 
   it('does not let a completed operation overwrite a newer generation after refresh', async () => {
     let resolveRefresh!: () => void;
-    mocks.previewUpdate.mockResolvedValueOnce(preview('older'));
-    mocks.updateSkill.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
+    mocks.prepareUpdate.mockResolvedValueOnce(preview('older'));
+    mocks.executeUpdate.mockResolvedValue({ sources: [], skills: [], outcome: 'succeeded' });
     mocks.applyUpdateResult.mockReturnValue(new Promise<void>((resolve) => { resolveRefresh = resolve; }));
 
     await useSkillUpdateWorkflow.getState().open(context, ['older']);
     const confirming = useSkillUpdateWorkflow.getState().confirm();
     await Promise.resolve();
 
-    mocks.previewUpdate.mockResolvedValueOnce(preview('newer'));
+    mocks.prepareUpdate.mockResolvedValueOnce(preview('newer'));
     await useSkillUpdateWorkflow.getState().open(context, ['newer']);
     resolveRefresh();
     await confirming;
@@ -182,8 +187,8 @@ describe('skill update workflow', () => {
 
   it('preserves a command AppError without inventing retryable Skill results', async () => {
     const commandError: AppError = { kind: 'mutationBusy' };
-    mocks.previewUpdate.mockResolvedValue(preview());
-    mocks.updateSkill.mockRejectedValue(commandError);
+    mocks.prepareUpdate.mockResolvedValue(preview());
+    mocks.executeUpdate.mockRejectedValue(commandError);
 
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
     await useSkillUpdateWorkflow.getState().confirm();
@@ -197,8 +202,8 @@ describe('skill update workflow', () => {
   });
 
   it('returns to the ready phase when installation wins update admission', async () => {
-    mocks.previewUpdate.mockResolvedValue(preview());
-    mocks.updateSkill.mockRejectedValue({ kind: 'installWizardActive' });
+    mocks.prepareUpdate.mockResolvedValue(preview());
+    mocks.executeUpdate.mockRejectedValue({ kind: 'installWizardActive' });
 
     await useSkillUpdateWorkflow.getState().open(context, ['demo']);
     await useSkillUpdateWorkflow.getState().confirm();
@@ -210,5 +215,18 @@ describe('skill update workflow', () => {
       confirming: false,
     });
     expect(mocks.applyUpdateResult).not.toHaveBeenCalled();
+  });
+
+  it('prepares expired content again without repeating execution automatically', async () => {
+    mocks.prepareUpdate.mockResolvedValue(preview());
+    mocks.executeUpdate.mockRejectedValue({ kind: 'stalePayload' });
+    await useSkillUpdateWorkflow.getState().open(context, ['demo']);
+    const operationId = useSkillUpdateWorkflow.getState().operationId;
+    await useSkillUpdateWorkflow.getState().confirm();
+    await useSkillUpdateWorkflow.getState().retryFailed();
+    expect(useSkillUpdateWorkflow.getState().phase).toBe('ready');
+    expect(useSkillUpdateWorkflow.getState().operationId).not.toBe(operationId);
+    expect(mocks.prepareUpdate).toHaveBeenCalledTimes(2);
+    expect(mocks.executeUpdate).toHaveBeenCalledOnce();
   });
 });

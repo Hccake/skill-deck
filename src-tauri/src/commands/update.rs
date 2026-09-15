@@ -1,11 +1,12 @@
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
-use crate::application::mutation::plan::PreviewToken;
 use crate::application::update::{
-    UpdateCheckRequest, UpdateCheckResponse, UpdateExecutionProgress, UpdateExecutionRequest,
-    UpdateExecutionStage, UpdatePreview, UpdateRequest, UpdateResponse,
+    PreparedUpdatePreview, UpdateCheckRequest, UpdateCheckResponse, UpdateExecutionProgress,
+    UpdateExecutionStage, UpdateRequest, UpdateResponse,
 };
+use crate::application::update_preparation::{PreparationTarget, PreparedUpdates};
 use crate::core::mutation::{MutationKind, MutationPhase, MutationProgress};
+use crate::environment::runtime::ObservedEntryId;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -20,64 +21,66 @@ pub async fn check_updates(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn preview_update(
+pub async fn prepare_update(
+    operation_id: String,
     request: UpdateRequest,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<UpdatePreview, AppError> {
-    runtime.update().preview(&request).await
+) -> Result<PreparedUpdatePreview, AppError> {
+    let ticket = runtime
+        .update_preparations()
+        .begin(operation_id, window.label())?;
+    let prepared = runtime
+        .update()
+        .prepare(&request, ticket.cancellation.clone())
+        .await?;
+    let preview = prepared.preview.clone();
+    ticket.publish(PreparedUpdates::Direct(prepared))?;
+    Ok(preview)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn update_skill(
-    execution: UpdateExecutionRequest,
-    expected_token: PreviewToken,
-    acknowledge_redirect: bool,
+pub async fn cancel_update_preparation(
+    operation_id: String,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<UpdateResponse, AppError> {
-    validate_single_skill_update(&execution)?;
-    execute_update(execution, expected_token, acknowledge_redirect, runtime).await
-}
-
-fn validate_single_skill_update(execution: &UpdateExecutionRequest) -> Result<(), AppError> {
-    if execution.request.skill_names.len() == 1 {
-        return Ok(());
-    }
-    Err(AppError::Validation {
-        field: Some("skillNames".to_string()),
-        message: "single-Skill update requires exactly one Skill".to_string(),
-    })
+) -> Result<(), AppError> {
+    runtime
+        .update_preparations()
+        .cancel(&operation_id, window.label())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn update_skills_batch(
-    execution: UpdateExecutionRequest,
-    expected_token: PreviewToken,
-    acknowledge_redirect: bool,
+pub async fn execute_update(
+    operation_id: String,
+    selected_copy_entries: Vec<ObservedEntryId>,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
-    execute_update(execution, expected_token, acknowledge_redirect, runtime).await
-}
-
-async fn execute_update(
-    execution: UpdateExecutionRequest,
-    expected_token: PreviewToken,
-    acknowledge_redirect: bool,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<UpdateResponse, AppError> {
-    let context = execution.request.context.clone();
+    let PreparationTarget::Direct(context) = runtime
+        .update_preparations()
+        .target(&operation_id, window.label())?
+    else {
+        return Err(AppError::StaleContext);
+    };
     let guard = runtime
         .admission()
         .begin_mutation(MutationKind::Update, context.clone())?;
-    guard.transition(MutationPhase::Acquiring, None, true);
+    let PreparedUpdates::Direct(prepared) = runtime
+        .update_preparations()
+        .take(&operation_id, window.label())?
+    else {
+        return Err(AppError::StaleContext);
+    };
+    guard.transition(MutationPhase::Validating, None, true);
     let result = runtime
         .update()
-        .execute_with_confirmation_and_stage_observer(
-            &execution,
-            expected_token,
+        .execute_prepared(
+            prepared,
+            &selected_copy_entries,
             guard.cancellation(),
-            acknowledge_redirect,
             |event| {
                 let UpdateExecutionProgress {
                     stage,
@@ -102,33 +105,4 @@ async fn execute_update(
         .await;
     guard.transition(MutationPhase::Finishing, None, false);
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::application::update::UpdateRequest;
-    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
-
-    #[test]
-    fn single_skill_update_rejects_batch_requests() {
-        let execution = UpdateExecutionRequest {
-            request: UpdateRequest {
-                context: SkillLocationRef {
-                    environment: EnvironmentRef::Native,
-                    scope: SkillLocation::Global,
-                },
-                skill_names: vec!["alpha".to_string(), "beta".to_string()],
-            },
-            overwrite_private_entries: Vec::new(),
-        };
-
-        assert!(matches!(
-            validate_single_skill_update(&execution),
-            Err(AppError::Validation {
-                field: Some(field),
-                ..
-            }) if field == "skillNames"
-        ));
-    }
 }

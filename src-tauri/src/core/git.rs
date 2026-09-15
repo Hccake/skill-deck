@@ -106,10 +106,11 @@ where
 
     // 如果指定了分支/tag
     if let Some(branch) = git_ref {
-        cmd.arg("--branch").arg(branch);
+        cmd.arg("--branch")
+            .arg(environment_engine::git_ref::clone_branch(branch));
     }
 
-    cmd.arg(url).arg(&repo_path);
+    cmd.arg("--").arg(url).arg(&repo_path);
 
     // 执行克隆
     let result = execute_with_timeout_and_progress(&mut cmd, timeout, &on_progress, &cancellation);
@@ -117,6 +118,33 @@ where
     match result {
         Ok(output) => {
             if output.success {
+                if let Some(reference) = git_ref.filter(|reference| reference.starts_with("refs/"))
+                {
+                    for arguments in [
+                        vec!["fetch", "--depth", "1", "origin", reference],
+                        vec!["checkout", "--detach", "FETCH_HEAD"],
+                    ] {
+                        let mut command = std_command("git");
+                        apply_proxy_override(&mut command, proxy);
+                        apply_clone_env(&mut command);
+                        command.arg("-C").arg(&repo_path).args(arguments);
+                        let remaining = timeout.saturating_sub(started_at.elapsed());
+                        if remaining.is_zero() {
+                            return Err(AppError::GitTimeout {
+                                timeout_secs: display_timeout_secs.try_into().unwrap_or(u32::MAX),
+                            });
+                        }
+                        let output = execute_with_timeout_and_progress(
+                            &mut command,
+                            remaining,
+                            &on_progress,
+                            &cancellation,
+                        )?;
+                        if !output.success {
+                            return Err(classify_git_command_error(&output, url, "checkout ref"));
+                        }
+                    }
+                }
                 on_progress(CloneProgress {
                     phase: ClonePhase::Done,
                     elapsed_secs: output.elapsed_secs,
@@ -468,23 +496,11 @@ pub(crate) fn probe_remote_ref_revision_options(
 ) -> Result<String, AppError> {
     let mut cmd = std_command("git");
     apply_proxy_override(&mut cmd, proxy);
-    cmd.arg("ls-remote").arg("--exit-code").arg(url);
-    match git_ref.filter(|value| !value.is_empty()) {
-        Some(value) if value.starts_with("refs/") => {
-            cmd.arg(value);
-            if value.starts_with("refs/tags/") {
-                cmd.arg(format!("{value}^{{}}"));
-            }
-        }
-        Some(value) => {
-            cmd.arg(format!("refs/heads/{value}"))
-                .arg(format!("refs/tags/{value}^{{}}"))
-                .arg(format!("refs/tags/{value}"));
-        }
-        None => {
-            cmd.arg("HEAD");
-        }
-    }
+    cmd.arg("ls-remote")
+        .arg("--exit-code")
+        .arg("--")
+        .arg(url)
+        .args(environment_engine::git_ref::remote_ref_patterns(git_ref));
     apply_clone_env(&mut cmd);
 
     let output = execute_with_timeout_and_progress(&mut cmd, timeout, &|_| {}, &cancellation)?;
@@ -497,13 +513,7 @@ pub(crate) fn probe_remote_ref_revision_options(
         return Err(classify_git_command_error(&output, url, "probe ref"));
     }
 
-    let lines = output.stdout;
-    let revision = lines
-        .lines()
-        .find(|line| line.ends_with("^{}"))
-        .or_else(|| lines.lines().next())
-        .and_then(|line| line.split_whitespace().next())
-        .and_then(normalize_git_object_id)
+    let revision = environment_engine::git_ref::resolve_remote_revision(&output.stdout, git_ref)
         .ok_or_else(|| AppError::GitRefNotFound {
             ref_name: git_ref.unwrap_or("HEAD").to_string(),
         })?;
@@ -610,6 +620,67 @@ pub(crate) fn classify_git_failure(
 )]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_ref_probe_and_checkout_agree_for_branch_tag_name_collisions() {
+        let temp = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .current_dir(temp.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Skill Deck Test"]);
+        git(&["commit", "--allow-empty", "-m", "tag content"]);
+        let tag = git(&["rev-parse", "HEAD"]);
+        git(&["tag", "-a", "release", "-m", "release"]);
+        git(&["commit", "--allow-empty", "-m", "branch content"]);
+        let branch = git(&["rev-parse", "HEAD"]);
+        git(&["branch", "release"]);
+        let source = url::Url::from_directory_path(temp.path())
+            .unwrap()
+            .to_string();
+        for (reference, expected) in [
+            (None, &branch),
+            (Some("release"), &branch),
+            (Some("refs/heads/release"), &branch),
+            (Some("refs/tags/release"), &tag),
+        ] {
+            let probed = probe_remote_ref_revision_options(
+                &source,
+                reference,
+                CancellationSignal::default(),
+                None,
+                Duration::from_secs(30),
+            )
+            .unwrap();
+            let cloned = clone_repo_with_progress_options(
+                &source,
+                reference,
+                |_| {},
+                CancellationSignal::default(),
+                None,
+                Duration::from_secs(30),
+                30,
+            )
+            .unwrap();
+            assert_eq!(&probed, expected, "{reference:?}");
+            assert_eq!(
+                cloned.ref_revision.as_ref(),
+                Some(expected),
+                "{reference:?}"
+            );
+        }
+    }
 
     const SUBPROCESS_OUTPUT_FIXTURE_ENV: &str = "SKILL_DECK_GIT_OUTPUT_FIXTURE";
     const SUBPROCESS_PID_FILE_ENV: &str = "SKILL_DECK_GIT_PROCESS_PID_FILE";

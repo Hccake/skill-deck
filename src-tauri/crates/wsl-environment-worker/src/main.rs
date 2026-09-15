@@ -1018,6 +1018,7 @@ async fn execute_business_request(
                     source_id: source.id,
                     root: source.root.to_string_lossy().into_owned(),
                     revision: source.revision,
+                    managed_bytes: source.managed_bytes,
                 }),
             )
             .await?;
@@ -1031,6 +1032,7 @@ async fn execute_business_request(
                     source_id: source.id,
                     root: source.root.to_string_lossy().into_owned(),
                     revision: source.revision,
+                    managed_bytes: source.managed_bytes,
                 }),
             )
             .await?;
@@ -1128,7 +1130,7 @@ async fn execute_business_request(
             let result = probe_git(
                 GitSourceOptions {
                     url: intent.url,
-                    git_ref: None,
+                    git_ref: intent.git_ref,
                     proxy: intent.proxy,
                     deadline: Duration::from_millis(intent.deadline_millis),
                 },
@@ -2226,6 +2228,7 @@ async fn send_source_error(
         SourceError::DeadlineExceeded => ("deadlineExceeded", "source", Vec::new()),
         SourceError::Cancelled => ("cancelled", "source", Vec::new()),
         SourceError::MissingSource => ("staleSource", "source", Vec::new()),
+        SourceError::DirectoryLinksUnsupported => ("sourceDirectoryLinks", "source", Vec::new()),
         SourceError::InvalidLocalSource
         | SourceError::InvalidRelativePath
         | SourceError::InvalidInventory => ("invalidSource", "source", Vec::new()),

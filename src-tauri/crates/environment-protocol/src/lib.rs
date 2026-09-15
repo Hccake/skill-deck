@@ -428,6 +428,7 @@ pub struct OpenLocalSourceRequest {
 pub enum SourceScanMode {
     Recursive,
     PriorityDirectories,
+    SkillMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -770,6 +771,7 @@ pub enum Message {
         source_id: u64,
         root: String,
         revision: Option<String>,
+        managed_bytes: u64,
     },
     ReleaseSource {
         source_id: u64,

@@ -218,7 +218,7 @@ impl CollectionRecordReader for LibraryCatalogRecordReader<'_> {
     }
 }
 
-fn library_update_metadata(
+pub(crate) fn library_update_metadata(
     record: &LibrarySkillRecord,
 ) -> Result<NormalizedUpdateMetadata, AppError> {
     let source: crate::application::skill_libraries::LibrarySkillSourceRecord =

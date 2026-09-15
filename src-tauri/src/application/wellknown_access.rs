@@ -11,6 +11,9 @@ pub(crate) struct WellKnownFetchResult {
     pub(crate) repo_path: PathBuf,
     pub(crate) trust_metadata: HashMap<String, WellKnownTrustMetadata>,
     pub(crate) redirected_download_host: Option<String>,
+    pub(crate) redirected_download_hosts: Vec<String>,
+    pub(crate) member_failures:
+        std::collections::BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
 }
 
 #[derive(Debug)]
@@ -44,6 +47,9 @@ pub(crate) struct WellKnownIndexEvidence {
     pub(crate) index_url: String,
     pub(crate) complete_skill_catalog: Vec<String>,
     pub(crate) digests: HashMap<String, String>,
+    pub(crate) catalog_complete: bool,
+    pub(crate) member_failures:
+        std::collections::BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -75,6 +81,15 @@ pub(crate) trait WellKnownAccess: Send + Sync {
         url: &'a str,
         cancellation: &'a CancellationSignal,
     ) -> WellKnownFetchFuture<'a>;
+
+    fn fetch_selected<'a>(
+        &'a self,
+        url: &'a str,
+        _skill_names: &'a [String],
+        cancellation: &'a CancellationSignal,
+    ) -> WellKnownFetchFuture<'a> {
+        self.fetch(url, cancellation)
+    }
 
     fn check<'a>(
         &'a self,

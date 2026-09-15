@@ -29,6 +29,7 @@ pub struct WslNativeSource {
     native_root: String,
     managed_owner_registered: bool,
     ref_revision: Option<String>,
+    managed_bytes: u64,
 }
 
 impl WslNativeSource {
@@ -38,6 +39,10 @@ impl WslNativeSource {
 
     pub fn ref_revision(&self) -> Option<&str> {
         self.ref_revision.as_deref()
+    }
+
+    pub fn managed_bytes(&self) -> u64 {
+        self.managed_bytes
     }
 
     pub(crate) fn handle(&self) -> WorkerSourceHandle {
@@ -100,12 +105,13 @@ pub async fn acquire_wsl_source_native(
         )
         .await
         .map_err(|error| map_transport_timeout(error, git_timeout))?;
-    let (id, native_root, ref_revision) = match response {
+    let (id, native_root, ref_revision, managed_bytes) = match response {
         environment_protocol::Message::SourceOpened {
             source_id,
             root,
             revision,
-        } => (source_id, root, revision),
+            managed_bytes,
+        } => (source_id, root, revision, managed_bytes),
         environment_protocol::Message::Error {
             code,
             phase,
@@ -134,6 +140,7 @@ pub async fn acquire_wsl_source_native(
         native_root,
         managed_owner_registered: true,
         ref_revision,
+        managed_bytes,
     })
 }
 
@@ -144,12 +151,25 @@ pub(crate) async fn probe_wsl_git_connection(
     timeout: Duration,
     cancellation: CancellationSignal,
 ) -> Result<(), AppError> {
+    probe_wsl_git_ref(workspace, url, None, proxy, timeout, cancellation)
+        .await
+        .map(|_| ())
+}
+
+pub(crate) async fn probe_wsl_git_ref(
+    workspace: &WslWorkspace,
+    url: &str,
+    git_ref: Option<&str>,
+    proxy: Option<String>,
+    timeout: Duration,
+    cancellation: CancellationSignal,
+) -> Result<String, AppError> {
     let (_, response) = workspace
         .request_worker_control_once(
             environment_protocol::Message::ProbeGit {
                 request: environment_protocol::GitSourceRequest {
                     url: url.to_string(),
-                    git_ref: None,
+                    git_ref: git_ref.map(str::to_string),
                     proxy,
                     deadline_millis: duration_millis(timeout),
                 },
@@ -160,7 +180,7 @@ pub(crate) async fn probe_wsl_git_connection(
         .await
         .map_err(|error| map_transport_timeout(error, timeout))?;
     match response {
-        environment_protocol::Message::GitProbed { .. } => Ok(()),
+        environment_protocol::Message::GitProbed { revision } => Ok(revision),
         environment_protocol::Message::Error {
             code,
             phase,
@@ -271,8 +291,14 @@ git init -b main "$root"
 git -C "$root" config user.email test@example.com
 git -C "$root" config user.name 'Skill Deck Test'
 printf '%s\n' '---' 'name: worker-gate' 'description: Worker gate' '---' > "$root/SKILL.md"
-git -C "$root" add SKILL.md
+mkdir -p "$root/one/two/three/four/five/six/deep"
+printf '%s\n' '---' 'name: deep-gate' 'description: Deep gate' '---' > "$root/one/two/three/four/five/six/deep/skill.md"
+ln -s one/two/three/four/five/six "$root/alias"
+git -C "$root" add .
 git -C "$root" commit -m fixture
+git -C "$root" tag -a release -m release
+git -C "$root" commit --allow-empty -m branch
+git -C "$root" branch release
 "#,
             &fixture,
         )
@@ -298,6 +324,29 @@ git -C "$root" commit -m fixture
         )
         .await
         .unwrap();
+        let branch = super::probe_wsl_git_ref(
+            &workspace,
+            &fixture,
+            Some("release"),
+            None,
+            std::time::Duration::from_secs(30),
+            CancellationSignal::default(),
+        )
+        .await
+        .unwrap();
+        let tag = super::probe_wsl_git_ref(
+            &workspace,
+            &fixture,
+            Some("refs/tags/release"),
+            None,
+            std::time::Duration::from_secs(30),
+            CancellationSignal::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(source.ref_revision(), Some(branch.as_str()));
+        assert_ne!(branch, tag);
+        assert!(source.managed_bytes() > 0);
         let inventory = scan(
             &workspace,
             &source,
@@ -318,6 +367,17 @@ git -C "$root" commit -m fixture
             .any(|entry| entry.relative_path == "SKILL.md"));
 
         let storage = WslPayloadSessionStorage::for_source(workspace, &source);
+        let deep = storage
+            .read_source_skill_md(
+                &format!("{}/one/two/three/four/five/six/deep", source.native_root()),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert!(String::from_utf8(deep).unwrap().contains("name: deep-gate"));
+        assert!(matches!(storage.read_source_skill_md(
+            &format!("{}/alias/deep", source.native_root()), CancellationSignal::default()
+        ).await, Err(crate::error::AppError::CapabilityUnavailable { capability, .. }) if capability == "sourceDirectoryLinks"));
         let key = PayloadStorageKey::new("worker-gate", "SKILL.md");
         let acquired = storage
             .acquire_from_source_path(&key, source.native_root(), None)
@@ -340,7 +400,221 @@ git -C "$root" commit -m fixture
             .unwrap()
             .is_empty());
         storage.remove(&key).await.unwrap();
+        storage.remove_session(key.session_id()).await.unwrap();
+        crate::application::payload_session::RetainedSourceCleanup::remove(&storage)
+            .await
+            .unwrap();
         drop(source);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Windows with an Ubuntu WSL 2 distribution"]
+    async fn real_windows_http_payload_executes_in_wsl_after_source_release() {
+        use crate::application::mutation::coordinator::PreparedUnitExecutor;
+        use crate::application::mutation::plan::{
+            ExecutionUnit, ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation,
+            RuntimeRevisions,
+        };
+        use crate::application::payload_session::{
+            DiscoverySourceLocation, PayloadSessionLimits, PayloadSessionManager,
+        };
+        use crate::application::source_acquisition::{
+            retain_discovered_source, AcquireSelectedPayloadsRequest, InternalSkillVisibility,
+            ManagedDownloadedDirectory, RetainedSourceOptions, SelectedPayloadAcquisitionService,
+        };
+        use crate::environment::content_manifest::{ContentManifestReader, ContentManifestTarget};
+        use crate::environment::planning::{RuntimeTargetFactResolver, TargetFactResolver};
+        use crate::environment::runtime::ContextSnapshotRevision;
+        use crate::environment::types::{
+            EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+        };
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/.well-known/agent-skills/index.json?scope=test",
+            server.server_addr()
+        );
+        let server_task = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let request = server
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap()
+                    .unwrap();
+                let body = if request.url().contains("index.json?scope=test") {
+                    r#"{"skills":[{"name":"http-gate","description":"HTTP gate","files":["SKILL.md"]}]}"#
+                } else {
+                    assert_eq!(
+                        request.url(),
+                        "/.well-known/agent-skills/http-gate/SKILL.md"
+                    );
+                    "---\nname: http-gate\ndescription: HTTP gate\n---\nprepared content"
+                };
+                request
+                    .respond(tiny_http::Response::from_string(body))
+                    .unwrap();
+            }
+        });
+        let settings = Arc::new(crate::runtime::proxy_settings::ProxySettingsStore::new(
+            crate::models::NetworkProxySettings::default(),
+        ));
+        let http = crate::runtime::http_transport::HttpTransport::new(settings);
+        let fetched =
+            crate::runtime::wellknown_protocol::fetch_selected_wellknown_skills_with_client(
+                &http,
+                &url,
+                Some(&["http-gate".to_string()]),
+                &CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        server_task.join().unwrap();
+        let native_root = fetched.repo_path.clone();
+        let distro =
+            std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+        let fixture = format!(
+            "/tmp/skill-deck-http-update-gate-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        run_fixture_command(
+            &distro,
+            "mkdir -p \"$1/http-gate\"\nprintf old > \"$1/http-gate/SKILL.md\"",
+            &fixture,
+        )
+        .await;
+        let _cleanup = FixtureCleanup {
+            distro: distro.clone(),
+            fixture: fixture.clone(),
+        };
+        let runtime = Arc::new(WslRuntime::for_wsl_test());
+        let workspace = runtime.workspace(&distro).unwrap();
+        let session = runtime.connect(&distro).await.unwrap();
+        let environment = EnvironmentRef::Wsl {
+            distro_name: distro,
+        };
+        let storage = Arc::new(WslPayloadSessionStorage::new(workspace.clone()));
+        let manager = Arc::new(PayloadSessionManager::new(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 2_000_000,
+            },
+            || 1_000,
+        ));
+        let parsed = crate::models::ParsedSource {
+            source_type: crate::models::SourceType::WellKnown,
+            ..crate::core::parse_source(&url).unwrap()
+        };
+        let discovery = retain_discovered_source(
+            manager.clone(),
+            environment.clone(),
+            parsed,
+            url,
+            DiscoverySourceLocation::Native {
+                root: native_root.clone(),
+                ref_revision: None,
+            },
+            native_root.clone(),
+            ManagedDownloadedDirectory::new(native_root.clone()),
+            RetainedSourceOptions {
+                storage: Some(storage.clone()),
+                trust_metadata: Some(fetched.trust_metadata),
+                full_depth: true,
+                internal_skill_visibility: InternalSkillVisibility::All,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .discovery_session;
+        let handle = SelectedPayloadAcquisitionService::new(manager.clone())
+            .acquire(AcquireSelectedPayloadsRequest {
+                discovery_session: discovery.clone(),
+                skill_paths: vec!["http-gate/SKILL.md".into()],
+            })
+            .await
+            .unwrap()
+            .remove(0);
+        let lease = manager.pin_verified(&handle).await.unwrap();
+        let expected = lease.manifest().payload_root_hash.clone();
+        let payload_id = lease.manifest().payload_id().clone();
+        manager.release_source_snapshot(&discovery).await.unwrap();
+        assert!(!native_root.exists());
+        let target = ResourceLocator {
+            environment: environment.clone(),
+            native_path: format!("{fixture}/http-gate"),
+        };
+        let targets = RuntimeTargetFactResolver::new(runtime);
+        let fact = targets
+            .resolve_environment(&environment, std::slice::from_ref(&target), None)
+            .await
+            .unwrap()
+            .remove(0);
+        let manifest = targets
+            .read(&ContentManifestTarget {
+                key: fact.key.clone(),
+                location: fact.destination.clone(),
+            })
+            .await
+            .unwrap();
+        let unit = ExecutionUnit {
+            id: "http-update-gate".into(),
+            skill_name: "http-gate".into(),
+            source: None,
+            target: SkillLocationRef {
+                environment,
+                scope: SkillLocation::Global,
+            },
+            expected_revisions: RuntimeRevisions {
+                registry: "test".into(),
+                environment: "test".into(),
+                context: ContextSnapshotRevision::parse("context-v1-http-gate").unwrap(),
+            },
+            primary_entry: Some(PreparedEntryMutation {
+                key: fact.key.clone(),
+                destination: fact.destination,
+                action: PreparedEntryAction::Replace {
+                    payload_id: payload_id.clone(),
+                    requested_mode: crate::models::InstallMode::Copy,
+                },
+                reader_agent_ids: Vec::new(),
+            }),
+            additional_entries: Vec::new(),
+            lock_mutation: None,
+            expected_targets: vec![ExpectedTargetEntry {
+                key: fact.key,
+                fingerprint: fact.fingerprint,
+                expected_content_manifest_hash: Some(manifest.hash().clone()),
+            }],
+        };
+        let payloads = BTreeMap::from([(payload_id, lease)]);
+        let executor = crate::environment::wsl::operations::materialize::WslPreparedUnitExecutor::for_operation(session, workspace.clone(), "http-update-gate", crate::core::mutation::MutationKind::Update);
+        let prepared = executor
+            .prepare(&unit, &payloads, CancellationSignal::default())
+            .await
+            .unwrap();
+        executor
+            .execute(prepared, None, CancellationSignal::default())
+            .await
+            .unwrap();
+        let verification_key = PayloadStorageKey::new(
+            format!("verify-{}", uuid::Uuid::new_v4().simple()),
+            "installed",
+        );
+        let verification = storage
+            .acquire_from_path(&verification_key, &target.native_path, None)
+            .await
+            .unwrap();
+        assert_eq!(verification.manifest.payload_root_hash, expected);
+        storage
+            .remove_session(verification_key.session_id())
+            .await
+            .unwrap();
+        drop(payloads);
+        manager.retire_wsl_sessions();
+        manager.cleanup().await.unwrap();
     }
 
     async fn run_fixture_command(distro: &str, script: &str, fixture: &str) {

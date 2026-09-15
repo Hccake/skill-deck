@@ -18,9 +18,9 @@ const api = vi.hoisted(() => ({
   deleteInvalidCustomAgent: vi.fn(),
   listSkills: vi.fn(),
   checkUpdates: vi.fn(),
-  previewUpdate: vi.fn(),
-  updateSkill: vi.fn(),
-  updateSkillsBatch: vi.fn(),
+  prepareUpdate: vi.fn(),
+  cancelUpdatePreparation: vi.fn(async () => {}),
+  executeUpdate: vi.fn(),
   getInstallWizardSession: vi.fn(),
 }));
 

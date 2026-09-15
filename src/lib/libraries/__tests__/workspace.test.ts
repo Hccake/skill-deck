@@ -432,7 +432,7 @@ describe('LibraryWorkspace', () => {
     }));
 
     expect(result.lastAddResults[0].status).toBe('succeeded');
-    expect(result.membershipOutcome?.snapshotError).toEqual(snapshotError);
+    expect(result.membershipOutcomes['lib-1']?.snapshotError).toEqual(snapshotError);
     expect(result.catalogError).toEqual(snapshotError);
     expect(api.addSkillsToLibrary).toHaveBeenCalledOnce();
   });
@@ -469,7 +469,7 @@ describe('LibraryWorkspace', () => {
     }));
 
     expect(completed.pendingRetire).toBeNull();
-    expect(completed.membershipOutcome?.scopes[0].state).toBe('pending');
+    expect(completed.membershipOutcomes['lib-1']?.scopes[0].state).toBe('pending');
     expect(api.removeLibrarySkill).toHaveBeenCalledWith({
       request: { environment, libraryId: 'lib-1', skillName: 'api' },
       expectedToken: 'retire-1',
@@ -526,15 +526,74 @@ describe('LibraryWorkspace', () => {
       snapshotError: null,
     });
     const workspace = createLibraryWorkspace();
+    api.listSkillLibraries.mockResolvedValue(createdCatalog);
+    succeeded(await workspace.execute({ kind: 'load', environment }));
+    const refreshedDetail = { ...emptyDetail, name: 'Refreshed' };
+    api.getSkillLibrary.mockResolvedValue(refreshedDetail);
 
     const snapshot = succeeded(await workspace.execute({
       kind: 'resumeMembership', environment, libraryId: 'lib-1',
     }));
 
-    expect(snapshot.membershipOutcome).toEqual({
+    expect(snapshot.membershipOutcomes['lib-1']).toEqual({
       scopes: [], cleanup: [], snapshotError: null,
     });
     expect(api.resumeLibraryMembership).toHaveBeenCalledWith(environment, 'lib-1');
+    expect(snapshot.detail).toEqual(refreshedDetail);
+    const reloaded = succeeded(await workspace.execute({ kind: 'load', environment }));
+    expect(reloaded.membershipOutcomes).toEqual({});
+  });
+
+  it('preserves the completed resume and exposes a failed detail refresh', async () => {
+    api.listSkillLibraries.mockResolvedValue(createdCatalog);
+    api.resumeLibraryMembership.mockResolvedValue(membershipOutcome());
+    const workspace = createLibraryWorkspace();
+    succeeded(await workspace.execute({ kind: 'load', environment }));
+    const error = { kind: 'io', data: { message: 'refresh failed' } } as const;
+    api.getSkillLibrary.mockRejectedValue(error);
+
+    const snapshot = succeeded(await workspace.execute({
+      kind: 'resumeMembership', environment, libraryId: 'lib-1',
+    }));
+
+    expect(snapshot.detail).toEqual(emptyDetail);
+    expect(snapshot.membershipOutcomes['lib-1']?.snapshotError).toEqual(error);
+    expect(api.resumeLibraryMembership).toHaveBeenCalledOnce();
+  });
+
+  it('keeps membership results with their Library through refresh and other Library operations', async () => {
+    api.listSkillLibraries.mockResolvedValue(threeLibraryCatalog);
+    api.getSkillLibrary.mockImplementation(async (_environment, id) => detailFor(id));
+    const pending = {
+      scopes: [{ context: { environment, scope: { scope: 'global' } }, state: 'pending', error: null }],
+      cleanup: [], snapshotError: null,
+    };
+    api.resumeLibraryMembership.mockResolvedValueOnce(pending).mockResolvedValueOnce(membershipOutcome());
+    const workspace = createLibraryWorkspace();
+    succeeded(await workspace.execute({ kind: 'load', environment }));
+    succeeded(await workspace.execute({ kind: 'resumeMembership', environment, libraryId: 'lib-a' }));
+    succeeded(await workspace.execute({ kind: 'select', environment, libraryId: 'lib-b' }));
+    succeeded(await workspace.execute({ kind: 'resumeMembership', environment, libraryId: 'lib-b' }));
+    const reloaded = succeeded(await workspace.execute({ kind: 'load', environment }));
+
+    expect(reloaded.selectedLibraryId).toBe('lib-b');
+    expect(reloaded.membershipOutcomes['lib-a']).toEqual(pending);
+    const returned = succeeded(await workspace.execute({ kind: 'select', environment, libraryId: 'lib-a' }));
+    expect(returned.membershipOutcomes['lib-a']).toEqual(pending);
+    expect(workspace.getSnapshot({ kind: 'wsl', distro_name: 'Ubuntu' }).membershipOutcomes).toEqual({});
+  });
+
+  it('does not restore a membership result that arrives after changing Libraries', async () => {
+    let finish!: (value: unknown) => void;
+    api.resumeLibraryMembership.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    api.getSkillLibrary.mockResolvedValue(detailFor('lib-b'));
+    const workspace = createLibraryWorkspace();
+    const old = workspace.execute({ kind: 'resumeMembership', environment, libraryId: 'lib-a' });
+    succeeded(await workspace.execute({ kind: 'select', environment, libraryId: 'lib-b' }));
+    finish(membershipOutcome());
+    await old;
+
+    expect(workspace.getSnapshot(environment).membershipOutcomes).toEqual({});
   });
 
   it('reuses an inspected source when adding only the selected Skills', async () => {

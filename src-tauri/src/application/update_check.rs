@@ -1,7 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use crate::application::collection_records::{RecordProjection, SourceRecordRevision};
+use crate::application::collection_records::RecordProjection;
 use crate::application::source_evidence::{
     EvidenceCheckMode, EvidenceCheckRequest, EvidenceCheckResult, EvidenceFreshness,
     ProviderThrottleKey, RemoteEvidenceKey, SkillRevision, SourceEvidenceCoordinator,
@@ -12,10 +12,9 @@ use crate::application::update::{
     UpdateCheckOutcome, UpdateCheckReasonCode, UpdateCheckRequest, UpdateCheckResponse,
     UpdateCheckSelection,
 };
-use crate::application::update_subjects::{
-    BoundInstalledUpdateSubjectSource, BoundLibraryUpdateSubjectSource,
-    InstalledUpdateSubjectSnapshots, LibraryUpdateSubjectSnapshots, UpdateSubjectSnapshot,
-    UpdateSubjectSource,
+use crate::application::update_records::{
+    BoundInstalledUpdateRecords, BoundLibraryUpdateRecords, InstalledUpdateRecordSnapshots,
+    LibraryUpdateRecordSnapshots, UpdateRecord, UpdateRecordSource, UpdateRecordState,
 };
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
@@ -55,7 +54,7 @@ pub struct LibraryUpdateCheckService<P> {
 
 impl<P> LibraryUpdateCheckService<P>
 where
-    P: LibraryUpdateSubjectSnapshots,
+    P: LibraryUpdateRecordSnapshots,
 {
     pub fn new(subjects: P, evidence: SourceEvidenceCoordinator) -> Self {
         Self {
@@ -71,14 +70,18 @@ where
         mode: UpdateCheckMode,
         names: BTreeSet<String>,
     ) -> Result<UpdateCheckResponse, AppError> {
-        let source = BoundLibraryUpdateSubjectSource::new(&self.subjects, environment, library_id);
+        let source = BoundLibraryUpdateRecords {
+            provider: &self.subjects,
+            environment,
+            library_id,
+        };
         self.evidence.check(&source, mode, names).await
     }
 }
 
 impl<P> UpdateCheckService<P>
 where
-    P: InstalledUpdateSubjectSnapshots,
+    P: InstalledUpdateRecordSnapshots,
 {
     pub fn new(subjects: P, evidence: SourceEvidenceCoordinator) -> Self {
         Self {
@@ -87,13 +90,56 @@ where
         }
     }
 
+    pub async fn qualify_skills(
+        &self,
+        context: &crate::environment::types::SkillLocationRef,
+        skills: &mut [crate::core::skill::InstalledSkill],
+    ) -> Result<(), AppError> {
+        let records = self
+            .subjects
+            .snapshot_installed_records(
+                context,
+                skills.iter().map(|skill| skill.name.clone()).collect(),
+            )
+            .await?;
+        let records = records
+            .into_iter()
+            .map(|record| (record.skill_name.clone(), record))
+            .collect::<BTreeMap<_, _>>();
+        for skill in skills {
+            if skill.maintenance_error.is_some() {
+                skill.can_run_update = Some(false);
+                skill.can_check_for_updates = Some(false);
+                continue;
+            }
+            match records.get(&skill.name) {
+                Some(record) if matches!(record.state, UpdateRecordState::Source(_)) => {
+                    skill.comparison_fingerprint = record.comparison_fingerprint.clone();
+                }
+                Some(record) if matches!(record.state, UpdateRecordState::Invalid(_)) => {
+                    skill.can_run_update = Some(false);
+                    skill.can_check_for_updates = Some(true);
+                    skill.comparison_fingerprint = record.comparison_fingerprint.clone();
+                }
+                _ => {
+                    skill.can_run_update = Some(false);
+                    skill.can_check_for_updates = Some(false);
+                    skill.comparison_fingerprint = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn check(
         &self,
         request: &UpdateCheckRequest,
     ) -> Result<UpdateCheckResponse, AppError> {
         let selected = selected_names(request)?;
-        let source =
-            BoundInstalledUpdateSubjectSource::new(&self.subjects, request.context.clone());
+        let source = BoundInstalledUpdateRecords {
+            provider: &self.subjects,
+            context: request.context.clone(),
+        };
         self.evidence.check(&source, request.mode, selected).await
     }
 }
@@ -110,11 +156,11 @@ impl UpdateEvidenceModule {
         names: BTreeSet<String>,
     ) -> Result<UpdateCheckResponse, AppError>
     where
-        S: UpdateSubjectSource,
+        S: UpdateRecordSource,
     {
         let initial = source.snapshot(names.clone()).await?;
         let initial_revisions = subject_revisions(&initial);
-        let prepared = prepare_update_checks(projection_entries(initial));
+        let prepared = prepare_record_checks(initial);
         let mut checked = HashMap::new();
         let mut sources = Vec::new();
         let mut detections = tokio::task::JoinSet::new();
@@ -149,28 +195,62 @@ impl UpdateEvidenceModule {
                         },
                         CancellationSignal::default(),
                     )
-                    .await?;
-                Ok::<_, AppError>((key, group, result))
+                    .await;
+                (key, group, result)
             });
         }
         while let Some(joined) = detections.join_next().await {
             let (key, group, result) = joined.map_err(|error| AppError::ExecutionFailed {
                 message: format!("source evidence task failed: {error}"),
-            })??;
-            sources.push(source_info(&group, &result));
+            })?;
+            let diagnostic = match &result {
+                Ok(result) => source_info(&group, result),
+                Err(
+                    error @ (AppError::MutationCancelled
+                    | AppError::StaleEnvironment
+                    | AppError::StaleContext
+                    | AppError::EnvironmentUnavailable { .. }),
+                ) => return Err(error.clone()),
+                Err(error) => {
+                    let mut diagnostic = source_info(
+                        &group,
+                        &EvidenceCheckResult {
+                            evidence: None,
+                            evidence_is_fresh: false,
+                            freshness: EvidenceFreshness::Unavailable,
+                            last_attempt: None,
+                        },
+                    );
+                    diagnostic.error = Some(error.clone());
+                    diagnostic
+                }
+            };
+            sources.push(diagnostic);
             checked.insert(key, result);
         }
 
         let latest = source.snapshot(names).await?;
         let latest_revisions = subject_revisions(&latest);
-        let latest = prepare_update_checks(projection_entries(latest));
+        let latest = prepare_record_checks(latest);
         let mut skills = latest.immediate_results;
         for (key, group) in latest.groups {
             skills.extend(group.skills.into_iter().map(|skill| {
                 let unchanged =
                     initial_revisions.get(&skill.name) == latest_revisions.get(&skill.name);
                 match unchanged.then(|| checked.get(&key)).flatten() {
-                    Some(result) => info_from_evidence(skill, result),
+                    Some(Ok(result)) => info_from_evidence(skill, result),
+                    Some(Err(error)) => {
+                        let mut result = info(
+                            skill.name,
+                            skill.metadata,
+                            false,
+                            SkillUpdateCheckStatus::CannotCheck,
+                            Some(UpdateCheckReasonCode::UpstreamUnavailable),
+                            EvidenceFreshness::Unavailable,
+                        );
+                        result.error = Some(error.clone());
+                        result
+                    }
                     None => info(
                         skill.name,
                         skill.metadata,
@@ -197,6 +277,9 @@ fn update_check_outcome(
     sources: &[SourceUpdateCheckInfo],
     skills: &[SkillUpdateInfo],
 ) -> UpdateCheckOutcome {
+    if sources.is_empty() && skills.is_empty() {
+        return UpdateCheckOutcome::NotCompleted;
+    }
     let source_completed = |source: &&SourceUpdateCheckInfo| {
         matches!(
             source.freshness,
@@ -242,24 +325,44 @@ fn selected_names(request: &UpdateCheckRequest) -> Result<BTreeSet<String>, AppE
     }
 }
 
-fn projection_entries(snapshot: UpdateSubjectSnapshot) -> Vec<(String, RecordProjection)> {
+fn projection_entries(snapshot: Vec<UpdateRecord>) -> Vec<(String, RecordProjection)> {
     snapshot
-        .subjects
         .into_iter()
-        .map(|subject| (subject.skill_name, subject.projection))
+        .filter_map(|record| match record.state {
+            UpdateRecordState::Source(projection) => Some((record.skill_name, projection)),
+            UpdateRecordState::Invalid(_) => {
+                Some((record.skill_name, RecordProjection::Uninterpretable))
+            }
+            UpdateRecordState::Excluded => None,
+        })
         .collect()
 }
 
-fn subject_revisions(snapshot: &UpdateSubjectSnapshot) -> HashMap<String, SourceRecordRevision> {
-    snapshot
-        .subjects
+fn prepare_record_checks(records: Vec<UpdateRecord>) -> PreparedUpdateChecks {
+    let mut failures = records
         .iter()
-        .map(|subject| {
-            (
-                subject.skill_name.clone(),
-                subject.source_record_revision.clone(),
-            )
+        .filter_map(|record| match &record.state {
+            UpdateRecordState::Invalid(error) => Some((
+                record.skill_name.clone(),
+                (error.clone(), record.comparison_fingerprint.clone()),
+            )),
+            _ => None,
         })
+        .collect::<HashMap<_, _>>();
+    let mut prepared = prepare_update_checks(projection_entries(records));
+    for item in &mut prepared.immediate_results {
+        if let Some((error, fingerprint)) = failures.remove(&item.name) {
+            item.error = Some(error);
+            item.comparison_fingerprint = fingerprint;
+        }
+    }
+    prepared
+}
+
+fn subject_revisions(snapshot: &[UpdateRecord]) -> HashMap<String, String> {
+    snapshot
+        .iter()
+        .map(|subject| (subject.skill_name.clone(), subject.revision.clone()))
         .collect()
 }
 
@@ -334,6 +437,9 @@ fn unavailable_info(
     reason: UpdateCheckReasonCode,
 ) -> SkillUpdateInfo {
     SkillUpdateInfo {
+        comparison_fingerprint: None,
+        source_key: None,
+        error: None,
         name,
         source: String::new(),
         has_update: false,
@@ -367,7 +473,43 @@ fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> 
         );
     };
     let path = evidence_path(&skill).unwrap_or_default();
-    if !evidence.complete_skill_path_catalog.contains(&path) {
+    if let Some(reason) = evidence.member_failures.get(&path) {
+        let well_known = skill.metadata.source_type == "well-known";
+        if !well_known && *reason == crate::error::SourceAcquisitionFailureReason::NotFound {
+            return info(
+                skill.name,
+                skill.metadata,
+                false,
+                SkillUpdateCheckStatus::DeletedUpstream,
+                Some(UpdateCheckReasonCode::DeletedUpstream),
+                result.freshness,
+            );
+        }
+        let mut result = info(
+            skill.name,
+            skill.metadata,
+            false,
+            SkillUpdateCheckStatus::CannotCheck,
+            Some(UpdateCheckReasonCode::UpstreamUnavailable),
+            result.freshness,
+        );
+        result.error = Some(
+            if *reason == crate::error::SourceAcquisitionFailureReason::DirectoryLinksUnsupported {
+                AppError::CapabilityUnavailable {
+                    capability: "sourceDirectoryLinks".into(),
+                    path: None,
+                }
+            } else if well_known {
+                AppError::WellKnownSourceFailed { reason: *reason }
+            } else {
+                AppError::InvalidSkillMd {
+                    message: format!("Source Skill metadata is unavailable: {path}"),
+                }
+            },
+        );
+        return result;
+    }
+    if evidence.catalog_complete && !evidence.complete_skill_path_catalog.contains(&path) {
         return info(
             skill.name,
             skill.metadata,
@@ -425,6 +567,9 @@ fn evidence_path(skill: &UpdateCheckSkill) -> Option<String> {
 fn source_info(group: &UpdateCheckGroup, result: &EvidenceCheckResult) -> SourceUpdateCheckInfo {
     let evidence = result.evidence.as_ref();
     SourceUpdateCheckInfo {
+        provider: Some(group.identity.remote().provider().clone()),
+        source_key: Some(group.identity.key()),
+        error: None,
         source: group.identity.sanitized_display().to_string(),
         requested_ref: (!matches!(
             group.identity.remote().provider(),
@@ -434,7 +579,11 @@ fn source_info(group: &UpdateCheckGroup, result: &EvidenceCheckResult) -> Source
             NormalizedRef::Default => "HEAD".to_string(),
             NormalizedRef::Named(value) => value.clone(),
         }),
-        resolved_ref: evidence.map(|entry| entry.snapshot_id.resolved_ref.clone()),
+        resolved_ref: evidence
+            .filter(|_| {
+                group.identity.remote().provider() != &crate::core::SourceProvider::WellKnown
+            })
+            .map(|entry| entry.snapshot_id.resolved_ref.clone()),
         ref_revision: evidence.map(|entry| entry.snapshot_id.commit_revision.clone()),
         checked_at_epoch_ms: evidence.map(|entry| entry.checked_at_epoch_ms),
         expires_at_epoch_ms: evidence.map(|entry| entry.expires_at_epoch_ms),
@@ -464,6 +613,11 @@ fn info(
     freshness: EvidenceFreshness,
 ) -> SkillUpdateInfo {
     SkillUpdateInfo {
+        comparison_fingerprint: Some(metadata.comparison_fingerprint()),
+        source_key: SourceIdentity::from_metadata(&metadata)
+            .ok()
+            .map(|identity| identity.key()),
+        error: None,
         name,
         source: metadata.source.clone(),
         has_update,
@@ -493,7 +647,7 @@ mod tests {
         EvidenceDetectionFailure, EvidenceDetectionOutcome, EvidenceDetectionRequest,
         EvidenceFuture, RemoteEvidenceObservation, SourceEvidenceDetector,
     };
-    use crate::application::update_subjects::InstalledUpdateSubjectProvider;
+    use crate::application::update_records::InstalledUpdateRecordProvider;
     use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
     use crate::core::NormalizedUpdateMetadata;
     use crate::environment::agent_environment::AgentRuntimeSnapshot;
@@ -516,6 +670,18 @@ mod tests {
             let skill_root = root.path().join(".agents/skills");
             fs::create_dir_all(&skill_root).unwrap();
             for facts in &mut values {
+                if let Some(skills) = facts
+                    .lock_document
+                    .clone()
+                    .into_value()
+                    .get("skills")
+                    .and_then(serde_json::Value::as_object)
+                {
+                    for name in skills.keys() {
+                        let directory = crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(name).unwrap();
+                        fs::create_dir_all(skill_root.join(directory)).unwrap();
+                    }
+                }
                 facts.resolved_context.home.native_path =
                     root.path().to_string_lossy().into_owned();
                 facts.resolved_context.skill_root.native_path =
@@ -678,6 +844,8 @@ mod tests {
                 "revision-1",
             ),
             provider_validation: None,
+            catalog_complete: true,
+            member_failures: BTreeMap::new(),
             complete_skill_path_catalog: catalog,
             skill_revisions: paths
                 .iter()
@@ -688,7 +856,6 @@ mod tests {
                     )
                 })
                 .collect(),
-            snapshot_facts: None,
         })
     }
 
@@ -697,6 +864,9 @@ mod tests {
         last_attempt: Option<crate::application::source_evidence::EvidenceAttempt>,
     ) -> SourceUpdateCheckInfo {
         SourceUpdateCheckInfo {
+            provider: Some(crate::core::source_identity::SourceProvider::Github),
+            source_key: None,
+            error: None,
             source: "owner/repo".to_string(),
             requested_ref: Some("main".to_string()),
             resolved_ref: Some("refs/heads/main".to_string()),
@@ -708,19 +878,249 @@ mod tests {
         }
     }
 
-    type TestSubjectProvider = InstalledUpdateSubjectProvider<Facts, RuntimeTargetFactResolver>;
+    type TestSubjectProvider = InstalledUpdateRecordProvider<Facts, RuntimeTargetFactResolver>;
+
+    fn record_provider<T>(facts: Facts, targets: T) -> InstalledUpdateRecordProvider<Facts, T> {
+        let libraries = test_libraries(&facts._root.path().join("libraries"));
+        InstalledUpdateRecordProvider::new(facts, targets, libraries)
+    }
+
+    fn test_libraries(
+        root: &std::path::Path,
+    ) -> Arc<dyn crate::application::skill_libraries::SkillLibraryRepository> {
+        Arc::new(
+            crate::runtime::skill_libraries::RuntimeSkillLibraryRepository::new(
+                root.to_path_buf(),
+                Arc::new(WslRuntime::new_with_support(false, false)),
+                Arc::new(crate::core::projects::ProjectMigrationRegistry::new(
+                    crate::core::projects::ProjectMigrationState::NotNeeded,
+                )),
+            ),
+        )
+    }
 
     fn service(
         values: Vec<ScopePlanningSnapshot>,
         detector: Arc<RecordingDetector>,
     ) -> UpdateCheckService<TestSubjectProvider> {
         UpdateCheckService::new(
-            InstalledUpdateSubjectProvider::new(
+            record_provider(
                 Facts::new(values),
                 RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
             ),
             SourceEvidenceCoordinator::with_clock(detector, || 1_000),
         )
+    }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn checking_versions_does_not_require_readable_installed_content() {
+        let lock = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-old"}}}"#;
+        let facts = Facts::new(vec![facts(lock)]);
+        let directory = facts
+            ._root
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("alpha");
+        let unreadable = directory.join("resource");
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: observation(&["skills/alpha"]),
+        });
+        let service = UpdateCheckService::new(
+            record_provider(
+                facts,
+                RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            ),
+            SourceEvidenceCoordinator::with_clock(detector.clone(), || 1_000),
+        );
+        #[cfg(unix)]
+        let _blocked_content = std::os::unix::net::UnixListener::bind(&unreadable).unwrap();
+        #[cfg(windows)]
+        let _blocked_content = {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .share_mode(0)
+                .open(&unreadable)
+                .unwrap()
+        };
+        assert!(crate::environment::native::content_manifest::read_directory(&directory).is_err());
+
+        let response = service
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: selection(&["alpha"]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            response.skills[0].status,
+            SkillUpdateCheckStatus::UpdateAvailable
+        );
+        assert_eq!(detector.requested.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn absent_canonical_installation_does_not_request_remote_versions() {
+        let lock = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-old"}}}"#;
+        let facts = Facts::new(vec![facts(lock)]);
+        let directory = facts._root.path().join(".agents/skills/alpha");
+        if directory.exists() {
+            fs::remove_dir_all(directory).unwrap();
+        }
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: observation(&["skills/alpha"]),
+        });
+        let service = UpdateCheckService::new(
+            record_provider(
+                facts,
+                RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            ),
+            SourceEvidenceCoordinator::with_clock(detector.clone(), || 1_000),
+        );
+        let response = service
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: selection(&["alpha"]),
+            })
+            .await
+            .unwrap();
+        assert!(detector.requested.lock().unwrap().is_empty());
+        assert!(response.skills.iter().all(|skill| !skill.has_update));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn canonical_library_link_does_not_use_a_stale_direct_installation_record() {
+        use crate::application::skill_libraries::{LibraryCatalog, LibraryId};
+        let lock = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-old"}}}"#;
+        let facts = Facts::new(vec![facts(lock)]);
+        let library_root = facts._root.path().join("library-storage");
+        let libraries = test_libraries(&library_root);
+        let catalog: LibraryCatalog = serde_json::from_value(serde_json::json!({
+            "schemaVersion": crate::application::skill_libraries::LIBRARY_SCHEMA_VERSION,
+            "libraries": [{"id": "library-one", "name": "Library", "retiredSkills": [], "skills": [{
+                "name": "alpha", "description": "Alpha", "sourceRecord": {}, "contentManifestHash": "old"
+            }]}]
+        })).unwrap();
+        libraries
+            .save(&EnvironmentRef::Native, &catalog)
+            .await
+            .unwrap();
+        let library = libraries
+            .resolve_collection(&EnvironmentRef::Native, &LibraryId::parse("library-one"))
+            .await
+            .unwrap();
+        let member = std::path::PathBuf::from(&library.root.native_path).join("alpha");
+        fs::create_dir_all(&member).unwrap();
+        let canonical = facts._root.path().join(".agents/skills/alpha");
+        fs::remove_dir(&canonical).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&member, &canonical).unwrap();
+        #[cfg(windows)]
+        junction::create(&member, &canonical).unwrap();
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: observation(&["skills/alpha"]),
+        });
+        let provider = InstalledUpdateRecordProvider::new(
+            facts,
+            RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            libraries,
+        );
+        let records = provider
+            .snapshot_installed_records(&context(), BTreeSet::from(["alpha".to_string()]))
+            .await
+            .unwrap();
+        assert!(
+            matches!(records[0].state, UpdateRecordState::Excluded),
+            "{records:?}"
+        );
+        let service = UpdateCheckService::new(
+            provider,
+            SourceEvidenceCoordinator::with_clock(detector.clone(), || 1_000),
+        );
+        let response = service
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: selection(&["alpha"]),
+            })
+            .await
+            .unwrap();
+        assert!(detector.requested.lock().unwrap().is_empty());
+        assert!(response.skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_scoped_source_error_does_not_discard_other_source_results() {
+        struct MixedDetector;
+        impl SourceEvidenceDetector for MixedDetector {
+            fn detect<'a>(
+                &'a self,
+                request: EvidenceDetectionRequest,
+                _: Option<crate::application::source_evidence::RemoteEvidenceEntry>,
+                _: CancellationSignal,
+            ) -> EvidenceFuture<'a> {
+                Box::pin(async move {
+                    if request.key.remote.provider()
+                        == &crate::core::source_identity::SourceProvider::WellKnown
+                    {
+                        Err(AppError::WellKnownScopeNotFound {
+                            scope_path: "/docs".to_string(),
+                            root_url: "https://example.com".to_string(),
+                        })
+                    } else {
+                        Ok(observation(&["skills/alpha"]))
+                    }
+                })
+            }
+        }
+        let lock = r#"{"skills":{
+            "alpha":{"source":"owner/repo","sourceType":"github","ref":"main","skillPath":"skills/alpha","skillFolderHash":"old"},
+            "site":{"source":"example.com","sourceType":"well-known","sourceBaseUrl":"https://example.com/docs","skillPath":"site","wellKnownDigest":"sha256:old"}
+        }}"#;
+        let service = UpdateCheckService::new(
+            record_provider(
+                Facts::new(vec![facts(lock)]),
+                RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            ),
+            SourceEvidenceCoordinator::with_clock(Arc::new(MixedDetector), || 1_000),
+        );
+        let response = service
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: selection(&["alpha", "site"]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.outcome, UpdateCheckOutcome::Partial);
+        assert!(
+            response
+                .skills
+                .iter()
+                .find(|skill| skill.name == "alpha")
+                .unwrap()
+                .has_update
+        );
+        let site = serde_json::to_value(
+            response
+                .skills
+                .iter()
+                .find(|skill| skill.name == "site")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(site["error"]["kind"], "wellKnownScopeNotFound");
+        assert_eq!(site["error"]["data"]["scopePath"], "/docs");
     }
 
     #[test]
@@ -819,7 +1219,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn selected_missing_and_uninterpretable_records_remain_in_the_report() {
+    async fn selected_uninterpretable_records_remain_but_absent_installations_are_excluded() {
         let lock = r#"{"skills":{"available":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/available","skillFolderHash":"tree-available"},"broken":{"source":42}}}"#;
         let detector = Arc::new(RecordingDetector {
             requested: Mutex::new(Vec::new()),
@@ -846,17 +1246,12 @@ mod tests {
             detector.requested.lock().unwrap().as_slice(),
             &[BTreeSet::from(["skills/available".to_string()])]
         );
-        assert_eq!(response.skills.len(), 3);
+        assert_eq!(response.skills.len(), 2);
         assert_eq!(response.skills[0].name, "available");
         assert_eq!(response.skills[1].name, "broken");
         assert_eq!(
             response.skills[1].reason,
             Some(UpdateCheckReasonCode::UnsupportedSource)
-        );
-        assert_eq!(response.skills[2].name, "missing");
-        assert_eq!(
-            response.skills[2].reason,
-            Some(UpdateCheckReasonCode::MissingSource)
         );
     }
 
@@ -966,6 +1361,8 @@ mod tests {
                     "revision-1",
                 ),
                 provider_validation: None,
+                catalog_complete: true,
+                member_failures: BTreeMap::new(),
                 complete_skill_path_catalog: catalog,
                 skill_revisions: revisions,
             }),
@@ -984,6 +1381,27 @@ mod tests {
             ),
         );
         assert_eq!(deleted.status, SkillUpdateCheckStatus::DeletedUpstream);
+
+        let mut unsupported = result(
+            BTreeSet::new(),
+            BTreeMap::new(),
+            true,
+            EvidenceFreshness::Fresh,
+        );
+        unsupported
+            .evidence
+            .as_mut()
+            .unwrap()
+            .member_failures
+            .insert(
+                "skills/alpha".into(),
+                crate::error::SourceAcquisitionFailureReason::DirectoryLinksUnsupported,
+            );
+        let unsupported = info_from_evidence(skill(), &unsupported);
+        assert_eq!(unsupported.status, SkillUpdateCheckStatus::CannotCheck);
+        assert!(
+            matches!(unsupported.error, Some(AppError::CapabilityUnavailable { capability, .. }) if capability == "sourceDirectoryLinks")
+        );
 
         let sparse = info_from_evidence(
             skill(),
@@ -1041,6 +1459,8 @@ mod tests {
                     "catalog-revision",
                 ),
                 provider_validation: None,
+                catalog_complete: true,
+                member_failures: BTreeMap::new(),
                 complete_skill_path_catalog: catalog,
                 skill_revisions: digest
                     .map(|digest| {
@@ -1153,7 +1573,7 @@ mod tests {
         let lock = format!(r#"{{"skills":{{{skills}}}}}"#);
         let detector = Arc::new(ConcurrentDetector::new());
         let service = UpdateCheckService::new(
-            InstalledUpdateSubjectProvider::new(
+            record_provider(
                 Facts::new(vec![facts(&lock), facts(&lock)]),
                 RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
             ),

@@ -10,8 +10,9 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const skillsBinary = join(
   repoRoot,
   "node_modules",
-  ".bin",
-  process.platform === "win32" ? "skills.cmd" : "skills",
+  "skills",
+  "bin",
+  "cli.mjs",
 );
 const skillName = "interop-skill";
 
@@ -20,7 +21,7 @@ function run(command, args, options = {}) {
     cwd: options.cwd,
     encoding: "utf8",
     env: options.env ?? process.env,
-    shell: process.platform === "win32" && command.endsWith(".cmd"),
+    timeout: 30_000,
   });
 
   assert.equal(
@@ -96,7 +97,7 @@ function cliEnvironment(home) {
 }
 
 function runSkills(fixture, args) {
-  return run(skillsBinary, args, {
+  return run(process.execPath, [skillsBinary, ...args], {
     cwd: fixture.project,
     env: cliEnvironment(fixture.home),
   });
@@ -129,12 +130,40 @@ function eveSkillPath(project, subagent) {
 }
 
 test("uses the pinned Vercel Skills CLI", () => {
-  const result = run(skillsBinary, ["--version"], {
+  const result = run(process.execPath, [skillsBinary, "--version"], {
     cwd: repoRoot,
     env: cliEnvironment(join(repoRoot, ".tmp-skills-cli-home")),
   });
 
   assert.equal(result.stdout.trim(), "1.5.23");
+});
+
+test("defaults to a private copy for one explicit Agent without creating a canonical installation", async (t) => {
+  const fixture = await createFixture(t);
+  runSkills(fixture, [
+    "add", fixture.source, "--skill", skillName, "--agent", "claude-code", "--yes",
+  ]);
+
+  assert.equal(
+    await pathExists(join(fixture.project, ".claude", "skills", skillName, "SKILL.md")),
+    true,
+  );
+  assert.equal(await pathExists(join(fixture.project, ".agents", "skills", skillName)), false);
+  assert.ok((await readProjectLock(fixture.project)).skills[skillName]);
+});
+
+test("copies into two private-only Agent directories without creating a canonical installation", async (t) => {
+  const fixture = await createFixture(t);
+  installFrom(fixture, fixture.source, { agents: ["codebuddy", "minimax-code"] });
+
+  for (const agentRoot of [".codebuddy", ".minimax"]) {
+    assert.equal(
+      await pathExists(join(fixture.project, agentRoot, "skills", skillName, "SKILL.md")),
+      true,
+    );
+  }
+  assert.equal(await pathExists(join(fixture.project, ".agents", "skills", skillName)), false);
+  assert.ok((await readProjectLock(fixture.project)).skills[skillName]);
 });
 
 test("installs Eve root placement without writing redundant metadata", async (t) => {
@@ -145,6 +174,41 @@ test("installs Eve root placement without writing redundant metadata", async (t)
   const lock = await readProjectLock(fixture.project);
   assert.equal(await pathExists(join(eveSkillPath(fixture.project), "SKILL.md")), true);
   assert.equal("subagents" in lock.skills[skillName], false);
+  const markdown = await readFile(join(eveSkillPath(fixture.project), "SKILL.md"), "utf8");
+  assert.doesNotMatch(markdown, /^name:/m);
+  assert.match(markdown, /^description:/m);
+});
+
+test("writes an Eve single file from a blob snapshot without a packaged SKILL.md", async (t) => {
+  const fixture = await createFixture(t);
+  const content = await readFile(join(fixture.source, skillName, "SKILL.md"), "utf8");
+  const responses = {
+    tree: { sha: "tree-1", tree: [{ path: `skills/${skillName}/SKILL.md`, type: "blob", sha: "blob-1" }] },
+    content,
+    snapshot: { files: [{ path: `${skillName}.md`, contents: content }], hash: "1".repeat(64) },
+  };
+  const fetchFixture = join(fixture.root, "cli-fetch-fixture.mjs");
+  await writeFile(fetchFixture, `
+const fixture = ${JSON.stringify(responses)};
+globalThis.fetch = async (input) => {
+  const url = String(input);
+  if (url.includes("/git/trees/")) return Response.json(fixture.tree);
+  if (url.startsWith("https://raw.githubusercontent.com/")) return new Response(fixture.content);
+  if (url.includes("/snapshot.json") || url.includes("/api/download/")) return Response.json(fixture.snapshot);
+  return Response.json({ private: false });
+};
+`, "utf8");
+  run(process.execPath, [
+    "--import", pathToFileURL(fetchFixture).href,
+    skillsBinary, "add", "zapier/connectors",
+    "--skill", skillName, "--agent", "eve", "--subagent", "root", "--yes",
+  ], { cwd: fixture.project, env: cliEnvironment(fixture.home) });
+
+  const markdown = await readFile(join(fixture.project, "agent", "skills", `${skillName}.md`), "utf8");
+  assert.doesNotMatch(markdown, /^name:/m);
+  assert.match(markdown, /^description:/m);
+  assert.equal(await pathExists(eveSkillPath(fixture.project)), false);
+  assert.ok((await readProjectLock(fixture.project)).skills[skillName]);
 });
 
 test("records and installs a named Eve subagent", async (t) => {

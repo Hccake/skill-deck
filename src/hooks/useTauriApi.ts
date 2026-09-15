@@ -19,7 +19,7 @@ import type {
   InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
   UpdateCheckRequest, UpdateCheckResponse,
-  UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
+  UpdateRequest, PreparedUpdatePreview, UpdateResponse,
   ManageAgentSelectionSnapshot, ManageAgentsPreviewRequest, ManageAgentsPreview,
   ManageAgentsPreviewOutcome, ManageAgentsRequest, ManageAgentsResponse,
   CopyAgentSelectionSnapshot, CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
@@ -36,8 +36,7 @@ import type {
   ApplyLibraryApplicationRequest, LibraryApplicationDraft, LibraryApplicationPreview,
   LibraryApplicationResponse, LibraryApplicationSummary,
   LibraryAgentOptions,
-  ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdatePreview,
-  LibraryUpdateContinuation, LibraryUpdatePreviewToken, LibraryUpdateRiskConfirmation,
+  PreparedLibraryUpdatePreview, LibraryUpdateResponse,
   UpdateLibrarySkillsRequest,
   ExecuteRetireLibrarySkillRequest, LibraryMembershipOutcome,
   LibraryRetirePreview, LibraryRetireResponse, RemoveLibrarySkillRequest,
@@ -57,7 +56,7 @@ export type {
   InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
   UpdateCheckRequest, UpdateCheckResponse,
-  UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
+  UpdateRequest, PreparedUpdatePreview, UpdateResponse,
   ManageAgentSelectionSnapshot, ManageAgentsPreviewRequest, ManageAgentsPreview,
   ManageAgentsPreviewOutcome, ManageAgentsRequest, ManageAgentsResponse,
   CopyAgentSelectionSnapshot, CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
@@ -73,8 +72,7 @@ export type {
   ApplyLibraryApplicationRequest, LibraryApplicationDraft, LibraryApplicationPreview,
   LibraryApplicationResponse, LibraryApplicationSummary,
   LibraryAgentOptions,
-  ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdatePreview,
-  LibraryUpdateContinuation, LibraryUpdatePreviewToken, LibraryUpdateRiskConfirmation,
+  PreparedLibraryUpdatePreview, LibraryUpdateResponse,
   UpdateLibrarySkillsRequest,
   ExecuteRetireLibrarySkillRequest, LibraryMembershipOutcome,
   LibraryRetirePreview, LibraryRetireResponse, RemoveLibrarySkillRequest,
@@ -301,15 +299,16 @@ export async function checkLibrarySkillUpdates(
 }
 
 export async function updateLibrarySkills(
-  request: ExecuteLibraryUpdateRequest,
-): Promise<LibraryUpdateExecutionOutcome> {
-  return unwrap(await commands.updateLibrarySkills(request));
+  operationId: string,
+): Promise<LibraryUpdateResponse> {
+  return unwrap(await commands.updateLibrarySkills(operationId));
 }
 
-export async function previewLibrarySkillUpdates(
+export async function prepareLibrarySkillUpdates(
+  operationId: string,
   request: UpdateLibrarySkillsRequest,
-): Promise<LibraryUpdatePreview> {
-  return unwrap(await commands.previewLibrarySkillUpdates(request));
+): Promise<PreparedLibraryUpdatePreview> {
+  return unwrap(await commands.prepareLibrarySkillUpdates(operationId, request));
 }
 
 export async function removeLibrarySkill(
@@ -560,30 +559,19 @@ export async function checkUpdates(request: UpdateCheckRequest): Promise<UpdateC
   return unwrap(await commands.checkUpdates(request));
 }
 
-export async function previewUpdate(request: UpdateRequest): Promise<UpdatePreview> {
-  return unwrap(await commands.previewUpdate(request));
+export async function prepareUpdate(operationId: string, request: UpdateRequest): Promise<PreparedUpdatePreview> {
+  return unwrap(await commands.prepareUpdate(operationId, request));
 }
 
-/**
- * 更新指定 skill
- */
-export async function updateSkill(
-  execution: UpdateExecutionRequest,
-  expectedToken: PreviewToken,
-  acknowledgeRedirect = false,
-): Promise<UpdateResponse> {
-  return unwrap(await commands.updateSkill(execution, expectedToken, acknowledgeRedirect));
+export async function cancelUpdatePreparation(operationId: string): Promise<void> {
+  unwrap(await commands.cancelUpdatePreparation(operationId));
 }
 
-/**
- * 批量更新多个 skills（同源 clone 合并）
- */
-export async function updateSkillsBatch(
-  execution: UpdateExecutionRequest,
-  expectedToken: PreviewToken,
-  acknowledgeRedirect = false,
+export async function executeUpdate(
+  operationId: string,
+  selectedCopyEntries: string[],
 ): Promise<UpdateResponse> {
-  return unwrap(await commands.updateSkillsBatch(execution, expectedToken, acknowledgeRedirect));
+  return unwrap(await commands.executeUpdate(operationId, selectedCopyEntries));
 }
 
 // ============ 向导窗口 API ============

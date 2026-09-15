@@ -103,6 +103,98 @@ async fn worker_binary_handshakes_observes_home_and_shuts_down() {
 }
 
 #[tokio::test]
+async fn worker_probe_dispatch_preserves_explicit_git_ref() {
+    let home = tempfile::tempdir().unwrap();
+    let repository = home.path().join("repository");
+    std::fs::create_dir(&repository).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(&repository)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-b", "main"]);
+    git(&["config", "user.name", "Skill Deck Test"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["commit", "--allow-empty", "-m", "tag"]);
+    git(&["tag", "-a", "release", "-m", "release"]);
+    let tag = git(&["rev-parse", "HEAD"]);
+    git(&["commit", "--allow-empty", "-m", "branch"]);
+    git(&["branch", "release"]);
+    let branch = git(&["rev-parse", "HEAD"]);
+    assert_ne!(tag, branch);
+    let binary = env!("CARGO_BIN_EXE_wsl-environment-worker");
+    let mut child = Command::new(binary)
+        .env("WSL_DISTRO_NAME", "Ubuntu")
+        .env("HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let (writer, writer_task) = environment_protocol::spawn_writer(child.stdin.take().unwrap());
+    let mut reader = FramedRead::new(child.stdout.take().unwrap(), codec());
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 1,
+            message: Message::Handshake {
+                build_id: file_sha256(std::path::Path::new(binary)).unwrap(),
+            },
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_message(&mut reader).await.message,
+        Message::HandshakeResult { .. }
+    ));
+    for (index, (reference, expected)) in [("release", branch), ("refs/tags/release", tag)]
+        .into_iter()
+        .enumerate()
+    {
+        writer
+            .send_control(WireRecord::Control(Envelope {
+                request_id: index as u64 + 2,
+                message: Message::ProbeGit {
+                    request: environment_protocol::GitSourceRequest {
+                        url: repository.to_string_lossy().into_owned(),
+                        git_ref: Some(reference.into()),
+                        proxy: None,
+                        deadline_millis: 30_000,
+                    },
+                },
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_message(&mut reader).await.message,
+            Message::GitProbed { revision: expected }
+        );
+    }
+    writer
+        .send_control(WireRecord::Control(Envelope {
+            request_id: 4,
+            message: Message::Shutdown,
+        }))
+        .await
+        .unwrap();
+    drop(writer);
+    writer_task.await.unwrap().unwrap();
+    assert!(timeout(Duration::from_secs(2), child.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
+}
+
+#[tokio::test]
 async fn worker_maps_host_paths_with_structured_wslpath_arguments() {
     use std::os::unix::fs::PermissionsExt;
 

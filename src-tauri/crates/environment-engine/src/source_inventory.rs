@@ -29,6 +29,7 @@ pub struct SourceRoot {
 pub enum SourceScanMode {
     Recursive,
     PriorityDirectories,
+    SkillMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +158,34 @@ fn scan_platform(
                 &mut total_content_bytes,
                 &mut entries,
             ),
+            SourceScanMode::SkillMetadata => {
+                let mut children = read_directory(&root.path)?;
+                children.sort_by_key(|entry| (entry.file_name() != "SKILL.md", entry.file_name()));
+                if let Some(file) = children.into_iter().find(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                }) {
+                    let safe = fs::canonicalize(file.path())
+                        .ok()
+                        .zip(fs::canonicalize(&root.path).ok())
+                        .is_some_and(|(file, root)| file.starts_with(root));
+                    let mut entry = inspect_entry(
+                        &file.path(),
+                        root_index as u32,
+                        PathBuf::from(file.file_name()),
+                        safe,
+                        request,
+                        &mut total_content_bytes,
+                    );
+                    if !safe {
+                        entry.error = Some(SourceEntryError::PathUnavailable);
+                    }
+                    entries.push(entry);
+                }
+                Ok(())
+            }
         };
         if let Err(error) = visit_result {
             if error == SourceInventoryError::Cancelled {
