@@ -23,6 +23,9 @@ export function MembershipOutcomeSummary({
   action?: ReactNode;
 }) {
   const { t } = useTranslation();
+  if (outcome.scopes.length === 0 && outcome.cleanup.length === 0 && !outcome.snapshotError && !action) {
+    return null;
+  }
   return (
     <div className="flex items-start justify-between gap-3" role="status">
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">

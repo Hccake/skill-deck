@@ -58,9 +58,9 @@ describe('Agent selection copy', () => {
     expect(zhCN.agentSelection.automatic.install.title).toBe('安装后可直接使用');
     expect(zhCN.agentSelection.automatic.install.help)
       .toBe('Skill 会安装到通用 Skill 目录，这些 Agent 可以直接从该目录读取，无需额外设置。');
-    expect(zhCN.agentSelection.automatic.manage.title).toBe('无需选择即可使用');
+    expect(zhCN.agentSelection.automatic.manage.title).toBe('读取通用目录的 Agent');
     expect(zhCN.agentSelection.automatic.manage.help)
-      .toBe('此 Skill 已安装在通用 Skill 目录，这些 Agent 可以直接读取，无需选择。');
+      .toBe('当前 Skill 位于通用目录时，这些 Agent 可直接使用；此处只调整专用目录中的关联。');
     expect(zhCN.agentSelection.automatic.copyToProject.title).toBe('复制后可直接使用');
     expect(zhCN.agentSelection.automatic.copyToProject.help)
       .toBe('Skill 会复制到目标 Project 的通用 Skill 目录，这些 Agent 可以直接读取，无需额外设置。');

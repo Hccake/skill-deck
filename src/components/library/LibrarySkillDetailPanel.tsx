@@ -14,11 +14,16 @@ import {
 } from '@/components/skills/detail/DetailPrimitives';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { formatTime } from '@/lib/utils';
-import type { LibrarySkillSummary, SkillUpdateInfo } from '@/bindings';
+import type { LibrarySkillSummary, SkillUpdateInfo, LibraryUpdateSkillResult } from '@/bindings';
+import { canRetryLibraryUpdate } from '@/lib/libraries/update-progress';
+import { formatMutationError } from '@/lib/mutation-results';
+import { formatAppError } from '@/utils/format-app-error';
+import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 
 interface LibrarySkillDetailPanelProps {
   skill: LibrarySkillSummary;
   check?: SkillUpdateInfo;
+  result?: LibraryUpdateSkillResult;
   content: string | null;
   loading: boolean;
   contentError?: boolean;
@@ -38,6 +43,7 @@ interface LibrarySkillDetailPanelProps {
 export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   skill,
   check,
+  result,
   content,
   loading,
   contentError = false,
@@ -58,16 +64,21 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
     return () => window.removeEventListener('keydown', close);
   }, [onClose]);
 
-  const sourceLabel = skill.source?.trim() || skill.sourceUrl?.trim() || null;
+  const presentation = skillStatusPresentation(skill, check);
+  const sourceLabel = presentation.sourceLabel;
   const sourceUrl = isOpenableUrl(skill.sourceUrl)
     ? skill.sourceUrl
     : isOpenableUrl(skill.source) ? skill.source : null;
 
   const isUpdateAvailable = check?.status === 'updateAvailable';
+  const capability = check?.capability ?? skill.updateCapability;
+  const canUpdate = capability?.canRunUpdate !== false && (isUpdateAvailable || canRetryLibraryUpdate(result));
   const attentionLabels = [
-    check?.status === 'deletedUpstream' ? t('skills.card.sourceMissingUpstream') : null,
-    check?.status === 'cannotCheck' ? t('skills.card.updateCheckIncomplete') : null,
+    result?.error ? formatMutationError(result.error, t) : null,
+    presentation.notice && !result?.error ? t(presentation.notice.labelKey) : null,
   ].filter((label): label is string => Boolean(label));
+  const noticeDescription = presentation.notice?.error ? formatAppError(presentation.notice.error, t)
+    : presentation.notice?.hintKey ? t(presentation.notice.hintKey) : undefined;
 
   const hasMetadata = Boolean(skill.updatedAt || skill.pluginName || skill.refName);
 
@@ -77,19 +88,18 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
         <ScrollArea className="absolute inset-0 h-full w-full">
           <div className="w-full space-y-4 px-6 py-6 sm:px-8 sm:py-6">
             <div className="space-y-3">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <h2 className="min-w-0 font-heading text-2xl font-extrabold leading-tight tracking-tight text-foreground sm:text-3xl">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
+                  <h2 className="min-w-0 font-heading text-xl font-semibold leading-7 text-foreground [overflow-wrap:anywhere]">
                     {skill.name}
                   </h2>
-                  {/* 与卡片一致：只有"新版本可用"进标题，已是最新不占位，来源异常走注意行。 */}
-                  {isUpdateAvailable ? (
+                  {presentation.available ? (
                     <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} />
                   ) : null}
                 </div>
 
-                <div className="flex shrink-0 items-center gap-1 pt-1">
-                  {isUpdateAvailable && onUpdate ? (
+                <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-1">
+                  {canUpdate && onUpdate ? (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -135,12 +145,12 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
                 </p>
               ) : null}
 
-              <SkillCardAttentionRow labels={attentionLabels} />
             </div>
 
-            {sourceLabel ? (
-              <DetailSourceLink label={sourceLabel} url={sourceUrl} />
+            {presentation.local ? <p className="text-sm text-muted-foreground">{t('skills.updateStatusLabel.localSource')}</p> : sourceLabel ? (
+              <DetailSourceLink label={sourceLabel} url={sourceUrl} hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
             ) : null}
+            <SkillCardAttentionRow labels={attentionLabels} description={noticeDescription} />
 
             {hasMetadata ? (
               <div className="grid grid-cols-2 gap-4 border-b border-border pb-4 md:grid-cols-3">

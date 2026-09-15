@@ -10,14 +10,13 @@ import { LibraryApplicationStrip } from './LibraryApplicationStrip';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentId, InstalledSkill, InstalledSkillLocation, LibraryApplicationSummary, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { AgentId, InstalledSkill, InstalledSkillLocation, LibraryApplicationSummary, UpdateCheckOutcome } from '@/bindings';
 import {
   isSkillUpdateActive,
   resolveEvidenceFailureReasonI18nKey,
   resolveUpdateStatusLabelI18nKey,
   hasIncompleteUpdateCheck,
   hasCommittedUpdateComparison,
-  providerCooldownDeadline,
   type SkillUpdateDisplayStatus,
   type SkillListItem,
 } from '@/stores/skills-utils';
@@ -26,13 +25,10 @@ import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_DUPLICATE_LOCATION_SET = new Set<string>();
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
-const EMPTY_SOURCE_DIAGNOSTICS: SourceUpdateCheckInfo[] = [];
 
 interface SkillsSectionProps {
   title: string;
   skills: SkillListItem[];
-  /** 当前 Environment 的完整来源诊断，不受列表筛选影响。 */
-  sourceDiagnostics?: SourceUpdateCheckInfo[];
   scope: InstalledSkillLocation;
   duplicateLocationSkillNames?: Set<string>;
   /** 项目目录是否存在（仅 project scope） */
@@ -66,7 +62,6 @@ interface SkillsSectionProps {
 export const SkillsSection = memo(function SkillsSection({
   title,
   skills,
-  sourceDiagnostics = EMPTY_SOURCE_DIAGNOSTICS,
   scope,
   duplicateLocationSkillNames = EMPTY_DUPLICATE_LOCATION_SET,
   pathExists = true,
@@ -148,17 +143,6 @@ export const SkillsSection = memo(function SkillsSection({
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
   const latestFailure = latestFailureSkill?.updateEvidence?.lastAttempt?.failure ?? null;
   const latestAttemptAt = latestFailureSkill?.updateEvidence?.lastAttempt?.checkedAtEpochMs ?? null;
-  const cooldownDeadline = providerCooldownDeadline([
-    ...sourceDiagnostics,
-    ...skills.flatMap((skill) => skill.updateEvidence ? [skill.updateEvidence] : []),
-  ]);
-  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
-  const cooldownActive = cooldownDeadline != null && cooldownDeadline > cooldownNow;
-  useEffect(() => {
-    if (cooldownDeadline == null) return undefined;
-    const timer = setTimeout(() => setCooldownNow(Date.now()), Math.max(0, cooldownDeadline - Date.now()));
-    return () => clearTimeout(timer);
-  }, [cooldownDeadline]);
 
   const showUpToDate = pathExists
     && (!filterActive || skills.length > 0)
@@ -367,13 +351,7 @@ export const SkillsSection = memo(function SkillsSection({
                   </span>
                 ) : (
                   <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
-                    disabled={isCheckingUpdates || cooldownActive}
                     aria-busy={isCheckingUpdates}
-                    title={cooldownActive && cooldownDeadline
-                      ? t('skills.updateEvidence.retryAt', {
-                          time: new Date(cooldownDeadline).toLocaleString(i18n.language),
-                        })
-                      : undefined}
                     onClick={() => {
                       void handleCheckUpdates();
                     }}>

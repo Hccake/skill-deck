@@ -14,6 +14,15 @@ vi.mock('react-i18next', () => ({
 }));
 
 describe('MembershipOutcomeSummary', () => {
+  it('renders nothing when there is no result or action to display', () => {
+    const { container } = render(<MembershipOutcomeSummary outcome={{
+      scopes: [], cleanup: [], snapshotError: null,
+    }} />);
+
+    expect(container.childElementCount).toBe(0);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
   it('keeps every Scope and cleanup state distinct', () => {
     const context = { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } };
     render(<MembershipOutcomeSummary outcome={{

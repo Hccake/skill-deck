@@ -53,6 +53,7 @@ import { environmentKey } from '@/lib/context';
 import { environmentDisplayName } from '@/lib/environments/presentation';
 import { cn } from '@/lib/utils';
 import { formatAppError } from '@/utils/format-app-error';
+import { membershipNeedsAttention } from '@/lib/libraries/membership';
 import { readLibrarySkillContent } from '@/hooks/useTauriApi';
 import { useLibraryUpdateWorkflow } from '@/workflows/library-update';
 import { libraryUpdateDisplayStatuses } from '@/lib/libraries/update-progress';
@@ -108,6 +109,7 @@ export function LibraryPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedLibraryId = searchParams.get('library');
+  const requestedSkillName = searchParams.get('skill');
   const environment = useWorkspaceContextStore((state) => state.selectedContext.environment);
   const environments = useEnvironmentStore((state) => state.environments);
   const workspace = useLibraryWorkspace(environment);
@@ -118,9 +120,11 @@ export function LibraryPage() {
     return workspace.execute({ kind: 'select', libraryId });
   }, [workspace]);
   const writeBlocked = useBusinessWriteBlocked();
-  const checks = useLibraryUpdateWorkflow((state) => state.checks);
+  const rawChecks = useLibraryUpdateWorkflow((state) => state.checks);
+  const checks = useMemo(() => Object.fromEntries(Object.entries(rawChecks).filter(([name, check]) => workspace.detail?.skills.some((skill) => skill.name === name && skill.comparisonFingerprint === check.comparisonFingerprint))), [rawChecks, workspace.detail]);
   const updatePhase = useLibraryUpdateWorkflow((state) => state.phase);
   const updateError = useLibraryUpdateWorkflow((state) => state.hasError);
+  const updateAppError = useLibraryUpdateWorkflow((state) => state.error);
   const pendingUpdate = useLibraryUpdateWorkflow((state) => state.pending);
   const lastResults = useLibraryUpdateWorkflow((state) => state.lastResults);
   const activateUpdate = useLibraryUpdateWorkflow((state) => state.activate);
@@ -226,7 +230,22 @@ export function LibraryPage() {
     && workspace.pendingRetire.skillName === removeSkillName
     ? workspace.pendingRetire.preview
     : null;
-  const membershipOutcome = workspace.membershipOutcome;
+  const membershipLibraryId = workspace.detail?.id === workspace.selectedLibraryId
+    ? workspace.selectedLibraryId
+    : null;
+  const recordedMembership = membershipLibraryId
+    ? workspace.membershipOutcomes[membershipLibraryId]
+    : undefined;
+  const pendingUsages = membershipLibraryId
+    ? workspace.detail?.usages.filter((usage) => usage.state === 'pendingAdjustment') ?? []
+    : [];
+  const membershipOutcome = membershipNeedsAttention(recordedMembership)
+    ? recordedMembership
+    : pendingUsages.length > 0 ? {
+      scopes: pendingUsages.map((usage) => ({ context: usage.context, state: 'pending' as const, error: null })),
+      cleanup: [],
+      snapshotError: null,
+    } : null;
 
   const submitName = async () => {
     if (!nameDialog || !name.trim()) return;
@@ -270,7 +289,7 @@ export function LibraryPage() {
     });
   };
 
-  const openSkillContent = async (skillName: string) => {
+  const openSkillContent = useCallback(async (skillName: string) => {
     const libraryId = workspace.selectedLibraryId;
     if (!libraryId) return;
     const requestId = ++contentRequestId.current;
@@ -283,7 +302,21 @@ export function LibraryPage() {
     } catch {
       if (requestId === contentRequestId.current) setContentError(true);
     }
-  };
+  }, [environment, workspace.selectedLibraryId, setSelectedSkillName, setSkillContent, setContentError]);
+
+  useEffect(() => {
+    if (!requestedSkillName || workspace.detailPhase !== 'ready'
+      || workspace.selectedLibraryId !== requestedLibraryId
+      || workspace.detail?.id !== requestedLibraryId) return;
+    if (workspace.detail.skills.some((skill) => skill.name === requestedSkillName)) {
+      void openSkillContent(requestedSkillName);
+    }
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('skill');
+      return next;
+    }, { replace: true });
+  }, [requestedSkillName, requestedLibraryId, workspace.detailPhase, workspace.selectedLibraryId, workspace.detail, openSkillContent, setSearchParams]);
 
   const applyUpdates = async () => {
     const response = await confirmUpdates();
@@ -337,9 +370,8 @@ export function LibraryPage() {
     }
   };
 
-  const retryMembership = async () => {
-    const libraryId = workspace.selectedLibraryId;
-    if (!libraryId || busy) return;
+  const retryMembership = async (libraryId: string | null) => {
+    if (!libraryId || libraryId !== workspace.selectedLibraryId || busy) return;
     setPageError(null);
     const result = await workspace.execute({
       kind: 'resumeMembership',
@@ -350,11 +382,17 @@ export function LibraryPage() {
     }
   };
 
+  const visibleSkills = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return workspace.detail?.skills.filter((skill) => !normalized || [skill.name, skill.description, skill.source]
+      .some((value) => value.toLocaleLowerCase().includes(normalized))) ?? [];
+  }, [workspace.detail?.skills, query]);
+
   const availableUpdates = useMemo(() => (
     Object.values(checks)
-      .filter((check) => check.status === 'updateAvailable')
+      .filter((check) => check.status === 'updateAvailable' && visibleSkills.some((skill) => skill.name === check.name))
       .map((check) => check.name)
-  ), [checks]);
+  ), [checks, visibleSkills]);
 
   const updateSummaryItems = useMemo(
     () => formatLibraryUpdateSummaryItems(summarizeLibraryUpdates(checks, updateError), t),
@@ -365,7 +403,7 @@ export function LibraryPage() {
 
   // 批次内的成员共享当前阶段，卡片据此显示进度条；与 Skills 页同一模型。
   const memberUpdateStatuses = useMemo(
-    () => libraryUpdateDisplayStatuses(updatePhase, pendingUpdate?.request.skillNames ?? [], lastResults),
+    () => libraryUpdateDisplayStatuses(updatePhase, pendingUpdate?.request.skillNames ?? [], Object.fromEntries(Object.entries(lastResults).map(([name, result]) => [name, result.status]))),
     [updatePhase, pendingUpdate, lastResults],
   );
 
@@ -382,9 +420,9 @@ export function LibraryPage() {
   const handleCheckUpdates = useCallback(async () => {
     await checkUpdates();
     const state = useLibraryUpdateWorkflow.getState();
-    const foundUpdates = Object.values(state.checks)
-      .some((check) => check.status === 'updateAvailable');
-    if (state.hasError || foundUpdates) return;
+    const checkedSkills = Object.values(state.checks);
+    if (state.hasError) return;
+    if (!checkedSkills.length || checkedSkills.some((check) => check.status !== 'upToDate')) return;
     if (hideCheckDoneTimerRef.current) clearTimeout(hideCheckDoneTimerRef.current);
     setCheckDone(true);
     hideCheckDoneTimerRef.current = setTimeout(() => {
@@ -418,46 +456,33 @@ export function LibraryPage() {
         </Tooltip>
       ) : null}
 
-      {(workspace.detail?.skills.length ?? 0) > 0 ? (
+      {workspace.detail?.skills.some((skill) => skill.updateCapability?.canCheckForUpdates !== false) ? (
         checkDone && availableUpdates.length === 0 ? (
           <span className="inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs font-medium text-success">
             <Check className="size-3.5" aria-hidden="true" />
-            <span className="library-secondary-action-label">{t('skills.checkCompleted')}</span>
+            <span className="library-secondary-action-label">{t('skills.checkUpToDate')}</span>
           </span>
         ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="library-secondary-action h-7 cursor-pointer gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-                onClick={() => void handleCheckUpdates()}
-                disabled={busy}
-                aria-busy={updatePhase === 'checking'}
-                aria-label={t('libraries.checkUpdates')}
-              >
-                <RefreshCw
-                  className={cn('size-3.5 shrink-0', updatePhase === 'checking' && 'animate-spin')}
-                  aria-hidden="true"
-                />
-                <span className="library-secondary-action-label">{t('libraries.checkUpdates')}</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('libraries.checkUpdates')}</TooltipContent>
-          </Tooltip>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="library-secondary-action h-7 cursor-pointer gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+            onClick={() => void handleCheckUpdates()}
+            disabled={busy}
+            aria-busy={updatePhase === 'checking'}
+            aria-label={t('libraries.checkUpdates')}
+          >
+            <RefreshCw
+              className={cn('size-3.5 shrink-0', updatePhase === 'checking' && 'animate-spin')}
+              aria-hidden="true"
+            />
+            <span className="library-secondary-action-label">{t('libraries.checkUpdates')}</span>
+          </Button>
         )
       ) : null}
     </div>
   );
-  const visibleSkills = useMemo(() => {
-    return workspace.detail?.skills.filter((skill) => {
-      const normalized = query.trim().toLocaleLowerCase();
-      return !normalized || [skill.name, skill.description, skill.source]
-        .some((value) => value.toLocaleLowerCase().includes(normalized));
-    }) ?? [];
-  }, [workspace.detail?.skills, query]);
-
   const selectedSkill = useMemo(() => {
     if (!selectedSkillName || !workspace.detail) return null;
     return workspace.detail.skills.find((s) => s.name === selectedSkillName) ?? null;
@@ -615,28 +640,22 @@ export function LibraryPage() {
 
               <div className="library-header-actions flex shrink-0 items-center gap-2">
                 {libraryActions}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="h-7 shrink-0 cursor-pointer gap-1.5 border border-transparent bg-primary/[0.04] px-2.5 text-xs font-semibold text-primary/80 shadow-none transition-colors hover:bg-primary/10 hover:text-primary sm:px-3"
-                      onClick={(event) => openAddDialog(event.currentTarget)}
-                      disabled={busy}
-                      aria-label={t('libraries.addSkill')}
-                    >
-                      <Plus className="size-3.5 shrink-0" aria-hidden="true" />
-                      <span>{t('libraries.addSkill')}</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t('libraries.addSkill')}</p>
-                  </TooltipContent>
-                </Tooltip>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 shrink-0 cursor-pointer gap-1.5 border border-transparent bg-primary/[0.04] px-2.5 text-xs font-semibold text-primary/80 shadow-none transition-colors hover:bg-primary/10 hover:text-primary sm:px-3"
+                  onClick={(event) => openAddDialog(event.currentTarget)}
+                  disabled={busy}
+                  aria-label={t('libraries.addSkill')}
+                >
+                  <Plus className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t('libraries.addSkill')}</span>
+                </Button>
               </div>
             </header>
 
+            {updateAppError && !pendingUpdate ? <p className="px-4 py-2 text-sm text-destructive" role="alert">{formatAppError(updateAppError, t)}</p> : null}
             {/* 主内容区域：双栏 Split View 或 单栏 */}
             <div className="flex-1 min-h-0 overflow-hidden">
               <ResizablePanelGroup
@@ -715,21 +734,19 @@ export function LibraryPage() {
                         <div className="rounded-md border px-3 py-2">
                           <MembershipOutcomeSummary
                             outcome={membershipOutcome}
-                            action={membershipOutcome.snapshotError
-                            || membershipOutcome.scopes.some((scope) => scope.state !== 'synced')
-                            || membershipOutcome.cleanup.some((item) => item.state === 'failed') ? (
+                            action={(
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 shrink-0 gap-1"
-                                onClick={() => void retryMembership()}
+                                onClick={() => void retryMembership(membershipLibraryId)}
                                 disabled={busy}
                               >
                                 <RefreshCw className="size-3.5" aria-hidden="true" />
                                 {t('libraries.membership.retry')}
                               </Button>
-                              ) : null}
+                              )}
                           />
                         </div>
                       ) : null}
@@ -774,6 +791,7 @@ export function LibraryPage() {
                               key={skill.name}
                               skill={skill}
                               check={checks[skill.name]}
+                              result={lastResults[skill.name]}
                               updateStatus={memberUpdateStatuses[skill.name]}
                               busy={busy}
                               onClick={(name) => void openSkillContent(name)}
@@ -800,6 +818,7 @@ export function LibraryPage() {
                       <LibrarySkillDetailPanel
                         skill={selectedSkill}
                         check={checks[selectedSkill.name]}
+                        result={lastResults[selectedSkill.name]}
                         content={skillContent}
                         loading={skillContent === null && !contentError}
                         contentError={contentError}
@@ -900,18 +919,22 @@ export function LibraryPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('libraries.confirmUpdateTitle')}</DialogTitle>
-            <DialogDescription>{t('libraries.confirmUpdateDescription', { count: pendingUpdate?.request.skillNames.length ?? 0 })}</DialogDescription>
+            <DialogDescription>{updatePhase === 'preparing' ? t('skills.updatePlan.loadingPreview') : t('libraries.confirmUpdateDescription', { count: pendingUpdate?.skillNames.length ?? 0 })}</DialogDescription>
             {(pendingUpdate?.redirectedDownloadHosts.length ?? 0) > 0 ? (
               <p className="text-sm text-warning">
                 {t('libraries.redirectConfirmation', { host: pendingUpdate?.redirectedDownloadHosts.join(', ') })}
               </p>
             ) : null}
           </DialogHeader>
+          <div className="max-h-80 space-y-3 overflow-y-auto">
+            {updateAppError ? <p className="text-sm text-destructive" role="alert">{formatAppError(updateAppError, t)}</p> : null}
+            {pendingUpdate?.blocked.map((issue) => <div key={issue.skillName} className="text-sm" role="alert"><p className="font-medium">{issue.skillName}</p><p className="text-destructive">{formatAppError(issue.error, t)}</p></div>)}
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => {
               cancelUpdates();
-            }}>{t('common.cancel')}</Button>
-            <Button type="button" onClick={() => void applyUpdates()} disabled={busy}>{t('libraries.update')}</Button>
+            }} disabled={updatePhase === 'executing'}>{t('common.cancel')}</Button>
+            <Button type="button" onClick={() => void applyUpdates()} disabled={busy || updatePhase !== 'ready' || !pendingUpdate?.skillNames.length}>{t('libraries.update')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

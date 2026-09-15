@@ -5,7 +5,6 @@ import { RefreshCw } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
-  sourceDiagnosticsForEnvironment,
   useSkillsDataStore,
   type ContextSkillSnapshot,
 } from '@/stores/skills-data';
@@ -82,10 +81,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const projectSnapshot = projectContextKey
     ? snapshots[projectContextKey] ?? EMPTY_SNAPSHOT
     : EMPTY_SNAPSHOT;
-  const environmentSourceDiagnostics = useMemo(
-    () => sourceDiagnosticsForEnvironment(snapshots, selectedContext.environment),
-    [selectedContext.environment, snapshots],
-  );
   const globalSkills = globalSnapshot.skills;
   const projectSkills = isProjectSelected ? projectSnapshot.skills : EMPTY_SNAPSHOT.skills;
   const projectPathExists = projectSnapshot.pathExists;
@@ -94,19 +89,18 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const error = projectSnapshot.error ?? globalSnapshot.error;
   const isSyncing = useSkillsDataStore((s) => s.isSyncing);
   const isAutomaticCheckingGlobal = useSkillsDataStore((s) => (
-    s.automaticUpdateScopes?.has(globalContextKey)
-      ?? s.checkingUpdateScopes.has(globalContextKey)
+    s.automaticUpdateScopes.has(globalContextKey)
   ));
   const isAutomaticCheckingProject = useSkillsDataStore((s) => (
     projectContextKey
-      ? (s.automaticUpdateScopes?.has(projectContextKey) ?? s.checkingUpdateScopes.has(projectContextKey))
+      ? s.automaticUpdateScopes.has(projectContextKey)
       : false
   ));
-  const isForceCheckingGlobal = useSkillsDataStore((s) => s.forceUpdateScopes?.has(globalContextKey) ?? false);
+  const isForceCheckingGlobal = useSkillsDataStore((s) => s.forceUpdateScopes.has(globalContextKey));
   const isForceCheckingProject = useSkillsDataStore((s) => (
-    projectContextKey ? s.forceUpdateScopes?.has(projectContextKey) ?? false : false
+    projectContextKey ? s.forceUpdateScopes.has(projectContextKey) : false
   ));
-  const activateAutomaticChecks = useSkillsDataStore((s) => s.activateAutomaticChecks ?? s.syncUpdates);
+  const activateAutomaticChecks = useSkillsDataStore((s) => s.activateAutomaticChecks);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const activeUpdatePhase = useSkillUpdateWorkflow((s) => (
     s.phase === 'executing' ? 'updating' : null
@@ -145,8 +139,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
   }, [selectedContextKey]);
 
-  // 长生命周期 store 会在 Context snapshot 加载后统一决定是否准入 Automatic。
-  // 组件不监听 focus，也不在重新挂载时安排 timer；同一应用会话返回页面不得新增 IPC 请求。
   useEffect(() => {
     let ignore = false;
     void refreshWorkspace(selectedContext).then(() => {
@@ -154,6 +146,18 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     });
     return () => { ignore = true; };
   }, [selectedContext, selectedContextKey, refreshWorkspace, activateAutomaticChecks]);
+
+  useEffect(() => {
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void activateAutomaticChecks(selectedContext);
+    };
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [selectedContext, activateAutomaticChecks]);
 
   // ③a 仅在 context 真正切换时关闭详情面板
   const previousContextRef = useRef(selectedContextKey);
@@ -478,7 +482,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             <SkillsSection
               title={t('skills.projectSkills')}
               skills={filteredProjectSkills}
-              sourceDiagnostics={environmentSourceDiagnostics}
               scope="project"
               filterActive={hasActiveFilters}
               duplicateLocationSkillNames={duplicateLocationSkillNames}
@@ -510,7 +513,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           <SkillsSection
             title={t('skills.globalSkills')}
             skills={filteredGlobalSkills}
-            sourceDiagnostics={environmentSourceDiagnostics}
             scope="global"
             filterActive={hasActiveFilters}
             duplicateLocationSkillNames={duplicateLocationSkillNames}

@@ -18,9 +18,9 @@ describe('Skill Library application copy', () => {
     expect(zhCN.libraries.reapplying).toBe('正在重新应用…');
     expect(zhCN.libraries.saveError).toBe('无法保存 Skill 库设置，请重试。');
     expect(zhCN.libraries.targetConflictAgent)
-      .toBe('{{agents}} 的专用 Skill 目录中存在无法安全处理的 {{skill}}，请取消关联后再保存。');
+      .toBe('{{agents}} 的专用 Skill 目录中存在无法安全处理的「{{skill}}」，请取消关联后再保存。');
     expect(zhCN.libraries.targetConflictScope)
-      .toBe('通用 Skill 目录中的 {{skill}} 不是可管理的 Skill，请处理该目录项后再保存。');
+      .toBe('通用 Skill 目录中的「{{skill}}」不是可管理的 Skill，请处理该目录项后再保存。');
     expect(zhCN.libraries.cancelConflictingAgents).toBe('取消关联 {{agents}}');
     expect(zhCN.libraries.continue).toBe('继续完成更改');
     expect(zhCN.libraries.copyOnlyUnsupported)
@@ -50,7 +50,7 @@ describe('Skill Library application copy', () => {
     expect(zhCN.mutation.result.targetKinds.file).toBe('文件');
     expect(zhCN.mutation.result.targetKinds.other).toBe('其他目录项');
     expect(zhCN.mutation.result.errors.skillPlacementTargetConflict)
-      .toBe('{{skillName}} 的目标 Skill 目录 {{targetPath}} 中存在无法管理的{{targetKind}}，请处理后重试。');
+      .toBe('「{{skillName}}」的目标 Skill 目录 {{targetPath}} 中存在无法管理的{{targetKind}}，请处理后重试。');
     expect(en.mutation.result.targetKinds.file).toBe('file');
     expect(en.mutation.result.targetKinds.other).toBe('directory entry');
     expect(en.mutation.result.errors.skillPlacementTargetConflict)

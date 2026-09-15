@@ -65,7 +65,7 @@ describe('installed Skill list presentation', () => {
     expect(screen.getByRole('button', { name: 'owner/repo' })).toBeTruthy();
 
     const attention = screen.getByTestId('skill-card-attention');
-    expect(within(attention).getByText('skills.card.updateCheckIncomplete')).toBeTruthy();
+    expect(within(attention).queryByText('skills.card.updateCheckIncomplete')).toBeNull();
     expect(within(attention).getByText('skills.card.duplicateLocations')).toBeTruthy();
     expect(within(attention).getByText('skills.card.duplicateAgentInstall')).toBeTruthy();
     expect(attention.querySelectorAll('svg')).toHaveLength(1);

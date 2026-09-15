@@ -102,7 +102,7 @@
         "alreadyInLibrary": "Already in Library",
         "allExisting": "Every Skill from this Source is already in this Library.",
         "agentIntentIgnored": "Agent options in this command do not apply to a Skill Library. Apply the Library from the Skills page after adding.",
-        "review": "Review Selected Skills"
+        "review": "Next"
       },
       "preparing": "Preparing additions…",
       "executing": "Adding Skills…",
@@ -111,13 +111,16 @@
         "previewMissing": "The prepared additions expired. Go back and choose the Skills again."
       },
       "review": {
-        "summary": "Add {{count}} Skills",
-        "confirm": "Add Skills"
+        "summary": "To add · {{count}} Skills",
+        "syncCount": "Sync {{count}} locations",
+        "confirm": "Confirm Add",
+        "adding": "Adding…"
       },
       "result": {
         "succeeded": "Added {{count}} Skills",
         "partial": "{{succeeded}} added, {{failed}} failed",
-        "retry": "Retry Failed"
+        "retry": "Retry Failed",
+        "done": "Done"
       }
     },
     "addAll": "Add discovered Skills",
@@ -235,8 +238,8 @@
         "help": "This Skill is installed in the common Skill directory. These Agents can read it directly with no additional configuration."
       },
       "manage": {
-        "title": "Available without selection",
-        "help": "This Skill is already installed in the common Skill directory. These Agents can read it directly and do not need to be selected."
+        "title": "Agents that read the common directory",
+        "help": "These Agents can use this Skill when it is in the common directory. This dialog manages their dedicated directory associations."
       },
       "copyToProject": {
         "title": "Available after copying",
@@ -453,6 +456,7 @@
     "updateCheckIncompleteCount": "{{count}} checks incomplete",
     "card": {
       "sourceIncomplete": "Source information is incomplete",
+      "sourceNeedsAttention": "Cannot check for updates",
       "sourceMissingUpstream": "This Skill is no longer in the source",
       "updateCheckIncomplete": "Update check incomplete",
       "duplicateLocations": "Installed in both Global and Project",
@@ -481,22 +485,17 @@
       "extraCopiesHint": "These Agents can use this Skill from the common directory, and it is also installed in their own Skill directories.",
       "extraCopiesNamedHint": "also have this Skill installed in their own Skill directories.",
       "extraCopiesAgentSummaryMore": "{{agents}} and {{count}} Agents total",
+      "libraryVersions": "This scope also uses same-name library versions. Manage them in their libraries:",
       "extraCopiesCountHint": "This Skill is also installed in {{count}} Agent-specific Skill directories."
     },
     "deleteConfirm": {
-      "title": "Delete Skill",
-      "description": "This deletes “{{name}}” from the common Skill directory and removes its corresponding links or copies from Agent directories.",
+      "title": "Delete {{name}}",
       "scopeLabel": "Deletion list",
-      "scopeCount": "{{count}} locations",
-      "pathDisplayMode": "Path display mode",
-      "relativePaths": "Relative paths",
-      "fullPaths": "Full paths",
-      "standardDirSection": "Common Skill directory",
-      "mainDirectory": "Skill directory",
+      "standardDirSection": "Common directory",
       "linkMode": "Link",
       "copyMode": "Copy",
-      "copyWarning": "Some Agent directories contain independent copies of this Skill. This operation will delete them as well.",
-      "restoresLibrary": "This Scope still applies a Library containing this Skill. Removing the direct installation restores the current winning Library version in the same operation.",
+      "copyWarning": "Independent copies will also be deleted.",
+      "restoresLibrary": "Eligible locations will use a library version after removal.",
       "previewError": "The current deletion scope could not be loaded. Try again.",
       "executionError": "Deletion did not finish. The current scope is still available to retry.",
       "recoveryRequired": "Deletion did not finish. Some files need to be checked before continuing.",
@@ -580,7 +579,9 @@
     "updateFailed": "Failed",
     "checkUpdates": "Check Updates",
     "checkCompleted": "Check complete",
+    "checkUpToDate": "Up to date",
     "checkUpdatesError": "Failed to check updates: {{error}}",
+    "checkUpdatesFailed": "Update check did not complete.",
     "updateEvidence": {
       "title": "Update check details",
       "freshness": {
@@ -597,7 +598,7 @@
       "providerCooldownUntil": "Provider cooldown until {{time}}",
       "failure": {
         "rateLimited": "Request limit reached",
-        "authenticationRequired": "Authentication is required",
+        "authenticationRequired": "Cannot access the source",
         "refNotFound": "The saved ref was not found",
         "repositoryNotFound": "The repository was not found",
         "notFoundOrUnauthorized": "The repository was not found or access was denied",
@@ -606,14 +607,14 @@
         "sourceUnavailable": "The source is unavailable"
       },
       "nextStep": {
-        "configureTokenOrWait": "Wait for the limit to reset, or configure a GitHub Token and try again.",
-        "configureToken": "Configure a valid GitHub Token in Git settings.",
+        "configureTokenOrWait": "Wait for the limit to reset, or check the source credentials.",
+        "configureToken": "Check the Git credentials required to access this source.",
         "checkSource": "Confirm that the repository and ref still exist.",
-        "checkSourceOrToken": "Check the source address, or configure a GitHub Token with access.",
+        "checkSourceOrToken": "Check the source address and your access permissions.",
         "retry": "Check again after the network connection recovers."
       },
       "actions": {
-        "configureToken": "Configure GitHub Token",
+        "configureToken": "Check Git credentials",
         "openSource": "Open source",
         "retry": "Check again"
       }
@@ -644,7 +645,8 @@
       "deleted-upstream": "Deleted upstream"
     },
     "updateHint": {
-      "missingRemoteHash": "Local version information is incomplete. Remove this Skill and install it again to restore version checks.",
+      "missingRemoteHash": "Local version information is missing, so Skill Deck cannot determine whether a newer version is available.",
+      "missingRemoteHashCanUpdate": "Local version information is missing, so Skill Deck cannot determine whether a newer version is available. You can still update from the original source.",
       "missingSource": "Install source information is incomplete. Remove this Skill and install it again to restore version checks.",
       "unsupportedSource": "This install source does not support automatic update checks. Check the original source manually.",
       "upstreamUnavailable": "The install source cannot be reached right now. Check again later.",
@@ -656,7 +658,7 @@
       "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
       "deleted-upstream": "The source is reachable, but this skill path no longer exists upstream. Remove the local copy or keep it installed.",
       "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
-      "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
+      "auth": "Cannot access the source. Check your access permissions.",
       "network-error": "Network connection failed. Check again later.",
       "http-error": "Version check failed. Check again later."
     },
@@ -673,39 +675,39 @@
       "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
       "deleted-upstream": "The source is reachable, but this skill path no longer exists upstream. Remove the local copy or keep it installed.",
       "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
-      "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
+      "auth": "Cannot access the source. Check your access permissions.",
       "network-error": "Network connection failed. Check again later.",
       "http-error": "Version check failed. Check again later."
     },
     "updatePlan": {
-      "title": "Update plan",
+      "title": "Update Skills",
       "description": "Review grouped updates and items that need repair before starting.",
       "updatable": "Updatable",
       "needsRepair": "Needs repair",
       "skipped": "Skipped",
       "readyTitle": "Update {{count}} Skill(s)",
       "singleTitle": "Update “{{skillName}}”",
-      "readyDescription": "Review what this update will change. Modified copies are preserved by default.",
+      "readyDescription": "Review the locations to update.",
       "executingTitle": "Updating “{{skillName}}”",
       "executingBatchTitle": "Updating Skills",
       "executionDescription": "Fetching, validating, and writing the latest content.",
       "resultDescription": "The result reflects what was actually committed.",
       "groupNotice": "This will fetch the latest content from {{count}} install source(s) and reinstall.",
       "skillCount": "{{count}} Skill(s)",
-      "source": "Install source",
+      "source": "Source",
       "blocked": "Cannot update yet",
-      "standardSkillAction": "Update the Skill in the common Skill directory",
-      "cleanCopiesAction": "Sync unchanged copies ({{count}})",
-      "adapterTargetsAction": "Sync project-local Skills used by {{agents}}",
-      "conflictingCopies": "Modified copies found",
-      "preserveConflictDefault": "Preserved by default; select to overwrite with the latest content",
-      "confirm": "Start update",
+      "updateLocations": "Locations to update",
+      "restoreLocation": "Restore",
+      "preserveIndependentLocations": "Preserved references · Excluded from this update",
+      "conflictingCopies": "Copies with different content",
+      "preserveConflictDefault": "Selected copies will be overwritten. Unselected copies will not be updated.",
+      "confirm": "Confirm update",
       "stop": "Stop update",
       "stopping": "Stopping update…",
       "starting": "Starting update…",
       "finishing": "Finishing the critical write step…",
       "currentSkill": "Processing {{skillName}}",
-      "loadingPreview": "Preparing update preview...",
+      "loadingPreview": "Preparing content for the selected Skills...",
       "previewError": "Unable to prepare the update preview.",
       "targetAgents": "Target agents",
       "privateCopiesTitle": "Optional private-copy updates",
@@ -713,21 +715,43 @@
       "cleanCopyCount": "{{count}} separate copies will update automatically.",
       "cleanCopyCountForSkill": "{{skillName}}: {{count}} copies will update automatically.",
       "progress": "{{current}} of {{total}} Skills processed.",
-      "overwritePrivateEntry": "Overwrite this private copy",
       "retryFailed": "Retry failed",
       "resultTitle": "Update results",
       "resultSuccess": "Success: {{count}}",
       "resultPartial": "Partial: {{count}}",
       "resultFailed": "Failed: {{count}}",
       "resultSkipped": "Skipped: {{count}}",
-      "resultSummary": "{{success}} succeeded, {{partial}} partial, {{failed}} failed, {{skipped}} stopped",
-      "preservedConflicts": "Locally modified separate copies were preserved.",
+      "resultSummary": "{{success}} succeeded, {{partial}} partial, {{failed}} failed, {{skipped}} not run or stopped",
+      "preservedConflicts": "Separate copies with different content were preserved.",
       "resultOutcome": {
         "succeeded": "Completed",
         "partial": "Partially completed",
         "failed": "Failed",
         "cancelled": "Update stopped"
-      }
+      },
+      "contentDifferent": "Review required",
+      "globalTitle": "Update Global Skills",
+      "projectTitle": "Update Skills in {{project}}",
+      "commonDirectory": "Common directory",
+      "excludedLocation": "Not updated",
+      "skippedCopies": "These copies were not updated:",
+      "updatedWithSkippedCopies": "Updated with skipped copies",
+      "preservedReferences": "Independent references were kept and excluded from this update.",
+      "copyKind": "Copy",
+      "linkKind": "Link",
+      "preserved": "Kept",
+      "installLocation": "Location",
+      "writeCount": "Update {{count}} locations",
+      "otherLocations": "Other locations ({{count}})",
+      "locationDetails": "Location details ({{count}})",
+      "noUpdateLocations": "No updatable locations",
+      "noUpdateLocationsDescription": "No installed location in this scope can be updated. Content and source records will stay unchanged.",
+      "selectConflict": "Select a differing copy to update",
+      "linkDetails": "View link target: {{path}}",
+      "linkTarget": "Target: {{path}}",
+      "linkTargetUpdated": "Target content will be updated. The link stays unchanged.",
+      "linkTargetPreserved": "Target content and the link stay unchanged.",
+      "blockedCount": "{{count}} unavailable"
     },
     "discover": {
       "searchPlaceholder": "Search skills...",
@@ -775,7 +799,20 @@
         "fail": "Fail",
         "unknown": "Unknown"
       }
-    }
+    },
+    "installPath": {
+      "viewFullPath": "View full path: {{path}}",
+      "fullPath": "Full path",
+      "copied": "Full path copied",
+      "copyFailed": "Could not copy the path. Please try again.",
+      "outsideProject": "Outside project",
+      "outsideHome": "Outside home",
+      "project": "Project: {{name}}",
+      "nativeEnvironment": "This device",
+      "copyPath": "Copy path"
+    },
+    "checkUpdatesNetworkFailed": "Cannot connect to the source. Try again later.",
+    "checkUpdatesAccessFailed": "Cannot access the source. Check your access permissions."
   },
   "settings": {
     "title": "Settings",
@@ -1419,11 +1456,19 @@
       "errors": {
         "unknown": "The operation failed for an unknown reason.",
         "validation": "The request is no longer valid. Review it and try again.",
+        "noUpdateTargets": "No update locations were confirmed. Existing content was kept.",
+        "eveSingleFile": "Only directory-based Eve Skills are supported. This single-file installation cannot be maintained: {{path}}",
+        "installedSkillSourceAmbiguous": "The Skill source or installation location is ambiguous: {{path}}",
+        "installedSkillFormat": "The source Skill requires a valid name and description before copying or adding Agent associations: {{path}}",
+        "sharedSkillLinkSource": "This Skill has no shared installation to link to. Select copy mode.",
+        "libraryContentTarget": "This target is a library member directory. Manage it from its library: {{path}}",
         "skillPlacementTargetConflict": "The target Skill directory {{targetPath}} for {{skillName}} contains a {{targetKind}} that cannot be managed. Resolve it and try again.",
         "wellKnownScopeNotFound": "No Skills were found for {{scopePath}} on {{rootUrl}}. Check the scoped address.",
         "environmentUnavailable": "The selected environment is unavailable.",
         "storageUnsupported": "This storage location is not supported for the operation.",
         "capabilityUnavailable": "The selected environment cannot perform this operation.",
+        "preparedContentCapacity": "The temporary content retention limit has been reached. Select fewer Skills or use a smaller source and try again.",
+        "sourceContentCapacity": "The source exceeds the temporary content retention limit. Use a smaller source.",
         "unsafePath": "The target path is outside the allowed Skill locations.",
         "unsafeSourceLink": "The source contains a link that cannot be copied safely.",
         "selfCopy": "The source and destination resolve to the same physical location.",
@@ -1431,7 +1476,7 @@
         "staleContext": "The context changed after preview. Review the refreshed plan.",
         "staleRegistry": "The Agent registry changed after preview. Review the refreshed plan.",
         "staleEnvironment": "The environment changed after preview. Review the refreshed plan.",
-        "stalePayload": "The Skill content changed after preview. Review the refreshed plan.",
+        "stalePayload": "The prepared content is no longer valid. Prepare it again and confirm.",
         "staleTarget": "A destination changed after preview. Review the refreshed plan.",
         "externalLockChanged": "Skill information changed. Refresh and try again.",
         "mutationCancelled": "The operation was cancelled.",
@@ -1523,6 +1568,7 @@
           "network": "network request failed",
           "limitExceeded": "content exceeded a safety limit",
           "invalidContent": "content is not a valid Skill",
+          "directoryLinksUnsupported": "Skill updates cannot locate source content through directory links. Use a real directory or import the content as a local Skill.",
           "unavailable": "source is unavailable"
         },
         "downloadFailure": {

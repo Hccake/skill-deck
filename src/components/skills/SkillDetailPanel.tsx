@@ -1,6 +1,7 @@
 // src/components/skills/SkillDetailPanel.tsx
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatAppError } from '@/utils/format-app-error';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
 import { Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
@@ -8,22 +9,21 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
-  CopyablePath,
   DetailBody,
   DetailField,
   DetailSourceLink,
 } from '@/components/skills/detail/DetailPrimitives';
 import { formatTime } from '@/lib/utils';
-import type { InstalledSkill, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { InstalledLibraryVersion, InstalledSkill, InstalledSkillLocation, ScopePathBase, SkillLocationRef, UpdateCheckOutcome } from '@/bindings';
+import { InstallPath } from './InstallPath';
+import { SkillCardAttentionRow, SkillCardStatusLabel } from './card/SkillCardPrimitives';
+import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 import {
   hasIncompleteUpdateCheck,
-  resolveEvidenceFailureReasonI18nKey,
   isSkillUpdateActive,
   resolveSkillUpdatePhaseI18nKey,
   type SkillUpdateDisplayStatus,
   type SkillUpdateActivePhase,
-  resolveUpdateReasonI18nKey,
-  resolveUpdateStatusI18nKey,
   providerCooldownDeadline,
   type SkillListItem,
 } from '@/stores/skills-utils';
@@ -31,14 +31,13 @@ import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface SkillDetailPanelProps {
   skill: SkillListItem;
-  /** 当前 Environment 的完整来源诊断，用于 provider 级 cooldown。 */
-  sourceDiagnostics?: SourceUpdateCheckInfo[];
   content: string | null;
   loading: boolean;
   agentDisplayNames: Map<string, string>;
   updateStatus?: SkillUpdateDisplayStatus;
   isCheckingUpdates?: boolean;
-  projectPath?: string;
+  context?: SkillLocationRef;
+  pathBase?: ScopePathBase | null;
   onClose: () => void;
   onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   onUpdate: (name: string, scope: InstalledSkillLocation) => void;
@@ -48,16 +47,18 @@ interface SkillDetailPanelProps {
   onCopyToProject?: (skill: InstalledSkill) => void;
   /** 打开 Git 凭据设置。路由归页面所有，面板保持无路由依赖。 */
   onConfigureGitCredentials?: () => void;
+  onOpenLibraryVersion?: (version: InstalledLibraryVersion) => void;
 }
 
 export const SkillDetailPanel = memo(function SkillDetailPanel({
   skill,
-  sourceDiagnostics = [],
   content,
   loading,
   agentDisplayNames,
   updateStatus,
   isCheckingUpdates = false,
+  context,
+  pathBase,
   onClose,
   onCheckUpdates,
   onUpdate,
@@ -66,9 +67,10 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onManageAgents,
   onCopyToProject,
   onConfigureGitCredentials,
+  onOpenLibraryVersion,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
-  const writeBlocked = useBusinessWriteBlocked();
+  const writeBlocked = useBusinessWriteBlocked() || Boolean(skill.maintenanceError);
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayAgents = skill.associatedAgents.filter(
@@ -139,10 +141,9 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
   const isUpdateInProgress = activeUpdatePhase !== null;
-  const showCheckDone = checkDone && !skill.hasUpdate;
+  const showCheckDone = checkDone && !skill.hasUpdate && skill.updateStatus === 'upToDate';
   const typedFailure = skill.updateEvidence?.lastAttempt?.failure ?? null;
   const cooldownDeadline = providerCooldownDeadline([
-    ...sourceDiagnostics,
     ...(skill.updateEvidence ? [skill.updateEvidence] : []),
   ]);
   const [cooldownNow, setCooldownNow] = useState(() => Date.now());
@@ -157,10 +158,11 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   }, [cooldownDeadline]);
   const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
   const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
-  const showCannotCheckStatus = isDeletedUpstream
-    || skill.updateStatus === 'cannotCheck'
-    || skill.canCheckForUpdates === false;
-  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false && !isDeletedUpstream;
+  const presentation = skillStatusPresentation(skill);
+  const notice = presentation.notice;
+  const noticeDescription = notice?.error ? formatAppError(notice.error, t)
+    : notice?.hintKey ? t(notice.hintKey) : undefined;
+  const canShowUpdateAction = (skill.canRunUpdate === true || (skill.hasUpdate === true && skill.canRunUpdate !== false)) && !isDeletedUpstream;
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">
       {/* 沉浸式滚动文档流 (Scrollable Document Area) */}
@@ -168,13 +170,15 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
         <ScrollArea className="absolute inset-0 w-full h-full">
           <div className="px-6 py-6 sm:px-8 sm:py-6 w-full space-y-4">
 
-            {/* Hero title & Abstract */}
             <div className="space-y-3">
-              <div className="flex justify-between items-start gap-4">
-                <h2 className="min-w-0 flex-1 text-2xl sm:text-3xl font-heading font-extrabold tracking-tight text-foreground leading-tight">
-                  {skill.name}
-                </h2>
-                <div className="flex shrink-0 flex-wrap justify-end gap-1 pt-1">
+              <div className="flex flex-wrap justify-between items-start gap-x-4 gap-y-2">
+                <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
+                  <h2 className="min-w-0 text-xl font-heading font-semibold text-foreground leading-7 [overflow-wrap:anywhere]">
+                    {skill.name}
+                  </h2>
+                  {presentation.available && !updateStatus ? <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} /> : null}
+                </div>
+                <div className="ml-auto flex max-w-full shrink-0 flex-wrap justify-end gap-1">
                   {activeUpdatePhase ? (
                     <UpdatingStatusBadge phase={activeUpdatePhase} />
                   ) : null}
@@ -192,7 +196,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                          className="h-8 w-8 text-primary hover:text-primary hover:bg-primary/10 cursor-pointer"
                           title={t('skills.actions.update')}
                           disabled={writeBlocked}
                           onClick={handleUpdate}
@@ -204,8 +208,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     showCheckDone ? (
                       <div
                         className="flex h-8 w-8 items-center justify-center text-success"
-                        aria-label={t('skills.checkCompleted')}
-                        title={t('skills.checkCompleted')}
+                        aria-label={t('skills.checkUpToDate')}
+                        title={t('skills.checkUpToDate')}
                       >
                         <Check className="h-4 w-4" />
                       </div>
@@ -276,59 +280,40 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                   {skill.description}
                 </p>
               ) : null}
+              {skill.libraryVersions?.length ? (
+                <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
+                  <p className="text-muted-foreground">{t('skills.detail.libraryVersions')}</p>
+                  {skill.libraryVersions.map((version) => (
+                    <Button
+                      key={`${version.libraryId}:${version.skillName}`}
+                      variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left"
+                      onClick={() => onOpenLibraryVersion?.(version)}
+                      disabled={!onOpenLibraryVersion}
+                    >
+                      {version.libraryName} · {version.skillName}
+                      <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+              {skill.maintenanceError ? (
+                <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+                  {formatAppError(skill.maintenanceError, t)}
+                </p>
+              ) : null}
             </div>
 
             {/* Source link */}
-            {skill.source ? (
-              <DetailSourceLink label={skill.source} url={skill.sourceUrl} />
+            {presentation.local ? <p className="text-sm text-muted-foreground">{t('skills.updateStatusLabel.localSource')}</p>
+              : presentation.sourceLabel ? (
+              <DetailSourceLink label={presentation.sourceLabel} url={skill.sourceUrl} hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
             ) : null}
-            {showCannotCheckStatus ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="text-xs text-muted-foreground">
-                  {t(isIncompleteCheck
-                    ? 'skills.updateStatusLabel.checkIncomplete'
-                    : resolveUpdateStatusI18nKey(isDeletedUpstream ? 'deletedUpstream' : 'cannotCheck'))}
-                </Badge>
-                {!isIncompleteCheck ? (() => {
-                  const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);
-                  return reasonKey ? (
-                    <span className="text-xs text-muted-foreground">
-                      {t(reasonKey)}
-                    </span>
-                  ) : null;
-                })() : null}
-              </div>
-            ) : null}
+            {notice ? <SkillCardAttentionRow labels={[t(notice.labelKey)]} description={noticeDescription} /> : null}
             {isIncompleteCheck && typedFailure ? (
               <div
                 role="status"
-                className="space-y-2 border-y border-border/60 py-3 text-sm"
+                className="flex flex-wrap items-center gap-2 text-sm"
               >
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-medium text-foreground">
-                    {t(resolveEvidenceFailureReasonI18nKey(typedFailure.reason))}
-                  </span>
-                  {skill.updateEvidence?.checkedAtEpochMs ? (
-                    <span className="text-xs text-muted-foreground">
-                      {t('skills.updateEvidence.lastChecked', {
-                        time: new Date(skill.updateEvidence.checkedAtEpochMs).toLocaleString(i18n.language),
-                      })}
-                    </span>
-                  ) : null}
-                  <span className="text-xs text-muted-foreground">
-                    {t('skills.updateEvidence.lastAttempt', {
-                      time: new Date(skill.updateEvidence?.lastAttempt?.checkedAtEpochMs ?? 0)
-                        .toLocaleString(i18n.language),
-                    })}
-                  </span>
-                  {typedFailure.retryAtEpochMs ? (
-                    <span className="text-xs text-muted-foreground">
-                      {t('skills.updateEvidence.retryAt', {
-                        time: new Date(typedFailure.retryAtEpochMs).toLocaleString(i18n.language),
-                      })}
-                    </span>
-                  ) : null}
-                </div>
                 <div className="flex flex-wrap gap-2">
                   {typedFailure.reason === 'rateLimited'
                     || typedFailure.reason === 'authenticationRequired' ? (
@@ -387,7 +372,11 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 label={t('skills.detail.installPath')}
                 className="col-span-2 md:col-span-1"
               >
-                <CopyablePath value={skill.canonicalPath} />
+                <InstallPath
+                  path={{ environment: context?.environment ?? pathBase?.logicalRoot.environment ?? { kind: 'native' }, nativePath: skill.canonicalPath }}
+                  base={pathBase}
+                  scope={skill.scope}
+                />
               </DetailField>
             </div>
 
@@ -432,7 +421,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
             {/* Markdown 正文 */}
             <div className="pb-10">
-              <DetailBody loading={loading} content={content} onRetry={onRetry} />
+              {!skill.maintenanceError ? <DetailBody loading={loading} content={content} onRetry={onRetry} /> : null}
             </div>
 
           </div>

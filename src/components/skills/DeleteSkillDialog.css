@@ -1,0 +1,57 @@
+.delete-skill-dialog {
+  width: min(680px, calc(100vw - 48px));
+  max-width: min(680px, calc(100vw - 48px));
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.delete-skill-positions {
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.delete-skill-position {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 2px 12px;
+  min-height: 50px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.delete-skill-position-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.delete-skill-position-path {
+  min-width: 0;
+  max-width: 100%;
+  width: fit-content;
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.delete-skill-position-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 名称、安装方式和间距占 216 px，路径至少预留 200 px。 */
+@container (min-width: 416px) {
+  .delete-skill-position {
+    grid-template-columns: 128px minmax(0, 1fr) 64px;
+    min-height: 36px;
+    padding: 0;
+  }
+  .delete-skill-position-path { grid-column: 2; grid-row: 1; }
+  .delete-skill-position-mode { grid-column: 3; }
+}

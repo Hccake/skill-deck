@@ -81,11 +81,9 @@ const mocks = vi.hoisted(() => ({
   skillsDataState: {
     snapshots: {} as Record<string, ReturnType<typeof snapshot>>,
     isSyncing: false,
-    checkingUpdateScopes: new Set<string>(),
     automaticUpdateScopes: new Set<string>(),
     forceUpdateScopes: new Set<string>(),
     refreshWorkspace: vi.fn().mockResolvedValue(undefined),
-    syncUpdates: vi.fn().mockResolvedValue(undefined),
     activateAutomaticChecks: vi.fn().mockResolvedValue(undefined),
     forceCheckUpdates: vi.fn().mockResolvedValue(true),
     syncSkills: vi.fn().mockResolvedValue(undefined),
@@ -133,11 +131,6 @@ vi.mock('@/hooks/useProjectWorkspace', () => ({
 }));
 
 vi.mock('@/stores/skills-data', () => ({
-  sourceDiagnosticsForEnvironment: (snapshots: typeof mocks.skillsDataState.snapshots) => (
-    Object.values(snapshots).flatMap((item) => (
-      (item as typeof item & { updateCheck?: { sources: unknown[] } }).updateCheck?.sources ?? []
-    ))
-  ),
   useSkillsDataStore: (selector?: (state: typeof mocks.skillsDataState) => unknown) =>
     selector ? selector(mocks.skillsDataState) : mocks.skillsDataState,
 }));
@@ -313,9 +306,7 @@ describe('SkillsPanel', () => {
       'native/global': snapshot(),
     };
     mocks.skillsDataState.isSyncing = false;
-    mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.refreshWorkspace.mockClear();
-    mocks.skillsDataState.syncUpdates.mockClear();
     mocks.skillsDataState.activateAutomaticChecks.mockClear();
     mocks.skillsDataState.forceCheckUpdates.mockClear();
     mocks.updateWorkflowState.open.mockClear();
@@ -774,7 +765,7 @@ describe('SkillsPanel', () => {
     expect(mocks.skillsDataState.syncSkills).toHaveBeenCalledWith(nativeGlobal, { origin: 'passive' });
   });
 
-  it('does not recheck on focus, remount, or unmount timer activity', async () => {
+  it('asks the store to reconcile freshness on focus and removes listeners on unmount', async () => {
     const { unmount } = render(<SkillsPanel compact={false} />);
     await waitFor(() => {
       expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(nativeGlobal);
@@ -783,8 +774,10 @@ describe('SkillsPanel', () => {
 
     window.dispatchEvent(new Event('focus'));
     window.dispatchEvent(new Event('focus'));
-    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(1);
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(3);
     unmount();
+    window.dispatchEvent(new Event('focus'));
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(3);
   });
 
   it('waits for workspace refresh before activating the selected Context', async () => {

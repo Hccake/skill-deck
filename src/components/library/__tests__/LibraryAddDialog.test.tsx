@@ -43,7 +43,7 @@ const target = {
 const membershipPreview = {
   environment,
   libraryId: 'lib-1',
-  scopes: [],
+  scopes: [{ environment, scope: { scope: 'global' as const } }],
   impacts: [{
     context: { environment, scope: { scope: 'global' as const } },
     skills: [{ skillName: 'ui-review', kind: 'added' as const }],
@@ -177,6 +177,10 @@ describe('LibraryAddDialog', () => {
       'addSkill.actions.back',
       'libraries.addFlow.selection.review',
     ]);
+    expect(within(footer).getByRole('button', { name: 'common.cancel' }).getAttribute('data-variant')).toBe('ghost');
+    const back = within(footer).getByRole('button', { name: 'addSkill.actions.back' });
+    expect(back.getAttribute('data-variant')).toBe('outline');
+    expect(back.querySelector('svg')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'libraries.addFlow.selection.selectAll' }));
     expect(existing.getAttribute('data-state')).toBe('unchecked');
@@ -213,6 +217,7 @@ describe('LibraryAddDialog', () => {
           pendingAdd: null,
           retryAdd: null,
           lastAddResults: [{ skillName: 'ui-review', status: 'succeeded', error: null }],
+          membershipOutcomes: {},
         },
       });
     render(
@@ -240,7 +245,10 @@ describe('LibraryAddDialog', () => {
       skillPaths: [discovery.skills[1].relativePath],
     }));
     expect(await screen.findByText('libraries.addFlow.review.summary:{"count":1}')).toBeTruthy();
+    expect(screen.queryByText('libraries.membership.impact.added:{"count":1}')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'libraries.addFlow.review.syncCount:{"count":1}' }));
     expect(screen.getByText('libraries.membership.impact.added:{"count":1}')).toBeTruthy();
+    await user.keyboard('{Escape}');
     expect(screen.queryByText('libraries.addFlow.review.title')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'libraries.addFlow.review.confirm' }));
@@ -250,6 +258,37 @@ describe('LibraryAddDialog', () => {
     }));
     expect(await screen.findByText('libraries.addFlow.result.succeeded:{"count":1}')).toBeTruthy();
     expect(screen.getByRole('dialog').querySelector('[aria-current="step"]')).toBeNull();
+    const resultFooter = screen.getByRole('dialog').querySelector<HTMLElement>('[data-slot="dialog-footer"]')!;
+    expect(within(resultFooter).getByRole('button', { name: 'libraries.addFlow.result.done' })).toBeTruthy();
+  });
+
+  it.each([true, false])('hides zero synchronization counts while retaining incomplete inventory warnings: %s', async (inventoryComplete) => {
+    const user = userEvent.setup();
+    const rawPath = '\\\\?\\C:\\Users\\cheng\\libraries\\ui-review';
+    const execute = vi.fn().mockResolvedValue({ status: 'succeeded', snapshot: {
+      pendingAdd: { request: {}, preview: {
+        token: {},
+        skills: [{ skillName: 'ui-review', targetPath: rawPath }],
+        redirectedDownloadHost: null,
+        membership: { ...membershipPreview, inventoryComplete, scopes: [], impacts: [] },
+      } },
+    } });
+    render(<LibraryAddDialog open target={target} existingSkillNames={new Set(['api-design'])} execute={execute} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByRole('textbox', { name: 'libraries.addFlow.source.label' }), { target: { value: 'https://example.com/repo' } });
+    await user.click(screen.getByRole('button', { name: 'libraries.addFlow.source.read' }));
+    await user.click(await screen.findByRole('checkbox', { name: /ui-review/ }));
+    await user.click(screen.getByRole('button', { name: 'libraries.addFlow.selection.review' }));
+    await screen.findByText('libraries.addFlow.review.summary:{"count":1}');
+
+    expect(screen.queryByText('libraries.membership.affectedScopes:{"count":0}')).toBeNull();
+    expect(screen.queryByRole('button', { name: /libraries.addFlow.review.syncCount/ })).toBeNull();
+    const warning = screen.queryByText('libraries.membership.inventoryIncomplete:{"count":0}');
+    expect(Boolean(warning)).toBe(!inventoryComplete);
+    expect(screen.queryByText(rawPath)).toBeNull();
+    const path = screen.getByText((_, element) => element?.tagName === 'CODE' && element.textContent === 'C:\\Users\\cheng\\libraries\\ui-review');
+    fireEvent.focus(path);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toBe('C:\\Users\\cheng\\libraries\\ui-review');
   });
 
   it('keeps earlier successes when retrying only the failed Skills', async () => {
@@ -288,6 +327,7 @@ describe('LibraryAddDialog', () => {
             { skillName: 'api-design', status: 'succeeded', error: null },
             { skillName: 'ui-review', status: 'failed', error: { kind: 'staleTarget' } },
           ],
+          membershipOutcomes: {},
         },
       })
       .mockResolvedValueOnce({
@@ -296,6 +336,7 @@ describe('LibraryAddDialog', () => {
           pendingAdd: null,
           retryAdd: null,
           lastAddResults: [{ skillName: 'ui-review', status: 'succeeded', error: null }],
+          membershipOutcomes: {},
         },
       });
     render(
@@ -356,6 +397,7 @@ describe('LibraryAddDialog', () => {
         pendingAdd: null,
         retryAdd: null,
         lastAddResults: [{ skillName: 'ui-review', status: 'succeeded', error: null }],
+        membershipOutcomes: {},
       },
     });
     render(

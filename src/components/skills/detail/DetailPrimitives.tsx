@@ -155,26 +155,24 @@ export const DetailBody = memo(function DetailBody({
 export const DetailSourceLink = memo(function DetailSourceLink({
   label,
   url,
+  hint,
 }: {
   label: string;
   url?: string | null;
+  hint?: string;
 }) {
   const { t } = useTranslation();
   const openable = isOpenableUrl(url) ? url : null;
 
-  if (!openable) {
-    return (
-      <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-sm text-muted-foreground">
+  const source = !openable ? (
+      <span tabIndex={hint ? 0 : undefined} className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
         <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
         <span className="truncate">{label}</span>
       </span>
-    );
-  }
-
-  return (
+  ) : (
     <button
       type="button"
-      title={t('skills.externalLink')}
+      title={hint ? undefined : t('skills.externalLink')}
       className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-sm font-medium text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
       onClick={() => {
         void openUrl(openable).catch((error: unknown) => {
@@ -187,4 +185,6 @@ export const DetailSourceLink = memo(function DetailSourceLink({
       <span className="truncate">{label}</span>
     </button>
   );
+  return hint ? <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
+    <TooltipContent className="max-w-80 text-wrap">{hint}</TooltipContent></Tooltip> : source;
 });

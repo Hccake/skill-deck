@@ -1,18 +1,16 @@
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { openUrl } from '@tauri-apps/plugin-opener';
-import { toast } from 'sonner';
+import { formatAppError } from '@/utils/format-app-error';
 import {
   ArrowUpCircle,
-  CircleAlert,
-  ExternalLink,
   Folder,
   FolderOutput,
   Globe,
   Pencil,
   Trash2,
 } from 'lucide-react';
-import { cn, toTitleCase } from '@/lib/utils';
+import { toTitleCase } from '@/lib/utils';
+import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 import { formatSkillCardDate, isOpenableUrl, useCardActivation } from '@/lib/skill-card-presentation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,65 +19,21 @@ import {
   SkillCardMarker,
   SkillCardProgressBar,
   SkillCardShell,
+  SkillCardStatusLabel,
+  SkillCardAttentionRow,
+  SkillSourceLink,
 } from '@/components/skills/card/SkillCardPrimitives';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { AgentId, InstalledSkill, InstalledSkillLocation } from '@/bindings';
 import {
-  hasCommittedUpdateComparison,
-  hasIncompleteUpdateCheck,
   isSkillUpdateActive,
-  resolveEvidenceFailureNextStepI18nKey,
-  resolveEvidenceFailureReasonI18nKey,
   resolveSkillUpdatePhaseI18nKey,
-  resolveUpdateHintI18nKey,
-  resolveUpdateStatusLabelI18nKey,
   type SkillListItem,
   type SkillUpdateDisplayStatus,
 } from '@/stores/skills-utils';
 
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
-
-type AttentionKey =
-  | 'skills.card.sourceIncomplete'
-  | 'skills.card.sourceMissingUpstream'
-  | 'skills.card.updateCheckIncomplete'
-  | 'skills.card.duplicateLocations'
-  | 'skills.card.duplicateAgentInstall';
-
-function isMissingSource(skill: SkillListItem): boolean {
-  return skill.updateReason === 'missingSource'
-    || skill.updateReason === 'missing-skill-path';
-}
-
-function isDeletedUpstream(skill: SkillListItem): boolean {
-  return skill.updateStatus === 'deletedUpstream'
-    || skill.updateReason === 'deletedUpstream'
-    || skill.updateReason === 'deleted-upstream';
-}
-
-function hasUpdateCheckProblem(skill: SkillListItem): boolean {
-  if (isMissingSource(skill) || isDeletedUpstream(skill)) return false;
-  if (hasIncompleteUpdateCheck(skill)) return true;
-  if (!skill.updateReason) return false;
-  return ![
-    'missingRemoteHash',
-    'missing-remote-hash',
-    'unsupportedSource',
-    'unsupported-source-type',
-    'local-source',
-  ].includes(skill.updateReason);
-}
-
-function resolveAttentionKeys(skill: SkillListItem, hasDuplicateLocations: boolean): AttentionKey[] {
-  const keys: AttentionKey[] = [];
-  if (isMissingSource(skill)) keys.push('skills.card.sourceIncomplete');
-  else if (isDeletedUpstream(skill)) keys.push('skills.card.sourceMissingUpstream');
-  if (hasUpdateCheckProblem(skill)) keys.push('skills.card.updateCheckIncomplete');
-  if (hasDuplicateLocations) keys.push('skills.card.duplicateLocations');
-  if ((skill.duplicateCopyCount ?? 0) > 0) keys.push('skills.card.duplicateAgentInstall');
-  return keys;
-}
 
 interface SkillCardProps {
   skill: SkillListItem;
@@ -114,25 +68,15 @@ export const SkillCard = memo(function SkillCard({
   const effectiveAgents = Array.from(new Set(skill.associatedAgents));
   const scopeIcon = displayScope === 'global' ? Globe : Folder;
   const ScopeIcon = scopeIcon;
-  const deletedUpstream = isDeletedUpstream(skill);
+  const deletedUpstream = skill.updateStatus === 'deletedUpstream' || ['deletedUpstream', 'deleted-upstream'].includes(skill.updateReason ?? '');
+  const presentation = skillStatusPresentation(skill);
   const canShowUpdateAction = skill.hasUpdate === true
     && skill.canRunUpdate !== false
     && !deletedUpstream
     && !updateStatus
     && Boolean(onUpdate);
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
-  const hasCommittedUpdateConclusion = hasCommittedUpdateComparison(skill);
-  const rawStatusLabelKey = resolveUpdateStatusLabelI18nKey(
-    hasCommittedUpdateConclusion ? { ...skill, updateAttempt: null } : skill,
-  );
-  const titleStatusLabelKey = rawStatusLabelKey && [
-    'skills.updateStatusLabel.available',
-    'skills.updateStatusLabel.reinstallRequired',
-    'skills.updateStatusLabel.autoCheckUnavailable',
-    'skills.updateStatusLabel.localSource',
-  ].includes(rawStatusLabelKey)
-    ? rawStatusLabelKey
-    : null;
+  const titleStatusLabelKey = presentation.available ? 'skills.updateStatusLabel.available' : null;
   const statusTransitionKey = activeUpdatePhase
     ? resolveSkillUpdatePhaseI18nKey(activeUpdatePhase)
     : updateStatus === 'done'
@@ -140,66 +84,27 @@ export const SkillCard = memo(function SkillCard({
       : updateStatus === 'failed'
         ? 'skills.updateFailed'
         : titleStatusLabelKey ?? 'none';
-  const attentionKeys = resolveAttentionKeys(skill, hasDuplicateLocation);
-  const attentionLabels = attentionKeys.map((key) => t(key));
-  const typedFailure = skill.updateEvidence?.lastAttempt?.failure ?? null;
-  const legacyFailureKey = resolveUpdateHintI18nKey(skill.updateReason);
-  const failureReasonKey = typedFailure
-    ? resolveEvidenceFailureReasonI18nKey(typedFailure.reason)
-    : legacyFailureKey;
-  const failureNextStepKey = typedFailure
-    ? resolveEvidenceFailureNextStepI18nKey(typedFailure.reason)
-    : null;
-  const retryAtLabel = typedFailure?.retryAtEpochMs
-    ? t('skills.updateEvidence.retryAt', {
-        time: new Date(typedFailure.retryAtEpochMs).toLocaleString(i18n.language),
-      })
-    : null;
-  const attentionTitle = hasUpdateCheckProblem(skill) && failureReasonKey
-    ? [t(failureReasonKey), failureNextStepKey ? t(failureNextStepKey) : null, retryAtLabel]
-      .filter((value): value is string => Boolean(value))
-      .join('\n')
-    : undefined;
-  const sourceLabel = skill.source?.trim() || skill.sourceUrl?.trim() || null;
+  const notice = presentation.notice;
+  const attentionLabels = [
+    notice ? t(notice.labelKey) : null,
+    hasDuplicateLocation ? t('skills.card.duplicateLocations') : null,
+    (skill.duplicateCopyCount ?? 0) > 0 ? t('skills.card.duplicateAgentInstall') : null,
+  ].filter((label): label is string => Boolean(label));
+  const attentionTitle = notice?.error ? formatAppError(notice.error, t)
+    : notice?.hintKey ? t(notice.hintKey) : undefined;
+  const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.sourceLabel;
   const sourceUrl = isOpenableUrl(skill.sourceUrl) ? skill.sourceUrl : null;
   const updatedAt = skill.updatedAt
     ? formatSkillCardDate(skill.updatedAt, i18n.language)
     : null;
   const activation = useCardActivation(onClick ? () => onClick(skill) : undefined);
 
-  const handleOpenSource = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (!sourceUrl) return;
-    void openUrl(sourceUrl).catch((error: unknown) => {
-      console.error('Failed to open Skill source:', error);
-      toast.error(t('skills.card.sourceOpenFailed'));
-    });
-  }, [sourceUrl, t]);
-
   const handleTitleClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onClick?.(skill);
   }, [onClick, skill]);
 
-  const attentionRow = attentionLabels.length > 0 ? (
-    <div
-      data-testid="skill-card-attention"
-      role="note"
-      aria-label={attentionLabels.join('，')}
-      tabIndex={attentionTitle ? 0 : undefined}
-      className="flex items-start gap-1.5 rounded-sm text-xs leading-5 text-warning/90 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-    >
-      <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-      <div className="flex min-w-0 flex-wrap gap-x-1.5">
-        {attentionLabels.map((label, index) => (
-          <span key={attentionKeys[index]} className="inline-flex max-w-full whitespace-normal break-words">
-            {index > 0 ? <span className="mr-1.5 text-warning/50" aria-hidden="true">·</span> : null}
-            {label}
-          </span>
-        ))}
-      </div>
-    </div>
-  ) : null;
+  const attentionRow = <SkillCardAttentionRow labels={attentionLabels} description={attentionTitle} testId="skill-card-attention" />;
 
   return (
     <SkillCardShell
@@ -217,12 +122,12 @@ export const SkillCard = memo(function SkillCard({
         </Tooltip>
 
         <div className="min-w-0 space-y-2">
-          <div data-testid="skill-card-title" className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <div data-testid="skill-card-title" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden">
             {onClick ? (
               <button
                 type="button"
                 title={skill.name}
-                className="min-w-16 shrink cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="min-w-0 shrink cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 onClick={handleTitleClick}
               >
                 <h3 className="truncate font-heading text-[15px] font-semibold leading-5 text-foreground">
@@ -252,16 +157,7 @@ export const SkillCard = memo(function SkillCard({
               ) : updateStatus === 'failed' ? (
                 <Badge variant="outline" className="shrink-0 text-xs text-destructive">{t('skills.updateFailed')}</Badge>
               ) : titleStatusLabelKey ? (
-                <span className={cn(
-                  'inline-flex h-5 shrink-0 items-center rounded-sm px-1.5 text-[11px] font-medium',
-                  titleStatusLabelKey === 'skills.updateStatusLabel.available'
-                    ? 'bg-primary/10 text-primary'
-                    : titleStatusLabelKey === 'skills.updateStatusLabel.autoCheckUnavailable'
-                      ? 'bg-muted text-muted-foreground'
-                      : 'bg-warning/10 text-warning',
-                )}>
-                  {t(titleStatusLabelKey)}
-                </span>
+                <SkillCardStatusLabel label={t(titleStatusLabelKey)} />
               ) : null}
             </CrossfadeSwap>
           </div>
@@ -279,19 +175,8 @@ export const SkillCard = memo(function SkillCard({
             >
               {sourceLabel ? (
                 <span className="inline-flex min-w-0 items-center">
-                  {sourceUrl ? (
-                    <button
-                      type="button"
-                      aria-label={sourceLabel}
-                      title={t('skills.externalLink')}
-                      className="inline-flex min-w-0 cursor-pointer items-center gap-1 font-medium text-primary outline-none transition-colors hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring/50"
-                      onClick={handleOpenSource}
-                    >
-                      <span className="max-w-48 truncate">{sourceLabel}</span>
-                      <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <span className="max-w-48 truncate">{sourceLabel}</span>
+                  {presentation.local ? <span>{sourceLabel}</span> : (
+                    <SkillSourceLink label={sourceLabel} url={sourceUrl} hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
                   )}
                 </span>
               ) : null}
@@ -317,14 +202,7 @@ export const SkillCard = memo(function SkillCard({
             </div>
           ) : null}
 
-          {attentionTitle && attentionRow ? (
-            <Tooltip>
-              <TooltipTrigger asChild>{attentionRow}</TooltipTrigger>
-              <TooltipContent className="max-w-72 whitespace-pre-line">
-                {attentionTitle}
-              </TooltipContent>
-            </Tooltip>
-          ) : attentionRow}
+          {attentionRow}
 
           {effectiveAgents.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 pt-0.5">

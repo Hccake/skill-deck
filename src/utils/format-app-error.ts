@@ -129,6 +129,14 @@ export function formatAppError(error: AppError, t: TFunction): string {
     case 'unsafeSourceLink':
       return t('addSkill.error.storageUnsupported');
     case 'capabilityUnavailable':
+      if (error.data.capability === 'libraryContentTarget') return t('mutation.result.errors.libraryContentTarget', { path: error.data.path });
+      if (error.data.capability === 'installedSkillFormat') return t('mutation.result.errors.installedSkillFormat', { path: error.data.path });
+      if (error.data.capability === 'sharedSkillLinkSource') return t('mutation.result.errors.sharedSkillLinkSource', { path: error.data.path });
+      if (error.data.capability === 'eveSingleFile') return t('mutation.result.errors.eveSingleFile', { path: error.data.path });
+      if (error.data.capability === 'installedSkillSourceAmbiguous') return t('mutation.result.errors.installedSkillSourceAmbiguous', { path: error.data.path });
+      if (error.data.capability === 'sourceDirectoryLinks') return t('addSkill.source.error.acquisitionReason.directoryLinksUnsupported');
+      if (error.data.capability === 'sourceSessionCapacity') return t('mutation.result.errors.sourceContentCapacity');
+      if (error.data.capability === 'payloadSessionCapacity') return t('mutation.result.errors.preparedContentCapacity');
       if (error.kind === 'capabilityUnavailable'
         && (error.data.capability === 'runtimeMaintenancePending'
           || error.data.capability === 'runtimeMaintenanceFailed')) {

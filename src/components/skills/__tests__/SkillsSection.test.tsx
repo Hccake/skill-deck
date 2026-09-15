@@ -448,7 +448,7 @@ describe('SkillsSection', () => {
     expect(screen.getAllByTestId('update-summary-prefix')).toHaveLength(2);
   });
 
-  it('disables Force during provider cooldown and exposes the retry time', () => {
+  it('keeps manual checking available during a provider cooldown', () => {
     const retryAtEpochMs = Date.now() + 60_000;
     render(
       <SkillsSection
@@ -488,113 +488,8 @@ describe('SkillsSection', () => {
     );
 
     const button = screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.title).toContain('skills.updateEvidence.retryAt');
+    expect(button.disabled).toBe(false);
     expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
-  });
-
-  it('keeps Force disabled when filtering hides the source that established provider cooldown', () => {
-    const retryAtEpochMs = Date.now() + 60_000;
-    render(
-      <SkillsSection
-        title="Global"
-        skills={[makeSkill('global', { source: 'other/repo', hasUpdate: false })]}
-        sourceDiagnostics={[{
-          source: 'github.com/owner/rate-limited',
-          requestedRef: 'HEAD',
-          resolvedRef: null,
-          refRevision: null,
-          checkedAtEpochMs: null,
-          expiresAtEpochMs: null,
-          freshness: 'coolingDown',
-          lastAttempt: {
-            checkedAtEpochMs: Date.now(),
-            failure: {
-              reason: 'rateLimited',
-              message: 'rate limited',
-              retryAtEpochMs,
-              providerCooldown: true,
-            },
-          },
-        }]}
-        scope="global"
-        updatingSkills={new Map()}
-        onSkillClick={vi.fn()}
-        onPrepareUpdate={vi.fn(async () => true)}
-        onDelete={vi.fn()}
-        onAdd={vi.fn()}
-        onCheckUpdates={async () => 'notCompleted' as const}
-      />
-    );
-
-    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled)
-      .toBe(true);
-  });
-
-  it('re-enables Force when the observed provider cooldown is already expired', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
-    const retryAtEpochMs = 1_060_000;
-    const skill = makeSkill('global', {
-      hasUpdate: false,
-      updateStatus: 'cannotCheck',
-      updateReason: 'upstreamUnavailable',
-      updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
-      updateEvidence: {
-        source: 'github.com/owner/repo',
-        requestedRef: 'main',
-        resolvedRef: null,
-        refRevision: null,
-        checkedAtEpochMs: null,
-        expiresAtEpochMs: null,
-        freshness: 'coolingDown',
-        lastAttempt: {
-          checkedAtEpochMs: 1_000_000,
-          failure: {
-            reason: 'rateLimited',
-            message: 'rate limited',
-            retryAtEpochMs,
-            providerCooldown: true,
-          },
-        },
-      },
-    });
-    const props = {
-      title: 'Global',
-      skills: [skill],
-      scope: 'global' as const,
-      updatingSkills: new Map<string, never>(),
-      onSkillClick: vi.fn(),
-      onPrepareUpdate: vi.fn(async () => true),
-      onDelete: vi.fn(),
-      onAdd: vi.fn(),
-      onCheckUpdates: vi.fn(async () => 'notCompleted' as const),
-    };
-    const { rerender } = render(<SkillsSection {...props} />);
-
-    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(true);
-
-    vi.setSystemTime(1_120_000);
-    rerender(<SkillsSection
-      {...props}
-      skills={[{
-        ...skill,
-        updateEvidence: {
-          ...skill.updateEvidence!,
-          lastAttempt: {
-            ...skill.updateEvidence!.lastAttempt!,
-            failure: {
-              ...skill.updateEvidence!.lastAttempt!.failure!,
-              retryAtEpochMs: 1_050_000,
-            },
-          },
-        },
-      }]}
-    />);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(false);
-    vi.useRealTimers();
   });
 
   it('disables write actions but keeps update checks available during another mutation', () => {

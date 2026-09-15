@@ -223,7 +223,7 @@ export function useLibraryAddFlow({
       }
       return [...merged.values()];
     });
-    setMembershipOutcome(outcome.snapshot.membershipOutcome);
+    setMembershipOutcome(outcome.snapshot.membershipOutcomes[target.libraryId] ?? null);
     setPrepared(outcome.snapshot.pendingAdd ? {
       preview: outcome.snapshot.pendingAdd.preview,
       hasRetryPreviewError: false,
@@ -233,7 +233,7 @@ export function useLibraryAddFlow({
     } : null);
     setFlowError(outcome.snapshot.retryAdd?.error ?? null);
     setPhase('result');
-  }, [execute, prepared, redirectAcknowledged]);
+  }, [execute, prepared, redirectAcknowledged, target.libraryId]);
 
   const retryFailed = useCallback(async () => {
     if (!prepared) return;
