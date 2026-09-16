@@ -10,6 +10,7 @@ import type {
   UpdateCheckSelection, UpdateCheckOutcome, UpdateResponse,
   LibraryApplicationSummary,
   ScopePathBase,
+  SkillReadStatus,
 } from '@/bindings';
 
 export type RefreshOrigin = 'initial' | 'passive' | 'selfMutation';
@@ -29,6 +30,7 @@ export interface ContextSkillSnapshot {
   agents: ResolvedAgent[];
   libraryApplication?: LibraryApplicationSummary;
   pathExists: boolean;
+  readStatus?: SkillReadStatus | null;
   loading: boolean;
   error: AppError | null;
   requestId: number;

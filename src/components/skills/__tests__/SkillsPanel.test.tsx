@@ -12,6 +12,7 @@ import type {
   InstalledSkill,
   ProjectInfo,
   ResolvedAgent,
+  SkillReadStatus,
 } from '@/bindings';
 import type { ReactNode } from 'react';
 
@@ -50,6 +51,7 @@ function snapshot(
   skills: InstalledSkill[] = [],
   loading = false,
   error: AppError | null = null,
+  readStatus?: SkillReadStatus,
 ): {
   skills: InstalledSkill[];
   agents: ResolvedAgent[];
@@ -57,6 +59,7 @@ function snapshot(
   loading: boolean;
   error: AppError | null;
   requestId: number;
+  readStatus?: SkillReadStatus;
 } {
   return {
     skills,
@@ -65,6 +68,7 @@ function snapshot(
     loading,
     error,
     requestId: 1,
+    readStatus,
   };
 }
 
@@ -450,6 +454,23 @@ describe('SkillsPanel', () => {
     await waitFor(() => {
       expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(ubuntuGlobal);
     });
+  });
+
+  it('keeps valid Skills visible when some locations are incomplete', () => {
+    mocks.workspaceContextState.selectedContext = nativeGlobal;
+    mocks.skillsDataState.snapshots = {
+      'native/global': snapshot([makeSkill('toolkit')], false, null, {
+        complete: false,
+        issues: [],
+        counts: [{ code: 'readFailed', count: 3 }],
+        omittedCount: 1,
+      }),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('phase:global:toolkit')).toBeDefined();
+    expect(screen.getByText('skills.readIncompleteWithOmitted')).toBeDefined();
   });
 
   it('refreshes and clears details when the committed context changes', async () => {

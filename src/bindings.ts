@@ -1010,7 +1010,7 @@ export type ListSkillsResult = { pathBase?: ScopePathBase | null; skills: Instal
 /**
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */
-pathExists: boolean; libraryApplication: LibraryApplicationSummary }
+pathExists: boolean; readStatus?: SkillReadStatus | null; libraryApplication: LibraryApplicationSummary }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
 export type ManageAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; optionStates: ManageInstallOptionState[] }
 export type ManageAgentsConfirmation = { removesEntityDirectories: boolean }
@@ -1121,6 +1121,9 @@ export type SkillLibrarySummary = { id: LibraryId; name: string; skillCount: num
 export type SkillLocation = { scope: "global" } | { scope: "project"; project_id: string }
 export type SkillLocationRef = { environment: EnvironmentRef; scope: SkillLocation }
 export type SkillPlacementTargetKind = "file" | "other"
+export type SkillReadIssue = { code: string; path: ResourceLocator; agentIds: AgentId[] }
+export type SkillReadIssueCount = { code: string; count: number }
+export type SkillReadStatus = { complete: boolean; issues: SkillReadIssue[]; counts: SkillReadIssueCount[]; omittedCount: number }
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
 export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness; comparisonFingerprint?: string | null; sourceKey?: string | null; error?: AppError | null }
 export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "directoryLinksUnsupported" | "unavailable"

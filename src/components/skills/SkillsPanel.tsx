@@ -1,7 +1,7 @@
 // src/components/skills/SkillsPanel.tsx
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
@@ -84,6 +84,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const globalSkills = globalSnapshot.skills;
   const projectSkills = isProjectSelected ? projectSnapshot.skills : EMPTY_SNAPSHOT.skills;
   const projectPathExists = projectSnapshot.pathExists;
+  const incompleteReadStatuses = [globalSnapshot.readStatus, isProjectSelected ? projectSnapshot.readStatus : null]
+    .filter((status) => status && !status.complete);
+  const readIssueCount = incompleteReadStatuses.reduce(
+    (total, status) => total + status!.counts.reduce((count, item) => count + item.count, 0),
+    0,
+  );
+  const omittedReadIssueCount = incompleteReadStatuses.reduce(
+    (total, status) => total + status!.omittedCount,
+    0,
+  );
   const loading = (globalSnapshot.loading && globalSkills.length === 0)
     || (isProjectSelected && projectSnapshot.loading && projectSkills.length === 0);
   const error = projectSnapshot.error ?? globalSnapshot.error;
@@ -445,6 +455,28 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       </div>
 
       <CrossStorageWarningBanner />
+
+      {incompleteReadStatuses.length > 0 && (
+        <div role="status" className="flex items-center gap-3 border-y border-warning/30 bg-warning/10 px-4 py-2.5 text-sm sm:px-6">
+          <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
+          <p className="min-w-0 flex-1 text-warning">
+            {t(omittedReadIssueCount > 0 ? 'skills.readIncompleteWithOmitted' : 'skills.readIncomplete', {
+              count: readIssueCount,
+              omitted: omittedReadIssueCount,
+            })}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            onClick={() => { void refreshWorkspace(selectedContext); }}
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+            {t('skills.retry')}
+          </Button>
+        </div>
+      )}
 
       {/* Skills list content */}
       {compact ? (

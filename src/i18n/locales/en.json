@@ -406,6 +406,8 @@
     "emptyHint": "Click \"Add\" to install your first skill",
     "loadError": "Unable to load skills",
     "retry": "Retry",
+    "readIncomplete": "{{count}} Skill locations could not be read completely. Other results remain available.",
+    "readIncompleteWithOmitted": "{{count}} Skill locations could not be read completely; {{omitted}} details are omitted. Other results remain available.",
     "add": "Add",
     "enabled": "Enabled: {{count}}/{{total}} agents",
     "scope": {
