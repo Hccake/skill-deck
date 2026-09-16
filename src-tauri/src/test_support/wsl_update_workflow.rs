@@ -33,6 +33,7 @@ use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
 use crate::environment::agent_environment::{AgentEnvironmentResolver, EnvironmentContext};
 use crate::environment::context_resolver::ResolvedContext;
+use crate::environment::inspection::FilesystemInspector;
 use crate::environment::native::recovery::NativeRecoveryMarkerStore;
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::runtime::ContextSnapshotRevision;
@@ -41,6 +42,7 @@ use crate::environment::types::{
     SkillLocationRef,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
+use crate::environment::wsl::operations::inspection::WslInspector;
 use crate::environment::wsl::{WslRuntime, WslWorkspace};
 use crate::error::AppError;
 use crate::git_fixture::BareSkillRepo;
@@ -574,17 +576,15 @@ fi
     read_plan.set_project_lock(Some(
         &observed_facts.lock_document.to_pretty_bytes().unwrap(),
     ));
-    let snapshot = workspace
-        .filesystem_inspector()
-        .inspect(&read_plan.read_plan)
-        .await
-        .unwrap();
+    let inspector = Arc::new(WslInspector::new(workspace.clone()));
+    let snapshot = inspector.inspect(&read_plan.read_plan).await.unwrap();
     let listed = crate::application::skill_read::project_direct_skill_snapshot(
         &read_plan,
         snapshot,
         &observed_facts.agent_runtime,
         libraries.as_ref(),
         &targets,
+        inspector.as_ref(),
     )
     .await
     .unwrap();

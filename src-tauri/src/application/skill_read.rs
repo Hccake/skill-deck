@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -15,10 +16,12 @@ use crate::environment::agent_environment::{AgentRuntimeSnapshot, DetectionState
 use crate::environment::context_resolver::ResolvedContext;
 use crate::environment::inspection::{
     FilesystemEntryKind, RawFilesystemSnapshot, ReadPlan, ReadPlanBuilder, ReadRootPurpose,
+    SkillMetadataSource,
 };
-use crate::environment::runtime::ContextSnapshotRevision;
+use crate::environment::planning::{locator_comparison_key, ResolvedTargetFact, TargetEntryKind};
+use crate::environment::runtime::{ContextSnapshotRevision, PhysicalTargetKey};
 use crate::environment::types::{
-    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocation,
+    same_environment_identity, EnvironmentKey, EnvironmentRef, ResourceLocator, SkillLocation,
 };
 use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
@@ -65,7 +68,142 @@ pub struct ListSkillsResult {
     pub agents: Vec<ResolvedAgent>,
     /// 项目目录是否存在（project scope 时有意义，global 始终为 true）
     pub path_exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_status: Option<SkillReadStatus>,
     pub library_application: crate::application::library_application::LibraryApplicationSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct SkillReadIssue {
+    pub code: String,
+    pub path: ResourceLocator,
+    pub agent_ids: Vec<AgentId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct SkillReadIssueCount {
+    pub code: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct SkillReadStatus {
+    pub complete: bool,
+    pub issues: Vec<SkillReadIssue>,
+    pub counts: Vec<SkillReadIssueCount>,
+    pub omitted_count: u32,
+}
+
+const MAX_PUBLIC_READ_ISSUES: usize = 256;
+
+#[derive(Default)]
+struct SkillReadIssueCollector {
+    issues: Vec<SkillReadIssue>,
+    counts: BTreeMap<String, u32>,
+    omitted_count: u32,
+    seen: BTreeSet<(String, EnvironmentKey, String)>,
+}
+
+impl SkillReadIssueCollector {
+    fn record(
+        &mut self,
+        code: impl Into<String>,
+        path: ResourceLocator,
+        agent_ids: impl IntoIterator<Item = AgentId>,
+    ) {
+        let code = code.into();
+        if !self.seen.insert((
+            code.clone(),
+            EnvironmentKey::from_ref(&path.environment),
+            path.native_path.clone(),
+        )) {
+            return;
+        }
+        *self.counts.entry(code.clone()).or_default() += 1;
+        if self.issues.len() < MAX_PUBLIC_READ_ISSUES {
+            self.issues.push(SkillReadIssue {
+                code,
+                path,
+                agent_ids: agent_ids.into_iter().collect(),
+            });
+        } else {
+            self.omitted_count += 1;
+        }
+    }
+
+    fn finish(self) -> SkillReadStatus {
+        SkillReadStatus {
+            complete: self.counts.is_empty(),
+            issues: self.issues,
+            counts: self
+                .counts
+                .into_iter()
+                .map(|(code, count)| SkillReadIssueCount { code, count })
+                .collect(),
+            omitted_count: self.omitted_count,
+        }
+    }
+}
+
+type SkillFactId = (u32, String);
+type SkillDocuments = BTreeMap<SkillFactId, Arc<SkillFrontmatter>>;
+
+fn skill_fact_id(fact: &crate::environment::inspection::RawPathFact) -> SkillFactId {
+    (fact.root_index, fact.relative_path.clone())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum DocumentIdentity {
+    Physical(PhysicalTargetKey),
+    LinkTarget(EnvironmentKey, String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SkillMetadataCacheKey {
+    registry_revision: String,
+    environment_revision: String,
+    identity: DocumentIdentity,
+    fingerprint: String,
+}
+
+#[derive(Clone)]
+enum CachedSkillMetadata {
+    Parsed(Arc<SkillFrontmatter>),
+    InvalidFrontmatter,
+}
+
+#[derive(Default)]
+struct SkillMetadataCache {
+    entries: Mutex<BTreeMap<SkillMetadataCacheKey, CachedSkillMetadata>>,
+}
+
+impl SkillMetadataCache {
+    const MAX_ENTRIES: usize = 16_384;
+
+    fn get(&self, key: &SkillMetadataCacheKey) -> Option<CachedSkillMetadata> {
+        self.entries.lock().ok()?.get(key).cloned()
+    }
+
+    fn insert(&self, key: SkillMetadataCacheKey, value: CachedSkillMetadata) {
+        let Ok(mut entries) = self.entries.lock() else {
+            return;
+        };
+        if entries.len() >= Self::MAX_ENTRIES && !entries.contains_key(&key) {
+            entries.clear();
+        }
+        entries.insert(key, value);
+    }
+}
+
+fn skill_metadata_cache() -> &'static SkillMetadataCache {
+    static CACHE: OnceLock<SkillMetadataCache> = OnceLock::new();
+    CACHE.get_or_init(SkillMetadataCache::default)
 }
 
 #[derive(Debug)]
@@ -220,24 +358,261 @@ pub fn build_skill_read_plan(
     })
 }
 
+async fn read_skill_documents(
+    plan: &SkillReadPlan,
+    snapshot: &mut RawFilesystemSnapshot,
+    targets: &dyn crate::environment::planning::TargetFactResolver,
+    metadata: &dyn SkillMetadataSource,
+) -> Result<
+    (
+        SkillDocuments,
+        BTreeMap<SkillFactId, ResolvedTargetFact>,
+        Vec<SkillReadIssue>,
+    ),
+    AppError,
+> {
+    struct Candidate {
+        fact_id: SkillFactId,
+        target: ResourceLocator,
+        document: ResourceLocator,
+    }
+
+    let mut candidates = Vec::new();
+    for fact in &snapshot.facts {
+        let root = plan
+            .read_plan
+            .roots
+            .get(fact.root_index as usize)
+            .ok_or(AppError::StaleTarget)?;
+        if let Some(relative) = fact.relative_path.strip_suffix("/SKILL.md") {
+            if relative.starts_with(".skill-deck-stage-")
+                || relative.starts_with(".skill-deck-backup-")
+            {
+                continue;
+            }
+            candidates.push(Candidate {
+                fact_id: skill_fact_id(fact),
+                target: root.locator.join_child(relative),
+                document: root.locator.join_child(&fact.relative_path),
+            });
+        } else if fact.kind == FilesystemEntryKind::File
+            && !fact.relative_path.contains('/')
+            && fact.relative_path.ends_with(".md")
+        {
+            candidates.push(Candidate {
+                fact_id: skill_fact_id(fact),
+                target: root.locator.join_child(&fact.relative_path),
+                document: root.locator.join_child(&fact.relative_path),
+            });
+        }
+    }
+    if candidates.is_empty() {
+        return Ok((BTreeMap::new(), BTreeMap::new(), Vec::new()));
+    }
+
+    let target_locators = candidates
+        .iter()
+        .map(|candidate| candidate.target.clone())
+        .collect::<Vec<_>>();
+    let resolved = targets
+        .resolve(&plan.read_plan.context, &target_locators, None)
+        .await?;
+    if resolved.len() != candidates.len() {
+        return Err(AppError::StaleTarget);
+    }
+    let direct_by_path = resolved
+        .iter()
+        .filter(|fact| fact.entry_kind == TargetEntryKind::Directory)
+        .filter_map(|fact| {
+            locator_comparison_key(&fact.destination).map(|key| (key, fact.key.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut groups = BTreeMap::<DocumentIdentity, Vec<(SkillFactId, ResourceLocator)>>::new();
+    let mut resolved_by_fact = BTreeMap::new();
+    for (candidate, fact) in candidates.into_iter().zip(resolved) {
+        let identity = fact
+            .link_target_identity
+            .as_ref()
+            .map(|identity| identity.comparison_key())
+            .map(|key| {
+                direct_by_path
+                    .get(&key)
+                    .cloned()
+                    .map(DocumentIdentity::Physical)
+                    .unwrap_or_else(|| DocumentIdentity::LinkTarget(key.0, key.1))
+            })
+            .unwrap_or_else(|| DocumentIdentity::Physical(fact.key.clone()));
+        groups
+            .entry(identity)
+            .or_default()
+            .push((candidate.fact_id.clone(), candidate.document));
+        resolved_by_fact.insert(candidate.fact_id, fact);
+    }
+
+    let fact_positions = snapshot
+        .facts
+        .iter()
+        .enumerate()
+        .map(|(index, fact)| (skill_fact_id(fact), index))
+        .collect::<BTreeMap<_, _>>();
+    struct Group {
+        members: Vec<(SkillFactId, ResourceLocator)>,
+        cache_key: Option<SkillMetadataCacheKey>,
+    }
+    #[derive(Clone)]
+    struct GroupResult {
+        frontmatter: Option<Arc<SkillFrontmatter>>,
+        truncated: bool,
+        error_code: Option<String>,
+        bytes_read: u32,
+    }
+    let groups = groups
+        .into_iter()
+        .map(|(identity, members)| {
+            let fingerprint = members
+                .first()
+                .and_then(|(fact_id, _)| fact_positions.get(fact_id))
+                .and_then(|index| snapshot.facts[*index].fingerprint.as_ref());
+            let cache_key = fingerprint.map(|fingerprint| SkillMetadataCacheKey {
+                registry_revision: plan.read_plan.registry_revision.clone(),
+                environment_revision: plan.read_plan.environment_revision.clone(),
+                identity,
+                fingerprint: fingerprint.0.clone(),
+            });
+            Group { members, cache_key }
+        })
+        .collect::<Vec<_>>();
+    let cache = skill_metadata_cache();
+    let mut results = vec![None; groups.len()];
+    let mut misses = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        let cached = group.cache_key.as_ref().and_then(|key| cache.get(key));
+        results[index] = cached.map(|cached| match cached {
+            CachedSkillMetadata::Parsed(frontmatter) => GroupResult {
+                frontmatter: Some(frontmatter),
+                truncated: false,
+                error_code: None,
+                bytes_read: 0,
+            },
+            CachedSkillMetadata::InvalidFrontmatter => GroupResult {
+                frontmatter: None,
+                truncated: false,
+                error_code: Some("invalidFrontmatter".to_string()),
+                bytes_read: 0,
+            },
+        });
+        if results[index].is_none() {
+            misses.push((index, group.members[0].1.clone()));
+        }
+    }
+    if !misses.is_empty() {
+        let representatives = misses
+            .iter()
+            .map(|(_, locator)| locator.clone())
+            .collect::<Vec<_>>();
+        let loaded = metadata
+            .read(&representatives, plan.read_plan.per_file_limit)
+            .await?;
+        if loaded.len() != representatives.len()
+            || loaded
+                .iter()
+                .zip(&representatives)
+                .any(|(fact, expected)| fact.locator != *expected)
+        {
+            return Err(AppError::ConfigurationCorrupted {
+                message: "Skill metadata response does not match its request".to_string(),
+            });
+        }
+        for ((group_index, _), metadata) in misses.into_iter().zip(loaded) {
+            let parsed = (!metadata.truncated && metadata.error_code.is_none())
+                .then(|| parse_skill_frontmatter(&metadata.bytes))
+                .flatten()
+                .map(Arc::new);
+            let error_code = metadata.error_code.clone().or_else(|| {
+                (!metadata.truncated && parsed.is_none()).then(|| "invalidFrontmatter".to_string())
+            });
+            if let Some(cache_key) = groups[group_index].cache_key.clone() {
+                if let Some(frontmatter) = &parsed {
+                    cache.insert(cache_key, CachedSkillMetadata::Parsed(frontmatter.clone()));
+                } else if !metadata.truncated && metadata.error_code.is_none() {
+                    cache.insert(cache_key, CachedSkillMetadata::InvalidFrontmatter);
+                }
+            }
+            results[group_index] = Some(GroupResult {
+                frontmatter: parsed,
+                truncated: metadata.truncated,
+                error_code,
+                bytes_read: metadata.bytes.len() as u32,
+            });
+        }
+    }
+
+    let mut documents = BTreeMap::new();
+    let mut metadata_issues = Vec::new();
+    snapshot.total_content_bytes = 0;
+    for (group, result) in groups.into_iter().zip(results) {
+        let result = result.ok_or_else(|| AppError::ConfigurationCorrupted {
+            message: "Skill metadata group has no result".to_string(),
+        })?;
+        snapshot.total_content_bytes = snapshot
+            .total_content_bytes
+            .saturating_add(result.bytes_read);
+        let issue_code = result
+            .error_code
+            .clone()
+            .or_else(|| result.truncated.then(|| "frontmatterTooLarge".to_string()));
+        if let Some(code) = issue_code {
+            let agent_ids = group
+                .members
+                .iter()
+                .filter_map(|(fact_id, _)| fact_positions.get(fact_id))
+                .filter_map(|index| {
+                    plan.read_plan
+                        .roots
+                        .get(snapshot.facts[*index].root_index as usize)
+                })
+                .flat_map(|root| root.consumer_agent_ids.iter().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            metadata_issues.push(SkillReadIssue {
+                code,
+                path: group.members[0].1.clone(),
+                agent_ids,
+            });
+        }
+        for (fact_id, _) in group.members {
+            if let Some(frontmatter) = &result.frontmatter {
+                documents.insert(fact_id, frontmatter.clone());
+            }
+        }
+    }
+    Ok((documents, resolved_by_fact, metadata_issues))
+}
+
 pub(crate) async fn project_direct_skill_snapshot(
     plan: &SkillReadPlan,
     mut snapshot: RawFilesystemSnapshot,
     runtime: &AgentRuntimeSnapshot,
     libraries: &dyn crate::application::skill_libraries::SkillLibraryRepository,
     targets: &dyn crate::environment::planning::TargetFactResolver,
+    metadata: &dyn SkillMetadataSource,
 ) -> Result<ListSkillsResult, AppError> {
     use crate::application::installed_skill_resolver::SkillDirectoryName;
     use crate::application::library_candidates::ResolvedLibraryCandidateIndex;
     use crate::core::skill::InstalledLibraryVersion;
 
-    let single_files = project_recorded_eve_entries(plan, &mut snapshot, runtime, targets).await?;
+    let (mut documents, resolved_by_fact, metadata_issues) =
+        read_skill_documents(plan, &mut snapshot, targets, metadata).await?;
+    let single_files =
+        project_recorded_eve_entries(plan, &mut snapshot, &mut documents, runtime, targets).await?;
     let mut entries = Vec::new();
     for fact in &snapshot.facts {
         let Some(relative) = fact.relative_path.strip_suffix("/SKILL.md") else {
             continue;
         };
-        let Some(frontmatter) = parse_skill_frontmatter(&fact.frontmatter_bytes) else {
+        let fact_id = skill_fact_id(fact);
+        let Some(frontmatter) = documents.get(&fact_id) else {
             continue;
         };
         let root = plan
@@ -256,28 +631,16 @@ pub(crate) async fn project_direct_skill_snapshot(
                     relative,
                 ),
             },
+            resolved_by_fact
+                .get(&fact_id)
+                .cloned()
+                .ok_or(AppError::StaleTarget)?,
         ));
     }
     let names = entries
         .iter()
-        .map(|(_, name, _)| name.clone())
+        .map(|(_, name, _, _)| name.clone())
         .collect::<BTreeSet<_>>();
-    // 读取器不会展开作为根的链接；仍需核对这些根下已知 Skill 的库归属。
-    for (root_index, root) in plan.read_plan.roots.iter().enumerate() {
-        if !plan.owners.contains_key(&root.locator.native_path) {
-            continue;
-        }
-        for name in &names {
-            let path = root.locator.join_child(name.as_ref());
-            if !entries.iter().any(|(_, _, existing)| existing == &path) {
-                entries.push((
-                    (root_index as u32, format!("{}/SKILL.md", name.as_ref())),
-                    name.clone(),
-                    path,
-                ));
-            }
-        }
-    }
     let catalog = libraries.load(&snapshot.environment).await?;
     let known = ResolvedLibraryCandidateIndex::from_catalog(
         libraries,
@@ -287,25 +650,11 @@ pub(crate) async fn project_direct_skill_snapshot(
         &catalog,
     )
     .await?;
-    let destinations = entries
-        .iter()
-        .map(|(_, _, path)| path.clone())
-        .collect::<Vec<_>>();
-    let facts = if destinations.is_empty() {
-        Vec::new()
-    } else {
-        targets
-            .resolve(&plan.read_plan.context, &destinations, None)
-            .await?
-    };
-    if facts.len() != entries.len() {
-        return Err(AppError::StaleTarget);
-    }
-    let mut excluded = BTreeSet::new();
     let mut references = BTreeMap::<SkillDirectoryName, Vec<InstalledLibraryVersion>>::new();
-    for ((id, name, _), fact) in entries.iter().zip(&facts) {
-        if let Some(owner) = known.owner(name, fact) {
-            excluded.insert(id.clone());
+    let mut record_reference =
+        |name: &SkillDirectoryName,
+         owner: &crate::application::library_candidates::LibraryVersionCandidate|
+         -> Result<(), AppError> {
             let library = catalog
                 .libraries
                 .iter()
@@ -320,6 +669,36 @@ pub(crate) async fn project_direct_skill_snapshot(
             if !versions.contains(&reference) {
                 versions.push(reference);
             }
+            Ok(())
+        };
+    for fact in snapshot.facts.iter().filter(|fact| {
+        fact.relative_path.is_empty()
+            && matches!(
+                fact.kind,
+                FilesystemEntryKind::Symlink | FilesystemEntryKind::ReparsePoint
+            )
+    }) {
+        let Some(root) = plan.read_plan.roots.get(fact.root_index as usize) else {
+            return Err(AppError::StaleTarget);
+        };
+        if !plan.owners.contains_key(&root.locator.native_path) {
+            continue;
+        }
+        let Some(identity) = fact.resolved_target.as_deref().and_then(|target| {
+            crate::environment::planning::resolve_link_target_identity(&root.locator, target)
+        }) else {
+            continue;
+        };
+        for owner in known.members_for_root_link(&identity, &names) {
+            let name = SkillDirectoryName::try_from(owner.member_name())?;
+            record_reference(&name, owner)?;
+        }
+    }
+    let mut excluded = BTreeSet::new();
+    for (id, name, _, fact) in &entries {
+        if let Some(owner) = known.owner(name, fact) {
+            excluded.insert(id.clone());
+            record_reference(name, owner)?;
         } else if matches!(
             fact.entry_kind,
             crate::environment::planning::TargetEntryKind::Symlink
@@ -327,14 +706,13 @@ pub(crate) async fn project_direct_skill_snapshot(
         ) {
             let direct = entries
                 .iter()
-                .zip(&facts)
-                .filter(|((_, candidate_name, _), target)| {
+                .filter(|(_, candidate_name, _, target)| {
                     candidate_name == name
                         && target.entry_kind
                             == crate::environment::planning::TargetEntryKind::Directory
                         && known.owner(name, target).is_none()
                 })
-                .map(|(_, target)| target)
+                .map(|(_, _, _, target)| target)
                 .collect::<Vec<_>>();
             if !direct.is_empty()
                 && !direct.iter().any(|target| {
@@ -350,7 +728,13 @@ pub(crate) async fn project_direct_skill_snapshot(
     snapshot
         .facts
         .retain(|fact| !excluded.contains(&(fact.root_index, fact.relative_path.clone())));
-    let mut result = project_skill_snapshot(plan, snapshot, runtime)?;
+    let mut result = project_skill_snapshot_with_documents(
+        plan,
+        snapshot,
+        runtime,
+        &documents,
+        metadata_issues,
+    )?;
     for skill in &mut result.skills {
         skill.library_versions =
             references.remove(&SkillDirectoryName::try_from(skill.name.as_str())?);
@@ -373,6 +757,7 @@ pub(crate) async fn project_direct_skill_snapshot(
 async fn project_recorded_eve_entries(
     plan: &SkillReadPlan,
     snapshot: &mut RawFilesystemSnapshot,
+    documents: &mut SkillDocuments,
     runtime: &AgentRuntimeSnapshot,
     targets: &dyn crate::environment::planning::TargetFactResolver,
 ) -> Result<Vec<InstalledSkill>, AppError> {
@@ -505,7 +890,7 @@ async fn project_recorded_eve_entries(
         }
         matches.sort_by_key(|((root, _, _, _, _), _)| root != root_index);
         let Some(((root, name, target, _, _), _)) = matches.first() else {
-            snapshot.facts[*fact_index].frontmatter_bytes.clear();
+            documents.remove(&skill_fact_id(&snapshot.facts[*fact_index]));
             continue;
         };
         let positions = expected
@@ -556,34 +941,72 @@ async fn project_recorded_eve_entries(
             continue;
         }
         // 仅为读取投影补充已确认的身份；磁盘中的 Eve 文件保持原样。
-        let bytes = &mut snapshot.facts[*fact_index].frontmatter_bytes;
-        let parsed = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|raw| raw.strip_prefix("---"))
-            .and_then(|rest| rest.find("---").map(|end| &rest[..end]))
-            .and_then(|yaml| serde_yaml::from_str::<serde_yaml::Mapping>(yaml).ok());
-        if let Some(mut metadata) = parsed {
-            metadata.insert(
-                serde_yaml::Value::String("name".into()),
-                serde_yaml::Value::String(name.clone()),
-            );
-            *bytes = format!("---\n{}---\n", serde_yaml::to_string(&metadata)?).into_bytes();
-        } else {
-            bytes.clear();
-        }
+        let fact_id = skill_fact_id(&snapshot.facts[*fact_index]);
+        let Some(frontmatter) = documents.get(&fact_id) else {
+            continue;
+        };
+        let mut frontmatter = frontmatter.as_ref().clone();
+        frontmatter.name = name.clone();
+        documents.insert(fact_id, Arc::new(frontmatter));
     }
     Ok(single_files)
 }
 
+#[cfg(test)]
 pub fn project_skill_snapshot(
+    plan: &SkillReadPlan,
+    mut snapshot: RawFilesystemSnapshot,
+    runtime: &AgentRuntimeSnapshot,
+) -> Result<ListSkillsResult, AppError> {
+    let mut documents = SkillDocuments::new();
+    for fact in &mut snapshot.facts {
+        if fact.frontmatter_bytes.is_empty() {
+            continue;
+        }
+        if let Some(frontmatter) = parse_skill_frontmatter(&fact.frontmatter_bytes) {
+            documents.insert(skill_fact_id(fact), Arc::new(frontmatter));
+        } else {
+            fact.error_code = Some("invalidFrontmatter".to_string());
+        }
+    }
+    project_skill_snapshot_with_documents(plan, snapshot, runtime, &documents, Vec::new())
+}
+
+fn project_skill_snapshot_with_documents(
     plan: &SkillReadPlan,
     snapshot: RawFilesystemSnapshot,
     runtime: &AgentRuntimeSnapshot,
+    documents: &SkillDocuments,
+    initial_issues: Vec<SkillReadIssue>,
 ) -> Result<ListSkillsResult, AppError> {
     if !same_environment_identity(&snapshot.environment, &plan.read_plan.context.environment) {
         return Err(AppError::ConfigurationCorrupted {
             message: "Skill read snapshot belongs to another Environment".to_string(),
         });
+    }
+    let mut read_issues = SkillReadIssueCollector::default();
+    for issue in initial_issues {
+        read_issues.record(issue.code, issue.path, issue.agent_ids);
+    }
+    for fact in &snapshot.facts {
+        let Some(code) = fact
+            .error_code
+            .clone()
+            .or_else(|| fact.truncated.then(|| "frontmatterTooLarge".to_string()))
+        else {
+            continue;
+        };
+        let root = plan
+            .read_plan
+            .roots
+            .get(fact.root_index as usize)
+            .ok_or(AppError::StaleTarget)?;
+        let path = if fact.relative_path.is_empty() {
+            root.locator.clone()
+        } else {
+            root.locator.join_child(&fact.relative_path)
+        };
+        read_issues.record(code, path, root.consumer_agent_ids.iter().cloned());
     }
     let is_global = matches!(plan.read_plan.context.scope, SkillLocation::Global);
     let mut directory_kinds = BTreeMap::<(u32, String), FilesystemEntryKind>::new();
@@ -623,7 +1046,8 @@ pub fn project_skill_snapshot(
         if fact.truncated || fact.error_code.is_some() {
             continue;
         }
-        let Some(frontmatter) = parse_skill_frontmatter(&fact.frontmatter_bytes) else {
+        let fact_id = skill_fact_id(fact);
+        let Some(frontmatter) = documents.get(&fact_id) else {
             continue;
         };
         if frontmatter
@@ -720,6 +1144,7 @@ pub fn project_skill_snapshot(
         skills,
         agents,
         path_exists,
+        read_status: Some(read_issues.finish()),
         library_application: crate::application::library_application::LibraryApplicationSummary {
             ordered_libraries: Vec::new(),
             selected_agent_ids: Vec::new(),
@@ -908,6 +1333,8 @@ fn project_candidate(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use super::{build_skill_read_plan, project_skill_snapshot};
     use crate::core::agent_definition::{
@@ -918,13 +1345,23 @@ mod tests {
         AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
     };
     use crate::environment::context_resolver::ResolvedContext;
-    use crate::environment::inspection::FilesystemInspector;
-    use crate::environment::inspection::{FilesystemEntryKind, RawFilesystemSnapshot, RawPathFact};
+    use crate::environment::inspection::{
+        FilesystemEntryKind, FilesystemInspector, MetadataFuture, RawFilesystemSnapshot,
+        RawPathFact, RawSkillMetadata, SkillMetadataSource,
+    };
     use crate::environment::native::inspection::NativeInspector;
+    use crate::environment::planning::{
+        ResolvedTargetFact, RuntimeTargetFactResolver, TargetEntryKind, TargetFactFuture,
+        TargetFactResolver,
+    };
+    use crate::environment::runtime::{
+        EntryFingerprint, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
+    };
     use crate::environment::types::{
         EnvironmentRef, EnvironmentStatus, RegisteredProject, ResourceLocator, SkillLocation,
-        SkillLocationRef,
+        SkillLocationRef, StorageAccess,
     };
+    use crate::error::AppError;
 
     fn resolved_scope(standard_root: &str, private_root: Option<&str>) -> ResolvedAgentScope {
         ResolvedAgentScope {
@@ -1033,9 +1470,131 @@ mod tests {
             relative_path: String::new(),
             kind: FilesystemEntryKind::Directory,
             resolved_target: None,
+            fingerprint: None,
             frontmatter_bytes: Vec::new(),
             truncated: false,
             error_code: None,
+        }
+    }
+
+    #[derive(Clone)]
+    struct CountingTargets {
+        inner: RuntimeTargetFactResolver,
+        batch_sizes: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl TargetFactResolver for CountingTargets {
+        fn resolve<'a>(
+            &'a self,
+            context: &'a SkillLocationRef,
+            logical_destinations: &'a [ResourceLocator],
+            cancellation: Option<crate::core::mutation::CancellationSignal>,
+        ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
+            self.batch_sizes
+                .lock()
+                .unwrap()
+                .push(logical_destinations.len());
+            self.inner
+                .resolve(context, logical_destinations, cancellation)
+        }
+    }
+
+    #[cfg(unix)]
+    struct CountingMetadata {
+        inner: NativeInspector,
+        batch_sizes: Arc<Mutex<Vec<usize>>>,
+    }
+
+    #[cfg(unix)]
+    impl SkillMetadataSource for CountingMetadata {
+        fn read<'a>(
+            &'a self,
+            locators: &'a [ResourceLocator],
+            per_file_limit: u32,
+        ) -> MetadataFuture<'a, Result<Vec<RawSkillMetadata>, AppError>> {
+            self.batch_sizes.lock().unwrap().push(locators.len());
+            self.inner.read(locators, per_file_limit)
+        }
+    }
+
+    struct SyntheticScaleTargets;
+
+    impl TargetFactResolver for SyntheticScaleTargets {
+        fn resolve<'a>(
+            &'a self,
+            _context: &'a SkillLocationRef,
+            logical_destinations: &'a [ResourceLocator],
+            _cancellation: Option<crate::core::mutation::CancellationSignal>,
+        ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
+            Box::pin(async move {
+                logical_destinations
+                    .iter()
+                    .map(|destination| {
+                        let name = destination.native_path.rsplit('/').next().ok_or_else(|| {
+                            AppError::Validation {
+                                field: Some("scaleTarget".to_string()),
+                                message: "missing synthetic Skill name".to_string(),
+                            }
+                        })?;
+                        let index = name
+                            .strip_prefix("skill-")
+                            .and_then(|value| value.parse::<u64>().ok())
+                            .unwrap_or_default();
+                        Ok(ResolvedTargetFact {
+                            key: PhysicalTargetKey {
+                                backend: ExecutionBackend::NativeUnix,
+                                physical_parent: PhysicalParentIdentity::Unix {
+                                    device: 1,
+                                    inode: index + 1,
+                                },
+                                normalized_final_child_name: name.to_string(),
+                            },
+                            destination: destination.clone(),
+                            storage_access: StorageAccess::Native,
+                            fingerprint: EntryFingerprint(format!("scale-{index}")),
+                            entry_kind: TargetEntryKind::Directory,
+                            link_target: None,
+                            link_target_identity: None,
+                        })
+                    })
+                    .collect()
+            })
+        }
+    }
+
+    struct SyntheticScaleMetadata {
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl SkillMetadataSource for SyntheticScaleMetadata {
+        fn read<'a>(
+            &'a self,
+            locators: &'a [ResourceLocator],
+            _per_file_limit: u32,
+        ) -> MetadataFuture<'a, Result<Vec<RawSkillMetadata>, AppError>> {
+            self.reads.fetch_add(locators.len(), Ordering::SeqCst);
+            Box::pin(async move {
+                Ok(locators
+                    .iter()
+                    .map(|locator| {
+                        let name = locator
+                            .native_path
+                            .trim_end_matches("/SKILL.md")
+                            .rsplit('/')
+                            .next()
+                            .unwrap();
+                        RawSkillMetadata {
+                            locator: locator.clone(),
+                            bytes: format!(
+                                "---\nname: {name}\ndescription: Synthetic {name}\n---\n"
+                            )
+                            .into_bytes(),
+                            truncated: false,
+                            error_code: None,
+                        }
+                    })
+                    .collect())
+            })
         }
     }
 
@@ -1046,6 +1605,7 @@ mod tests {
                 relative_path: "toolkit".to_string(),
                 kind: FilesystemEntryKind::Directory,
                 resolved_target: None,
+                fingerprint: None,
                 frontmatter_bytes: Vec::new(),
                 truncated: false,
                 error_code: None,
@@ -1055,6 +1615,7 @@ mod tests {
                 relative_path: "toolkit/SKILL.md".to_string(),
                 kind: FilesystemEntryKind::File,
                 resolved_target: None,
+                fingerprint: None,
                 frontmatter_bytes: b"---\nname: toolkit\ndescription: Toolkit\n---\n".to_vec(),
                 truncated: false,
                 error_code: None,
@@ -1156,6 +1717,7 @@ mod tests {
                 relative_path: directory.to_string(),
                 kind: FilesystemEntryKind::Directory,
                 resolved_target: None,
+                fingerprint: None,
                 frontmatter_bytes: Vec::new(),
                 truncated: false,
                 error_code: None,
@@ -1165,6 +1727,7 @@ mod tests {
                 relative_path: format!("{directory}/SKILL.md"),
                 kind: FilesystemEntryKind::File,
                 resolved_target: None,
+                fingerprint: None,
                 frontmatter_bytes: format!("---\nname: {name}\ndescription: Test\n---\n")
                     .into_bytes(),
                 truncated: false,
@@ -1191,6 +1754,396 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["toolkit"]
         );
+    }
+
+    #[test]
+    fn skill_snapshot_keeps_valid_cards_when_another_frontmatter_is_invalid() {
+        let environment = EnvironmentRef::Native;
+        let context = context(environment.clone());
+        let runtime = runtime(environment.clone());
+        let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
+        let canonical_index = root_index(&plan, "/work/app/.agents/skills");
+        let mut facts = vec![root_fact(canonical_index)];
+        facts.extend(skill_facts(canonical_index));
+        facts.push(RawPathFact {
+            root_index: canonical_index,
+            relative_path: "broken".to_string(),
+            kind: FilesystemEntryKind::Directory,
+            resolved_target: None,
+            fingerprint: None,
+            frontmatter_bytes: Vec::new(),
+            truncated: false,
+            error_code: None,
+        });
+        facts.push(RawPathFact {
+            root_index: canonical_index,
+            relative_path: "broken/SKILL.md".to_string(),
+            kind: FilesystemEntryKind::File,
+            resolved_target: None,
+            fingerprint: None,
+            frontmatter_bytes: b"not frontmatter".to_vec(),
+            truncated: false,
+            error_code: None,
+        });
+
+        let result = project_skill_snapshot(
+            &plan,
+            RawFilesystemSnapshot {
+                environment,
+                total_content_bytes: facts
+                    .iter()
+                    .map(|fact| fact.frontmatter_bytes.len() as u32)
+                    .sum(),
+                facts,
+            },
+            &runtime,
+        )
+        .unwrap();
+
+        assert_eq!(result.skills.len(), 1);
+        let status = result.read_status.unwrap();
+        assert!(!status.complete);
+        assert_eq!(status.counts[0].code, "invalidFrontmatter");
+        assert_eq!(status.counts[0].count, 1);
+        assert_eq!(status.omitted_count, 0);
+    }
+
+    #[tokio::test]
+    async fn direct_skill_projection_resolves_only_observed_entries() {
+        use crate::environment::wsl::WslRuntime;
+
+        let temp = tempfile::tempdir().unwrap();
+        let project_root = temp.path();
+        let canonical_root = project_root.join(".agents/skills");
+        std::fs::create_dir_all(&canonical_root).unwrap();
+
+        let environment = EnvironmentRef::Native;
+        let mut context = context(environment.clone());
+        context.project.as_mut().unwrap().native_path = project_root.to_string_lossy().into_owned();
+        context.skill_root.native_path = canonical_root.to_string_lossy().into_owned();
+        context.lock.native_path = project_root
+            .join("skills-lock.json")
+            .to_string_lossy()
+            .into_owned();
+
+        let template = runtime(environment.clone())
+            .agents
+            .into_values()
+            .next()
+            .unwrap();
+        let mut runtime = runtime(environment.clone());
+        runtime.project_path = Some(project_root.to_string_lossy().into_owned());
+        runtime.agents.clear();
+        for index in 0..20 {
+            let id = AgentId::parse(format!("custom-{index}")).unwrap();
+            let relative_root = format!(".custom-{index}/skills");
+            let private_root = project_root.join(&relative_root);
+            let skill_name = format!("skill-{index}");
+            std::fs::create_dir_all(private_root.join(&skill_name)).unwrap();
+            std::fs::write(
+                private_root.join(&skill_name).join("SKILL.md"),
+                format!("---\nname: {skill_name}\ndescription: Skill {index}\n---\n"),
+            )
+            .unwrap();
+
+            let mut agent = template.clone();
+            agent.definition.id = id.clone();
+            agent.definition.display_name = format!("Custom {index}");
+            agent.definition.project.private_path = Some(PathSpec::project(&relative_root));
+            agent.project.standard_path = Some(canonical_root.to_string_lossy().into_owned());
+            agent.project.private_path = Some(private_root.to_string_lossy().into_owned());
+            runtime.agents.insert(id, agent);
+        }
+
+        let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
+        let inspector = NativeInspector::new(environment.clone());
+        let snapshot = inspector.inspect(&plan.read_plan).await.unwrap();
+        let libraries =
+            crate::native_workflow_integration_support::update_library_repository(temp.path());
+        let batch_sizes = Arc::new(Mutex::new(Vec::new()));
+        let targets = CountingTargets {
+            inner: RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            batch_sizes: batch_sizes.clone(),
+        };
+
+        let result = super::project_direct_skill_snapshot(
+            &plan,
+            snapshot,
+            &runtime,
+            libraries.as_ref(),
+            &targets,
+            &inspector,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.skills.len(), 20);
+        assert_eq!(*batch_sizes.lock().unwrap(), vec![20]);
+    }
+
+    #[tokio::test]
+    #[ignore = "large-scale Skill read contract"]
+    async fn scale_projection_deduplicates_ten_thousand_placements_to_one_thousand_reads() {
+        const AGENTS: usize = 100;
+        const SKILLS: usize = 1_000;
+        const PLACEMENTS_PER_ROOT: usize = 100;
+
+        let environment = EnvironmentRef::Native;
+        let context = context(environment.clone());
+        let template = runtime(environment.clone())
+            .agents
+            .into_values()
+            .next()
+            .unwrap();
+        let mut runtime = runtime(environment.clone());
+        runtime.agents.clear();
+        for index in 0..AGENTS {
+            let id = AgentId::parse(format!("scale-agent-{index:03}")).unwrap();
+            let relative_root = if index == 0 {
+                ".agents/skills".to_string()
+            } else {
+                format!(".scale-agent-{index:03}/skills")
+            };
+            let private_root = format!("/work/app/{relative_root}");
+            let mut agent = template.clone();
+            agent.definition.id = id.clone();
+            agent.definition.display_name = format!("Scale Agent {index:03}");
+            agent.definition.project.private_path = Some(PathSpec::project(&relative_root));
+            agent.project.standard_path = Some("/work/app/.agents/skills".to_string());
+            agent.project.private_path = Some(private_root);
+            runtime.agents.insert(id, agent);
+        }
+
+        let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
+        let mut facts = plan
+            .read_plan
+            .roots
+            .iter()
+            .enumerate()
+            .map(|(index, _)| root_fact(index as u32))
+            .collect::<Vec<_>>();
+        let skill_roots = plan
+            .read_plan
+            .roots
+            .iter()
+            .enumerate()
+            .filter(|(_, root)| root.locator.native_path != "/work/app")
+            .map(|(index, _)| index as u32)
+            .collect::<Vec<_>>();
+        assert_eq!(skill_roots.len(), AGENTS);
+        for (root_position, root_index) in skill_roots.into_iter().enumerate() {
+            for offset in 0..PLACEMENTS_PER_ROOT {
+                let skill_index = (root_position * PLACEMENTS_PER_ROOT + offset) % SKILLS;
+                let name = format!("skill-{skill_index:04}");
+                facts.push(RawPathFact {
+                    root_index,
+                    relative_path: name.clone(),
+                    kind: FilesystemEntryKind::Directory,
+                    resolved_target: None,
+                    fingerprint: None,
+                    frontmatter_bytes: Vec::new(),
+                    truncated: false,
+                    error_code: None,
+                });
+                facts.push(RawPathFact {
+                    root_index,
+                    relative_path: format!("{name}/SKILL.md"),
+                    kind: FilesystemEntryKind::File,
+                    resolved_target: None,
+                    fingerprint: Some(EntryFingerprint(format!("document-{skill_index:04}"))),
+                    frontmatter_bytes: Vec::new(),
+                    truncated: false,
+                    error_code: None,
+                });
+            }
+        }
+        let reads = Arc::new(AtomicUsize::new(0));
+        let metadata = SyntheticScaleMetadata {
+            reads: reads.clone(),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let libraries =
+            crate::native_workflow_integration_support::update_library_repository(temp.path());
+
+        let snapshot = RawFilesystemSnapshot {
+            environment,
+            facts,
+            total_content_bytes: 0,
+        };
+        let result = super::project_direct_skill_snapshot(
+            &plan,
+            snapshot.clone(),
+            &runtime,
+            libraries.as_ref(),
+            &SyntheticScaleTargets,
+            &metadata,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.skills.len(), SKILLS);
+        assert_eq!(reads.load(Ordering::SeqCst), SKILLS);
+        assert!(result.read_status.unwrap().complete);
+
+        let refreshed = super::project_direct_skill_snapshot(
+            &plan,
+            snapshot.clone(),
+            &runtime,
+            libraries.as_ref(),
+            &SyntheticScaleTargets,
+            &metadata,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refreshed.skills.len(), SKILLS);
+        assert_eq!(reads.load(Ordering::SeqCst), SKILLS);
+
+        let mut changed = snapshot;
+        for fact in &mut changed.facts {
+            if fact.relative_path == "skill-0000/SKILL.md" {
+                fact.fingerprint = Some(EntryFingerprint("document-0000-changed".to_string()));
+            }
+        }
+        let changed_result = super::project_direct_skill_snapshot(
+            &plan,
+            changed,
+            &runtime,
+            libraries.as_ref(),
+            &SyntheticScaleTargets,
+            &metadata,
+        )
+        .await
+        .unwrap();
+        assert_eq!(changed_result.skills.len(), SKILLS);
+        assert_eq!(reads.load(Ordering::SeqCst), SKILLS + 1);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    #[ignore = "requires SKILL_DECK_TEST_WSL_DISTRO and a matching real WSL Worker"]
+    async fn real_wsl_skill_read_scale_p95_is_within_five_seconds() {
+        use std::time::{Duration, Instant};
+
+        use crate::environment::wsl::WslRuntime;
+
+        const AGENTS: usize = 100;
+        const SAMPLES: usize = 20;
+        const SKILLS: usize = 1_000;
+
+        let distro_name =
+            std::env::var("SKILL_DECK_TEST_WSL_DISTRO").expect("set SKILL_DECK_TEST_WSL_DISTRO");
+        let fixture_root = format!("/tmp/skill-deck-skill-read-scale-{}", uuid::Uuid::new_v4());
+        let wsl = Arc::new(WslRuntime::for_wsl_test());
+        wsl.connect(&distro_name).await.expect("connect WSL Worker");
+        wsl.run_test_script(
+            &distro_name,
+            r#"set -eu
+root=$1
+mkdir -p "$root/content" "$root/project"
+i=0
+while [ "$i" -lt 1000 ]; do
+  name=$(printf 'skill-%04d' "$i")
+  mkdir -p "$root/content/$name"
+  printf '%s\n' '---' "name: $name" "description: Synthetic $name" '---' > "$root/content/$name/SKILL.md"
+  i=$((i + 1))
+done
+r=0
+while [ "$r" -lt 100 ]; do
+  root_name=$(printf 'root-%03d' "$r")
+  mkdir -p "$root/roots/$root_name"
+  k=0
+  while [ "$k" -lt 100 ]; do
+    skill=$(((r * 100 + k) % 1000))
+    name=$(printf 'skill-%04d' "$skill")
+    ln -s "$root/content/$name" "$root/roots/$root_name/$name"
+    k=$((k + 1))
+  done
+  r=$((r + 1))
+done
+"#,
+            vec![fixture_root.clone()],
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("create scale fixture");
+
+        let environment = EnvironmentRef::Wsl {
+            distro_name: distro_name.clone(),
+        };
+        let mut resolved_context = context(environment.clone());
+        resolved_context.project.as_mut().unwrap().native_path = format!("{fixture_root}/project");
+        resolved_context.skill_root.native_path = format!("{fixture_root}/roots/root-000");
+        resolved_context.lock.native_path = format!("{fixture_root}/project/skills-lock.json");
+        let template = runtime(environment.clone())
+            .agents
+            .into_values()
+            .next()
+            .unwrap();
+        let mut agent_runtime = runtime(environment.clone());
+        agent_runtime.project_path = Some(format!("{fixture_root}/project"));
+        agent_runtime.agents.clear();
+        for index in 0..AGENTS {
+            let id = AgentId::parse(format!("scale-agent-{index:03}")).unwrap();
+            let root = format!("{fixture_root}/roots/root-{index:03}");
+            let mut agent = template.clone();
+            agent.definition.id = id.clone();
+            agent.definition.display_name = format!("Scale Agent {index:03}");
+            agent.definition.project.private_path =
+                Some(PathSpec::project(format!(".scale-agent-{index:03}/skills")));
+            agent.project.standard_path = Some(resolved_context.skill_root.native_path.clone());
+            agent.project.private_path = Some(root);
+            agent_runtime.agents.insert(id, agent);
+        }
+        let base_plan = build_skill_read_plan(&resolved_context, &agent_runtime, &[]).unwrap();
+        assert_eq!(base_plan.read_plan.roots.len(), AGENTS + 1);
+        let workspace = wsl.workspace(&distro_name).unwrap();
+        let inspector =
+            crate::environment::wsl::operations::inspection::WslInspector::new(workspace);
+        let targets = RuntimeTargetFactResolver::new(wsl.clone());
+        let mut elapsed = Vec::with_capacity(SAMPLES);
+        let measured = async {
+            for sample in 0..SAMPLES {
+                let mut plan = base_plan.clone();
+                plan.read_plan.registry_revision = format!("scale-registry-{sample}");
+                let started = Instant::now();
+                let mut snapshot = inspector.inspect(&plan.read_plan).await?;
+                let (documents, _, metadata_issues) =
+                    super::read_skill_documents(&plan, &mut snapshot, &targets, &inspector).await?;
+                let result = super::project_skill_snapshot_with_documents(
+                    &plan,
+                    snapshot,
+                    &agent_runtime,
+                    &documents,
+                    metadata_issues,
+                )?;
+                if result.skills.len() != SKILLS {
+                    return Err(AppError::ConfigurationCorrupted {
+                        message: format!(
+                            "scale fixture projected {} Skills instead of {SKILLS}",
+                            result.skills.len()
+                        ),
+                    });
+                }
+                elapsed.push(started.elapsed());
+            }
+            Ok::<_, AppError>(())
+        }
+        .await;
+
+        wsl.run_test_script(
+            &distro_name,
+            "set -eu\ncase $1 in /tmp/skill-deck-skill-read-scale-*) rm -rf -- \"$1\" ;; *) exit 64 ;; esac\n",
+            vec![fixture_root],
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("clean scale fixture");
+        measured.expect("execute scale reads");
+
+        elapsed.sort_unstable();
+        let p95 = elapsed[(SAMPLES * 95).div_ceil(100) - 1];
+        eprintln!("real WSL Skill read samples: {elapsed:?}; p95={p95:?}");
+        assert!(p95 <= Duration::from_secs(5), "P95 was {p95:?}");
     }
 
     #[cfg(unix)]
@@ -1227,12 +2180,28 @@ mod tests {
         resolved.project.standard_path = Some(canonical_root.to_string_lossy().into_owned());
         resolved.project.private_path = Some(agent_root.to_string_lossy().into_owned());
         let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
-        let snapshot = NativeInspector::new(environment)
-            .inspect(&plan.read_plan)
-            .await
-            .unwrap();
-
-        let result = project_skill_snapshot(&plan, snapshot, &runtime).unwrap();
+        let inspector = NativeInspector::new(environment);
+        let snapshot = inspector.inspect(&plan.read_plan).await.unwrap();
+        let targets = RuntimeTargetFactResolver::new(Arc::new(
+            crate::environment::wsl::WslRuntime::default(),
+        ));
+        let libraries =
+            crate::native_workflow_integration_support::update_library_repository(temp.path());
+        let metadata_batches = Arc::new(Mutex::new(Vec::new()));
+        let metadata = CountingMetadata {
+            inner: NativeInspector::new(EnvironmentRef::Native),
+            batch_sizes: metadata_batches.clone(),
+        };
+        let result = super::project_direct_skill_snapshot(
+            &plan,
+            snapshot,
+            &runtime,
+            libraries.as_ref(),
+            &targets,
+            &metadata,
+        )
+        .await
+        .unwrap();
 
         let skill = result
             .skills
@@ -1247,6 +2216,7 @@ mod tests {
             skill.private_adapted_agents.as_deref(),
             Some([AgentId::parse("custom-both").unwrap()].as_slice())
         );
+        assert_eq!(*metadata_batches.lock().unwrap(), vec![1]);
     }
 
     #[tokio::test]
@@ -1303,16 +2273,15 @@ mod tests {
         agent.project.private_path = Some(private_root.to_string_lossy().into_owned());
         let targets = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
         let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
-        let snapshot = NativeInspector::new(EnvironmentRef::Native)
-            .inspect(&plan.read_plan)
-            .await
-            .unwrap();
+        let inspector = NativeInspector::new(EnvironmentRef::Native);
+        let snapshot = inspector.inspect(&plan.read_plan).await.unwrap();
         let result = super::project_direct_skill_snapshot(
             &plan,
             snapshot,
             &runtime,
             libraries.as_ref(),
             &targets,
+            &inspector,
         )
         .await
         .unwrap();
@@ -1345,16 +2314,14 @@ mod tests {
         std::os::unix::fs::symlink(&library_root, &canonical_root).unwrap();
         #[cfg(windows)]
         junction::create(&library_root, &canonical_root).unwrap();
-        let snapshot = NativeInspector::new(EnvironmentRef::Native)
-            .inspect(&plan.read_plan)
-            .await
-            .unwrap();
+        let snapshot = inspector.inspect(&plan.read_plan).await.unwrap();
         let result = super::project_direct_skill_snapshot(
             &plan,
             snapshot,
             &runtime,
             libraries.as_ref(),
             &targets,
+            &inspector,
         )
         .await
         .unwrap();
@@ -1365,16 +2332,14 @@ mod tests {
         );
 
         std::fs::remove_dir_all(private_root.join("toolkit")).unwrap();
-        let snapshot = NativeInspector::new(EnvironmentRef::Native)
-            .inspect(&plan.read_plan)
-            .await
-            .unwrap();
+        let snapshot = inspector.inspect(&plan.read_plan).await.unwrap();
         let result = super::project_direct_skill_snapshot(
             &plan,
             snapshot,
             &runtime,
             libraries.as_ref(),
             &targets,
+            &inspector,
         )
         .await
         .unwrap();

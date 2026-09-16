@@ -119,6 +119,7 @@ fn inspection_adapter_executes_the_shared_engine_and_returns_raw_path_bytes() {
 
     let response = execute_inspection(
         InspectionRequest {
+            read_content: true,
             roots: vec![InspectionRoot {
                 path: temp.path().to_string_lossy().into_owned(),
                 stat_only: false,

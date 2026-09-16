@@ -421,6 +421,7 @@ async fn worker_streams_inspection_without_starving_control() {
             request_id: 2,
             message: Message::InspectFilesystem {
                 request: InspectionRequest {
+                    read_content: true,
                     roots: vec![InspectionRoot {
                         path: root.to_string_lossy().into_owned(),
                         stat_only: false,

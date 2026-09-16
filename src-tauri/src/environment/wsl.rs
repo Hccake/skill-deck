@@ -212,6 +212,38 @@ impl WslRuntime {
         )
     }
 
+    #[cfg(all(test, target_os = "windows"))]
+    pub(crate) async fn run_test_script(
+        &self,
+        distro_name: &str,
+        script: &'static str,
+        args: Vec<String>,
+        limit: std::time::Duration,
+    ) -> Result<(), AppError> {
+        let session = self.connect(distro_name).await?;
+        let output = protocol::WslCommandRunner::run(protocol::WslCommandRequest {
+            session,
+            script,
+            args,
+            stdin: Vec::new(),
+            timeout: limit,
+            stdout_limit: protocol::DEFAULT_WSL_STDOUT_LIMIT,
+            stderr_limit: protocol::DEFAULT_WSL_STDERR_LIMIT,
+            cancellation: None,
+        })
+        .await?;
+        if output.exit_code == Some(0) {
+            Ok(())
+        } else {
+            Err(AppError::ExecutionFailed {
+                message: format!(
+                    "WSL test fixture command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            })
+        }
+    }
+
     pub fn wsl_integration_enabled(&self) -> bool {
         matches!(
             self.state
@@ -876,12 +908,6 @@ impl WslRuntime {
 impl WslWorkspace {
     pub fn distro_name(&self) -> &str {
         &self.distro_name
-    }
-
-    pub(crate) fn filesystem_inspector(
-        &self,
-    ) -> Arc<dyn crate::environment::inspection::FilesystemInspector> {
-        Arc::new(operations::inspection::WslInspector::new(self.clone()))
     }
 
     pub(crate) fn payload_storage(

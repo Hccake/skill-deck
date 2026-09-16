@@ -1,4 +1,6 @@
 use std::fmt;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::{fs, io::Read, path::Path};
@@ -6,6 +8,7 @@ use std::{fs, io::Read, path::Path};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectionRequest {
     pub roots: Vec<InspectionRoot>,
+    pub read_content: bool,
     pub per_file_limit: u32,
     pub aggregate_limit: u32,
 }
@@ -38,6 +41,7 @@ pub struct PathFact {
     pub relative_path: PathBuf,
     pub kind: EntryKind,
     pub resolved_target: Option<PathBuf>,
+    pub fingerprint: Option<String>,
     pub content_bytes: Vec<u8>,
     pub truncated: bool,
     pub error_code: Option<ErrorCode>,
@@ -163,7 +167,7 @@ fn inspect_platform(
                         &skill_path,
                         root_index as u32,
                         relative_path.join("SKILL.md"),
-                        true,
+                        request.read_content,
                         request,
                         &mut total_content_bytes,
                     ));
@@ -257,6 +261,15 @@ fn inspect_path(
         relative_path,
         kind,
         resolved_target,
+        fingerprint: Some(format!(
+            "entry-v1:{}:{}:{}:{}:{}:{}",
+            metadata.dev(),
+            metadata.ino(),
+            metadata.mode(),
+            metadata.size(),
+            metadata.mtime(),
+            metadata.mtime_nsec()
+        )),
         content_bytes,
         truncated,
         error_code,
@@ -275,6 +288,7 @@ fn empty_fact(
         relative_path,
         kind,
         resolved_target: None,
+        fingerprint: None,
         content_bytes: Vec::new(),
         truncated: false,
         error_code,

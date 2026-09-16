@@ -2245,6 +2245,7 @@ mod tests {
     fn inspection_request() -> Message {
         Message::InspectFilesystem {
             request: InspectionRequest {
+                read_content: true,
                 roots: Vec::new(),
                 per_file_limit: 1,
                 aggregate_limit: 1,

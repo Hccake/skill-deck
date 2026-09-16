@@ -1,4 +1,3 @@
-#[cfg(not(target_os = "linux"))]
 use std::{fs, io::Read, path::Path};
 
 #[cfg(target_os = "linux")]
@@ -8,8 +7,9 @@ use environment_engine::inspection::{
 };
 
 use crate::environment::inspection::{
-    FilesystemEntryKind, FilesystemInspector, InspectionFuture, RawFilesystemSnapshot, RawPathFact,
-    ReadPlan, ReadRootPurpose,
+    FilesystemEntryKind, FilesystemInspector, InspectionFuture, MetadataFuture,
+    RawFilesystemSnapshot, RawPathFact, RawSkillMetadata, ReadPlan, ReadRootPurpose,
+    SkillMetadataSource,
 };
 #[cfg(not(target_os = "linux"))]
 use crate::environment::native::tree::{inspect_entry_no_follow, NativeEntryKind};
@@ -54,9 +54,79 @@ impl FilesystemInspector for NativeInspector {
     }
 }
 
+impl SkillMetadataSource for NativeInspector {
+    fn read<'a>(
+        &'a self,
+        locators: &'a [crate::environment::types::ResourceLocator],
+        per_file_limit: u32,
+    ) -> MetadataFuture<'a, Result<Vec<RawSkillMetadata>, AppError>> {
+        let environment = self.environment.clone();
+        let locators = locators.to_vec();
+        Box::pin(async move {
+            if environment != EnvironmentRef::Native
+                || per_file_limit == 0
+                || locators
+                    .iter()
+                    .any(|locator| locator.environment != EnvironmentRef::Native)
+            {
+                return Err(AppError::StorageUnsupported {
+                    path: "nativeSkillMetadata".to_string(),
+                });
+            }
+            tokio::task::spawn_blocking(move || read_native_metadata(&locators, per_file_limit))
+                .await
+                .map_err(|error| AppError::ExecutionFailed {
+                    message: format!("native metadata task failed: {error}"),
+                })?
+        })
+    }
+}
+
+fn read_native_metadata(
+    locators: &[crate::environment::types::ResourceLocator],
+    per_file_limit: u32,
+) -> Result<Vec<RawSkillMetadata>, AppError> {
+    Ok(locators
+        .iter()
+        .map(|locator| {
+            let path = Path::new(&locator.native_path);
+            let mut bytes = Vec::new();
+            let mut truncated = false;
+            let mut error_code = None;
+            match fs::File::open(path) {
+                Ok(file) => {
+                    if file
+                        .take(per_file_limit as u64)
+                        .read_to_end(&mut bytes)
+                        .is_err()
+                    {
+                        bytes.clear();
+                        error_code = Some("readFailed".to_string());
+                    } else {
+                        truncated = fs::metadata(path)
+                            .map(|metadata| metadata.len() > bytes.len() as u64)
+                            .unwrap_or(false);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    error_code = Some("missing".to_string());
+                }
+                Err(_) => error_code = Some("readFailed".to_string()),
+            }
+            RawSkillMetadata {
+                locator: locator.clone(),
+                bytes,
+                truncated,
+                error_code,
+            }
+        })
+        .collect())
+}
+
 #[cfg(target_os = "linux")]
 fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
     let snapshot = engine_inspection::inspect(&InspectionRequest {
+        read_content: false,
         roots: plan
             .roots
             .iter()
@@ -91,6 +161,9 @@ fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
                 resolved_target: fact
                     .resolved_target
                     .map(|target| target.to_string_lossy().into_owned()),
+                fingerprint: fact
+                    .fingerprint
+                    .map(crate::environment::runtime::EntryFingerprint),
                 frontmatter_bytes: fact.content_bytes,
                 truncated: fact.truncated,
                 error_code: fact.error_code.map(|code| match code {
@@ -114,6 +187,7 @@ fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
             path,
             root_index as u32,
             String::new(),
+            false,
             plan,
             &mut total,
         ));
@@ -145,6 +219,7 @@ fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
                 &child_path,
                 root_index as u32,
                 relative.clone(),
+                false,
                 plan,
                 &mut total,
             ));
@@ -162,6 +237,7 @@ fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
                         &skill,
                         root_index as u32,
                         format!("{relative}/SKILL.md"),
+                        false,
                         plan,
                         &mut total,
                     ));
@@ -181,6 +257,7 @@ fn inspect_path(
     path: &Path,
     root_index: u32,
     relative_path: String,
+    read_content: bool,
     plan: &ReadPlan,
     total: &mut usize,
 ) -> RawPathFact {
@@ -192,6 +269,7 @@ fn inspect_path(
                 relative_path,
                 kind: FilesystemEntryKind::Other,
                 resolved_target: None,
+                fingerprint: None,
                 frontmatter_bytes: Vec::new(),
                 truncated: false,
                 error_code: Some("pathUnavailable".to_string()),
@@ -210,6 +288,7 @@ fn inspect_path(
     let mut truncated = false;
     let mut error_code = None;
     if kind == FilesystemEntryKind::File
+        && read_content
         && (relative_path == "SKILL.md" || relative_path.ends_with("/SKILL.md"))
     {
         let remaining = (plan.aggregate_limit as usize).saturating_sub(*total);
@@ -236,6 +315,7 @@ fn inspect_path(
         resolved_target: inspected
             .link_target
             .map(|target| target.to_string_lossy().into_owned()),
+        fingerprint: Some(inspected.fingerprint),
         frontmatter_bytes: content,
         truncated,
         error_code,
@@ -279,10 +359,9 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = NativeInspector::new(EnvironmentRef::Native)
-            .inspect(&builder.build().unwrap())
-            .await
-            .unwrap();
+        let plan = builder.build().unwrap();
+        let inspector = NativeInspector::new(EnvironmentRef::Native);
+        let snapshot = inspector.inspect(&plan).await.unwrap();
 
         assert_eq!(snapshot.facts.len(), 1);
         assert_eq!(snapshot.total_content_bytes, 0);
@@ -324,10 +403,9 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = NativeInspector::new(EnvironmentRef::Native)
-            .inspect(&builder.build().unwrap())
-            .await
-            .unwrap();
+        let plan = builder.build().unwrap();
+        let inspector = NativeInspector::new(EnvironmentRef::Native);
+        let snapshot = inspector.inspect(&plan).await.unwrap();
 
         let linked_directory = snapshot
             .facts
@@ -341,7 +419,22 @@ mod tests {
             .find(|fact| fact.relative_path == "toolkit/SKILL.md")
             .expect("Skill document through directory link");
         assert_eq!(skill_document.kind, FilesystemEntryKind::File);
-        assert_eq!(skill_document.frontmatter_bytes, document);
+        assert!(skill_document.frontmatter_bytes.is_empty());
+        assert!(skill_document.fingerprint.is_some());
+
+        let locator = ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: agent_root
+                .join("toolkit/SKILL.md")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        let metadata = inspector
+            .read(std::slice::from_ref(&locator), plan.per_file_limit)
+            .await
+            .unwrap();
+        assert_eq!(metadata[0].locator, locator);
+        assert_eq!(metadata[0].bytes, document);
     }
 
     #[cfg(unix)]

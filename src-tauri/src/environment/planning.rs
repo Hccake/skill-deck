@@ -16,8 +16,8 @@ use crate::environment::runtime::{
     PhysicalTargetKey,
 };
 use crate::environment::types::{
-    normalized_wsl_distro_name, same_environment_identity, EnvironmentRef, ResourceLocator,
-    SkillLocationRef, StorageAccess,
+    normalized_wsl_distro_name, same_environment_identity, EnvironmentKey, EnvironmentRef,
+    ResourceLocator, SkillLocationRef, StorageAccess,
 };
 use crate::environment::wsl::operations::content_manifest as wsl_content_manifest;
 use crate::environment::wsl::operations::entry::inspect_entries;
@@ -59,6 +59,20 @@ impl ResolvedLinkTargetIdentity {
             && normalized_comparison_path(&target.environment, &target.native_path)
                 .is_some_and(|candidate| candidate == self.comparison_path)
     }
+
+    pub(crate) fn comparison_key(&self) -> (EnvironmentKey, String) {
+        (
+            EnvironmentKey::from_ref(&self.environment),
+            self.comparison_path.clone(),
+        )
+    }
+}
+
+pub(crate) fn locator_comparison_key(
+    locator: &ResourceLocator,
+) -> Option<(EnvironmentKey, String)> {
+    normalized_comparison_path(&locator.environment, &locator.native_path)
+        .map(|path| (EnvironmentKey::from_ref(&locator.environment), path))
 }
 
 pub(crate) fn resolve_link_target_identity(

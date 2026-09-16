@@ -121,6 +121,7 @@ fn inspection_payload_round_trips_raw_posix_path_bytes() {
             relative_path: vec![b's', b'k', 0x80],
             kind: InspectionEntryKind::Symlink,
             resolved_target: Some(vec![b'.', b'.', b'/', 0xff]),
+            fingerprint: Some("entry-v1-test".to_string()),
             content_bytes: vec![0, 255, 1],
             truncated: true,
             error_code: Some(InspectionErrorCode::ReadLinkFailed),

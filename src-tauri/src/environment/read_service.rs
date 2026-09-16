@@ -104,6 +104,7 @@ mod tests {
                                 FilesystemEntryKind::Directory
                             },
                             resolved_target: None,
+                            fingerprint: None,
                             frontmatter_bytes: content.clone(),
                             truncated: self.oversized,
                             error_code: (index == 1).then(|| "pathUnavailable".to_string()),

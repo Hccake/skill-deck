@@ -2582,10 +2582,11 @@ mod update_lifecycle {
                 .map(|document| document.to_pretty_bytes())
                 .transpose()?;
             plan.set_project_lock(bytes.as_deref());
+            let inspector = crate::environment::native::inspection::NativeInspector::new(
+                EnvironmentRef::Native,
+            );
             let snapshot = crate::environment::inspection::FilesystemInspector::inspect(
-                &crate::environment::native::inspection::NativeInspector::new(
-                    EnvironmentRef::Native,
-                ),
+                &inspector,
                 &plan.read_plan,
             )
             .await?;
@@ -2595,6 +2596,7 @@ mod update_lifecycle {
                 &facts.agent_runtime,
                 update_library_repository(self._root.path()).as_ref(),
                 &self.targets,
+                &inspector,
             )
             .await
         }
@@ -3081,8 +3083,10 @@ mod update_lifecycle {
             &[],
         )
         .unwrap();
+        let inspector =
+            crate::environment::native::inspection::NativeInspector::new(EnvironmentRef::Native);
         let snapshot = crate::environment::inspection::FilesystemInspector::inspect(
-            &crate::environment::native::inspection::NativeInspector::new(EnvironmentRef::Native),
+            &inspector,
             &read_plan.read_plan,
         )
         .await
@@ -3093,6 +3097,7 @@ mod update_lifecycle {
             &facts.agent_runtime,
             update_library_repository(fixture._root.path()).as_ref(),
             &fixture.targets,
+            &inspector,
         )
         .await
         .unwrap();

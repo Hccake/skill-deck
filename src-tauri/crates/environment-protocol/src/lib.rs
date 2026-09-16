@@ -58,6 +58,7 @@ pub enum PathKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InspectionRequest {
     pub roots: Vec<InspectionRoot>,
+    pub read_content: bool,
     pub per_file_limit: u32,
     pub aggregate_limit: u32,
     pub deadline_millis: u64,
@@ -92,6 +93,7 @@ pub struct InspectionFact {
     pub relative_path: Vec<u8>,
     pub kind: InspectionEntryKind,
     pub resolved_target: Option<Vec<u8>>,
+    pub fingerprint: Option<String>,
     #[serde(with = "serde_bytes")]
     pub content_bytes: Vec<u8>,
     pub truncated: bool,

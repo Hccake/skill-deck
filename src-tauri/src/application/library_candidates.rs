@@ -7,7 +7,9 @@ use crate::application::installed_skill_resolver::SkillDirectoryName;
 use crate::application::library_application::{LibraryApplicationBackend, LibraryMemberIdentity};
 use crate::application::skill_libraries::{LibraryCatalog, LibraryId, SkillLibraryRepository};
 use crate::core::agent_definition::AgentId;
-use crate::environment::planning::{ResolvedTargetFact, TargetFactResolver};
+use crate::environment::planning::{
+    ResolvedLinkTargetIdentity, ResolvedTargetFact, TargetFactResolver,
+};
 use crate::environment::runtime::PhysicalTargetKey;
 use crate::environment::types::{
     same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
@@ -501,6 +503,8 @@ impl LibraryCandidateSource for RepositoryLibraryCandidateSource {
 
 pub(crate) struct ResolvedLibraryCandidateIndex {
     by_member: BTreeMap<LibraryCatalogMember, LibraryVersionCandidate>,
+    members_by_skill: BTreeMap<SkillDirectoryName, Vec<LibraryCatalogMember>>,
+    roots_by_library: BTreeMap<LibraryId, ResourceLocator>,
 }
 
 impl ResolvedLibraryCandidateIndex {
@@ -513,6 +517,8 @@ impl ResolvedLibraryCandidateIndex {
         if skills.is_empty() {
             return Ok(Self {
                 by_member: BTreeMap::new(),
+                members_by_skill: BTreeMap::new(),
+                roots_by_library: BTreeMap::new(),
             });
         }
         let catalog = repository.load(environment).await?;
@@ -555,6 +561,9 @@ impl ResolvedLibraryCandidateIndex {
         if resolved.len() != members.len() {
             return Err(AppError::StaleTarget);
         }
+        let members_by_skill = index
+            .recognized_members(&members)
+            .map_err(candidate_configuration_error)?;
         Ok(Self {
             by_member: members
                 .into_iter()
@@ -564,7 +573,30 @@ impl ResolvedLibraryCandidateIndex {
                     (member, candidate)
                 })
                 .collect(),
+            members_by_skill,
+            roots_by_library: roots,
         })
+    }
+
+    pub(crate) fn members_for_root_link<'a>(
+        &'a self,
+        identity: &ResolvedLinkTargetIdentity,
+        skills: &BTreeSet<SkillDirectoryName>,
+    ) -> Vec<&'a LibraryVersionCandidate> {
+        let Some(library_id) = self
+            .roots_by_library
+            .iter()
+            .find_map(|(library_id, root)| identity.matches(root).then_some(library_id))
+        else {
+            return Vec::new();
+        };
+        skills
+            .iter()
+            .filter_map(|skill| self.members_by_skill.get(skill))
+            .flatten()
+            .filter_map(|member| self.by_member.get(member))
+            .filter(|candidate| candidate.library_id() == library_id)
+            .collect()
     }
 
     pub(crate) fn owner(
@@ -572,13 +604,11 @@ impl ResolvedLibraryCandidateIndex {
         skill: &SkillDirectoryName,
         target: &ResolvedTargetFact,
     ) -> Option<&LibraryVersionCandidate> {
-        self.by_member.values().find(|candidate| {
-            SkillDirectoryName::try_from(candidate.member_name.as_str())
-                .ok()
-                .as_ref()
-                == Some(skill)
-                && candidate.matches_target(target)
-        })
+        self.members_by_skill
+            .get(skill)?
+            .iter()
+            .filter_map(|member| self.by_member.get(member))
+            .find(|candidate| candidate.matches_target(target))
     }
 
     pub(crate) async fn load<T: TargetFactResolver + ?Sized>(
@@ -604,6 +634,14 @@ impl ResolvedLibraryCandidateIndex {
         if resolved.len() != members.len() {
             return Err(AppError::StaleTarget);
         }
+        let members_by_skill = members.iter().try_fold(
+            BTreeMap::<SkillDirectoryName, Vec<LibraryCatalogMember>>::new(),
+            |mut grouped, member| {
+                let skill = SkillDirectoryName::try_from(member.member_name.as_str())?;
+                grouped.entry(skill).or_default().push(member.clone());
+                Ok::<_, AppError>(grouped)
+            },
+        )?;
         Ok(Self {
             by_member: members
                 .into_iter()
@@ -613,6 +651,8 @@ impl ResolvedLibraryCandidateIndex {
                     (member, candidate)
                 })
                 .collect(),
+            members_by_skill,
+            roots_by_library: BTreeMap::new(),
         })
     }
 

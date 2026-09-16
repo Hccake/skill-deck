@@ -18,6 +18,7 @@ fn inspects_direct_children_and_bounded_skill_documents() {
     std::fs::write(root.join("beta/SKILL.md"), b"abcdef").expect("beta document");
 
     let snapshot = inspect(&InspectionRequest {
+        read_content: true,
         roots: vec![InspectionRoot {
             path: root,
             stat_only: false,
@@ -47,12 +48,42 @@ fn inspects_direct_children_and_bounded_skill_documents() {
 }
 
 #[test]
+fn inventory_reports_skill_documents_without_reading_content() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("skills");
+    std::fs::create_dir_all(root.join("demo")).expect("demo directory");
+    std::fs::write(root.join("demo/SKILL.md"), b"frontmatter bytes").expect("document");
+
+    let snapshot = inspect(&InspectionRequest {
+        roots: vec![InspectionRoot {
+            path: root,
+            stat_only: false,
+        }],
+        read_content: false,
+        per_file_limit: 16,
+        aggregate_limit: 16,
+    })
+    .expect("inventory");
+
+    let document = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.relative_path == std::path::Path::new("demo/SKILL.md"))
+        .expect("document locator");
+    assert_eq!(document.kind, EntryKind::File);
+    assert!(document.content_bytes.is_empty());
+    assert!(!document.truncated);
+    assert_eq!(snapshot.total_content_bytes, 0);
+}
+
+#[test]
 fn stat_only_root_does_not_enumerate_or_consume_content_budget() {
     let temp = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(temp.path().join("toolkit")).expect("toolkit directory");
     std::fs::write(temp.path().join("toolkit/SKILL.md"), b"document").expect("document");
 
     let snapshot = inspect(&InspectionRequest {
+        read_content: true,
         roots: vec![InspectionRoot {
             path: temp.path().to_path_buf(),
             stat_only: true,
@@ -79,6 +110,7 @@ fn follows_a_child_directory_symlink_only_for_its_skill_document() {
     symlink(temp.path().join("missing"), root.join("broken")).expect("broken symlink");
 
     let snapshot = inspect(&InspectionRequest {
+        read_content: true,
         roots: vec![InspectionRoot {
             path: root,
             stat_only: false,
@@ -112,6 +144,7 @@ fn preserves_non_utf8_relative_paths_without_lossy_conversion() {
     std::fs::write(temp.path().join(&raw_name), b"payload").expect("non-UTF-8 entry");
 
     let snapshot = inspect(&InspectionRequest {
+        read_content: true,
         roots: vec![InspectionRoot {
             path: temp.path().to_path_buf(),
             stat_only: false,
@@ -137,6 +170,7 @@ fn isolates_missing_and_unreadable_roots() {
     std::fs::write(&file, b"content").expect("file");
 
     let snapshot = inspect(&InspectionRequest {
+        read_content: true,
         roots: vec![
             InspectionRoot {
                 path: missing,
@@ -172,6 +206,7 @@ fn cooperative_cancellation_stops_between_filesystem_entries() {
 
     let error = inspect_with_cancel(
         &InspectionRequest {
+            read_content: true,
             roots: vec![InspectionRoot {
                 path: temp.path().to_path_buf(),
                 stat_only: false,

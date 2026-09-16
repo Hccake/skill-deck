@@ -156,6 +156,7 @@ where
                     stat_only: root.stat_only,
                 })
                 .collect(),
+            read_content: request.read_content,
             per_file_limit: request.per_file_limit,
             aggregate_limit: request.aggregate_limit,
         },
@@ -193,6 +194,7 @@ where
                 resolved_target: fact
                     .resolved_target
                     .map(|target| target.as_os_str().as_bytes().to_vec()),
+                fingerprint: fact.fingerprint,
                 content_bytes: fact.content_bytes,
                 truncated: fact.truncated,
                 error_code: fact.error_code.map(|code| match code {
@@ -214,8 +216,8 @@ pub fn execute_path_metadata<F>(
 where
     F: Fn() -> bool,
 {
+    validate_batch_size(request.queries.len(), "pathMetadata")?;
     if request.queries.is_empty()
-        || request.queries.len() > MAX_INSPECTION_ROOTS
         || request
             .queries
             .iter()
@@ -307,8 +309,8 @@ pub fn execute_directory_count<F>(
 where
     F: Fn() -> bool,
 {
+    validate_batch_size(request.paths.len(), "directoryCount")?;
     if request.paths.is_empty()
-        || request.paths.len() > MAX_INSPECTION_ROOTS
         || request
             .paths
             .iter()
@@ -359,8 +361,8 @@ pub fn execute_document_read<F>(
 where
     F: Fn() -> bool,
 {
+    validate_batch_size(request.queries.len(), "documentRead")?;
     if request.queries.is_empty()
-        || request.queries.len() > MAX_INSPECTION_ROOTS
         || request.queries.iter().any(|query| {
             !Path::new(&query.path).is_absolute()
                 || query.limit == 0
@@ -471,8 +473,8 @@ pub fn execute_map_windows_paths<F>(
 where
     F: Fn() -> bool,
 {
+    validate_batch_size(request.paths.len(), "pathMapping")?;
     if request.paths.is_empty()
-        || request.paths.len() > MAX_INSPECTION_ROOTS
         || request
             .paths
             .iter()
@@ -563,12 +565,20 @@ where
     )
     .map_err(|error| planning_error(projection_error_code(error), "projection"))?;
     let mut targets = Vec::with_capacity(response.targets.len());
+    let mut mapped_anchors = std::collections::BTreeMap::<std::path::PathBuf, String>::new();
     for target in response.targets {
         if is_cancelled() {
             return Err(planning_error("cancelled", "projection"));
         }
-        let storage_projection = map_path_to_windows(&target.physical_anchor)
-            .ok_or_else(|| planning_error("pathMappingFailed", "projection"))?;
+        let storage_projection = match mapped_anchors.get(&target.physical_anchor) {
+            Some(mapped) => mapped.clone(),
+            None => {
+                let mapped = map_path_to_windows(&target.physical_anchor)
+                    .ok_or_else(|| planning_error("pathMappingFailed", "projection"))?;
+                mapped_anchors.insert(target.physical_anchor.clone(), mapped.clone());
+                mapped
+            }
+        };
         targets.push(ProjectedTarget {
             anchor_device: target.anchor_device,
             anchor_inode: target.anchor_inode,
@@ -670,13 +680,21 @@ fn validate_paths(
     deadline: u64,
     phase: &'static str,
 ) -> Result<(), RequestError> {
+    validate_batch_size(paths.len(), phase)?;
     if paths.is_empty()
-        || paths.len() > MAX_INSPECTION_ROOTS
         || paths.iter().any(|path| !Path::new(path).is_absolute())
         || deadline == 0
         || deadline > MAX_REQUEST_DEADLINE_MILLIS
     {
         return Err(planning_error("invalidRequest", phase));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn validate_batch_size(len: usize, phase: &'static str) -> Result<(), RequestError> {
+    if len > MAX_INSPECTION_ROOTS {
+        return Err(planning_error("requestTooLarge", phase));
     }
     Ok(())
 }
@@ -858,8 +876,8 @@ where
 
 #[cfg(target_os = "linux")]
 fn validate_inspection_request(request: &InspectionRequest) -> Result<(), RequestError> {
+    validate_batch_size(request.roots.len(), "inspection")?;
     if request.roots.is_empty()
-        || request.roots.len() > MAX_INSPECTION_ROOTS
         || request
             .roots
             .iter()

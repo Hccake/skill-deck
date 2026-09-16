@@ -125,11 +125,11 @@ pub async fn inspect_eve_project(
         .inspect_path_metadata(vec![
             PathMetadataQuery {
                 path: agent_path.clone(),
-                inspect_content: false,
+                content_limit: None,
             },
             PathMetadataQuery {
                 path: package_path.clone(),
-                inspect_content: true,
+                content_limit: Some(1024 * 1024),
             },
         ])
         .await?;
@@ -1094,7 +1094,7 @@ async fn query_wsl_metadata(
                 .iter()
                 .map(|query| PathMetadataQuery {
                     path: query.path.clone(),
-                    inspect_content: query.inspect_eve_package,
+                    content_limit: query.inspect_eve_package.then_some(1024 * 1024),
                 })
                 .collect::<Vec<_>>(),
         )
@@ -2898,16 +2898,19 @@ mod tests {
                 path: "/work/package.json".to_string(),
                 kind: PathMetadataKind::Other,
                 content: PathMetadataContent::Empty,
+                truncated: false,
             },
             PathMetadataFact {
                 path: "/home/alice/.other-agent".to_string(),
                 kind: PathMetadataKind::Directory,
                 content: PathMetadataContent::NotRequested,
+                truncated: false,
             },
             PathMetadataFact {
                 path: "/home/alice/.blocked".to_string(),
                 kind: PathMetadataKind::Inaccessible,
                 content: PathMetadataContent::Unreadable,
+                truncated: false,
             },
         ])
         .expect("project Worker facts");
