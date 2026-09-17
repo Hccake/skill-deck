@@ -74,7 +74,10 @@ impl fmt::Display for DocumentWriteError {
         match self {
             Self::UnsupportedPlatform => formatter.write_str("Linux document write is unavailable"),
             Self::Io { phase, publication } => {
-                write!(formatter, "document write failed ({phase:?}, {publication:?})")
+                write!(
+                    formatter,
+                    "document write failed ({phase:?}, {publication:?})"
+                )
             }
             Self::Conflict => formatter.write_str("document changed since it was read"),
             Self::InvalidTarget => formatter.write_str("document target is not a regular file"),

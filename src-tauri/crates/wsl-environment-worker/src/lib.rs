@@ -19,8 +19,8 @@ use environment_protocol::{
     EntryMetadata, InspectionEntryKind, InspectionErrorCode, InspectionFact, ManifestRecord,
     ManifestRecordKind, PathMetadataContent, PathMetadataFact, PathMetadataKind, ProjectedTarget,
     MAX_DIRECTORY_COUNT_LIMIT, MAX_DOCUMENT_BYTES, MAX_INSPECTION_CONTENT_BYTES,
-    MAX_INSPECTION_FACTS, MAX_INSPECTION_ROOTS, MAX_MANIFEST_RECORDS,
-    MAX_PATH_CONTENT_BYTES_PER_FILE, MAX_REQUEST_DEADLINE_MILLIS,
+    MAX_INSPECTION_FACTS, MAX_MANIFEST_RECORDS, MAX_PATH_CONTENT_BYTES_PER_FILE,
+    MAX_REQUEST_DEADLINE_MILLIS,
 };
 use environment_protocol::{
     DirectoryCountRequest, DirectoryCountResponse, DirectoryListRequest, DirectoryListResponse,
@@ -28,7 +28,7 @@ use environment_protocol::{
     InspectionRequest, InspectionResponse, ManifestRequest, ManifestResponse,
     MapWindowsPathsRequest, MapWindowsPathsResponse, Message, PathKind, PathMetadataRequest,
     PathMetadataResponse, ProjectionRequest, ProjectionResponse, WriteProbeRequest,
-    WriteProbeResponse,
+    WriteProbeResponse, MAX_INSPECTION_ROOTS,
 };
 use sha2::{Digest, Sha256};
 
@@ -691,7 +691,6 @@ fn validate_paths(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn validate_batch_size(len: usize, phase: &'static str) -> Result<(), RequestError> {
     if len > MAX_INSPECTION_ROOTS {
         return Err(planning_error("requestTooLarge", phase));
@@ -773,12 +772,13 @@ where
 
 #[cfg(not(target_os = "linux"))]
 pub fn execute_projection<F>(
-    _request: ProjectionRequest,
+    request: ProjectionRequest,
     _is_cancelled: F,
 ) -> Result<ProjectionResponse, RequestError>
 where
     F: Fn() -> bool,
 {
+    validate_batch_size(request.destinations.len(), "projection")?;
     Err(planning_error("unsupportedPlatform", "projection"))
 }
 

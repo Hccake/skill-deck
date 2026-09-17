@@ -513,8 +513,9 @@ mod tests {
             )
             .unwrap();
 
+        let plan = builder.build().unwrap();
         let snapshot = NativeInspector::new(EnvironmentRef::Native)
-            .inspect(&builder.build().unwrap())
+            .inspect(&plan)
             .await
             .unwrap();
 
@@ -530,6 +531,22 @@ mod tests {
             .iter()
             .find(|fact| fact.relative_path == "toolkit/SKILL.md")
             .expect("Skill document through junction");
-        assert_eq!(skill_document.frontmatter_bytes, document);
+        assert_eq!(skill_document.kind, FilesystemEntryKind::File);
+        assert!(skill_document.frontmatter_bytes.is_empty());
+        assert!(skill_document.fingerprint.is_some());
+
+        let locator = ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: agent_root
+                .join("toolkit/SKILL.md")
+                .to_string_lossy()
+                .into_owned(),
+        };
+        let metadata = NativeInspector::new(EnvironmentRef::Native)
+            .read(std::slice::from_ref(&locator), plan.per_file_limit)
+            .await
+            .unwrap();
+        assert_eq!(metadata[0].locator, locator);
+        assert_eq!(metadata[0].bytes, document);
     }
 }

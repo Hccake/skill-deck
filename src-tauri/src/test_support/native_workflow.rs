@@ -4194,17 +4194,35 @@ mod update_lifecycle {
             .iter()
             .find(|target| target.is_standard == Some(true))
             .unwrap();
-        assert_eq!(Path::new(&standard.display_path.native_path), common);
         assert_eq!(alpha.linked_targets.len(), 1);
         let linked = &alpha.linked_targets[0];
-        assert_eq!(Path::new(&linked.display_path.native_path), link);
-        assert_eq!(Path::new(&linked.target_path.native_path), common);
+        let backend = if cfg!(windows) {
+            ExecutionBackend::NativeWindows
+        } else {
+            ExecutionBackend::NativeUnix
+        };
+        let physical_key = |path: &Path| {
+            crate::environment::native::tree::project_target(path, backend.clone())
+                .unwrap()
+                .key
+        };
+        assert_eq!(
+            physical_key(Path::new(&standard.display_path.native_path)),
+            physical_key(&common)
+        );
+        assert_eq!(
+            physical_key(Path::new(&linked.display_path.native_path)),
+            physical_key(&link)
+        );
+        assert_eq!(
+            physical_key(Path::new(&linked.target_path.native_path)),
+            physical_key(&common)
+        );
         assert!(linked.target_copy_entry_id.is_none());
         assert!(alpha.overwrite_private_entries.is_empty());
-        assert!(!alpha
-            .targets
-            .iter()
-            .any(|target| Path::new(&target.display_path.native_path) == link));
+        assert!(!alpha.targets.iter().any(|target| physical_key(Path::new(
+            &target.display_path.native_path
+        )) == physical_key(&link)));
     }
 
     #[tokio::test]

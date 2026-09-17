@@ -20,4 +20,4 @@ Skill Deck 先通过统一的 Agent 目录表解析通用 Skill 目录和 Agent 
 
 正式支持给正在应用的库增删成员并向多个 Scope 传播变化、需要精确区分 Skill Deck 与其他工具创建的 Agent 安装项，或者引入新的 Agent 内容转换与目录形态时，必须重新讨论版本选举输入、所有权证据和跨 Scope 的执行与恢复协议。当前版本继续禁止修改正在应用的库成员。
 
-当前行为由 [领域词汇](../../CONTEXT.md#scope-与-skill-目录)、[产品行为与交互](../product.md#组织和应用-skill-库)、[Agent 模型](../agent-model.md#skill-库的-agent-选择)、[Skill 生命周期](../skill-lifecycle.md#安装)、[系统架构](../architecture.md#应用内部结构)、[执行与恢复](../execution-and-recovery.md#skill-变更如何执行) 和 [测试与验证规范](../testing.md#后端测试) 负责说明。
+当前行为由 [领域词汇](../../CONTEXT.md#skill-位置与目录)、[Agent 模型](../agent-model.md#agent-选择与安装位置分组)、[Skill 生命周期](../skill-lifecycle.md#安装)、[系统架构](../architecture.md#应用内部结构)、[执行与恢复](../execution-and-recovery.md#skill-变更如何执行) 和 [测试与验证规范](../testing.md#后端测试) 负责说明。

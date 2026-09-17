@@ -127,6 +127,13 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+      - name: Prepare Windows Cargo resource placeholders
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p src-tauri/target/wsl-worker/current
+          printf 'quality-check-placeholder\n' > src-tauri/target/wsl-worker/current/worker
+          printf '{}\n' > src-tauri/target/wsl-worker/current/manifest.json
       - name: Capture runner diagnostics
         shell: bash
         run: |
@@ -186,6 +193,13 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+      - name: Prepare Windows Cargo resource placeholders
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p src-tauri/target/wsl-worker/current
+          printf 'quality-check-placeholder\n' > src-tauri/target/wsl-worker/current/worker
+          printf '{}\n' > src-tauri/target/wsl-worker/current/manifest.json
       - name: Capture runner diagnostics
         shell: bash
         run: |

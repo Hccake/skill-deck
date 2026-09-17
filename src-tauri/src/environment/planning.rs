@@ -54,6 +54,14 @@ pub struct ResolvedLinkTargetIdentity {
 }
 
 impl ResolvedLinkTargetIdentity {
+    fn from_locator(target: &ResourceLocator) -> Option<Self> {
+        let comparison_path = normalized_comparison_path(&target.environment, &target.native_path)?;
+        Some(Self {
+            environment: target.environment.clone(),
+            comparison_path,
+        })
+    }
+
     pub(crate) fn matches(&self, target: &ResourceLocator) -> bool {
         same_environment_identity(&self.environment, &target.environment)
             && normalized_comparison_path(&target.environment, &target.native_path)
@@ -80,10 +88,22 @@ pub(crate) fn resolve_link_target_identity(
     raw_target: &str,
 ) -> Option<ResolvedLinkTargetIdentity> {
     let target = resolved_link_target_path(destination, raw_target)?;
-    let comparison_path = normalized_comparison_path(&target.environment, &target.native_path)?;
-    Some(ResolvedLinkTargetIdentity {
-        environment: target.environment,
-        comparison_path,
+    ResolvedLinkTargetIdentity::from_locator(&target)
+}
+
+fn resolve_native_link_target_identity(
+    destination: &ResourceLocator,
+    raw_target: &str,
+    backend: ExecutionBackend,
+) -> Option<ResolvedLinkTargetIdentity> {
+    let target = resolved_link_target_path(destination, raw_target)?;
+    let projected = project_target(Path::new(&target.native_path), backend).ok()?;
+    ResolvedLinkTargetIdentity::from_locator(&ResourceLocator {
+        environment: EnvironmentRef::Native,
+        native_path: projected
+            .physical_destination
+            .to_string_lossy()
+            .into_owned(),
     })
 }
 
@@ -438,9 +458,9 @@ fn resolve_native(
             let link_target = inspection
                 .link_target
                 .map(|target| target.to_string_lossy().into_owned());
-            let link_target_identity = link_target
-                .as_deref()
-                .and_then(|raw| resolve_link_target_identity(&destination, raw));
+            let link_target_identity = link_target.as_deref().and_then(|raw| {
+                resolve_native_link_target_identity(&destination, raw, backend.clone())
+            });
             Ok(ResolvedTargetFact {
                 key: projected.key,
                 destination,
@@ -805,6 +825,55 @@ mod tests {
         let identity = resolve_link_target_identity(&destination, "../shared/toolkit").unwrap();
 
         assert!(identity.matches(&target));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_link_identity_resolves_a_symlinked_target_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let physical = temp.path().join("physical");
+        let alias = temp.path().join("alias");
+        let links = physical.join("links");
+        let target = physical.join("shared/toolkit");
+        std::fs::create_dir_all(&links).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        symlink(&physical, &alias).unwrap();
+        symlink(alias.join("shared/toolkit"), links.join("demo")).unwrap();
+
+        let resolved = resolve_native_targets(&[
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: links.join("demo").to_string_lossy().into_owned(),
+            },
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: target.to_string_lossy().into_owned(),
+            },
+        ])
+        .unwrap();
+        let identity = resolved[0].link_target_identity.as_ref().unwrap();
+
+        assert!(identity.matches(&resolved[1].destination));
+
+        std::fs::remove_dir_all(&target).unwrap();
+        let broken = resolve_native_targets(&[
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: links.join("demo").to_string_lossy().into_owned(),
+            },
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: target.to_string_lossy().into_owned(),
+            },
+        ])
+        .unwrap();
+        assert!(broken[0]
+            .link_target_identity
+            .as_ref()
+            .unwrap()
+            .matches(&broken[1].destination));
     }
 
     #[test]

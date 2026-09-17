@@ -150,6 +150,20 @@ test("quality workflow separates portable formatting, static checks, and tests",
   assert.match(testCommands, /native_eve_update_restores_recorded_missing_installation[^\n]*--ignored/);
   assert.match(testCommands, /grep[^\n]*native_eve_update_restores_recorded_missing_installation/);
 
+  for (const jobName of ["rust-static", "rust-test"]) {
+    const steps = workflow.jobs[jobName].steps;
+    const resources = steps.findIndex(
+      (step) => step.name === "Prepare Windows Cargo resource placeholders",
+    );
+    const firstCargo = steps.findIndex((step) =>
+      /cargo (?:check|clippy|test)/.test(step.run ?? ""),
+    );
+    assert.ok(resources >= 0 && resources < firstCargo);
+    assert.equal(steps[resources].if, "runner.os == 'Windows'");
+    assert.match(steps[resources].run, /target\/wsl-worker\/current\/worker/);
+    assert.match(steps[resources].run, /target\/wsl-worker\/current\/manifest\.json/);
+  }
+
   const clippyStep = workflow.jobs["rust-static"].steps.find((step) =>
     (step.run ?? "").includes("cargo clippy"),
   );

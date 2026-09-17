@@ -153,6 +153,7 @@ impl SkillReadIssueCollector {
 
 type SkillFactId = (u32, String);
 type SkillDocuments = BTreeMap<SkillFactId, Arc<SkillFrontmatter>>;
+type SkillDocumentGroup = Vec<(SkillFactId, ResourceLocator)>;
 
 fn skill_fact_id(fact: &crate::environment::inspection::RawPathFact) -> SkillFactId {
     (fact.root_index, fact.relative_path.clone())
@@ -368,6 +369,7 @@ async fn read_skill_documents(
         SkillDocuments,
         BTreeMap<SkillFactId, ResolvedTargetFact>,
         Vec<SkillReadIssue>,
+        Vec<SkillDocumentGroup>,
     ),
     AppError,
 > {
@@ -407,7 +409,7 @@ async fn read_skill_documents(
         }
     }
     if candidates.is_empty() {
-        return Ok((BTreeMap::new(), BTreeMap::new(), Vec::new()));
+        return Ok((BTreeMap::new(), BTreeMap::new(), Vec::new(), Vec::new()));
     }
 
     let target_locators = candidates
@@ -525,7 +527,7 @@ async fn read_skill_documents(
         }
         for ((group_index, _), metadata) in misses.into_iter().zip(loaded) {
             let parsed = (!metadata.truncated && metadata.error_code.is_none())
-                .then(|| parse_skill_frontmatter(&metadata.bytes))
+                .then(|| parse_skill_frontmatter_allow_missing_name(&metadata.bytes))
                 .flatten()
                 .map(Arc::new);
             let error_code = metadata.error_code.clone().or_else(|| {
@@ -549,6 +551,7 @@ async fn read_skill_documents(
 
     let mut documents = BTreeMap::new();
     let mut metadata_issues = Vec::new();
+    let mut missing_name_groups = Vec::new();
     snapshot.total_content_bytes = 0;
     for (group, result) in groups.into_iter().zip(results) {
         let result = result.ok_or_else(|| AppError::ConfigurationCorrupted {
@@ -581,13 +584,74 @@ async fn read_skill_documents(
                 agent_ids,
             });
         }
+        if result
+            .frontmatter
+            .as_ref()
+            .is_some_and(|frontmatter| frontmatter.name.is_empty())
+        {
+            missing_name_groups.push(group.members.clone());
+        }
         for (fact_id, _) in group.members {
             if let Some(frontmatter) = &result.frontmatter {
                 documents.insert(fact_id, frontmatter.clone());
             }
         }
     }
-    Ok((documents, resolved_by_fact, metadata_issues))
+    Ok((
+        documents,
+        resolved_by_fact,
+        metadata_issues,
+        missing_name_groups,
+    ))
+}
+
+fn reject_unidentified_skill_documents(
+    plan: &SkillReadPlan,
+    snapshot: &RawFilesystemSnapshot,
+    documents: &mut SkillDocuments,
+    groups: Vec<SkillDocumentGroup>,
+    issues: &mut Vec<SkillReadIssue>,
+) -> Result<(), AppError> {
+    let positions = snapshot
+        .facts
+        .iter()
+        .enumerate()
+        .map(|(index, fact)| (skill_fact_id(fact), index))
+        .collect::<BTreeMap<_, _>>();
+    for group in groups {
+        let invalid = group
+            .into_iter()
+            .filter(|(fact_id, _)| {
+                documents
+                    .get(fact_id)
+                    .is_some_and(|frontmatter| frontmatter.name.is_empty())
+            })
+            .collect::<Vec<_>>();
+        if invalid.is_empty() {
+            continue;
+        }
+        let agent_ids = invalid
+            .iter()
+            .filter_map(|(fact_id, _)| positions.get(fact_id))
+            .filter_map(|index| {
+                plan.read_plan
+                    .roots
+                    .get(snapshot.facts[*index].root_index as usize)
+            })
+            .flat_map(|root| root.consumer_agent_ids.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for (fact_id, _) in &invalid {
+            documents.remove(fact_id);
+        }
+        issues.push(SkillReadIssue {
+            code: "invalidFrontmatter".to_string(),
+            path: invalid[0].1.clone(),
+            agent_ids,
+        });
+    }
+    Ok(())
 }
 
 pub(crate) async fn project_direct_skill_snapshot(
@@ -602,10 +666,17 @@ pub(crate) async fn project_direct_skill_snapshot(
     use crate::application::library_candidates::ResolvedLibraryCandidateIndex;
     use crate::core::skill::InstalledLibraryVersion;
 
-    let (mut documents, resolved_by_fact, metadata_issues) =
+    let (mut documents, resolved_by_fact, mut metadata_issues, missing_name_groups) =
         read_skill_documents(plan, &mut snapshot, targets, metadata).await?;
     let single_files =
         project_recorded_eve_entries(plan, &mut snapshot, &mut documents, runtime, targets).await?;
+    reject_unidentified_skill_documents(
+        plan,
+        &snapshot,
+        &mut documents,
+        missing_name_groups,
+        &mut metadata_issues,
+    )?;
     let mut entries = Vec::new();
     for fact in &snapshot.facts {
         let Some(relative) = fact.relative_path.strip_suffix("/SKILL.md") else {
@@ -906,6 +977,13 @@ async fn project_recorded_eve_entries(
         if positions.len() > 1 {
             return Err(ambiguous_installed_source(&path.native_path));
         }
+        let fact_id = skill_fact_id(&snapshot.facts[*fact_index]);
+        // 仅为读取投影补充已确认的身份；磁盘中的 Eve 文件保持原样。
+        if let Some(frontmatter) = documents.get(&fact_id) {
+            let mut frontmatter = frontmatter.as_ref().clone();
+            frontmatter.name = name.clone();
+            documents.insert(fact_id, Arc::new(frontmatter));
+        }
         if *single_file {
             if expected.iter().zip(&facts[actual.len()..]).any(
                 |((other_root, other_name, _, _, file), fact)| {
@@ -940,14 +1018,6 @@ async fn project_recorded_eve_entries(
             single_files.push(skill);
             continue;
         }
-        // 仅为读取投影补充已确认的身份；磁盘中的 Eve 文件保持原样。
-        let fact_id = skill_fact_id(&snapshot.facts[*fact_index]);
-        let Some(frontmatter) = documents.get(&fact_id) else {
-            continue;
-        };
-        let mut frontmatter = frontmatter.as_ref().clone();
-        frontmatter.name = name.clone();
-        documents.insert(fact_id, Arc::new(frontmatter));
     }
     Ok(single_files)
 }
@@ -1206,12 +1276,18 @@ fn join_native_path(environment: &EnvironmentRef, root: &str, relative: &str) ->
     }
 }
 
+#[cfg(test)]
 fn parse_skill_frontmatter(bytes: &[u8]) -> Option<SkillFrontmatter> {
+    let frontmatter = parse_skill_frontmatter_allow_missing_name(bytes)?;
+    (!frontmatter.name.is_empty()).then_some(frontmatter)
+}
+
+fn parse_skill_frontmatter_allow_missing_name(bytes: &[u8]) -> Option<SkillFrontmatter> {
     let content = std::str::from_utf8(bytes).ok()?;
     let rest = content.strip_prefix("---")?;
     let end = rest.find("---")?;
     let frontmatter: SkillFrontmatter = serde_yaml::from_str(rest[..end].trim()).ok()?;
-    (!frontmatter.name.is_empty() && !frontmatter.description.is_empty()).then_some(frontmatter)
+    (!frontmatter.description.is_empty()).then_some(frontmatter)
 }
 
 fn project_candidate(
@@ -1781,7 +1857,7 @@ mod tests {
             kind: FilesystemEntryKind::File,
             resolved_target: None,
             fingerprint: None,
-            frontmatter_bytes: b"not frontmatter".to_vec(),
+            frontmatter_bytes: b"---\ndescription: Missing name\n---\n".to_vec(),
             truncated: false,
             error_code: None,
         });
@@ -2107,7 +2183,7 @@ done
                 plan.read_plan.registry_revision = format!("scale-registry-{sample}");
                 let started = Instant::now();
                 let mut snapshot = inspector.inspect(&plan.read_plan).await?;
-                let (documents, _, metadata_issues) =
+                let (documents, _, metadata_issues, _) =
                     super::read_skill_documents(&plan, &mut snapshot, &targets, &inspector).await?;
                 let result = super::project_skill_snapshot_with_documents(
                     &plan,

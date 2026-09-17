@@ -724,16 +724,17 @@ mod tests {
             .await
             .unwrap();
         let _ = resolved_targets;
+        let library_fact = targets
+            .resolve_environment(&EnvironmentRef::Native, &[locator(&library_path)], None)
+            .await
+            .unwrap()
+            .remove(0);
+        let library_locator = library_fact.destination.clone();
         let candidate = crate::application::library_candidates::LibraryVersionCandidate::new(
             crate::application::skill_libraries::LibraryId::parse("lib-1"),
             "demo",
-            locator(&library_path),
-            targets
-                .resolve_environment(&EnvironmentRef::Native, &[locator(&library_path)], None)
-                .await
-                .unwrap()
-                .remove(0)
-                .key,
+            library_locator.clone(),
+            library_fact.key,
         );
         let library_candidates = LibraryCandidateSnapshot::new(
             "library-evidence-1",
@@ -785,7 +786,7 @@ mod tests {
         let plan = recorded.lock().unwrap().take().unwrap();
         assert!(matches!(
             plan.units[0].primary_entry.as_ref().map(|entry| &entry.action),
-            Some(PreparedEntryAction::Link { target }) if target.native_path == library_path.to_string_lossy()
+            Some(PreparedEntryAction::Link { target }) if target == &library_locator
         ));
         let expected_private =
             std::fs::canonicalize(private_path.parent().expect("private parent"))
@@ -799,7 +800,7 @@ mod tests {
         assert!(matches!(
             &private_entry.action,
             PreparedEntryAction::Link { target }
-                if target.native_path == library_path.to_string_lossy()
+                if target == &library_locator
         ));
         assert_eq!(private_entry.reader_agent_ids, vec![agent_id]);
     }

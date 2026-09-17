@@ -2461,17 +2461,18 @@ mod tests {
             )
             .await
             .unwrap();
+        let first_physical_locator = library_facts[0].destination.clone();
         let candidates = vec![
             LibraryVersionCandidate::new(
                 crate::application::skill_libraries::LibraryId::parse("first"),
                 "demo",
-                first_locator.clone(),
+                first_physical_locator.clone(),
                 library_facts[0].key.clone(),
             ),
             LibraryVersionCandidate::new(
                 crate::application::skill_libraries::LibraryId::parse("second"),
                 "demo",
-                second_locator,
+                library_facts[1].destination.clone(),
                 library_facts[1].key.clone(),
             ),
         ];
@@ -2565,7 +2566,7 @@ mod tests {
             plan.agent_actions.as_slice(),
             [actions]
                 if matches!(actions.as_slice(), [PreparedEntryAction::Link { target }]
-                    if target == &first_locator)
+                    if target == &first_physical_locator)
         ));
     }
 

@@ -23,6 +23,7 @@ pub struct SkillMetadata {
 /// 对应 CLI: parseSkillMd 返回的数据结构
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillFrontmatter {
+    #[serde(default)]
     pub name: String,
     pub description: String,
     #[serde(default)]
