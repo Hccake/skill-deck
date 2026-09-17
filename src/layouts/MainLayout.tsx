@@ -55,6 +55,7 @@ export default function MainLayout() {
       void refreshWorkspace(event.payload.context, {
         origin: 'selfMutation',
         mutatedSkillNames: event.payload.mutatedSkillNames,
+        invalidateUpdates: true,
       });
     });
     return () => {

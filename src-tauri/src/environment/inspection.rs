@@ -5,7 +5,7 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 
 use crate::core::agent_definition::AgentId;
-use crate::environment::runtime::ContextSnapshotRevision;
+use crate::environment::runtime::{ContextSnapshotRevision, EntryFingerprint};
 use crate::environment::types::{
     same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
 };
@@ -132,6 +132,7 @@ pub struct RawPathFact {
     pub relative_path: String,
     pub kind: FilesystemEntryKind,
     pub resolved_target: Option<String>,
+    pub fingerprint: Option<EntryFingerprint>,
     pub frontmatter_bytes: Vec<u8>,
     pub truncated: bool,
     pub error_code: Option<String>,
@@ -144,7 +145,16 @@ pub struct RawFilesystemSnapshot {
     pub total_content_bytes: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawSkillMetadata {
+    pub locator: ResourceLocator,
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
+    pub error_code: Option<String>,
+}
+
 pub type InspectionFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub type MetadataFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait FilesystemInspector: Send + Sync {
     fn environment(&self) -> EnvironmentRef;
@@ -153,4 +163,12 @@ pub trait FilesystemInspector: Send + Sync {
         &'a self,
         plan: &'a ReadPlan,
     ) -> InspectionFuture<'a, Result<RawFilesystemSnapshot, AppError>>;
+}
+
+pub trait SkillMetadataSource: Send + Sync {
+    fn read<'a>(
+        &'a self,
+        locators: &'a [ResourceLocator],
+        per_file_limit: u32,
+    ) -> MetadataFuture<'a, Result<Vec<RawSkillMetadata>, AppError>>;
 }

@@ -5,6 +5,7 @@ import type {
   LibraryAddPreview,
   LibraryAddSkillResult,
   LibraryId,
+  LibraryMembershipOutcome,
 } from '@/bindings';
 import {
   useSourceDiscovery,
@@ -69,6 +70,7 @@ export function useLibraryAddFlow({
   const [prepared, setPrepared] = useState<PreparedAdd | null>(null);
   const [redirectAcknowledged, setRedirectAcknowledged] = useState(false);
   const [results, setResults] = useState<LibraryAddSkillResult[]>([]);
+  const [membershipOutcome, setMembershipOutcome] = useState<LibraryMembershipOutcome | null>(null);
   const [flowError, setFlowError] = useState<AppError | null>(null);
   const [flowIssue, setFlowIssue] = useState<'writeBlocked' | 'previewMissing' | null>(null);
 
@@ -106,6 +108,7 @@ export function useLibraryAddFlow({
     setPrepared(null);
     setRedirectAcknowledged(false);
     setResults([]);
+    setMembershipOutcome(null);
     setFlowError(null);
     setFlowIssue(null);
     setPhase('source');
@@ -191,7 +194,20 @@ export function useLibraryAddFlow({
       acknowledgeRedirect: redirectAcknowledged,
     });
     if (outcome.status === 'failed') {
-      setFlowError(outcome.error);
+      if (outcome.error.kind === 'staleContext') {
+        const refreshed = await execute({ kind: 'retryAddPreview' });
+        if (refreshed.status === 'succeeded' && refreshed.snapshot.pendingAdd) {
+          setPrepared({
+            preview: refreshed.snapshot.pendingAdd.preview,
+            hasRetryPreviewError: false,
+          });
+          setRedirectAcknowledged(false);
+          setPhase('review');
+          return;
+        }
+        if (refreshed.status === 'failed') setFlowError(refreshed.error);
+      }
+      setFlowError((current) => current ?? outcome.error);
       setPhase('review');
       return;
     }
@@ -207,6 +223,7 @@ export function useLibraryAddFlow({
       }
       return [...merged.values()];
     });
+    setMembershipOutcome(outcome.snapshot.membershipOutcomes[target.libraryId] ?? null);
     setPrepared(outcome.snapshot.pendingAdd ? {
       preview: outcome.snapshot.pendingAdd.preview,
       hasRetryPreviewError: false,
@@ -216,7 +233,7 @@ export function useLibraryAddFlow({
     } : null);
     setFlowError(outcome.snapshot.retryAdd?.error ?? null);
     setPhase('result');
-  }, [execute, prepared, redirectAcknowledged]);
+  }, [execute, prepared, redirectAcknowledged, target.libraryId]);
 
   const retryFailed = useCallback(async () => {
     if (!prepared) return;
@@ -284,6 +301,7 @@ export function useLibraryAddFlow({
     prepared,
     redirectAcknowledged,
     results,
+    membershipOutcome,
     flowError,
     flowIssue,
     discovery,

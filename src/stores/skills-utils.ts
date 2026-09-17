@@ -1,8 +1,7 @@
 // src/stores/skills-utils.ts
 import i18n from '@/i18n';
-import { contextKey } from '@/lib/context';
 import type {
-  AgentId,
+  AppError,
   SkillLocationRef,
   EvidenceFailureReason,
   EvidenceFreshness,
@@ -16,6 +15,7 @@ import type {
 } from '@/bindings';
 
 export type SkillListItem = InstalledSkill & {
+  updateError?: AppError | null;
   updateStatus?: SkillUpdateCheckStatus | null;
   updateReason?: string | null;
   updateFreshness?: EvidenceFreshness | null;
@@ -38,9 +38,12 @@ export function hasCommittedUpdateComparison(
 }
 
 export interface UpdateCheckDisplaySnapshot {
-  outcome: UpdateCheckOutcome;
+  results?: SkillUpdateInfo[];
+  memberRequests?: Record<string, number>;
+  invalidatedAt?: Record<string, number>;
+  comparisonObservedAt?: Record<string, number>;
+  error?: AppError | null;
   sources: SourceUpdateCheckInfo[];
-  skillFreshness: Record<string, EvidenceFreshness>;
   checkedAt: number;
 }
 
@@ -79,116 +82,41 @@ interface MergeUpdateInfoOptions {
   sources?: SourceUpdateCheckInfo[];
 }
 
-/** 将 check_updates 结果合并到 skills 列表 */
+/** 比较结果只属于后端返回的安装基线。 */
 export function mergeUpdateInfo(
   skills: SkillListItem[],
   updates: SkillUpdateInfo[],
   options: MergeUpdateInfoOptions = {},
 ): SkillListItem[] {
-  const exactUpdateMap = new Map(updates.map((u) => [updateIdentityKey(u), u]));
-  const pathlessUpdateMap = new Map<string, SkillUpdateInfo[]>();
-  const nameOnlyUpdateMap = new Map<string, SkillUpdateInfo>();
-
-  for (const update of updates) {
-    const pathlessKey = updateIdentityKey(update, { includeSkillPath: false });
-    pathlessUpdateMap.set(pathlessKey, [...(pathlessUpdateMap.get(pathlessKey) ?? []), update]);
-    if (!hasStableUpdateIdentity(update)) {
-      nameOnlyUpdateMap.set(update.name, update);
-    }
-  }
-
-  const previousSkillMap = new Map(
-    (options.previousSkills ?? []).map((skill) => [updateIdentityKey(skill), skill]),
-  );
-
-  return skills.map((s) => {
-    const update = findUpdateForSkill(s, exactUpdateMap, pathlessUpdateMap, nameOnlyUpdateMap);
-    const previous = options.preserveUnmatched
-      ? previousSkillMap.get(updateIdentityKey(s))
-      : undefined;
-    const updateEvidence = update
-      ? findSourceUpdateInfo(update, options.sources ?? [])
-      : undefined;
-    const incompleteAttempt = update
-      && updateEvidence?.lastAttempt?.failure != null
-      && (
-        (update.status === 'cannotCheck' && update.reason === 'upstreamUnavailable')
-        || update.freshness === 'backingOff'
-        || update.freshness === 'coolingDown'
-        || update.freshness === 'unavailable'
-      );
-    const lastConfirmed = previous ?? s;
-    const hasConfirmedComparison = hasCommittedUpdateComparison(lastConfirmed);
+  const key = (skill: { name: string; comparisonFingerprint?: string | null }) =>
+    JSON.stringify([skill.name, skill.comparisonFingerprint ?? null]);
+  const byKey = new Map(updates.map((update) => [key(update), update]));
+  const previous = new Map((options.previousSkills ?? []).map((skill) => [key(skill), skill]));
+  const sources = new Map((options.sources ?? []).filter((source) => source.sourceKey).map((source) => [source.sourceKey, source]));
+  return skills.map((skill) => {
+    const update = byKey.get(key(skill));
+    const before = options.preserveUnmatched ? previous.get(key(skill)) ?? skill : skill;
+    const evidence = options.previousSkills
+      ? before.updateEvidence
+      : update?.sourceKey ? sources.get(update.sourceKey) : undefined;
+    const incomplete = Boolean(update && (update.error || evidence?.error || evidence?.lastAttempt?.failure || (
+      update.status === 'cannotCheck' && update.reason === 'upstreamUnavailable'
+    ) || ['backingOff', 'coolingDown', 'unavailable'].includes(update.freshness)));
+    const preserve = incomplete && hasCommittedUpdateComparison(before);
     return {
-      ...s,
-      skillPath: update?.skillPath ?? s.skillPath ?? null,
-      hasUpdate: incompleteAttempt && hasConfirmedComparison
-        ? lastConfirmed.hasUpdate
-        : update?.hasUpdate ?? previous?.hasUpdate ?? (options.preserveUnmatched ? s.hasUpdate : false),
-      updateStatus: incompleteAttempt && hasConfirmedComparison
-        ? lastConfirmed.updateStatus
-        : update?.status ?? previous?.updateStatus ?? s.updateStatus ?? null,
-      updateReason: incompleteAttempt && hasConfirmedComparison
-        ? lastConfirmed.updateReason ?? null
-        : update?.reason ?? previous?.updateReason ?? s.updateReason ?? null,
-      updateFreshness: update?.freshness ?? previous?.updateFreshness ?? s.updateFreshness ?? null,
-      updateEvidence: updateEvidence ?? previous?.updateEvidence ?? s.updateEvidence ?? null,
-      updateAttempt: incompleteAttempt
-        ? { outcome: 'notCompleted', reason: 'upstreamUnavailable', attemptedAt: Date.now() }
-        : update
-          ? { outcome: 'completed', reason: null, attemptedAt: Date.now() }
-          : previous?.updateAttempt ?? s.updateAttempt ?? null,
+      ...skill,
+      skillPath: update?.skillPath ?? skill.skillPath ?? null,
+      hasUpdate: preserve ? before.hasUpdate : update?.hasUpdate ?? (options.preserveUnmatched ? before.hasUpdate : false),
+      updateStatus: preserve ? before.updateStatus : update?.status ?? before.updateStatus ?? null,
+      updateReason: preserve ? before.updateReason : update?.reason ?? before.updateReason ?? null,
+      updateFreshness: update?.freshness ?? before.updateFreshness ?? null,
+      updateEvidence: evidence ?? before.updateEvidence ?? null,
+      updateError: update ? update.error ?? evidence?.error ?? null : before.updateError ?? null,
+      updateAttempt: update
+        ? { outcome: incomplete ? 'notCompleted' as const : 'completed' as const, reason: update.reason, attemptedAt: Date.now() }
+        : before.updateAttempt ?? null,
     };
   });
-}
-
-/** 更新检测结果的 scope 级缓存 — 避免频繁切换 scope 时重复网络请求 */
-export const updateInfoCache = new Map<string, {
-  results: SkillUpdateInfo[];
-  sources: SourceUpdateCheckInfo[];
-  checkedAt: number;
-  completeness: 'complete' | 'partial';
-  outcome: UpdateCheckOutcome;
-}>();
-
-/** 清除缓存中指定 skill 的 hasUpdate 标记 — 更新成功后调用，防止 syncSkills 恢复旧标记 */
-export function clearUpdateCacheForSkill(
-  skillName: string,
-  scope: InstalledSkillLocation,
-  projectPath?: string,
-  options: { clearCannotCheck?: boolean } = {},
-) {
-  const cacheKey = scope === 'project' ? projectPath : 'global';
-  if (!cacheKey) return;
-  const cached = updateInfoCache.get(cacheKey);
-  if (cached) {
-    cached.results = cached.results.map((r) =>
-      r.name === skillName && (r.hasUpdate || options.clearCannotCheck)
-        ? clearCachedUpdateResult(r)
-        : r
-    );
-  }
-}
-
-export function clearUpdateCacheForContextSkill(
-  skillName: string,
-  context: SkillLocationRef,
-  options: { clearCannotCheck?: boolean } = {},
-) {
-  const cached = updateInfoCache.get(contextKey(context));
-  if (!cached) return;
-  cached.results = cached.results.map((result) =>
-    result.name === skillName && (result.hasUpdate || options.clearCannotCheck)
-      ? clearCachedUpdateResult(result)
-      : result
-  );
-}
-
-function clearCachedUpdateResult(result: SkillUpdateInfo): SkillUpdateInfo {
-  if (result.status === 'deletedUpstream' || result.reason === 'deletedUpstream') {
-    return result;
-  }
-  return { ...result, hasUpdate: false, status: 'upToDate', reason: null };
 }
 
 /** i18n t() 的便捷包装 */
@@ -355,7 +283,10 @@ export function resolveUpdateStatusLabelI18nKey(
   if (skill.updateReason === 'missingRemoteHash' || skill.updateReason === 'missing-remote-hash') {
     return 'skills.updateStatusLabel.reinstallRequired';
   }
-  if (skill.updateReason === 'unsupported-source-type' || skill.updateReason === 'local-source') {
+  if (skill.updateReason === 'local-source') {
+    return 'skills.updateStatusLabel.localSource';
+  }
+  if (skill.updateReason === 'unsupported-source-type') {
     return 'skills.updateStatusLabel.autoCheckUnavailable';
   }
   if (skill.updateReason) {
@@ -388,324 +319,4 @@ export interface AddDialogPrefill {
   scope?: InstalledSkillLocation;
   projectPath?: string;
   gitRef?: string | null;
-}
-
-export interface RepairSourceDraft {
-  source: string;
-  skillName: string;
-  scope: InstalledSkillLocation;
-  projectPath?: string;
-  gitRef?: string | null;
-  agents: AgentId[];
-  defaultAvailableAgents?: AgentId[];
-  privateAdaptedAgents?: AgentId[];
-  privateCopyAgents?: AgentId[];
-  context: SkillLocationRef;
-}
-
-export function getSkillOperationAgents(
-  skill: Pick<InstalledSkill, 'agents' | 'privateAdaptedAgents' | 'privateCopyAgents'>
-): AgentId[] {
-  const agents = [
-    ...(skill.privateAdaptedAgents ?? skill.agents),
-    ...(skill.privateCopyAgents ?? []),
-  ];
-  return agents.filter((agent, index) => agents.indexOf(agent) === index);
-}
-
-function normalizeRepairSource(source: string | null | undefined): string | null {
-  if (!source) return null;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) return source;
-  if (/^[^\s/]+\/[^\s/]+$/.test(source)) return `https://github.com/${source}`;
-  return null;
-}
-
-function buildRepairSource(
-  skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { gitRef?: string | null }
-): string | null {
-  const baseSource = skill.sourceUrl || normalizeRepairSource(skill.source);
-  if (!baseSource) return null;
-  if (skill.gitRef && !baseSource.includes('#')) return `${baseSource}#${skill.gitRef}`;
-  return baseSource;
-}
-
-function canRepairMissingSkillPath(
-  skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { updateReason?: string | null; gitRef?: string | null }
-): boolean {
-  return (skill.updateReason === 'missing-skill-path' || skill.updateReason === 'missingSource')
-    && buildRepairSource(skill) !== null;
-}
-
-type SkillMaintenanceAction = 'direct-reinstall' | 'repair-source' | 'none';
-
-export function resolveSkillMaintenanceAction(
-  skill: Pick<InstalledSkill, 'source' | 'sourceUrl' | 'canRunUpdate'> & {
-    updateReason?: string | null;
-    gitRef?: string | null;
-  }
-): SkillMaintenanceAction {
-  if (
-    (skill.updateReason === 'missingRemoteHash' || skill.updateReason === 'missing-remote-hash')
-    && skill.canRunUpdate !== false
-  ) {
-    return 'direct-reinstall';
-  }
-  if (canRepairMissingSkillPath(skill)) {
-    return 'repair-source';
-  }
-  return 'none';
-}
-
-export function createSkillRepairPrefill(
-  skill: Pick<InstalledSkill, 'name' | 'source' | 'sourceUrl'> & { gitRef?: string | null },
-  scope: InstalledSkillLocation,
-  projectPath?: string
-): AddDialogPrefill | null {
-  const source = buildRepairSource(skill);
-  if (!source) return null;
-  return {
-    source,
-    skillName: skill.name,
-    scope,
-    projectPath: scope === 'project' ? projectPath : undefined,
-    gitRef: skill.gitRef ?? null,
-  };
-}
-
-export function createSkillRepairDraft(
-  skill: Pick<
-    InstalledSkill,
-    | 'name'
-    | 'source'
-    | 'sourceUrl'
-    | 'agents'
-    | 'defaultAvailableAgents'
-    | 'privateAdaptedAgents'
-    | 'privateCopyAgents'
-  > & { gitRef?: string | null },
-  context: SkillLocationRef,
-  projectPath?: string,
-): RepairSourceDraft {
-  const source = buildRepairSource(skill) ?? '';
-  const scope = context.scope.scope;
-  const privateAdaptedAgents = skill.privateAdaptedAgents ?? skill.agents;
-  const privateCopyAgents = skill.privateCopyAgents ?? [];
-  return {
-    source,
-    skillName: skill.name,
-    scope,
-    projectPath: scope === 'project' ? projectPath : undefined,
-    gitRef: skill.gitRef ?? null,
-    agents: skill.agents,
-    defaultAvailableAgents: skill.defaultAvailableAgents ?? [],
-    privateAdaptedAgents,
-    privateCopyAgents,
-    context,
-  };
-}
-
-interface UpdatePlanItem {
-  name: string;
-  source?: string | null;
-  sourceUrl?: string | null;
-  gitRef?: string | null;
-  skillPath?: string | null;
-  reason?: string | null;
-  repairSource?: string | null;
-}
-
-interface UpdatePlanGroup {
-  id: string;
-  source: string;
-  sourceUrl?: string | null;
-  gitRef?: string | null;
-  skillNames: string[];
-  agents: AgentId[];
-  skillRows: Array<{
-    name: string;
-    agents: AgentId[];
-  }>;
-}
-
-export interface UpdatePlan {
-  scope: InstalledSkillLocation;
-  projectPath?: string;
-  total: number;
-  updatableCount: number;
-  repairableCount: number;
-  skippedCount: number;
-  deletedUpstreamCount?: number;
-  groups: UpdatePlanGroup[];
-  repairable: UpdatePlanItem[];
-  skipped: UpdatePlanItem[];
-  deletedUpstream?: UpdatePlanItem[];
-}
-
-export function buildUpdatePlan(
-  skills: SkillListItem[],
-  scope: InstalledSkillLocation,
-  projectPath?: string
-): UpdatePlan {
-  const groups = new Map<string, UpdatePlanGroup>();
-  const repairable: UpdatePlanItem[] = [];
-  const skipped: UpdatePlanItem[] = [];
-  const deletedUpstream: UpdatePlanItem[] = [];
-
-  for (const skill of skills) {
-    const source = skill.sourceUrl ?? skill.source ?? 'manual';
-    const groupKey = `${source}::${skill.gitRef ?? ''}`;
-    const isUpdatable = skill.hasUpdate === true && skill.canRunUpdate !== false;
-
-    if (isUpdatable) {
-      const group = groups.get(groupKey) ?? {
-        id: groupKey,
-        source: skill.source ?? source,
-        sourceUrl: skill.sourceUrl,
-        gitRef: skill.gitRef,
-        skillNames: [],
-        agents: [],
-        skillRows: [],
-      };
-      group.skillNames.push(skill.name);
-      const operationAgents = getSkillOperationAgents(skill);
-      group.skillRows.push({ name: skill.name, agents: operationAgents });
-      group.agents = Array.from(new Set([...group.agents, ...operationAgents]));
-      groups.set(groupKey, group);
-      continue;
-    }
-
-    if (skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream') {
-      deletedUpstream.push({
-        name: skill.name,
-        source: skill.source,
-        sourceUrl: skill.sourceUrl,
-        gitRef: skill.gitRef,
-        skillPath: skill.skillPath,
-        reason: skill.updateReason,
-        repairSource: buildRepairSource(skill),
-      });
-      continue;
-    }
-
-    if (canRepairMissingSkillPath(skill)) {
-      repairable.push({
-        name: skill.name,
-        source: skill.source,
-        sourceUrl: skill.sourceUrl,
-        gitRef: skill.gitRef,
-        skillPath: skill.skillPath,
-        reason: skill.updateReason,
-        repairSource: buildRepairSource(skill),
-      });
-      continue;
-    }
-
-    if (skill.updateStatus === 'cannotCheck' || skill.canCheckForUpdates === false) {
-      skipped.push({
-        name: skill.name,
-        source: skill.source,
-        sourceUrl: skill.sourceUrl,
-        gitRef: skill.gitRef,
-        skillPath: skill.skillPath,
-        reason: skill.updateReason,
-      });
-    }
-  }
-
-  const updateGroups = Array.from(groups.values());
-  return {
-    scope,
-    projectPath: scope === 'project' ? projectPath : undefined,
-    total: skills.length,
-    updatableCount: updateGroups.reduce((total, group) => total + group.skillNames.length, 0),
-    repairableCount: repairable.length,
-    skippedCount: skipped.length,
-    deletedUpstreamCount: deletedUpstream.length,
-    groups: updateGroups,
-    repairable,
-    skipped,
-    deletedUpstream,
-  };
-}
-
-function updateIdentityKey(
-  item: {
-    name: string;
-    source?: string | null;
-    sourceUrl?: string | null;
-    gitRef?: string | null;
-    skillPath?: string | null;
-  },
-  options: { includeSkillPath?: boolean } = {}
-): string {
-  const includeSkillPath = options.includeSkillPath ?? true;
-  return [
-    item.name,
-    item.sourceUrl ?? item.source ?? '',
-    item.gitRef ?? '',
-    includeSkillPath ? item.skillPath ?? '' : '',
-  ].join('::');
-}
-
-function hasStableUpdateIdentity(item: {
-  source?: string | null;
-  sourceUrl?: string | null;
-  gitRef?: string | null;
-  skillPath?: string | null;
-}): boolean {
-  return Boolean(item.sourceUrl || item.source || item.gitRef || item.skillPath);
-}
-
-function findUpdateForSkill(
-  skill: SkillListItem,
-  exactUpdateMap: Map<string, SkillUpdateInfo>,
-  pathlessUpdateMap: Map<string, SkillUpdateInfo[]>,
-  nameOnlyUpdateMap: Map<string, SkillUpdateInfo>
-): SkillUpdateInfo | undefined {
-  const exact = exactUpdateMap.get(updateIdentityKey(skill));
-  if (exact) return exact;
-
-  if (!skill.skillPath) {
-    const pathlessMatches = pathlessUpdateMap.get(updateIdentityKey(skill, { includeSkillPath: false })) ?? [];
-    if (pathlessMatches.length === 1) return pathlessMatches[0];
-  }
-
-  if (!hasStableUpdateIdentity(skill)) {
-    return nameOnlyUpdateMap.get(skill.name);
-  }
-
-  return undefined;
-}
-
-export function normalizeSourceIdentity(source: string | null | undefined): string | null {
-  const value = source?.trim();
-  if (!value) return null;
-  if (/^[^\s/:]+\/[^\s/]+$/.test(value)) {
-    return `github.com/${value.replace(/\.git$/i, '')}`.toLocaleLowerCase('en-US');
-  }
-  if (!value.includes('://') && value.includes('@') && value.includes(':')) {
-    const [, hostAndPath = value] = value.split('@');
-    return hostAndPath.replace(':', '/').replace(/\.git$/i, '').toLocaleLowerCase('en-US');
-  }
-  try {
-    const url = new URL(value);
-    return `${url.host}${url.pathname}`
-      .replace(/^\/+|\/+$/g, '')
-      .replace(/\.git$/i, '')
-      .toLocaleLowerCase('en-US');
-  } catch {
-    return value.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').toLocaleLowerCase('en-US');
-  }
-}
-
-function findSourceUpdateInfo(
-  update: SkillUpdateInfo,
-  sources: SourceUpdateCheckInfo[],
-): SourceUpdateCheckInfo | null {
-  const identity = normalizeSourceIdentity(update.sourceUrl ?? update.source);
-  if (!identity) return null;
-  return sources.find((source) => (
-    normalizeSourceIdentity(source.source) === identity
-    && (source.requestedRef ?? 'HEAD') === (update.gitRef ?? 'HEAD')
-  )) ?? null;
 }

@@ -18,6 +18,9 @@ const api = vi.hoisted(() => ({
   acquireSelectedPayloads: vi.fn(),
   previewAddLibrarySkills: vi.fn(),
   addSkillsToLibrary: vi.fn(),
+  previewRemoveLibrarySkill: vi.fn(),
+  removeLibrarySkill: vi.fn(),
+  resumeLibraryMembership: vi.fn(),
 }));
 const write = vi.hoisted(() => ({
   runBusinessWrite: vi.fn(),
@@ -32,12 +35,16 @@ const emptyCatalog: LibraryWorkspaceSnapshot = {
   libraries: [],
   revision: 'catalog-empty',
   usageProjection: [],
+  usageInventoryComplete: true,
+  usageInventoryProblemCount: 0,
 };
 const createdCatalog: LibraryWorkspaceSnapshot = {
   environment,
   libraries: [{ id: 'lib-1', name: 'Backend', skillCount: 0 }],
   revision: 'catalog-created',
   usageProjection: [],
+  usageInventoryComplete: true,
+  usageInventoryProblemCount: 0,
 };
 const threeLibraryCatalog: LibraryWorkspaceSnapshot = {
   environment,
@@ -48,6 +55,8 @@ const threeLibraryCatalog: LibraryWorkspaceSnapshot = {
   ],
   revision: 'catalog-three',
   usageProjection: [],
+  usageInventoryComplete: true,
+  usageInventoryProblemCount: 0,
 };
 const detailFor = (id: string): SkillLibraryDetail => ({
   id,
@@ -62,6 +71,16 @@ const previewToken = (generation: string) => ({
   skillRevisions: [],
   redirectedDownloadHost: null,
 });
+const membershipPreview = (token = 'membership-1') => ({
+  environment,
+  libraryId: 'lib-1',
+  scopes: [],
+  impacts: [],
+  inventoryComplete: true,
+  inventoryToken: `inventory-${token}`,
+  token,
+});
+const membershipOutcome = () => ({ scopes: [], cleanup: [], snapshotError: null });
 const libraryPreview = (
   generation: string,
   skills: LibraryAddPreview['skills'],
@@ -69,6 +88,7 @@ const libraryPreview = (
   token: previewToken(generation),
   skills,
   redirectedDownloadHost: null,
+  membership: membershipPreview(`membership-${generation}`),
 });
 
 function succeeded(result: LibraryWorkspaceResult) {
@@ -331,6 +351,7 @@ describe('LibraryWorkspace', () => {
     api.addSkillsToLibrary.mockResolvedValue({
       results: [{ skillName: 'api-design', status: 'succeeded', error: null }],
       library: detail,
+      membership: membershipOutcome(),
     });
     api.listSkillLibraries.mockResolvedValue({
       ...createdCatalog,
@@ -364,8 +385,215 @@ describe('LibraryWorkspace', () => {
         skills: [{ skillName: 'api-design', payload: handle }],
       },
       expectedToken: preview.token,
+      membership: preview.membership,
       acknowledgeRedirect: false,
     });
+  });
+
+  it('keeps a committed add result when its display snapshot and catalog refresh fail', async () => {
+    const fetched = {
+      discoverySession: {
+        sessionId: 'session-1', environment, sourceFingerprint: 'source-1', expiresAtEpochMs: 10_000,
+      },
+      sourceType: 'git',
+      sourceUrl: 'https://example.com/repo',
+      redirectedDownloadHost: null,
+      gitRef: null,
+      skillFilter: null,
+      skills: [{ name: 'api', installDirName: 'api', description: 'API', relativePath: 'skills/api' }],
+    } satisfies FetchResult;
+    const handle = {
+      sessionId: 'session-1',
+      skillPath: 'skills/api',
+      environment,
+      payloadId: 'payload-api',
+      manifestHash: 'manifest-api',
+      sourceFingerprint: 'source-1',
+      expiresAtEpochMs: 10_000,
+    } satisfies AcquiredPayloadHandle;
+    const snapshotError = { kind: 'io', data: { message: 'snapshot failed' } } as const;
+    api.acquireSelectedPayloads.mockResolvedValue([handle]);
+    api.previewAddLibrarySkills.mockResolvedValue(libraryPreview('preview-failure', [
+      { skillName: 'api', targetPath: '/libraries/lib-1/skills/api' },
+    ]));
+    api.addSkillsToLibrary.mockResolvedValue({
+      results: [{ skillName: 'api', status: 'succeeded', error: null }],
+      library: null,
+      membership: { scopes: [], cleanup: [], snapshotError },
+    });
+    api.listSkillLibraries.mockRejectedValue(snapshotError);
+    const workspace = createLibraryWorkspace();
+
+    succeeded(await workspace.execute({
+      kind: 'addSkills', environment, libraryId: 'lib-1', discovery: fetched,
+    }));
+    const result = succeeded(await workspace.execute({
+      kind: 'confirmAddSkills', environment, acknowledgeRedirect: false,
+    }));
+
+    expect(result.lastAddResults[0].status).toBe('succeeded');
+    expect(result.membershipOutcomes['lib-1']?.snapshotError).toEqual(snapshotError);
+    expect(result.catalogError).toEqual(snapshotError);
+    expect(api.addSkillsToLibrary).toHaveBeenCalledOnce();
+  });
+
+  it('owns retirement preview, commit, and membership outcome in one workspace', async () => {
+    const preview = {
+      skillName: 'api',
+      token: 'retire-1',
+      membership: membershipPreview('membership-retire'),
+    };
+    api.previewRemoveLibrarySkill.mockResolvedValue(preview);
+    api.removeLibrarySkill.mockResolvedValue({
+      library: emptyDetail,
+      membership: {
+        scopes: [{
+          context: { environment, scope: { scope: 'global' } },
+          state: 'pending',
+          error: null,
+        }],
+        cleanup: [],
+        snapshotError: null,
+      },
+    });
+    api.listSkillLibraries.mockResolvedValue(createdCatalog);
+    const workspace = createLibraryWorkspace();
+
+    const prepared = succeeded(await workspace.execute({
+      kind: 'prepareRetire', environment, libraryId: 'lib-1', skillName: 'api',
+    }));
+    expect(prepared.pendingRetire?.preview).toEqual(preview);
+
+    const completed = succeeded(await workspace.execute({
+      kind: 'confirmRetire', environment,
+    }));
+
+    expect(completed.pendingRetire).toBeNull();
+    expect(completed.membershipOutcomes['lib-1']?.scopes[0].state).toBe('pending');
+    expect(api.removeLibrarySkill).toHaveBeenCalledWith({
+      request: { environment, libraryId: 'lib-1', skillName: 'api' },
+      expectedToken: 'retire-1',
+      membership: preview.membership,
+    });
+  });
+
+  it('ignores a retirement preview completed after another workspace command', async () => {
+    let resolvePreview!: (value: unknown) => void;
+    api.previewRemoveLibrarySkill.mockReturnValue(new Promise((resolve) => {
+      resolvePreview = resolve;
+    }));
+    api.getSkillLibrary.mockResolvedValue(detailFor('lib-2'));
+    const workspace = createLibraryWorkspace();
+
+    const stale = workspace.execute({
+      kind: 'prepareRetire', environment, libraryId: 'lib-1', skillName: 'api',
+    });
+    await workspace.execute({ kind: 'select', environment, libraryId: 'lib-2' });
+    resolvePreview({
+      skillName: 'api', token: 'old', membership: membershipPreview('old'),
+    });
+    await stale;
+
+    expect(workspace.getSnapshot(environment).selectedLibraryId).toBe('lib-2');
+    expect(workspace.getSnapshot(environment).pendingRetire).toBeNull();
+  });
+
+  it('clears an obsolete retirement preview when refreshing it fails', async () => {
+    const preview = {
+      skillName: 'api',
+      token: 'retire-1',
+      membership: membershipPreview('membership-retire'),
+    };
+    api.previewRemoveLibrarySkill.mockResolvedValueOnce(preview);
+    const workspace = createLibraryWorkspace();
+    succeeded(await workspace.execute({
+      kind: 'prepareRetire', environment, libraryId: 'lib-1', skillName: 'api',
+    }));
+    api.previewRemoveLibrarySkill.mockRejectedValueOnce({ kind: 'staleContext' });
+
+    const result = await workspace.execute({
+      kind: 'prepareRetire', environment, libraryId: 'lib-1', skillName: 'api',
+    });
+
+    expect(result.status).toBe('failed');
+    expect(workspace.getSnapshot(environment).pendingRetire).toBeNull();
+  });
+
+  it('resumes membership through one workspace command', async () => {
+    api.resumeLibraryMembership.mockResolvedValue({
+      scopes: [],
+      cleanup: [],
+      snapshotError: null,
+    });
+    const workspace = createLibraryWorkspace();
+    api.listSkillLibraries.mockResolvedValue(createdCatalog);
+    succeeded(await workspace.execute({ kind: 'load', environment }));
+    const refreshedDetail = { ...emptyDetail, name: 'Refreshed' };
+    api.getSkillLibrary.mockResolvedValue(refreshedDetail);
+
+    const snapshot = succeeded(await workspace.execute({
+      kind: 'resumeMembership', environment, libraryId: 'lib-1',
+    }));
+
+    expect(snapshot.membershipOutcomes['lib-1']).toEqual({
+      scopes: [], cleanup: [], snapshotError: null,
+    });
+    expect(api.resumeLibraryMembership).toHaveBeenCalledWith(environment, 'lib-1');
+    expect(snapshot.detail).toEqual(refreshedDetail);
+    const reloaded = succeeded(await workspace.execute({ kind: 'load', environment }));
+    expect(reloaded.membershipOutcomes).toEqual({});
+  });
+
+  it('preserves the completed resume and exposes a failed detail refresh', async () => {
+    api.listSkillLibraries.mockResolvedValue(createdCatalog);
+    api.resumeLibraryMembership.mockResolvedValue(membershipOutcome());
+    const workspace = createLibraryWorkspace();
+    succeeded(await workspace.execute({ kind: 'load', environment }));
+    const error = { kind: 'io', data: { message: 'refresh failed' } } as const;
+    api.getSkillLibrary.mockRejectedValue(error);
+
+    const snapshot = succeeded(await workspace.execute({
+      kind: 'resumeMembership', environment, libraryId: 'lib-1',
+    }));
+
+    expect(snapshot.detail).toEqual(emptyDetail);
+    expect(snapshot.membershipOutcomes['lib-1']?.snapshotError).toEqual(error);
+    expect(api.resumeLibraryMembership).toHaveBeenCalledOnce();
+  });
+
+  it('keeps membership results with their Library through refresh and other Library operations', async () => {
+    api.listSkillLibraries.mockResolvedValue(threeLibraryCatalog);
+    api.getSkillLibrary.mockImplementation(async (_environment, id) => detailFor(id));
+    const pending = {
+      scopes: [{ context: { environment, scope: { scope: 'global' } }, state: 'pending', error: null }],
+      cleanup: [], snapshotError: null,
+    };
+    api.resumeLibraryMembership.mockResolvedValueOnce(pending).mockResolvedValueOnce(membershipOutcome());
+    const workspace = createLibraryWorkspace();
+    succeeded(await workspace.execute({ kind: 'load', environment }));
+    succeeded(await workspace.execute({ kind: 'resumeMembership', environment, libraryId: 'lib-a' }));
+    succeeded(await workspace.execute({ kind: 'select', environment, libraryId: 'lib-b' }));
+    succeeded(await workspace.execute({ kind: 'resumeMembership', environment, libraryId: 'lib-b' }));
+    const reloaded = succeeded(await workspace.execute({ kind: 'load', environment }));
+
+    expect(reloaded.selectedLibraryId).toBe('lib-b');
+    expect(reloaded.membershipOutcomes['lib-a']).toEqual(pending);
+    const returned = succeeded(await workspace.execute({ kind: 'select', environment, libraryId: 'lib-a' }));
+    expect(returned.membershipOutcomes['lib-a']).toEqual(pending);
+    expect(workspace.getSnapshot({ kind: 'wsl', distro_name: 'Ubuntu' }).membershipOutcomes).toEqual({});
+  });
+
+  it('does not restore a membership result that arrives after changing Libraries', async () => {
+    let finish!: (value: unknown) => void;
+    api.resumeLibraryMembership.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    api.getSkillLibrary.mockResolvedValue(detailFor('lib-b'));
+    const workspace = createLibraryWorkspace();
+    const old = workspace.execute({ kind: 'resumeMembership', environment, libraryId: 'lib-a' });
+    succeeded(await workspace.execute({ kind: 'select', environment, libraryId: 'lib-b' }));
+    finish(membershipOutcome());
+    await old;
+
+    expect(workspace.getSnapshot(environment).membershipOutcomes).toEqual({});
   });
 
   it('reuses an inspected source when adding only the selected Skills', async () => {
@@ -446,6 +674,7 @@ describe('LibraryWorkspace', () => {
         { skillName: 'ui', status: 'failed', error: { kind: 'staleTarget' } },
       ],
       library: emptyDetail,
+      membership: membershipOutcome(),
     });
     api.listSkillLibraries.mockResolvedValue(createdCatalog);
     const workspace = createLibraryWorkspace();
@@ -505,6 +734,7 @@ describe('LibraryWorkspace', () => {
     api.addSkillsToLibrary.mockResolvedValue({
       results: [{ skillName: 'ui', status: 'failed', error: { kind: 'staleTarget' } }],
       library: emptyDetail,
+      membership: membershipOutcome(),
     });
     api.listSkillLibraries.mockResolvedValue(createdCatalog);
     const workspace = createLibraryWorkspace();

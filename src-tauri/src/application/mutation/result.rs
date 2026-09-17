@@ -27,6 +27,7 @@ pub enum MutationUnitStatus {
 #[specta(rename_all = "camelCase")]
 pub enum OperationErrorCode {
     Validation,
+    NoUpdateTargets,
     SkillPlacementTargetConflict,
     WellKnownScopeNotFound,
     EnvironmentUnavailable,
@@ -51,6 +52,7 @@ pub enum OperationErrorCode {
     LibraryRecoveryIncomplete,
     ConfigurationReadOnly,
     ConfigurationCorrupted,
+    ConfigurationWriteUnconfirmed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -154,6 +156,7 @@ impl ErrorReport {
                     .insert("count".to_string(), usages.len().to_string());
                 report
             }
+            AppError::ProjectMatchesEnvironmentHome => Self::new(OperationErrorCode::Validation),
             AppError::SkillPlacementTargetConflict {
                 skill_name,
                 agent_ids,
@@ -248,14 +251,6 @@ impl ErrorReport {
                 report
                     .parameters
                     .insert("reason".to_string(), reason.code().to_string());
-                report
-            }
-            AppError::DirectDownloadUnsupportedOperation => {
-                let mut report = Self::new(OperationErrorCode::Validation);
-                report.parameters.insert(
-                    "reason".to_string(),
-                    "direct-download-unsupported-operation".to_string(),
-                );
                 report
             }
             AppError::DirectDownloadConflict { target } => {
@@ -409,6 +404,9 @@ impl ErrorReport {
                 Self::with_details(OperationErrorCode::RestoreFailed, false, message)
             }
             AppError::ConfigurationReadOnly => Self::new(OperationErrorCode::ConfigurationReadOnly),
+            AppError::ConfigurationWriteUnconfirmed => {
+                Self::new(OperationErrorCode::ConfigurationWriteUnconfirmed)
+            }
             AppError::ConfigurationCorrupted { message }
             | AppError::Yaml { message }
             | AppError::Json { message } => {

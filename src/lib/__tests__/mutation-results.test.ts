@@ -28,6 +28,10 @@ function errorReport(overrides: Partial<ErrorReport> = {}): ErrorReport {
 }
 
 describe('mutation result presentation', () => {
+  it.each(['installedSkillFormat', 'sharedSkillLinkSource', 'libraryContentTarget'])('explains the source restriction %s', (capability) => {
+    expect(formatMutationError(errorReport({ code: 'capabilityUnavailable', parameters: { capability, path: '/private/demo' } }), t))
+      .toBe(`mutation.result.errors.${capability}{"capability":"${capability}","path":"/private/demo"}`);
+  });
   it('formats public errors from stable codes and parameters without exposing diagnostics', () => {
     expect(formatMutationError(errorReport(), t)).toBe(
       'mutation.result.errors.executionFailed{"operation":"install"}',

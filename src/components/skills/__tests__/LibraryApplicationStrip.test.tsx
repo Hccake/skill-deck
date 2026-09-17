@@ -21,7 +21,7 @@ describe('LibraryApplicationStrip', () => {
         { id: 'second', name: 'Second', skillCount: 1 },
       ],
       selectedAgentIds: [],
-      pending: false,
+      pending: false, syncState: 'synced',
     }} />);
 
     const summary = screen.getByTestId('applied-libraries-summary');
@@ -40,17 +40,17 @@ describe('LibraryApplicationStrip', () => {
     render(<LibraryApplicationStrip application={{
       orderedLibraries: [],
       selectedAgentIds: [],
-      pending: true,
+      pending: true, syncState: 'pending',
     }} />);
 
-    expect(screen.getByRole('status').textContent).toBe('libraries.pending');
+    expect(screen.getByRole('status').textContent).toBe('libraries.syncState.pending');
   });
 
   it('does not reserve space without applied or pending Libraries', () => {
     render(<LibraryApplicationStrip application={{
       orderedLibraries: [],
       selectedAgentIds: [],
-      pending: false,
+      pending: false, syncState: 'synced',
     }} />);
 
     expect(screen.queryByTestId('applied-libraries-summary')).toBeNull();

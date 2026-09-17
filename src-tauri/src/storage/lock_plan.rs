@@ -9,7 +9,7 @@ use crate::core::lossless_lock::{
 };
 use crate::environment::types::ResourceLocator;
 use crate::error::AppError;
-use crate::storage::atomic_document::AtomicDocumentIo;
+use crate::storage::atomic_document::{AtomicDocumentIo, DocumentWriteFailure};
 
 #[derive(Debug, Clone)]
 pub struct LockCommitReceipt {
@@ -78,13 +78,6 @@ pub enum LockEntryMutation {
 }
 
 impl LockEntryMutation {
-    fn affected_keys(&self) -> Vec<&str> {
-        match self {
-            Self::Replace { key, .. } | Self::Remove { key } => vec![key],
-            Self::MoveAndReplace { from, to, .. } => vec![from, to],
-        }
-    }
-
     #[cfg(test)]
     pub fn target_key(&self) -> &str {
         match self {
@@ -141,96 +134,118 @@ where
     pub async fn commit(
         &self,
         prepared: PreparedLockMutation,
-    ) -> Result<LockCommitReceipt, AppError> {
-        let mut latest = self.load_latest(&prepared).await?;
-        for key in prepared.entry.affected_keys() {
-            let expected = prepared.expected.entry_snapshots.get(key).ok_or_else(|| {
-                AppError::InvalidSource {
-                    value: format!("lock plan did not capture Skill '{key}'"),
-                }
-            })?;
-            latest.validate_entry_snapshot(key, expected)?;
-        }
-        match prepared.entry {
-            LockEntryMutation::Replace { key, replacement } => latest.replace_entry(
-                prepared.schema,
-                &key,
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&key)
-                    .expect("validated snapshot"),
-                replacement,
-            )?,
-            LockEntryMutation::Remove { key } => latest.remove_entry(
-                &key,
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&key)
-                    .expect("validated snapshot"),
-            )?,
+    ) -> Result<LockCommitReceipt, DocumentWriteFailure> {
+        let current = self
+            .io
+            .observe(
+                &prepared.target,
+                u64::from(environment_protocol::MAX_DOCUMENT_BYTES),
+            )
+            .await
+            .map_err(DocumentWriteFailure::not_published)?;
+        let legacy = match (&current.bytes, &prepared.legacy_target) {
+            (None, Some(target)) => {
+                self.io
+                    .observe(target, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                    .await
+                    .map_err(DocumentWriteFailure::not_published)?
+                    .bytes
+            }
+            _ => None,
+        };
+        let applied = environment_engine::lock::apply(
+            current.bytes.as_deref(),
+            legacy.as_deref(),
+            &engine_mutation(&prepared),
+        )
+        .map_err(map_engine_error)
+        .map_err(DocumentWriteFailure::not_published)?;
+        self.io
+            .replace(&prepared.target, current, applied.bytes)
+            .await?;
+        Ok(LockCommitReceipt {
+            entry_snapshots: applied
+                .receipt
+                .entries
+                .into_iter()
+                .map(|(key, value)| (key, LockEntrySnapshot::from_value(value)))
+                .collect(),
+            root_snapshots: applied
+                .receipt
+                .roots
+                .into_iter()
+                .map(|(field, value)| (field, LockRootSnapshot::from_value(value)))
+                .collect(),
+        })
+    }
+}
+
+fn engine_mutation(prepared: &PreparedLockMutation) -> environment_engine::lock::LockMutation {
+    use environment_engine::lock::{EntryMutation, LockMutation, LockSchema as EngineSchema};
+
+    LockMutation {
+        schema: match prepared.schema {
+            LockSchema::Global => EngineSchema::Global,
+            LockSchema::Project => EngineSchema::Project,
+        },
+        entry: match &prepared.entry {
+            LockEntryMutation::Replace { key, replacement } => EntryMutation::Replace {
+                key: key.clone(),
+                replacement: replacement.clone(),
+            },
+            LockEntryMutation::Remove { key } => EntryMutation::Remove { key: key.clone() },
             LockEntryMutation::MoveAndReplace {
                 from,
                 to,
                 replacement,
-            } => latest.move_and_replace_entry(
-                prepared.schema,
-                &from,
-                &to,
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&from)
-                    .expect("validated snapshot"),
-                prepared
-                    .expected
-                    .entry_snapshots
-                    .get(&to)
-                    .expect("validated snapshot"),
-                replacement,
-            )?,
-        }
-        for (field, replacement) in &prepared.root_replacements {
-            let expected = prepared.expected.root_snapshots.get(field).ok_or_else(|| {
-                AppError::InvalidSource {
-                    value: format!("lock plan did not capture root field '{field}'"),
-                }
-            })?;
-            latest.replace_root(field, expected, replacement.clone())?;
-        }
-
-        let receipt = LockCommitReceipt {
-            entry_snapshots: prepared
-                .expected
-                .entry_snapshots
-                .keys()
-                .map(|name| (name.clone(), latest.entry_snapshot(name)))
-                .collect(),
-            root_snapshots: prepared
-                .expected
-                .root_snapshots
-                .keys()
-                .map(|field| (field.clone(), latest.root_snapshot(field)))
-                .collect(),
-        };
-        self.io
-            .write_atomic(&prepared.target, latest.to_pretty_bytes()?)
-            .await?;
-        Ok(receipt)
+            } => EntryMutation::MoveAndReplace {
+                from: from.clone(),
+                to: to.clone(),
+                replacement: replacement.clone(),
+            },
+        },
+        root_replacements: prepared.root_replacements.clone(),
+        expected_entries: prepared
+            .expected
+            .entry_snapshots
+            .iter()
+            .map(|(key, snapshot)| (key.clone(), snapshot.value().cloned()))
+            .collect(),
+        expected_roots: prepared
+            .expected
+            .root_snapshots
+            .iter()
+            .map(|(field, snapshot)| (field.clone(), snapshot.value().cloned()))
+            .collect(),
     }
+}
 
-    async fn load_latest(
-        &self,
-        prepared: &PreparedLockMutation,
-    ) -> Result<LosslessLockDocument, AppError> {
-        load_lock_document(
-            self.io.as_ref(),
-            &prepared.target,
-            prepared.legacy_target.as_ref(),
-            prepared.schema,
-        )
-        .await
+fn map_engine_error(error: environment_engine::lock::LockError) -> AppError {
+    match error {
+        environment_engine::lock::LockError::EntryConflict { key } => AppError::LockConflict {
+            target: crate::error::LockConflictTarget::Skill { skill_name: key },
+        },
+        environment_engine::lock::LockError::RootConflict { field } => AppError::LockConflict {
+            target: crate::error::LockConflictTarget::RootField { field },
+        },
+        environment_engine::lock::LockError::MissingExpectedEntry { key } => {
+            AppError::InvalidSource {
+                value: format!("lock plan did not capture Skill '{key}'"),
+            }
+        }
+        environment_engine::lock::LockError::MissingExpectedRoot { field } => {
+            AppError::InvalidSource {
+                value: format!("lock plan did not capture root field '{field}'"),
+            }
+        }
+        environment_engine::lock::LockError::UnsupportedSchema { version, supported } => {
+            AppError::ConfigurationCorrupted {
+                message: format!("lock schema version {version} is newer than {supported}"),
+            }
+        }
+        environment_engine::lock::LockError::InvalidDocument { message } => {
+            AppError::Json { message }
+        }
     }
 }
 
@@ -243,14 +258,22 @@ pub async fn load_lock_document<I>(
 where
     I: AtomicDocumentIo + ?Sized,
 {
-    if let Some(bytes) = io.read_optional(target).await? {
+    if let Some(bytes) = io
+        .observe(target, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+        .await?
+        .bytes
+    {
         ensure_supported_schema(&bytes, schema)?;
         return LosslessLockDocument::parse(&bytes);
     }
     let Some(legacy) = legacy_target else {
         return Ok(LosslessLockDocument::empty(schema));
     };
-    let Some(bytes) = io.read_optional(legacy).await? else {
+    let Some(bytes) = io
+        .observe(legacy, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+        .await?
+        .bytes
+    else {
         return Ok(LosslessLockDocument::empty(schema));
     };
     let document = LosslessLockDocument::parse(&bytes)?;
@@ -289,7 +312,9 @@ mod tests {
 
     use super::*;
     use crate::environment::types::EnvironmentRef;
-    use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
+    use crate::storage::atomic_document::{
+        AtomicDocumentIo, DocumentCommitReceipt, DocumentSnapshot, DocumentWriteFailure, IoFuture,
+    };
 
     #[derive(Default)]
     struct FakeIo {
@@ -297,25 +322,49 @@ mod tests {
     }
 
     impl AtomicDocumentIo for FakeIo {
-        fn read_optional<'a>(
+        fn observe<'a>(
             &'a self,
             target: &'a ResourceLocator,
-        ) -> IoFuture<'a, Result<Option<Vec<u8>>, AppError>> {
-            Box::pin(
-                async move { Ok(self.files.lock().unwrap().get(&target.native_path).cloned()) },
-            )
+            _max_bytes: u64,
+        ) -> IoFuture<'a, Result<DocumentSnapshot, AppError>> {
+            Box::pin(async move {
+                Ok(DocumentSnapshot {
+                    bytes: self.files.lock().unwrap().get(&target.native_path).cloned(),
+                    generation: None,
+                })
+            })
         }
 
-        fn write_atomic<'a>(
+        fn replace<'a>(
             &'a self,
             target: &'a ResourceLocator,
+            expected: DocumentSnapshot,
             bytes: Vec<u8>,
-        ) -> IoFuture<'a, Result<(), AppError>> {
+        ) -> IoFuture<'a, Result<DocumentCommitReceipt, DocumentWriteFailure>> {
             Box::pin(async move {
-                self.files
-                    .lock()
-                    .unwrap()
-                    .insert(target.native_path.clone(), bytes);
+                let mut files = self.files.lock().unwrap();
+                if files.get(&target.native_path) != expected.bytes.as_ref() {
+                    return Err(DocumentWriteFailure::not_published(AppError::StaleTarget));
+                }
+                files.insert(target.native_path.clone(), bytes.clone());
+                Ok(DocumentSnapshot {
+                    bytes: Some(bytes),
+                    generation: None,
+                })
+            })
+        }
+
+        fn remove<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            expected: DocumentSnapshot,
+        ) -> IoFuture<'a, Result<(), DocumentWriteFailure>> {
+            Box::pin(async move {
+                let mut files = self.files.lock().unwrap();
+                if files.get(&target.native_path) != expected.bytes.as_ref() {
+                    return Err(DocumentWriteFailure::not_published(AppError::StaleTarget));
+                }
+                files.remove(&target.native_path);
                 Ok(())
             })
         }
@@ -402,7 +451,11 @@ mod tests {
         );
         assert!(matches!(
             committer.commit(mutation(expected)).await,
-            Err(AppError::LockConflict { .. })
+            Err(DocumentWriteFailure {
+                error: AppError::LockConflict { .. },
+                publication: crate::storage::atomic_document::PublicationState::NotPublished,
+                ..
+            })
         ));
     }
 
@@ -431,7 +484,11 @@ mod tests {
 
         assert!(matches!(
             committer.commit(prepared).await,
-            Err(AppError::LockConflict { .. })
+            Err(DocumentWriteFailure {
+                error: AppError::LockConflict { .. },
+                publication: crate::storage::atomic_document::PublicationState::NotPublished,
+                ..
+            })
         ));
     }
 
@@ -531,7 +588,14 @@ mod tests {
                 })
                 .await;
 
-            assert!(matches!(result, Err(AppError::LockConflict { .. })));
+            assert!(matches!(
+                result,
+                Err(DocumentWriteFailure {
+                    error: AppError::LockConflict { .. },
+                    publication: crate::storage::atomic_document::PublicationState::NotPublished,
+                    ..
+                })
+            ));
             assert_eq!(
                 io.files.lock().unwrap()[&locator().native_path],
                 external_bytes

@@ -1,7 +1,7 @@
 use crate::core::local_lock::LocalSkillLockEntry;
 use crate::core::skill_lock::SkillLockEntry;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NormalizedUpdateMetadata {
     pub source: String,
     pub source_type: String,
@@ -14,6 +14,26 @@ pub struct NormalizedUpdateMetadata {
 }
 
 impl NormalizedUpdateMetadata {
+    pub fn comparison_fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let value = match crate::core::SourceIdentity::from_metadata(self) {
+            Ok(identity) => serde_json::json!([
+                identity.key(),
+                self.skill_path
+                    .as_deref()
+                    .map(crate::core::skill_paths::normalize_skill_folder_path),
+                self.comparison_baseline(),
+            ]),
+            Err(_) => {
+                serde_json::to_value(self).expect("update metadata serializes deterministically")
+            }
+        };
+        format!(
+            "comparison-v1:{:x}",
+            Sha256::digest(value.to_string().as_bytes())
+        )
+    }
+
     pub fn comparison_baseline(&self) -> Option<&str> {
         match self.source_type.as_str() {
             "well-known" => self

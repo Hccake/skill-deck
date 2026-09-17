@@ -12,6 +12,7 @@ import {
 import type {
   GitProxyScope,
   NativeGitProxySettings,
+  ProxySettingsTarget,
   WslGitProxySettings,
 } from '@/bindings';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ import {
   testProxyConnection,
   type NetworkProxySettings,
   type ProxyConnectionTestResult,
+  type ProxySettingsSnapshot,
 } from '@/hooks/useTauriApi';
 import { useRegisterUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
 import { cn } from '@/lib/utils';
@@ -113,6 +115,7 @@ export function ProxySettingsPage() {
   const writeBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
   const [savedSettings, setSavedSettings] = useState<NetworkProxySettings | null>(null);
+  const [configuration, setConfiguration] = useState<ProxySettingsSnapshot | null>(null);
   const [draft, setDraft] = useState<NetworkProxySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -125,21 +128,31 @@ export function ProxySettingsPage() {
   const saveRequestId = useRef(0);
   const testRequestId = useRef(0);
   const draftRevision = useRef(0);
+  const reloadRequested = useRef(false);
+  const preserveDraftOnLoad = useRef(false);
 
   useEffect(() => {
     const activeRequest = ++loadRequestId.current;
-    void getProxySettings()
-      .then((settings) => {
+    const loadingDraftRevision = draftRevision.current;
+    void getProxySettings(reloadRequested.current)
+      .then((snapshot) => {
         if (loadRequestId.current !== activeRequest) return;
-        const complete = completeSettings(settings);
+        const complete = completeSettings(snapshot.settings);
+        setConfiguration(snapshot);
         setSavedSettings(complete);
-        setDraft(complete);
+        setDraft((current) => current
+          && (preserveDraftOnLoad.current || draftRevision.current !== loadingDraftRevision)
+          ? current
+          : complete);
       })
       .catch(() => {
         if (loadRequestId.current === activeRequest) setError(t('settings.proxy.loadError'));
       })
       .finally(() => {
-        if (loadRequestId.current === activeRequest) setLoading(false);
+        if (loadRequestId.current === activeRequest) {
+          reloadRequested.current = false;
+          setLoading(false);
+        }
       });
     return () => {
       if (loadRequestId.current === activeRequest) loadRequestId.current += 1;
@@ -150,6 +163,7 @@ export function ProxySettingsPage() {
   const changed = savedSettings !== null
     && currentDraft !== null
     && JSON.stringify(savedSettings) !== JSON.stringify(currentDraft);
+  const needsRepair = (configuration?.issues.length ?? 0) > 0;
   const wslDistros = useMemo(() => environments
     .flatMap((environment) => environment.environment.kind === 'wsl'
       ? [environment.environment.distro_name]
@@ -176,6 +190,7 @@ export function ProxySettingsPage() {
   const discardDraft = useCallback(() => {
     if (!savedSettings) return;
     draftRevision.current += 1;
+    preserveDraftOnLoad.current = false;
     saveRequestId.current += 1;
     setSaving(false);
     setDraft(savedSettings);
@@ -191,6 +206,7 @@ export function ProxySettingsPage() {
 
   const updateDraft = (updater: (current: NetworkProxySettings) => NetworkProxySettings) => {
     draftRevision.current += 1;
+    preserveDraftOnLoad.current = true;
     setDraft((current) => current ? updater(current) : current);
     setMessage(null);
     setError(null);
@@ -207,11 +223,19 @@ export function ProxySettingsPage() {
       setError(t(`settings.proxy.errors.${appError.data.code}`));
       return;
     }
+    if (appError.kind === 'staleTarget') {
+      setError(t('settings.proxy.fileChanged'));
+      return;
+    }
+    if (appError.kind === 'configurationWriteUnconfirmed') {
+      setError(t('settings.proxy.errors.writeUnconfirmed'));
+      return;
+    }
     setError(t(fallbackKey));
   };
 
   const save = async () => {
-    if (!currentDraft || writeBlocked) return;
+    if (!currentDraft || writeBlocked || !configuration?.repairable) return;
     setSaving(true);
     const activeRequest = ++saveRequestId.current;
     const savedDraftRevision = draftRevision.current;
@@ -221,7 +245,9 @@ export function ProxySettingsPage() {
       const saved = completeSettings(await saveProxySettings(currentDraft));
       if (saveRequestId.current !== activeRequest) return;
       setSavedSettings(saved);
+      setConfiguration((current) => current ? { ...current, settings: saved, issues: [] } : current);
       if (draftRevision.current === savedDraftRevision) {
+        preserveDraftOnLoad.current = false;
         setDraft(saved);
         setMessage(t('settings.proxy.saved'));
       }
@@ -232,6 +258,16 @@ export function ProxySettingsPage() {
     } finally {
       if (saveRequestId.current === activeRequest) setSaving(false);
     }
+  };
+
+  const reload = () => {
+    reloadRequested.current = true;
+    preserveDraftOnLoad.current = changed;
+    setError(null);
+    setMessage(null);
+    invalidateTestResult();
+    setLoading(true);
+    setLoadAttempt((attempt) => attempt + 1);
   };
 
   const test = async () => {
@@ -295,6 +331,28 @@ export function ProxySettingsPage() {
             {t('settings.proxy.description')}
           </p>
         </header>
+
+        {configuration && needsRepair ? (
+          <section role="alert" className="mt-4 rounded-md border border-warning/40 bg-warning/5 p-4 text-sm">
+            <h3 className="font-medium">{t('settings.proxy.configurationIssueTitle')}</h3>
+            <ul className="mt-2 space-y-2">
+              {configuration.issues.map((issue, index) => (
+                <li key={`${issue.target.kind}-${issue.code}-${index}`}>
+                  <p>
+                    {proxyIssueTargetLabel(issue.target, nativeGitLabel, t)}: {t(`settings.proxy.errors.${issue.code}`)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(issue.usingPrevious ? 'settings.proxy.usingPrevious' : 'settings.proxy.affectedRequestsPaused')}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs">
+              {t(configuration.repairable ? 'settings.proxy.reviewBeforeRepair' : 'settings.proxy.documentRepairRequired')}
+            </p>
+            {configuration.configPath ? <p className="mt-2 break-all font-mono text-xs text-muted-foreground">{configuration.configPath}</p> : null}
+          </section>
+        ) : null}
 
         <FlatSection
           id="http-proxy-title"
@@ -462,7 +520,15 @@ export function ProxySettingsPage() {
           >
             {changed ? t('settings.proxy.unsavedChanges') : message ?? ''}
           </p>
-          <div className="flex shrink-0 items-center justify-end gap-2">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={saving || testing || writeBlocked}
+              onClick={reload}
+            >
+              {t('settings.proxy.reload')}
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -475,7 +541,7 @@ export function ProxySettingsPage() {
             <Button
               type="button"
               className="min-w-24"
-              disabled={!changed || saving || testing || writeBlocked}
+              disabled={(!changed && !needsRepair) || saving || testing || writeBlocked || !configuration?.repairable}
               onClick={() => void save()}
             >
               {saving ? (
@@ -492,6 +558,15 @@ export function ProxySettingsPage() {
       </div>
     </TooltipProvider>
   );
+}
+
+function proxyIssueTargetLabel(target: ProxySettingsTarget, nativeGitLabel: string, t: (key: string) => string) {
+  switch (target.kind) {
+    case 'all': return t('settings.proxy.title');
+    case 'http': return t('settings.proxy.modeTitle');
+    case 'nativeGit': return nativeGitLabel;
+    case 'wslGit': return target.distro ? `WSL · ${target.distro} Git` : t('settings.proxy.test.targets.wslGit');
+  }
 }
 
 function FlatSection({

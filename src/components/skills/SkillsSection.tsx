@@ -10,32 +10,25 @@ import { LibraryApplicationStrip } from './LibraryApplicationStrip';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentId, InstalledSkill, InstalledSkillLocation, LibraryApplicationSummary, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { AgentId, InstalledSkill, InstalledSkillLocation, LibraryApplicationSummary, UpdateCheckOutcome } from '@/bindings';
 import {
-  buildUpdatePlan,
   isSkillUpdateActive,
-  resolveSkillMaintenanceAction,
   resolveEvidenceFailureReasonI18nKey,
   resolveUpdateStatusLabelI18nKey,
   hasIncompleteUpdateCheck,
   hasCommittedUpdateComparison,
-  providerCooldownDeadline,
   type SkillUpdateDisplayStatus,
   type SkillListItem,
-  type UpdatePlan,
 } from '@/stores/skills-utils';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_DUPLICATE_LOCATION_SET = new Set<string>();
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
-const EMPTY_SOURCE_DIAGNOSTICS: SourceUpdateCheckInfo[] = [];
 
 interface SkillsSectionProps {
   title: string;
   skills: SkillListItem[];
-  /** 当前 Environment 的完整来源诊断，不受列表筛选影响。 */
-  sourceDiagnostics?: SourceUpdateCheckInfo[];
   scope: InstalledSkillLocation;
   duplicateLocationSkillNames?: Set<string>;
   /** 项目目录是否存在（仅 project scope） */
@@ -59,7 +52,6 @@ interface SkillsSectionProps {
   onDelete: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
-  onRepairSource?: (skill: InstalledSkill) => void;
   onAdd: () => void;
   onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   emptyState?: React.ReactNode;
@@ -70,7 +62,6 @@ interface SkillsSectionProps {
 export const SkillsSection = memo(function SkillsSection({
   title,
   skills,
-  sourceDiagnostics = EMPTY_SOURCE_DIAGNOSTICS,
   scope,
   duplicateLocationSkillNames = EMPTY_DUPLICATE_LOCATION_SET,
   pathExists = true,
@@ -86,11 +77,10 @@ export const SkillsSection = memo(function SkillsSection({
   onDelete,
   onCopyToProject,
   onManageAgents,
-  onRepairSource,
   onAdd,
   onCheckUpdates,
   emptyState,
-  libraryApplication = { orderedLibraries: [], selectedAgentIds: [], pending: false },
+  libraryApplication = { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
   onManageLibraries,
 }: SkillsSectionProps) {
   const { t, i18n } = useTranslation();
@@ -128,7 +118,11 @@ export const SkillsSection = memo(function SkillsSection({
       }
     } else if (updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed') {
       updateCheckFailureCount++;
-    } else if (updateStatusLabelKey && updateStatusLabelKey !== 'skills.updateStatusLabel.available') {
+    } else if (
+      updateStatusLabelKey
+      && updateStatusLabelKey !== 'skills.updateStatusLabel.available'
+      && updateStatusLabelKey !== 'skills.updateStatusLabel.localSource'
+    ) {
       maintenanceCount++;
     }
     if (skill.updateEvidence?.lastAttempt?.failure) {
@@ -138,26 +132,17 @@ export const SkillsSection = memo(function SkillsSection({
       }
     }
   }
-  const updatePlanPreview = useMemo(
-    () => buildUpdatePlan(skills, scope, scope === 'project' ? projectPath : undefined),
-    [projectPath, scope, skills]
+  const updatableSkillNames = useMemo(
+    () => skills
+      .filter((skill) => skill.hasUpdate === true && skill.canRunUpdate !== false)
+      .map((skill) => skill.name),
+    [skills],
   );
-  const updatesCount = updatePlanPreview.updatableCount;
+  const updatesCount = updatableSkillNames.length;
   const incompleteTotal = incompleteCheckCount + updateCheckFailureCount;
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
   const latestFailure = latestFailureSkill?.updateEvidence?.lastAttempt?.failure ?? null;
   const latestAttemptAt = latestFailureSkill?.updateEvidence?.lastAttempt?.checkedAtEpochMs ?? null;
-  const cooldownDeadline = providerCooldownDeadline([
-    ...sourceDiagnostics,
-    ...skills.flatMap((skill) => skill.updateEvidence ? [skill.updateEvidence] : []),
-  ]);
-  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
-  const cooldownActive = cooldownDeadline != null && cooldownDeadline > cooldownNow;
-  useEffect(() => {
-    if (cooldownDeadline == null) return undefined;
-    const timer = setTimeout(() => setCooldownNow(Date.now()), Math.max(0, cooldownDeadline - Date.now()));
-    return () => clearTimeout(timer);
-  }, [cooldownDeadline]);
 
   const showUpToDate = pathExists
     && (!filterActive || skills.length > 0)
@@ -244,29 +229,18 @@ export const SkillsSection = memo(function SkillsSection({
     showCheckDone();
   }, [onCheckUpdates, showCheckDone]);
 
-  const openPreparedUpdatePlan = useCallback(async (nextPlan: UpdatePlan, batch: boolean) => {
-    if (nextPlan.updatableCount === 0) return;
-    const skillNames = nextPlan.groups.flatMap((group) => group.skillNames);
+  const openPreparedUpdatePlan = useCallback(async (skillNames: string[], batch: boolean) => {
+    if (skillNames.length === 0) return;
     await onPrepareUpdate(skillNames, batch);
   }, [onPrepareUpdate]);
 
   const handleOpenUpdatePlan = useCallback(() => {
-    void openPreparedUpdatePlan(updatePlanPreview, true);
-  }, [openPreparedUpdatePlan, updatePlanPreview]);
+    void openPreparedUpdatePlan(updatableSkillNames, true);
+  }, [openPreparedUpdatePlan, updatableSkillNames]);
 
   const handleUpdateSkill = useCallback(async (skillName: string) => {
-    const skill = skills.find((candidate) => candidate.name === skillName);
-    if (skill && resolveSkillMaintenanceAction(skill) === 'direct-reinstall') {
-      await onPrepareUpdate([skillName], false);
-      return;
-    }
-    const nextPlan = buildUpdatePlan(
-      skills.filter((skill) => skill.name === skillName),
-      scope,
-      scope === 'project' ? projectPath : undefined,
-    );
-    await openPreparedUpdatePlan(nextPlan, false);
-  }, [onPrepareUpdate, openPreparedUpdatePlan, projectPath, scope, skills]);
+    await openPreparedUpdatePlan([skillName], false);
+  }, [openPreparedUpdatePlan]);
 
   return (
     <>
@@ -377,13 +351,7 @@ export const SkillsSection = memo(function SkillsSection({
                   </span>
                 ) : (
                   <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
-                    disabled={isCheckingUpdates || cooldownActive}
                     aria-busy={isCheckingUpdates}
-                    title={cooldownActive && cooldownDeadline
-                      ? t('skills.updateEvidence.retryAt', {
-                          time: new Date(cooldownDeadline).toLocaleString(i18n.language),
-                        })
-                      : undefined}
                     onClick={() => {
                       void handleCheckUpdates();
                     }}>
@@ -464,7 +432,6 @@ export const SkillsSection = memo(function SkillsSection({
                     onDelete={onDelete}
                     onCopyToProject={onCopyToProject}
                     onManageAgents={onManageAgents}
-                    onRepairSource={onRepairSource}
                   />
                 );
               })}

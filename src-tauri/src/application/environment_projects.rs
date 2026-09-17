@@ -309,6 +309,11 @@ mod tests {
                 .into_iter()
                 .collect(),
             pending,
+            sync_state: if pending {
+                crate::application::library_application::LibraryApplicationSyncState::Pending
+            } else {
+                crate::application::library_application::LibraryApplicationSyncState::Synced
+            },
         }
     }
 

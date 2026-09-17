@@ -16,6 +16,22 @@ impl RuntimeWellKnownAccess {
 }
 
 impl WellKnownAccess for RuntimeWellKnownAccess {
+    fn fetch_selected<'a>(
+        &'a self,
+        url: &'a str,
+        skill_names: &'a [String],
+        cancellation: &'a CancellationSignal,
+    ) -> WellKnownFetchFuture<'a> {
+        Box::pin(
+            crate::runtime::wellknown_protocol::fetch_selected_wellknown_skills_with_client(
+                &self.http,
+                url,
+                Some(skill_names),
+                cancellation,
+            ),
+        )
+    }
+
     fn fetch<'a>(
         &'a self,
         url: &'a str,

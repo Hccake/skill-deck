@@ -3,7 +3,6 @@ use tauri::State;
 use crate::application::environment_settings;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::mutation::MutationKind;
-use crate::core::read_config;
 use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::AppError;
 use crate::models::SkillDeckConfig;
@@ -11,8 +10,8 @@ use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_config() -> Result<SkillDeckConfig, AppError> {
-    read_config()
+pub fn get_config(runtime: State<'_, RuntimeServiceGraph>) -> Result<SkillDeckConfig, AppError> {
+    Ok(runtime.config().config())
 }
 
 #[tauri::command]
@@ -22,7 +21,7 @@ pub fn save_config(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<(), AppError> {
     save_config_with_admission(config, runtime.admission(), |config| {
-        environment_settings::save_config_preserving_wsl_setting(config)
+        environment_settings::save_config_preserving_wsl_setting(config, runtime.config())
     })
 }
 
@@ -51,6 +50,7 @@ pub async fn set_wsl_integration_enabled(
         runtime.wsl(),
         runtime.admission(),
         runtime.payloads(),
+        runtime.config(),
     )
     .set_enabled(enabled)
     .await

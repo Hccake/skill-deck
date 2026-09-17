@@ -6,22 +6,16 @@ use specta::Type;
 
 #[cfg(test)]
 use crate::application::collection_records::SkillSelection;
-use crate::application::mutation::plan::stable_digest;
+use crate::application::library_membership::LibraryMembershipOutcome;
 use crate::application::mutation::result::ErrorReport;
-use crate::application::payload_session::{
-    AcquiredPayloadHandle, DiscoverySessionHandle, PayloadSessionManager,
-};
-use crate::application::skill_changes::compare_update_subjects;
+use crate::application::payload_session::PayloadSessionManager;
+use crate::application::skill_changes::{compare_update_subjects, ReadyUpdatePayload};
 use crate::application::skill_libraries::{
     SkillLibraryDetail, SkillLibraryModule, UpdateLibrarySkillsRequest,
 };
-use crate::application::skill_source::{
-    validate_saved_payloads, SavedPayloadCandidate, SavedSkillSource, SkillSourceModule,
-};
+use crate::application::skill_source::{SavedSkillSource, SkillSourceModule};
 use crate::application::update::{UpdateOutcome, UpdateSourceResult, UpdateSourceStatus};
-use crate::application::update_subjects::{
-    LibraryUpdateSubjectSnapshots, UpdateSubject, UpdateSubjectSnapshot,
-};
+use crate::application::update_subjects::LibraryUpdateSubjectSnapshots;
 use crate::core::mutation::CancellationSignal;
 use crate::environment::content_manifest::ContentManifestReader;
 use crate::environment::planning::TargetFactResolver;
@@ -67,114 +61,55 @@ pub struct LibraryUpdateResponse {
     pub sources: Vec<UpdateSourceResult>,
     pub results: Vec<LibraryUpdateSkillResult>,
     pub outcome: UpdateOutcome,
-    pub library: SkillLibraryDetail,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdatePreviewToken {
-    pub generation: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdatePreview {
-    pub token: LibraryUpdatePreviewToken,
-    pub skill_names: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdateRiskConfirmation {
-    pub redirected_download_hosts: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdatePreparedPayload {
-    pub skill_name: String,
-    pub payload: AcquiredPayloadHandle,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdatePreparedSkillError {
-    pub skill_name: String,
-    pub error: ErrorReport,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(tag = "status", rename_all = "camelCase")]
-#[specta(tag = "status", rename_all = "camelCase")]
-pub enum LibraryUpdatePreparedSourceResult {
-    Acquired {
-        #[serde(rename = "discoverySession")]
-        #[specta(rename = "discoverySession")]
-        discovery_session: DiscoverySessionHandle,
-        payloads: Vec<LibraryUpdatePreparedPayload>,
-        #[serde(rename = "skillErrors")]
-        #[specta(rename = "skillErrors")]
-        skill_errors: Vec<LibraryUpdatePreparedSkillError>,
-        #[serde(rename = "redirectedDownloadHost")]
-        #[specta(rename = "redirectedDownloadHost")]
-        redirected_download_host: Option<String>,
-    },
-    Failed {
-        error: ErrorReport,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdatePreparedSource {
-    pub source_result_id: String,
-    pub source: String,
-    pub skill_names: Vec<String>,
-    pub result: LibraryUpdatePreparedSourceResult,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct LibraryUpdateContinuation {
-    pub sources: Vec<LibraryUpdatePreparedSource>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct ExecuteLibraryUpdateRequest {
-    pub request: UpdateLibrarySkillsRequest,
-    pub expected_token: LibraryUpdatePreviewToken,
-    pub continuation: Option<LibraryUpdateContinuation>,
-    pub risk_confirmation: Option<LibraryUpdateRiskConfirmation>,
+    pub library: Option<SkillLibraryDetail>,
+    pub membership: LibraryMembershipOutcome,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
-#[serde(tag = "status", rename_all = "camelCase")]
-#[specta(tag = "status", rename_all = "camelCase")]
-pub enum LibraryUpdateExecutionOutcome {
-    Completed {
-        response: LibraryUpdateResponse,
-    },
-    ConfirmationRequired {
-        token: LibraryUpdatePreviewToken,
-        #[serde(rename = "redirectedDownloadHosts")]
-        #[specta(rename = "redirectedDownloadHosts")]
-        redirected_download_hosts: Vec<String>,
-        continuation: LibraryUpdateContinuation,
-    },
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct PreparedLibraryUpdatePreview {
+    pub skill_names: Vec<String>,
+    pub blocked: Vec<crate::application::update::UpdatePreparationIssue>,
+    pub redirected_download_hosts: Vec<String>,
+}
+
+pub struct PreparedLibraryUpdate {
+    pub request: UpdateLibrarySkillsRequest,
+    pub preview: PreparedLibraryUpdatePreview,
+    items: Vec<(String, ReadyUpdatePayload)>,
+    sources: Vec<UpdateSourceResult>,
+    source_by_skill: BTreeMap<String, String>,
+}
+
+impl PreparedLibraryUpdate {
+    pub fn expires_at_epoch_ms(&self) -> Option<u64> {
+        self.items
+            .iter()
+            .map(|(_, item)| item.payload.handle().expires_at_epoch_ms)
+            .min()
+    }
+
+    pub fn expire_payloads(&mut self, now: u64) {
+        self.items.retain(|(_, item)| {
+            if item.payload.handle().expires_at_epoch_ms > now {
+                return true;
+            }
+            let name = item.payload.name();
+            self.preview.skill_names.retain(|skill| skill != name);
+            self.preview
+                .blocked
+                .push(crate::application::update::UpdatePreparationIssue {
+                    skill_name: name.to_string(),
+                    error: AppError::StalePayload,
+                });
+            false
+        });
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryUpdateExecutionStage {
-    Acquiring,
     Validating,
     Committing,
 }
@@ -209,414 +144,234 @@ where
         }
     }
 
-    pub async fn preview(
+    pub async fn prepare(
         &self,
         request: &UpdateLibrarySkillsRequest,
-    ) -> Result<LibraryUpdatePreview, AppError> {
-        let skill_names = validate_request(request)?;
-        let snapshot = self
-            .subjects
-            .snapshot_library(&request.environment, &request.library_id, skill_names)
-            .await?;
-        let token = preview_token(request, &snapshot, None)?;
-        Ok(LibraryUpdatePreview {
-            token,
-            skill_names: request.skill_names.clone(),
-        })
-    }
-
-    #[cfg(test)]
-    pub async fn execute(
-        &self,
-        execution: &ExecuteLibraryUpdateRequest,
         cancellation: CancellationSignal,
-    ) -> Result<LibraryUpdateExecutionOutcome, AppError> {
-        self.execute_with_stage_observer(execution, cancellation, |_| {})
-            .await
-    }
-
-    pub async fn execute_with_stage_observer<F>(
-        &self,
-        execution: &ExecuteLibraryUpdateRequest,
-        cancellation: CancellationSignal,
-        observe_stage: F,
-    ) -> Result<LibraryUpdateExecutionOutcome, AppError>
-    where
-        F: Fn(LibraryUpdateExecutionStage),
-    {
-        let request = &execution.request;
-        let skill_names = validate_request(request)?;
-        let selection = skill_names.clone();
-        let initial = self
-            .subjects
-            .snapshot_library(&request.environment, &request.library_id, selection.clone())
-            .await?;
-        if preview_token(request, &initial, execution.continuation.as_ref())?
-            != execution.expected_token
-        {
-            return Err(AppError::StaleContext);
-        }
-        let mut results = BTreeMap::<String, LibraryUpdateSkillResult>::new();
-        let initial_by_name = subjects_by_name(&initial);
-        let saved = skill_names
-            .iter()
-            .filter_map(|name| match initial_by_name.get(name.as_str()) {
-                Some(subject) => match subject.projection.metadata() {
-                    Some(metadata) => Some(SavedSkillSource {
-                        name: name.clone(),
-                        metadata: metadata.clone(),
-                    }),
-                    None => {
-                        results.insert(
-                            name.clone(),
-                            failed(
-                                name,
-                                "",
-                                AppError::InvalidSource {
-                                    value: name.clone(),
-                                },
-                            ),
-                        );
-                        None
-                    }
-                },
-                None => {
-                    results.insert(
-                        name.clone(),
-                        failed(name, "", AppError::PathNotFound { path: name.clone() }),
-                    );
-                    None
-                }
-            })
-            .collect();
-        observe_stage(LibraryUpdateExecutionStage::Acquiring);
-        let continuation = match &execution.continuation {
-            Some(continuation) => continuation.clone(),
-            None => match self
-                .skill_source
-                .acquire_saved_skills(&request.environment, saved, cancellation.clone())
-                .await
-            {
-                Ok(acquisitions) => continuation_from_acquisitions(acquisitions),
-                Err(AppError::MutationCancelled) => {
-                    mark_cancelled(&request.skill_names, &mut results);
-                    return self
-                        .response(request, &[], results)
-                        .await
-                        .map(|response| LibraryUpdateExecutionOutcome::Completed { response });
-                }
-                Err(error) => return Err(error),
-            },
-        };
-        let redirected_download_hosts = continuation_redirect_hosts(&continuation);
-        let confirmed_hosts = execution
-            .risk_confirmation
-            .as_ref()
-            .map(|confirmation| normalized_hosts(&confirmation.redirected_download_hosts))
-            .unwrap_or_default();
-        if !redirected_download_hosts.is_empty() && redirected_download_hosts != confirmed_hosts {
-            return Ok(LibraryUpdateExecutionOutcome::ConfirmationRequired {
-                token: preview_token(request, &initial, Some(&continuation))?,
-                redirected_download_hosts,
-                continuation,
-            });
-        }
-
-        let mut candidates = Vec::new();
-        observe_stage(LibraryUpdateExecutionStage::Validating);
-        let mut source_by_skill = BTreeMap::new();
-        let mut cancelled_acquisitions = BTreeSet::new();
-        for source in &continuation.sources {
-            for skill_name in &source.skill_names {
-                source_by_skill.insert(skill_name.clone(), source.source_result_id.clone());
-            }
-            match &source.result {
-                LibraryUpdatePreparedSourceResult::Acquired {
-                    discovery_session,
-                    payloads,
-                    skill_errors,
-                    ..
-                } => {
-                    for skill_error in skill_errors {
-                        results.insert(
-                            skill_error.skill_name.clone(),
-                            failed_report(
-                                &skill_error.skill_name,
-                                &source.source_result_id,
-                                skill_error.error.clone(),
-                            ),
-                        );
-                    }
-                    for prepared in payloads {
-                        candidates.push(SavedPayloadCandidate {
-                            source_result_id: source.source_result_id.clone(),
-                            discovery_session: discovery_session.clone(),
-                            skill_name: prepared.skill_name.clone(),
-                            handle: prepared.payload.clone(),
-                        });
-                    }
-                }
-                LibraryUpdatePreparedSourceResult::Failed { error } => {
-                    for skill_name in &source.skill_names {
-                        let cancelled_result = error.code
-                            == crate::application::mutation::result::OperationErrorCode::MutationCancelled;
-                        if cancelled_result {
-                            cancelled_acquisitions.insert(skill_name.clone());
-                            continue;
-                        }
-                        results.insert(
-                            skill_name.clone(),
-                            failed_report(skill_name, &source.source_result_id, error.clone()),
-                        );
-                    }
-                }
-            }
-        }
-        let mut first_cancelled = true;
-        for skill_name in &request.skill_names {
-            if cancelled_acquisitions.contains(skill_name) {
-                let result = if first_cancelled {
-                    first_cancelled = false;
-                    cancelled(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                    )
-                } else {
-                    not_run(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                    )
-                };
-                results.insert(skill_name.clone(), result);
-            }
-        }
-        let validation =
-            validate_saved_payloads(self.payloads.as_ref(), &request.environment, candidates).await;
-        for failed_payload in validation.failed {
-            results.insert(
-                failed_payload.skill_name.clone(),
-                failed(
-                    &failed_payload.skill_name,
-                    &failed_payload.source_result_id,
-                    failed_payload.error,
-                ),
-            );
-        }
-        let validated = validation
-            .validated
-            .into_iter()
-            .map(|validated| validated.payload)
-            .collect();
-
-        let latest = self
-            .subjects
-            .snapshot_library(&request.environment, &request.library_id, selection)
-            .await?;
-        let prepared = compare_update_subjects(&initial, &latest, validated)?;
-        for skill_name in prepared.stale_skill_names {
-            results.insert(
-                skill_name.clone(),
-                failed(
-                    &skill_name,
-                    source_by_skill
-                        .get(&skill_name)
-                        .map(String::as_str)
-                        .unwrap_or(""),
-                    AppError::StaleTarget,
-                ),
-            );
-        }
-        let mut ready = prepared
-            .ready
-            .into_iter()
-            .map(|prepared| (prepared.payload.name().to_string(), prepared))
-            .collect::<BTreeMap<_, _>>();
-        observe_stage(LibraryUpdateExecutionStage::Committing);
-        let mut stop_after_cancel = false;
-        for skill_name in &request.skill_names {
-            if results.contains_key(skill_name) {
-                continue;
-            }
-            if stop_after_cancel {
-                results.insert(
-                    skill_name.clone(),
-                    not_run(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                    ),
-                );
-                continue;
-            }
-            if cancellation.is_cancelled() {
-                results.insert(
-                    skill_name.clone(),
-                    cancelled(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                    ),
-                );
-                stop_after_cancel = true;
-                continue;
-            }
-            let Some(prepared) = ready.remove(skill_name) else {
-                results.insert(
-                    skill_name.clone(),
-                    failed(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                        AppError::StalePayload,
-                    ),
-                );
-                continue;
-            };
-            let current = match self
+    ) -> Result<PreparedLibraryUpdate, AppError> {
+        validate_request(request)?;
+        let mut inspections = Vec::new();
+        let mut saved = Vec::new();
+        for name in &request.skill_names {
+            let snapshot = self
                 .subjects
                 .snapshot_library(
                     &request.environment,
                     &request.library_id,
-                    BTreeSet::from([skill_name.clone()]),
+                    BTreeSet::from([name.clone()]),
                 )
-                .await
-            {
-                Ok(current) => current,
-                Err(error) => {
-                    results.insert(
-                        skill_name.clone(),
-                        failed(
-                            skill_name,
-                            source_by_skill
-                                .get(skill_name)
-                                .map(String::as_str)
-                                .unwrap_or(""),
-                            error,
-                        ),
-                    );
-                    continue;
+                .await;
+            let snapshot = snapshot.and_then(|snapshot| {
+                let metadata = snapshot
+                    .subjects
+                    .iter()
+                    .find(|subject| &subject.skill_name == name)
+                    .and_then(|subject| subject.projection.metadata())
+                    .ok_or(AppError::StaleTarget)?;
+                if !crate::application::update::derive_update_capability_from_metadata(metadata)
+                    .can_run_update
+                {
+                    return Err(AppError::InvalidSource {
+                        value: name.clone(),
+                    });
                 }
-            };
-            let mut current_prepared =
-                match compare_update_subjects(&latest, &current, vec![prepared.payload]) {
-                    Ok(prepared) => prepared,
-                    Err(error) => {
-                        results.insert(
-                            skill_name.clone(),
-                            failed(
-                                skill_name,
-                                source_by_skill
-                                    .get(skill_name)
-                                    .map(String::as_str)
-                                    .unwrap_or(""),
-                                error,
-                            ),
-                        );
-                        continue;
-                    }
-                };
-            if !current_prepared.stale_skill_names.is_empty() {
-                results.insert(
-                    skill_name.clone(),
-                    failed(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                        AppError::StaleTarget,
-                    ),
-                );
-                continue;
+                crate::core::source_identity::SourceIdentity::from_metadata(metadata)?;
+                saved.push(SavedSkillSource {
+                    name: name.clone(),
+                    metadata: metadata.clone(),
+                });
+                Ok(snapshot)
+            });
+            inspections.push((name.clone(), snapshot));
+        }
+        let acquisitions = if saved.is_empty() {
+            Vec::new()
+        } else {
+            self.skill_source
+                .acquire_saved_skills(&request.environment, saved, cancellation.clone())
+                .await?
+        };
+        let mut prepared = PreparedLibraryUpdate {
+            request: request.clone(),
+            preview: PreparedLibraryUpdatePreview {
+                skill_names: Vec::new(),
+                blocked: Vec::new(),
+                redirected_download_hosts: Vec::new(),
+            },
+            items: Vec::new(),
+            sources: Vec::new(),
+            source_by_skill: acquisitions
+                .iter()
+                .flat_map(|source| {
+                    source
+                        .skill_names
+                        .iter()
+                        .map(|name| (name.clone(), source.source_result_id.clone()))
+                })
+                .collect(),
+        };
+        let mut hosts = BTreeSet::new();
+        for source in &acquisitions {
+            if let Ok(content) = &source.result {
+                hosts.extend(content.redirected_download_hosts.iter().cloned());
             }
-            let Some(prepared) = current_prepared.ready.pop() else {
-                results.insert(
-                    skill_name.clone(),
-                    failed(
-                        skill_name,
-                        source_by_skill
-                            .get(skill_name)
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                        AppError::StalePayload,
-                    ),
-                );
-                continue;
-            };
-            match self
-                .libraries
-                .commit_validated_update(
-                    &self.targets,
-                    &request.environment,
-                    &request.library_id,
-                    prepared,
-                )
-                .await
-            {
-                Ok(()) => {
-                    results.insert(
-                        skill_name.clone(),
-                        succeeded(
-                            skill_name,
-                            source_by_skill
-                                .get(skill_name)
-                                .map(String::as_str)
-                                .unwrap_or(""),
-                        ),
-                    );
+            prepared.sources.push(UpdateSourceResult {
+                id: source.source_result_id.clone(),
+                source: source.source.clone(),
+                status: if source.result.is_ok() {
+                    UpdateSourceStatus::Acquired
+                } else {
+                    UpdateSourceStatus::Failed
+                },
+                error: source
+                    .result
+                    .as_ref()
+                    .err()
+                    .cloned()
+                    .map(|error| ErrorReport::from_app_error(error, None)),
+            });
+        }
+        prepared.preview.redirected_download_hosts = hosts.into_iter().collect();
+        for (name, initial) in inspections {
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            let outcome = async {
+                let initial = initial?;
+                let source = acquisitions
+                    .iter()
+                    .find(|source| source.skill_names.contains(&name))
+                    .ok_or(AppError::StalePayload)?;
+                let content = source.result.as_ref().map_err(Clone::clone)?;
+                let payload = content
+                    .validate_member(self.payloads.as_ref(), &request.environment, &name)
+                    .await?;
+                let latest = self
+                    .subjects
+                    .snapshot_library(
+                        &request.environment,
+                        &request.library_id,
+                        BTreeSet::from([name.clone()]),
+                    )
+                    .await?;
+                let mut comparison = compare_update_subjects(&initial, &latest, vec![payload])?;
+                if !comparison.stale_skill_names.is_empty() {
+                    return Err(AppError::StaleTarget);
                 }
-                Err(AppError::MutationCancelled) => {
-                    results.insert(
-                        skill_name.clone(),
-                        cancelled(
-                            skill_name,
-                            source_by_skill
-                                .get(skill_name)
-                                .map(String::as_str)
-                                .unwrap_or(""),
-                        ),
-                    );
-                    stop_after_cancel = true;
-                }
-                Err(error) => {
-                    results.insert(
-                        skill_name.clone(),
-                        failed_commit(
-                            skill_name,
-                            source_by_skill
-                                .get(skill_name)
-                                .map(String::as_str)
-                                .unwrap_or(""),
-                            error,
-                        ),
-                    );
-                }
+                let ready = comparison.ready.pop().ok_or(AppError::StaleTarget)?;
+                Ok::<_, AppError>((source.source_result_id.clone(), ready))
+            }
+            .await;
+            match outcome {
+                Ok(item) => prepared.items.push(item),
+                Err(error) => prepared.preview.blocked.push(
+                    crate::application::update::UpdatePreparationIssue {
+                        skill_name: name,
+                        error,
+                    },
+                ),
             }
         }
-        self.response(request, &continuation.sources, results)
-            .await
-            .map(|response| LibraryUpdateExecutionOutcome::Completed { response })
+        let mut valid = Vec::new();
+        for item in prepared.items {
+            match self.payloads.pin_verified(item.1.payload.handle()).await {
+                Ok(_) => {
+                    prepared
+                        .preview
+                        .skill_names
+                        .push(item.1.payload.name().to_string());
+                    valid.push(item);
+                }
+                Err(error) => prepared.preview.blocked.push(
+                    crate::application::update::UpdatePreparationIssue {
+                        skill_name: item.1.payload.name().to_string(),
+                        error,
+                    },
+                ),
+            }
+        }
+        prepared.items = valid;
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        Ok(prepared)
     }
 
-    async fn response(
+    pub async fn execute_prepared<F>(
+        &self,
+        prepared: PreparedLibraryUpdate,
+        cancellation: CancellationSignal,
+        observe: F,
+    ) -> Result<LibraryUpdateResponse, AppError>
+    where
+        F: Fn(LibraryUpdateExecutionStage),
+    {
+        let mut results = prepared
+            .preview
+            .blocked
+            .iter()
+            .map(|issue| {
+                (
+                    issue.skill_name.clone(),
+                    failed(
+                        &issue.skill_name,
+                        prepared
+                            .source_by_skill
+                            .get(&issue.skill_name)
+                            .map(String::as_str)
+                            .unwrap_or(""),
+                        issue.error.clone(),
+                    ),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut stopped = false;
+        for (source, item) in prepared.items {
+            let name = item.payload.name().to_string();
+            if stopped {
+                results.insert(name.clone(), not_run(&name, &source));
+                continue;
+            }
+            let result = async {
+                if cancellation.is_cancelled() {
+                    return Err(AppError::MutationCancelled);
+                }
+                observe(LibraryUpdateExecutionStage::Validating);
+                self.payloads.pin_verified(item.payload.handle()).await?;
+                observe(LibraryUpdateExecutionStage::Committing);
+                self.libraries
+                    .commit_validated_update(
+                        &self.targets,
+                        &prepared.request.environment,
+                        &prepared.request.library_id,
+                        item,
+                    )
+                    .await
+            }
+            .await;
+            results.insert(
+                name.clone(),
+                match result {
+                    Ok(()) => succeeded(&name, &source),
+                    Err(AppError::MutationCancelled) => {
+                        stopped = true;
+                        cancelled(&name, &source)
+                    }
+                    Err(error) => failed_commit(&name, &source, error),
+                },
+            );
+        }
+        self.response_with_sources(&prepared.request, prepared.sources, results)
+            .await
+    }
+
+    async fn response_with_sources(
         &self,
         request: &UpdateLibrarySkillsRequest,
-        sources: &[LibraryUpdatePreparedSource],
+        source_results: Vec<UpdateSourceResult>,
         mut results: BTreeMap<String, LibraryUpdateSkillResult>,
     ) -> Result<LibraryUpdateResponse, AppError> {
-        let ordered: Vec<LibraryUpdateSkillResult> = request
+        let ordered = request
             .skill_names
             .iter()
             .map(|name| {
@@ -624,33 +379,25 @@ where
                     .remove(name)
                     .unwrap_or_else(|| failed(name, "", AppError::StalePayload))
             })
-            .collect();
-        let source_results = sources
-            .iter()
-            .map(|source| UpdateSourceResult {
-                id: source.source_result_id.clone(),
-                source: source.source.clone(),
-                status: match &source.result {
-                    LibraryUpdatePreparedSourceResult::Acquired { .. } => {
-                        UpdateSourceStatus::Acquired
-                    }
-                    LibraryUpdatePreparedSourceResult::Failed { .. } => UpdateSourceStatus::Failed,
-                },
-                error: match &source.result {
-                    LibraryUpdatePreparedSourceResult::Acquired { .. } => None,
-                    LibraryUpdatePreparedSourceResult::Failed { error } => Some(error.clone()),
-                },
-            })
-            .collect();
+            .collect::<Vec<_>>();
         let outcome = library_update_outcome(&ordered);
+        let snapshot = self
+            .libraries
+            .detail(request.environment.clone(), request.library_id.clone())
+            .await;
+        let (library, snapshot_error) = match snapshot {
+            Ok(library) => (Some(library), None),
+            Err(error) => (None, Some(error)),
+        };
         Ok(LibraryUpdateResponse {
             sources: source_results,
             results: ordered,
             outcome,
-            library: self
-                .libraries
-                .detail(request.environment.clone(), request.library_id.clone())
-                .await?,
+            library,
+            membership: LibraryMembershipOutcome {
+                snapshot_error,
+                ..LibraryMembershipOutcome::default()
+            },
         })
     }
 }
@@ -674,102 +421,6 @@ fn library_update_outcome(results: &[LibraryUpdateSkillResult]) -> UpdateOutcome
     }
 }
 
-fn preview_token(
-    request: &UpdateLibrarySkillsRequest,
-    snapshot: &UpdateSubjectSnapshot,
-    continuation: Option<&LibraryUpdateContinuation>,
-) -> Result<LibraryUpdatePreviewToken, AppError> {
-    let revisions = snapshot
-        .subjects
-        .iter()
-        .map(|subject| {
-            (
-                subject.skill_name.as_str(),
-                &subject.source_record_revision,
-                &subject.target_revision,
-                &subject.content_revision,
-            )
-        })
-        .collect::<Vec<_>>();
-    Ok(LibraryUpdatePreviewToken {
-        generation: stable_digest(&(
-            "library-update-preview-v1",
-            &request.environment,
-            &request.library_id,
-            &request.skill_names,
-            &snapshot.resolution_revision,
-            revisions,
-            continuation,
-        ))?,
-    })
-}
-
-fn continuation_from_acquisitions(
-    acquisitions: Vec<crate::application::skill_source::SavedSkillSourceAcquisition>,
-) -> LibraryUpdateContinuation {
-    LibraryUpdateContinuation {
-        sources: acquisitions
-            .into_iter()
-            .map(|acquisition| LibraryUpdatePreparedSource {
-                source_result_id: acquisition.source_result_id,
-                source: acquisition.source,
-                skill_names: acquisition.skill_names,
-                result: match acquisition.result {
-                    Ok(acquired) => LibraryUpdatePreparedSourceResult::Acquired {
-                        discovery_session: acquired.facts.discovery_session,
-                        payloads: acquired
-                            .payloads
-                            .into_iter()
-                            .map(|(skill_name, payload)| LibraryUpdatePreparedPayload {
-                                skill_name,
-                                payload,
-                            })
-                            .collect(),
-                        skill_errors: acquired
-                            .skill_errors
-                            .into_iter()
-                            .map(|(skill_name, error)| LibraryUpdatePreparedSkillError {
-                                skill_name,
-                                error: ErrorReport::from_app_error(error, None),
-                            })
-                            .collect(),
-                        redirected_download_host: acquired.redirected_download_host,
-                    },
-                    Err(error) => LibraryUpdatePreparedSourceResult::Failed {
-                        error: ErrorReport::from_app_error(error, None),
-                    },
-                },
-            })
-            .collect(),
-    }
-}
-
-fn continuation_redirect_hosts(continuation: &LibraryUpdateContinuation) -> Vec<String> {
-    normalized_hosts(
-        &continuation
-            .sources
-            .iter()
-            .filter_map(|source| match &source.result {
-                LibraryUpdatePreparedSourceResult::Acquired {
-                    redirected_download_host,
-                    ..
-                } => redirected_download_host.clone(),
-                LibraryUpdatePreparedSourceResult::Failed { .. } => None,
-            })
-            .collect::<Vec<_>>(),
-    )
-}
-
-fn normalized_hosts(hosts: &[String]) -> Vec<String> {
-    hosts
-        .iter()
-        .filter(|host| !host.trim().is_empty())
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
 fn validate_request(request: &UpdateLibrarySkillsRequest) -> Result<BTreeSet<String>, AppError> {
     if request.skill_names.is_empty()
         || request
@@ -790,14 +441,6 @@ fn validate_request(request: &UpdateLibrarySkillsRequest) -> Result<BTreeSet<Str
         });
     }
     Ok(names)
-}
-
-fn subjects_by_name(snapshot: &UpdateSubjectSnapshot) -> BTreeMap<&str, &UpdateSubject> {
-    snapshot
-        .subjects
-        .iter()
-        .map(|subject| (subject.skill_name.as_str(), subject))
-        .collect()
 }
 
 fn succeeded(skill_name: &str, source_result_id: &str) -> LibraryUpdateSkillResult {
@@ -886,27 +529,6 @@ fn not_run(skill_name: &str, source_result_id: &str) -> LibraryUpdateSkillResult
     }
 }
 
-fn mark_cancelled(
-    skill_names: &[String],
-    results: &mut BTreeMap<String, LibraryUpdateSkillResult>,
-) {
-    let mut first = true;
-    for skill_name in skill_names {
-        if results.contains_key(skill_name) {
-            continue;
-        }
-        results.insert(
-            skill_name.clone(),
-            if first {
-                first = false;
-                cancelled(skill_name, "")
-            } else {
-                not_run(skill_name, "")
-            },
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::future::Future;
@@ -919,8 +541,9 @@ mod tests {
         PayloadPlanningMetadata, PayloadSessionLimits,
     };
     use crate::application::skill_libraries::{
-        LibraryCatalog, LibraryId, LibrarySkillRecord, LibrarySkillSourceRecord,
-        SkillLibraryRecord, SkillLibraryRepository, LIBRARY_SCHEMA_VERSION,
+        LibraryCatalog, LibraryFuture, LibraryId, LibrarySkillRecord, LibrarySkillSourceRecord,
+        LibraryUsage, LibraryUsageProvider, LibraryUsageSnapshot, SkillLibraryRecord,
+        SkillLibraryRepository, LIBRARY_SCHEMA_VERSION,
     };
     use crate::application::skill_paths::{
         ContentRevision, RootResolutionRevision, TargetRevision,
@@ -929,11 +552,11 @@ mod tests {
         AcquiredSavedSkillSource, SavedSkillSourceAcquisition, SavedSkillSourceGroup,
         SkillSourceFuture,
     };
-    use crate::application::source_evidence::{RemoteSnapshotId, SourceSnapshotFacts};
-    use crate::application::update_subjects::LibraryUpdateSubjectProvider;
+    use crate::application::update_subjects::{
+        LibraryUpdateSubjectProvider, UpdateSubject, UpdateSubjectSnapshot,
+    };
     use crate::core::projects::{ProjectMigrationRegistry, ProjectMigrationState};
     use crate::core::skill_payload::build_skill_payload;
-    use crate::core::source_identity::NormalizedRef;
     use crate::core::NormalizedUpdateMetadata;
     use crate::environment::planning::RuntimeTargetFactResolver;
     use crate::environment::types::EnvironmentRef;
@@ -946,6 +569,35 @@ mod tests {
         environment: EnvironmentRef,
         library_id: LibraryId,
         names: Vec<String>,
+    }
+
+    struct FailingSnapshotUsages;
+
+    impl LibraryUsageProvider for FailingSnapshotUsages {
+        fn usages<'a>(
+            &'a self,
+            _environment: &'a EnvironmentRef,
+            _library_id: &'a LibraryId,
+        ) -> LibraryFuture<'a, Result<Vec<LibraryUsage>, AppError>> {
+            Box::pin(async {
+                Err(AppError::Io {
+                    message: "snapshot unavailable".to_string(),
+                })
+            })
+        }
+
+        fn usage_projection<'a>(
+            &'a self,
+            _environment: &'a EnvironmentRef,
+        ) -> LibraryFuture<'a, Result<LibraryUsageSnapshot, AppError>> {
+            Box::pin(async {
+                Ok(LibraryUsageSnapshot {
+                    projections: Vec::new(),
+                    inventory_complete: true,
+                    problem_count: 0,
+                })
+            })
+        }
     }
 
     impl FixedSubjects {
@@ -1016,41 +668,6 @@ mod tests {
     struct UnrelatedRecordDriftSubjects {
         fixed: FixedSubjects,
         calls: AtomicUsize,
-    }
-
-    struct CommitRaceSubjects {
-        inner: LibraryUpdateSubjectProvider<RuntimeTargetFactResolver>,
-        repository: Arc<RuntimeSkillLibraryRepository>,
-        calls: AtomicUsize,
-    }
-
-    impl LibraryUpdateSubjectSnapshots for CommitRaceSubjects {
-        fn snapshot_library<'a>(
-            &'a self,
-            environment: &'a EnvironmentRef,
-            library_id: &'a LibraryId,
-            selection: SkillSelection,
-        ) -> Pin<Box<dyn Future<Output = Result<UpdateSubjectSnapshot, AppError>> + Send + 'a>>
-        {
-            Box::pin(async move {
-                let snapshot = self
-                    .inner
-                    .snapshot_library(environment, library_id, selection)
-                    .await?;
-                let call = self.calls.fetch_add(1, Ordering::SeqCst);
-                if call == 3 {
-                    let mut catalog = self.repository.load(&EnvironmentRef::Native).await?;
-                    set_source_revision(
-                        &mut catalog.libraries[0].skills[0].source_record,
-                        "external",
-                    );
-                    self.repository
-                        .save(&EnvironmentRef::Native, &catalog)
-                        .await?;
-                }
-                Ok(snapshot)
-            })
-        }
     }
 
     impl LibraryUpdateSubjectSnapshots for PreviewDriftSubjects {
@@ -1124,18 +741,6 @@ mod tests {
         }
     }
 
-    struct CancellingSource;
-
-    impl SkillSourceModule for CancellingSource {
-        fn acquire_saved_groups<'a>(
-            &'a self,
-            _groups: &'a [SavedSkillSourceGroup],
-            _cancellation: CancellationSignal,
-        ) -> SkillSourceFuture<'a, Result<Vec<SavedSkillSourceAcquisition>, AppError>> {
-            Box::pin(async { Err(AppError::MutationCancelled) })
-        }
-    }
-
     struct FixedSource {
         discovery: DiscoverySessionHandle,
         payloads: Vec<(String, AcquiredPayloadHandle)>,
@@ -1162,22 +767,15 @@ mod tests {
                         .map(|skill| skill.name.clone())
                         .collect(),
                     result: Ok(AcquiredSavedSkillSource {
-                        facts: SourceSnapshotFacts {
-                            discovery_session: self.discovery.clone(),
-                            snapshot_id: RemoteSnapshotId::new(
-                                NormalizedRef::Named("main".to_string()),
-                                "main",
-                                "new",
-                            ),
-                            complete_skill_path_catalog: groups[0]
-                                .skills
-                                .iter()
-                                .map(|skill| skill.skill_path().to_string())
-                                .collect(),
-                        },
+                        redirected_download_hosts: self
+                            .redirected_download_host
+                            .iter()
+                            .cloned()
+                            .collect(),
+                        _leases: Vec::new(),
+                        discovery_session: self.discovery.clone(),
                         payloads: self.payloads.clone(),
                         skill_errors: self.skill_errors.clone(),
-                        redirected_download_host: self.redirected_download_host.clone(),
                     }),
                 }])
             })
@@ -1246,35 +844,21 @@ mod tests {
         S: SkillSourceModule,
         T: TargetFactResolver + ContentManifestReader,
     {
-        let preview = service.preview(&request).await?;
-        match service
-            .execute(
-                &ExecuteLibraryUpdateRequest {
-                    request,
-                    expected_token: preview.token,
-                    continuation: None,
-                    risk_confirmation: None,
-                },
-                cancellation,
-            )
-            .await?
-        {
-            LibraryUpdateExecutionOutcome::Completed { response } => Ok(response),
-            LibraryUpdateExecutionOutcome::ConfirmationRequired { .. } => {
-                Err(AppError::StaleContext)
-            }
-        }
+        let prepared = service.prepare(&request, cancellation.clone()).await?;
+        service
+            .execute_prepared(prepared, cancellation, |_| {})
+            .await
     }
 
     #[tokio::test]
-    async fn preview_token_rejects_a_changed_source_record_before_acquisition() {
+    async fn preparation_rejects_a_changed_source_record() {
         let Fixture {
             _temp,
             repository,
             library_id,
             manager,
             subjects,
-            ..
+            source,
         } = fixture(&["alpha"], None).await;
         let service = LibraryUpdateService::new(
             manager,
@@ -1282,42 +866,34 @@ mod tests {
                 fixed: subjects,
                 calls: AtomicUsize::new(0),
             },
-            CancellingSource,
+            source,
             targets(),
             Arc::new(SkillLibraryModule::new(repository)),
         );
-        let request = UpdateLibrarySkillsRequest {
-            environment: EnvironmentRef::Native,
-            library_id,
-            skill_names: vec!["alpha".to_string()],
-        };
-
-        let preview = service.preview(&request).await.unwrap();
-        let error = service
-            .execute(
-                &ExecuteLibraryUpdateRequest {
-                    request,
-                    expected_token: preview.token,
-                    continuation: None,
-                    risk_confirmation: None,
+        let prepared = service
+            .prepare(
+                &UpdateLibrarySkillsRequest {
+                    environment: EnvironmentRef::Native,
+                    library_id,
+                    skill_names: vec!["alpha".into()],
                 },
                 CancellationSignal::default(),
             )
             .await
-            .unwrap_err();
-
-        assert_eq!(error, AppError::StaleContext);
+            .unwrap();
+        assert!(prepared.preview.skill_names.is_empty());
+        assert_eq!(prepared.preview.blocked[0].error, AppError::StaleTarget);
     }
 
     #[tokio::test]
-    async fn preview_token_ignores_an_unrelated_catalog_record_change() {
+    async fn preparation_ignores_an_unrelated_catalog_record_change() {
         let Fixture {
             _temp,
             repository,
             library_id,
             manager,
             subjects,
-            ..
+            source,
         } = fixture(&["alpha"], None).await;
         let service = LibraryUpdateService::new(
             manager,
@@ -1325,39 +901,27 @@ mod tests {
                 fixed: subjects,
                 calls: AtomicUsize::new(0),
             },
-            CancellingSource,
+            source,
             targets(),
             Arc::new(SkillLibraryModule::new(repository)),
         );
-        let request = UpdateLibrarySkillsRequest {
-            environment: EnvironmentRef::Native,
-            library_id,
-            skill_names: vec!["alpha".to_string()],
-        };
-
-        let preview = service.preview(&request).await.unwrap();
-        let outcome = service
-            .execute(
-                &ExecuteLibraryUpdateRequest {
-                    request,
-                    expected_token: preview.token,
-                    continuation: None,
-                    risk_confirmation: None,
+        let prepared = service
+            .prepare(
+                &UpdateLibrarySkillsRequest {
+                    environment: EnvironmentRef::Native,
+                    library_id,
+                    skill_names: vec!["alpha".into()],
                 },
                 CancellationSignal::default(),
             )
             .await
             .unwrap();
-
-        assert!(matches!(
-            outcome,
-            LibraryUpdateExecutionOutcome::Completed { response }
-                if response.outcome == UpdateOutcome::Cancelled
-        ));
+        assert_eq!(prepared.preview.skill_names, vec!["alpha"]);
+        assert!(prepared.preview.blocked.is_empty());
     }
 
     #[tokio::test]
-    async fn commit_rejects_a_source_record_changed_after_the_final_observation() {
+    async fn commit_rejects_a_source_record_changed_after_preparation() {
         let Fixture {
             _temp,
             repository,
@@ -1368,34 +932,42 @@ mod tests {
         } = fixture(&["alpha"], None).await;
         let service = LibraryUpdateService::new(
             manager,
-            CommitRaceSubjects {
-                inner: LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
-                repository: repository.clone(),
-                calls: AtomicUsize::new(0),
-            },
+            LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
             source,
             targets(),
             Arc::new(SkillLibraryModule::new(repository.clone())),
         );
-
-        let response = execute_completed(
-            &service,
-            UpdateLibrarySkillsRequest {
-                environment: EnvironmentRef::Native,
-                library_id,
-                skill_names: vec!["alpha".to_string()],
-            },
-            CancellationSignal::default(),
-        )
-        .await
-        .unwrap();
-
+        let prepared = service
+            .prepare(
+                &UpdateLibrarySkillsRequest {
+                    environment: EnvironmentRef::Native,
+                    library_id,
+                    skill_names: vec!["alpha".into()],
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let mut changed = repository.load(&EnvironmentRef::Native).await.unwrap();
+        set_source_revision(
+            &mut changed.libraries[0].skills[0].source_record,
+            "external",
+        );
+        repository
+            .save(&EnvironmentRef::Native, &changed)
+            .await
+            .unwrap();
+        let response = service
+            .execute_prepared(prepared, CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
         assert_eq!(response.results[0].status, LibraryUpdateSkillStatus::Failed);
         let saved = repository.load(&EnvironmentRef::Native).await.unwrap();
         assert_eq!(
             source_revision(&saved.libraries[0].skills[0].source_record).as_deref(),
             Some("external")
         );
+        assert_eq!(saved.libraries[0].skills[0].description, "alpha old");
     }
 
     #[tokio::test]
@@ -1405,35 +977,38 @@ mod tests {
             repository,
             library_id,
             manager,
-            subjects,
+            source,
             ..
         } = fixture(&["alpha", "beta"], None).await;
         let service = LibraryUpdateService::new(
             manager,
-            subjects,
-            CancellingSource,
+            LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
+            source,
             targets(),
             Arc::new(SkillLibraryModule::new(repository)),
         );
-
-        let response = execute_completed(
-            &service,
-            UpdateLibrarySkillsRequest {
-                environment: EnvironmentRef::Native,
-                library_id,
-                skill_names: vec!["beta".to_string(), "alpha".to_string()],
-            },
-            CancellationSignal::default(),
-        )
-        .await
-        .unwrap();
-
+        let prepared = service
+            .prepare(
+                &UpdateLibrarySkillsRequest {
+                    environment: EnvironmentRef::Native,
+                    library_id,
+                    skill_names: vec!["beta".into(), "alpha".into()],
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let cancellation = CancellationSignal::default();
+        cancellation.cancel();
+        let response = service
+            .execute_prepared(prepared, cancellation, |_| {})
+            .await
+            .unwrap();
         assert_eq!(response.results[0].skill_name, "beta");
         assert_eq!(
             response.results[0].status,
             LibraryUpdateSkillStatus::Cancelled
         );
-        assert_eq!(response.results[1].skill_name, "alpha");
         assert_eq!(response.results[1].status, LibraryUpdateSkillStatus::NotRun);
     }
 
@@ -1447,6 +1022,7 @@ mod tests {
             subjects: _,
             source,
         } = fixture(&["alpha", "beta"], None).await;
+        let acquisition_calls = source.calls.clone();
         let service = LibraryUpdateService::new(
             manager,
             LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
@@ -1455,17 +1031,30 @@ mod tests {
             Arc::new(SkillLibraryModule::new(repository.clone())),
         );
 
-        let response = execute_completed(
-            &service,
-            UpdateLibrarySkillsRequest {
-                environment: EnvironmentRef::Native,
-                library_id: library_id.clone(),
-                skill_names: vec!["alpha".to_string(), "beta".to_string()],
-            },
-            CancellationSignal::default(),
-        )
-        .await
-        .unwrap();
+        let prepared = service
+            .prepare(
+                &UpdateLibrarySkillsRequest {
+                    environment: EnvironmentRef::Native,
+                    library_id: library_id.clone(),
+                    skill_names: vec!["alpha".to_string(), "beta".to_string()],
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared.preview.skill_names, vec!["alpha", "beta"]);
+        assert!(prepared.preview.blocked.is_empty());
+        assert_eq!(acquisition_calls.load(Ordering::SeqCst), 1);
+        let before = repository.load(&EnvironmentRef::Native).await.unwrap();
+        assert!(before.libraries[0]
+            .skills
+            .iter()
+            .all(|skill| source_revision(&skill.source_record).as_deref() != Some("new")));
+        let response = service
+            .execute_prepared(prepared, CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(acquisition_calls.load(Ordering::SeqCst), 1);
 
         assert_eq!(
             response
@@ -1500,6 +1089,8 @@ mod tests {
         assert_eq!(
             response
                 .library
+                .as_ref()
+                .unwrap()
                 .skills
                 .iter()
                 .map(|skill| skill.description.as_str())
@@ -1514,7 +1105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn redirected_source_requires_confirmation_before_any_library_write() {
+    async fn committed_update_survives_a_failed_detail_snapshot() {
         let Fixture {
             _temp,
             repository,
@@ -1522,8 +1113,54 @@ mod tests {
             manager,
             subjects: _,
             source,
+        } = fixture(&["alpha"], None).await;
+        let service = LibraryUpdateService::new(
+            manager,
+            LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
+            source,
+            targets(),
+            Arc::new(SkillLibraryModule::with_usages(
+                repository.clone(),
+                Arc::new(FailingSnapshotUsages),
+            )),
+        );
+
+        let response = execute_completed(
+            &service,
+            UpdateLibrarySkillsRequest {
+                environment: EnvironmentRef::Native,
+                library_id,
+                skill_names: vec!["alpha".to_string()],
+            },
+            CancellationSignal::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            response.results[0].status,
+            LibraryUpdateSkillStatus::Succeeded
+        );
+        assert!(response.library.is_none());
+        assert!(matches!(
+            response.membership.snapshot_error,
+            Some(AppError::Io { .. })
+        ));
+        let saved = repository.load(&EnvironmentRef::Native).await.unwrap();
+        assert_eq!(saved.libraries[0].skills[0].description, "alpha updated");
+    }
+
+    #[tokio::test]
+    async fn redirected_source_is_prepared_before_confirmation_without_a_library_write() {
+        let Fixture {
+            _temp,
+            repository,
+            library_id,
+            manager,
+            source,
+            ..
         } = fixture(&["alpha"], Some("cdn.example.com")).await;
-        let acquisition_calls = source.calls.clone();
+        let calls = source.calls.clone();
         let service = LibraryUpdateService::new(
             manager,
             LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
@@ -1531,60 +1168,40 @@ mod tests {
             targets(),
             Arc::new(SkillLibraryModule::new(repository.clone())),
         );
-        let request = UpdateLibrarySkillsRequest {
-            environment: EnvironmentRef::Native,
-            library_id,
-            skill_names: vec!["alpha".to_string()],
-        };
-        let preview = service.preview(&request).await.unwrap();
-        let first = service
-            .execute(
-                &ExecuteLibraryUpdateRequest {
-                    request: request.clone(),
-                    expected_token: preview.token,
-                    continuation: None,
-                    risk_confirmation: None,
+        let prepared = service
+            .prepare(
+                &UpdateLibrarySkillsRequest {
+                    environment: EnvironmentRef::Native,
+                    library_id,
+                    skill_names: vec!["alpha".into()],
                 },
                 CancellationSignal::default(),
             )
             .await
             .unwrap();
-        let LibraryUpdateExecutionOutcome::ConfirmationRequired {
-            token,
-            redirected_download_hosts,
-            continuation,
-        } = first
-        else {
-            panic!("redirected update must require confirmation");
-        };
-        assert_eq!(redirected_download_hosts, vec!["cdn.example.com"]);
-        assert_eq!(acquisition_calls.load(Ordering::SeqCst), 1);
-        let unchanged = repository.load(&EnvironmentRef::Native).await.unwrap();
-        assert_eq!(unchanged.libraries[0].skills[0].description, "alpha old");
-
-        let completed = service
-            .execute(
-                &ExecuteLibraryUpdateRequest {
-                    request,
-                    expected_token: token,
-                    continuation: Some(continuation),
-                    risk_confirmation: Some(LibraryUpdateRiskConfirmation {
-                        redirected_download_hosts: vec!["cdn.example.com".to_string()],
-                    }),
-                },
-                CancellationSignal::default(),
-            )
+        assert_eq!(
+            prepared.preview.redirected_download_hosts,
+            vec!["cdn.example.com"]
+        );
+        assert_eq!(
+            repository
+                .load(&EnvironmentRef::Native)
+                .await
+                .unwrap()
+                .libraries[0]
+                .skills[0]
+                .description,
+            "alpha old"
+        );
+        let response = service
+            .execute_prepared(prepared, CancellationSignal::default(), |_| {})
             .await
             .unwrap();
-        let LibraryUpdateExecutionOutcome::Completed { response } = completed else {
-            panic!("confirmed update must complete");
-        };
-        assert_eq!(acquisition_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(
             response.results[0].status,
             LibraryUpdateSkillStatus::Succeeded
         );
-        assert_eq!(response.library.skills[0].description, "alpha updated");
     }
 
     #[tokio::test]
@@ -1628,7 +1245,10 @@ mod tests {
             response.results[0].status,
             LibraryUpdateSkillStatus::NameChanged
         );
-        assert_eq!(response.library.skills[0].description, "alpha old");
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[0].description,
+            "alpha old"
+        );
     }
 
     #[tokio::test]
@@ -1673,8 +1293,14 @@ mod tests {
             response.results[1].status,
             LibraryUpdateSkillStatus::Succeeded
         );
-        assert_eq!(response.library.skills[0].description, "alpha old");
-        assert_eq!(response.library.skills[1].description, "beta updated");
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[0].description,
+            "alpha old"
+        );
+        assert_eq!(
+            response.library.as_ref().unwrap().skills[1].description,
+            "beta updated"
+        );
     }
 
     fn payload_manager() -> PayloadSessionManager {
@@ -1723,6 +1349,7 @@ mod tests {
                         extra: serde_json::Map::new(),
                     })
                     .collect(),
+                retired_skills: Vec::new(),
                 extra: serde_json::Map::new(),
             }],
             extra: serde_json::Map::new(),

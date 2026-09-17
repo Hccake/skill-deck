@@ -42,6 +42,20 @@ pub struct LockEntrySnapshot(Option<Value>);
 pub struct LockRootSnapshot(Option<Value>);
 
 impl LockEntrySnapshot {
+    pub(crate) fn from_value(value: Option<Value>) -> Self {
+        Self(value)
+    }
+
+    pub fn value(&self) -> Option<&Value> {
+        self.0.as_ref()
+    }
+}
+
+impl LockRootSnapshot {
+    pub(crate) fn from_value(value: Option<Value>) -> Self {
+        Self(value)
+    }
+
     pub fn value(&self) -> Option<&Value> {
         self.0.as_ref()
     }
@@ -84,6 +98,7 @@ impl LosslessLockDocument {
         LockRootSnapshot(self.root.get(field).cloned())
     }
 
+    #[cfg(test)]
     pub fn replace_entry(
         &mut self,
         schema: LockSchema,
@@ -102,54 +117,6 @@ impl LosslessLockDocument {
         let replacement = merge_entry_fields(schema, current, replacement);
         self.skills_mut()
             .insert(skill_name.to_string(), replacement);
-        Ok(())
-    }
-
-    pub fn remove_entry(
-        &mut self,
-        skill_name: &str,
-        expected: &LockEntrySnapshot,
-    ) -> Result<(), AppError> {
-        if self.skills().get(skill_name) != expected.0.as_ref() {
-            return Err(AppError::LockConflict {
-                target: LockConflictTarget::Skill {
-                    skill_name: skill_name.to_string(),
-                },
-            });
-        }
-        self.skills_mut().remove(skill_name);
-        Ok(())
-    }
-
-    pub fn move_and_replace_entry(
-        &mut self,
-        schema: LockSchema,
-        from: &str,
-        to: &str,
-        expected_from: &LockEntrySnapshot,
-        expected_to: &LockEntrySnapshot,
-        replacement: Value,
-    ) -> Result<(), AppError> {
-        self.validate_entry_snapshot(from, expected_from)?;
-        self.validate_entry_snapshot(to, expected_to)?;
-        let replacement = merge_entry_fields(schema, self.skills().get(from), replacement);
-        self.skills_mut().remove(from);
-        self.skills_mut().insert(to.to_string(), replacement);
-        Ok(())
-    }
-
-    pub fn validate_entry_snapshot(
-        &self,
-        skill_name: &str,
-        expected: &LockEntrySnapshot,
-    ) -> Result<(), AppError> {
-        if self.skills().get(skill_name) != expected.0.as_ref() {
-            return Err(AppError::LockConflict {
-                target: LockConflictTarget::Skill {
-                    skill_name: skill_name.to_string(),
-                },
-            });
-        }
         Ok(())
     }
 
@@ -187,6 +154,7 @@ impl LosslessLockDocument {
         self.root["skills"].as_object().expect("validated skills")
     }
 
+    #[cfg(test)]
     fn skills_mut(&mut self) -> &mut Map<String, Value> {
         self.root["skills"]
             .as_object_mut()

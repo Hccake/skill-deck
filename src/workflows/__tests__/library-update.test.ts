@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  LibraryUpdateContinuation,
-  LibraryUpdatePreview,
+  PreparedLibraryUpdatePreview,
   SkillUpdateInfo,
   UpdateCheckResponse,
 } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   checkLibrarySkillUpdates: vi.fn(),
-  previewLibrarySkillUpdates: vi.fn(),
+  prepareLibrarySkillUpdates: vi.fn(),
+  cancelUpdatePreparation: vi.fn(async () => {}),
   updateLibrarySkills: vi.fn(),
 }));
 
@@ -28,79 +28,138 @@ const updateInfo = (status: SkillUpdateInfo['status']): SkillUpdateInfo => ({
   gitRef: null,
   sourceUrl: 'https://github.com/owner/repo',
   skillPath: 'skills/demo',
+  comparisonFingerprint: 'comparison-demo',
 });
 const checkResponse = (skill: SkillUpdateInfo, outcome: UpdateCheckResponse['outcome']): UpdateCheckResponse => ({
   outcome,
   sources: [],
   skills: [skill],
 });
-const preview: LibraryUpdatePreview = {
-  token: { generation: 'preview-1' },
+const preview: PreparedLibraryUpdatePreview = {
+  blocked: [], redirectedDownloadHosts: [],
   skillNames: ['demo'],
 };
+
+const completed = () => ({
+  sources: [], results: [{ skillName: 'demo', status: 'succeeded', sourceResultId: 'source-1', contentCommit: 'succeeded', catalogCommit: 'succeeded', error: null }],
+  outcome: 'succeeded', library: null, membership: { scopes: [], cleanup: [], snapshotError: null },
+});
 
 describe('library update workflow', () => {
   beforeEach(() => {
     useLibraryUpdateWorkflow.getState().reset();
     mocks.checkLibrarySkillUpdates.mockReset();
-    mocks.previewLibrarySkillUpdates.mockReset();
+    mocks.prepareLibrarySkillUpdates.mockReset();
     mocks.updateLibrarySkills.mockReset();
+    mocks.cancelUpdatePreparation.mockClear();
     useLibraryUpdateWorkflow.getState().activate(environment, 'library-1');
   });
 
-  it('keeps the last successful member status when a refresh cannot check it', async () => {
+  it('keeps the confirmed comparison and the latest error on the same baseline', async () => {
+    const error = { kind: 'io' as const, data: { message: 'offline' } };
     mocks.checkLibrarySkillUpdates
       .mockResolvedValueOnce(checkResponse(updateInfo('updateAvailable'), 'completed'))
-      .mockResolvedValueOnce(checkResponse(updateInfo('cannotCheck'), 'notCompleted'));
-
+      .mockRejectedValueOnce({ kind: 'io', data: { message: 'previous request failed' } })
+      .mockResolvedValueOnce(checkResponse({ ...updateInfo('cannotCheck'), error }, 'notCompleted'));
     await useLibraryUpdateWorkflow.getState().check();
     await useLibraryUpdateWorkflow.getState().check();
-
+    await useLibraryUpdateWorkflow.getState().check();
     expect(useLibraryUpdateWorkflow.getState()).toMatchObject({
-      checks: { demo: { status: 'updateAvailable' } },
+      checks: { demo: { status: 'updateAvailable', error } },
       hasError: true,
+      error: null,
     });
   });
 
-  it('reuses the prepared batch after redirect confirmation', async () => {
-    const continuation = { sources: [] } satisfies LibraryUpdateContinuation;
-    mocks.previewLibrarySkillUpdates.mockResolvedValue(preview);
-    mocks.updateLibrarySkills
-      .mockResolvedValueOnce({
-        status: 'confirmationRequired',
-        token: { generation: 'confirmed-preview' },
-        redirectedDownloadHosts: ['cdn.example.com'],
-        continuation,
-      })
-      .mockResolvedValueOnce({
-        status: 'completed',
-        response: { sources: [], results: [], outcome: 'succeeded', library: { id: 'library-1', name: 'Tools', skills: [], usages: [] } },
-      });
+  it('clears an operation error when retry starts and keeps the last comparison until completion', async () => {
+    let resolve!: (response: UpdateCheckResponse) => void;
+    const error = { kind: 'io' as const, data: { message: 'request failed' } };
+    mocks.checkLibrarySkillUpdates
+      .mockResolvedValueOnce(checkResponse(updateInfo('updateAvailable'), 'completed'))
+      .mockRejectedValueOnce(error)
+      .mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    await useLibraryUpdateWorkflow.getState().check();
+    await useLibraryUpdateWorkflow.getState().check();
+    expect(useLibraryUpdateWorkflow.getState().error).toEqual(error);
 
-    await useLibraryUpdateWorkflow.getState().prepare(['demo']);
-    expect(await useLibraryUpdateWorkflow.getState().confirm()).toBeNull();
-    expect(await useLibraryUpdateWorkflow.getState().confirm()).not.toBeNull();
+    const retry = useLibraryUpdateWorkflow.getState().check();
+    const duringRetry = useLibraryUpdateWorkflow.getState();
+    resolve(checkResponse(updateInfo('upToDate'), 'completed'));
+    await retry;
 
-    expect(mocks.updateLibrarySkills).toHaveBeenLastCalledWith({
-      request: { environment, libraryId: 'library-1', skillNames: ['demo'] },
-      expectedToken: { generation: 'confirmed-preview' },
-      continuation,
-      riskConfirmation: { redirectedDownloadHosts: ['cdn.example.com'] },
+    expect(duringRetry).toMatchObject({
+      phase: 'checking',
+      error: null,
+      hasError: false,
+      checks: { demo: { status: 'updateAvailable', hasUpdate: true } },
     });
-  });
-
-  it('does not let an old check overwrite a newly activated Library', async () => {
-    let resolveCheck!: (value: UpdateCheckResponse) => void;
-    mocks.checkLibrarySkillUpdates.mockReturnValue(new Promise((resolve) => { resolveCheck = resolve; }));
-
-    const pending = useLibraryUpdateWorkflow.getState().check();
-    useLibraryUpdateWorkflow.getState().activate(environment, 'library-2');
-    resolveCheck(checkResponse(updateInfo('updateAvailable'), 'completed'));
-    await pending;
-
     expect(useLibraryUpdateWorkflow.getState()).toMatchObject({
-      libraryId: 'library-2',
-      checks: {},
+      phase: 'idle',
+      error: null,
+      hasError: false,
+      checks: { demo: { status: 'upToDate', hasUpdate: false } },
     });
+  });
+
+  it('prepares all download hosts before executing exactly once', async () => {
+    mocks.prepareLibrarySkillUpdates.mockResolvedValue({ ...preview, redirectedDownloadHosts: ['cdn.example.com', 'assets.example.com'] });
+    mocks.updateLibrarySkills.mockResolvedValue(completed());
+    await useLibraryUpdateWorkflow.getState().prepare(['demo']);
+    const pending = useLibraryUpdateWorkflow.getState().pending!;
+    expect(pending.redirectedDownloadHosts).toHaveLength(2);
+    expect(mocks.updateLibrarySkills).not.toHaveBeenCalled();
+    expect(await useLibraryUpdateWorkflow.getState().confirm()).not.toBeNull();
+    expect(mocks.updateLibrarySkills).toHaveBeenCalledExactlyOnceWith(pending.operationId);
+    expect(useLibraryUpdateWorkflow.getState().pending).toBeNull();
+  });
+
+  it('releases a cancelled preparing operation and ignores its late result', async () => {
+    let resolve!: (value: PreparedLibraryUpdatePreview) => void;
+    mocks.prepareLibrarySkillUpdates.mockReturnValue(new Promise((done) => { resolve = done; }));
+    const preparing = useLibraryUpdateWorkflow.getState().prepare(['demo']);
+    const id = useLibraryUpdateWorkflow.getState().pending!.operationId;
+    useLibraryUpdateWorkflow.getState().cancel();
+    expect(mocks.cancelUpdatePreparation).toHaveBeenCalledWith(id);
+    resolve(preview);
+    await preparing;
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({ phase: 'idle', pending: null });
+    expect(mocks.updateLibrarySkills).not.toHaveBeenCalled();
+  });
+
+  it('keeps blocked members visible and prevents an empty execution', async () => {
+    mocks.prepareLibrarySkillUpdates.mockResolvedValue({ skillNames: [], redirectedDownloadHosts: [], blocked: [{ skillName: 'demo', error: { kind: 'staleTarget' } }] });
+    await useLibraryUpdateWorkflow.getState().prepare(['demo']);
+    await useLibraryUpdateWorkflow.getState().confirm();
+    expect(useLibraryUpdateWorkflow.getState().pending?.blocked).toHaveLength(1);
+    expect(mocks.updateLibrarySkills).not.toHaveBeenCalled();
+  });
+
+  it('completes when only the post-commit library snapshot fails', async () => {
+    mocks.prepareLibrarySkillUpdates.mockResolvedValue(preview);
+    mocks.updateLibrarySkills.mockResolvedValue({ ...completed(), membership: { scopes: [], cleanup: [], snapshotError: { kind: 'io', data: { message: 'snapshot unavailable' } } } });
+    await useLibraryUpdateWorkflow.getState().prepare(['demo']);
+    const response = await useLibraryUpdateWorkflow.getState().confirm();
+    expect(response?.library).toBeNull();
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({ phase: 'idle', pending: null, hasError: false, lastResults: { demo: { status: 'succeeded' } } });
+  });
+
+  it('does not let an old check overwrite another library or clear its new error', async () => {
+    let resolve!: (value: UpdateCheckResponse) => void;
+    const error = { kind: 'io' as const, data: { message: 'new library unavailable' } };
+    mocks.checkLibrarySkillUpdates
+      .mockReturnValueOnce(new Promise((done) => { resolve = done; }))
+      .mockRejectedValueOnce(error);
+    const checking = useLibraryUpdateWorkflow.getState().check();
+    useLibraryUpdateWorkflow.getState().activate(environment, 'library-2');
+    await useLibraryUpdateWorkflow.getState().check();
+    resolve(checkResponse(updateInfo('updateAvailable'), 'completed'));
+    await checking;
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({ libraryId: 'library-2', checks: {}, hasError: true, error });
+  });
+
+  it('does not report static library members as check failures', async () => {
+    mocks.checkLibrarySkillUpdates.mockResolvedValue({ outcome: 'notCompleted', skills: [], sources: [] });
+    await useLibraryUpdateWorkflow.getState().check();
+    expect(useLibraryUpdateWorkflow.getState().hasError).toBe(false);
   });
 });

@@ -49,6 +49,22 @@ function api(overrides: Partial<InstallPreparationApi> = {}): InstallPreparation
 }
 
 describe('prepareInstall', () => {
+  it('stops before preview when the caller cancels while waiting for content', async () => {
+    const controller = new AbortController();
+    let finishAcquisition!: () => void;
+    const acquisition = new Promise<[]>((resolve) => {
+      finishAcquisition = () => resolve([]);
+    });
+    const preparationApi = api({ acquireSelectedPayloads: vi.fn().mockReturnValue(acquisition) });
+    const preparation = prepareInstall({ ...input, signal: controller.signal }, preparationApi);
+
+    controller.abort();
+    finishAcquisition();
+
+    await expect(preparation).resolves.toEqual({ status: 'cancelled' });
+    expect(preparationApi.previewInstall).not.toHaveBeenCalled();
+  });
+
   it('returns a payload-stage failure without calling preview', async () => {
     const error = { kind: 'stalePayload', data: {} } as never;
     const preparationApi = api({
@@ -61,6 +77,22 @@ describe('prepareInstall', () => {
       error,
     });
     expect(preparationApi.previewInstall).not.toHaveBeenCalled();
+  });
+
+  it('does not reload Agent choices after an obsolete preview finishes', async () => {
+    const controller = new AbortController();
+    let finishPreview!: () => void;
+    const previewResult = new Promise((resolve) => {
+      finishPreview = () => resolve({ status: 'selectionStale', snapshot: {} });
+    });
+    const preparationApi = api({ previewInstall: vi.fn().mockReturnValue(previewResult) });
+    const preparation = prepareInstall({ ...input, signal: controller.signal }, preparationApi);
+    await vi.waitFor(() => expect(preparationApi.previewInstall).toHaveBeenCalled());
+    controller.abort();
+    finishPreview();
+
+    await expect(preparation).resolves.toEqual({ status: 'cancelled' });
+    expect(preparationApi.getInstallAgentSelection).not.toHaveBeenCalled();
   });
 
   it('returns a preview-stage failure with the original error', async () => {
@@ -102,7 +134,7 @@ describe('prepareInstall', () => {
   it('reloads a complete selection snapshot when the submitted revision is stale', async () => {
     const staleSnapshot = {
       selection: {
-        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
+        agents: [], installOptions: [], groups: [], baselineSelectedOptionIds: [],
         unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-2',
       },
       selectionHistoryWarning: null,
@@ -111,7 +143,7 @@ describe('prepareInstall', () => {
       ...staleSnapshot,
       selection: {
         ...staleSnapshot.selection,
-        initialSelectedOptionIds: ['new-item'],
+        baselineSelectedOptionIds: ['new-item'],
         revision: 'selection-3',
       },
       selectionHistoryWarning: 'readFailed' as const,

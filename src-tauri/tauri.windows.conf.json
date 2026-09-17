@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "target/wsl-worker/current/worker": "wsl-worker/current/worker",
+      "target/wsl-worker/current/manifest.json": "wsl-worker/current/manifest.json"
+    }
+  }
+}

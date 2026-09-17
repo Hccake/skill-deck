@@ -8,11 +8,13 @@ import { LibraryPage } from '../LibraryPage';
 import type { LibraryWorkspaceState } from '@/lib/libraries/workspace';
 import {
   checkLibrarySkillUpdates,
-  previewLibrarySkillUpdates,
+  prepareLibrarySkillUpdates,
   readLibrarySkillContent,
   updateLibrarySkills,
 } from '@/hooks/useTauriApi';
-import type { EnvironmentRef } from '@/bindings';
+import type { EnvironmentRef, LibraryMembershipOutcome } from '@/bindings';
+import { toast } from 'sonner';
+import i18n from '@/i18n';
 
 const execute = vi.hoisted(() => vi.fn());
 const addDialog = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
@@ -22,6 +24,7 @@ const contextState = vi.hoisted(() => ({
     scope: { scope: 'global' as const },
   },
 }));
+const membershipView = vi.hoisted(() => ({ outcome: null as LibraryMembershipOutcome | null }));
 
 function LocationProbe() {
   return <span data-testid="location-search">{useLocation().search}</span>;
@@ -32,6 +35,8 @@ const workspaceView = vi.hoisted(() => ({
     libraries: [{ id: 'lib-1', name: 'Backend', skillCount: 1 }],
     revision: 'catalog-1',
     usageProjection: [],
+    usageInventoryComplete: true,
+    usageInventoryProblemCount: 0,
   },
   selectedLibraryId: 'lib-1',
   detail: {
@@ -53,10 +58,12 @@ const workspaceView = vi.hoisted(() => ({
   },
   detailPhase: 'ready',
   detailError: null,
+  catalogError: null,
+  pendingRetire: null,
 }) as Pick<
   LibraryWorkspaceState,
-  'catalog' | 'selectedLibraryId' | 'detail' | 'detailPhase' | 'detailError'
->);
+  'catalog' | 'selectedLibraryId' | 'detail' | 'detailPhase' | 'detailError' | 'catalogError'
+> & Pick<LibraryWorkspaceState, 'pendingRetire'>);
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -99,10 +106,12 @@ vi.mock('@/hooks/useLibraryWorkspace', () => ({
     detail: workspaceView.detail,
     detailPhase: workspaceView.detailPhase,
     detailError: workspaceView.detailError,
-    catalogError: null,
+    catalogError: workspaceView.catalogError,
     pendingAdd: null,
     retryAdd: null,
+    pendingRetire: workspaceView.pendingRetire,
     lastAddResults: [],
+    membershipOutcomes: membershipView.outcome ? { 'lib-1': membershipView.outcome } : {},
     version: 1,
     execute,
   }),
@@ -111,12 +120,19 @@ vi.mock('@/hooks/useLibraryWorkspace', () => ({
 vi.mock('@/hooks/useTauriApi', () => ({
   checkLibrarySkillUpdates: vi.fn(),
   readLibrarySkillContent: vi.fn(),
-  removeLibrarySkill: vi.fn(),
-  previewLibrarySkillUpdates: vi.fn(),
+  prepareLibrarySkillUpdates: vi.fn(),
+  cancelUpdatePreparation: vi.fn(async () => {}),
   updateLibrarySkills: vi.fn(),
 }));
 
 describe('LibraryPage maintenance', () => {
+  it('opens the library member requested by the Skills detail link', async () => {
+    vi.mocked(readLibrarySkillContent).mockResolvedValue('Library content');
+    render(<MemoryRouter initialEntries={['/libraries?library=lib-1&skill=api-design']}><LibraryPage /></MemoryRouter>);
+    await waitFor(() => expect(readLibrarySkillContent).toHaveBeenCalledWith({ kind: 'native' }, 'lib-1', 'api-design'));
+    expect(await screen.findByText('Library content')).toBeTruthy();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     addDialog.props = null;
@@ -125,6 +141,8 @@ describe('LibraryPage maintenance', () => {
       libraries: [{ id: 'lib-1', name: 'Backend', skillCount: 1 }],
       revision: 'catalog-1',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     };
     workspaceView.selectedLibraryId = 'lib-1';
     workspaceView.detail = {
@@ -146,6 +164,9 @@ describe('LibraryPage maintenance', () => {
     };
     workspaceView.detailPhase = 'ready';
     workspaceView.detailError = null;
+    workspaceView.catalogError = null;
+    workspaceView.pendingRetire = null;
+    membershipView.outcome = null;
     (contextState.selectedContext as { environment: EnvironmentRef }).environment = { kind: 'native' };
     execute.mockResolvedValue({ status: 'succeeded', snapshot: {} });
     vi.mocked(readLibrarySkillContent).mockResolvedValue('# API design');
@@ -165,13 +186,11 @@ describe('LibraryPage maintenance', () => {
         freshness: 'fresh',
       }],
     });
-    vi.mocked(previewLibrarySkillUpdates).mockResolvedValue({
-      token: { generation: 'preview-1' },
+    vi.mocked(prepareLibrarySkillUpdates).mockResolvedValue({
+      blocked: [], redirectedDownloadHosts: [],
       skillNames: ['api-design'],
     });
     vi.mocked(updateLibrarySkills).mockResolvedValue({
-      status: 'completed',
-      response: {
         sources: [],
         results: [{
           skillName: 'api-design',
@@ -188,7 +207,7 @@ describe('LibraryPage maintenance', () => {
           skills: [],
           usages: [],
         },
-      },
+        membership: { scopes: [], cleanup: [], snapshotError: null },
     });
   });
 
@@ -206,23 +225,27 @@ describe('LibraryPage maintenance', () => {
     })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'libraries.update' }));
     expect(await screen.findByText(/libraries.confirmUpdateDescription/)).toBeTruthy();
-    expect(previewLibrarySkillUpdates).toHaveBeenCalledWith({
+    expect(prepareLibrarySkillUpdates).toHaveBeenCalledWith(expect.any(String), {
       environment: { kind: 'native' },
       libraryId: 'lib-1',
       skillNames: ['api-design'],
     });
     fireEvent.click(screen.getAllByRole('button', { name: 'libraries.update' }).at(-1)!);
 
-    await waitFor(() => expect(updateLibrarySkills).toHaveBeenCalledWith({
-      request: {
-        environment: { kind: 'native' },
-        libraryId: 'lib-1',
-        skillNames: ['api-design'],
-      },
-      expectedToken: { generation: 'preview-1' },
-      continuation: null,
-      riskConfirmation: null,
-    }));
+    await waitFor(() => expect(updateLibrarySkills).toHaveBeenCalledWith(expect.any(String)));
+  });
+
+  it('gives immediate feedback when a manual library check fails', async () => {
+    const notification = vi.spyOn(toast, 'error');
+    vi.mocked(checkLibrarySkillUpdates).mockResolvedValueOnce({ sources: [], skills: [{
+      name: 'api-design', source: 'owner/repo', hasUpdate: false, status: 'cannotCheck',
+      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      reason: 'upstreamUnavailable', gitRef: null, sourceUrl: null, skillPath: null, freshness: 'unavailable',
+    }], outcome: 'notCompleted' });
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.checkUpdates' }));
+    await waitFor(() => expect(notification).toHaveBeenCalledWith(i18n.t('skills.checkUpdatesFailed')));
+    notification.mockRestore();
   });
 
   it('captures the current Library target and existing members when opening add flow', () => {
@@ -238,6 +261,178 @@ describe('LibraryPage maintenance', () => {
     });
     expect([...(addDialog.props?.existingSkillNames as Set<string>)]).toEqual(['api-design']);
     expect(addDialog.props?.execute).toBe(execute);
+  });
+
+  it('previews retirement and submits it from the existing confirmation once', async () => {
+    const view = render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'libraries.removeSkill:{"name":"api-design"}',
+    }));
+    expect(execute).toHaveBeenCalledWith({
+      kind: 'prepareRetire', libraryId: 'lib-1', skillName: 'api-design',
+    });
+    workspaceView.pendingRetire = {
+      libraryId: 'lib-1',
+      skillName: 'api-design',
+      preview: {
+        skillName: 'api-design',
+        token: 'retire-1',
+        membership: {
+          environment: { kind: 'native' },
+          libraryId: 'lib-1',
+          scopes: [{ environment: { kind: 'native' }, scope: { scope: 'global' } }],
+          impacts: [{
+            context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+            skills: [{ skillName: 'api-design', kind: 'fallback' }],
+          }],
+          inventoryComplete: true,
+          inventoryToken: 'inventory-1',
+          token: 'membership-1',
+        },
+      },
+    };
+    view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    expect(await screen.findByText('libraries.membership.affectedScopes:{"count":1}')).toBeTruthy();
+    expect(screen.getByText('libraries.membership.impact.fallback:{"count":1}')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.delete' }));
+
+    await waitFor(() => expect(execute).toHaveBeenCalledWith({ kind: 'confirmRetire' }));
+  });
+
+  it('refreshes a stale retirement preview in the same confirmation dialog', async () => {
+    const view = render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'libraries.removeSkill:{"name":"api-design"}',
+    }));
+    workspaceView.pendingRetire = {
+      libraryId: 'lib-1',
+      skillName: 'api-design',
+      preview: {
+        skillName: 'api-design',
+        token: 'retire-1',
+        membership: {
+          environment: { kind: 'native' },
+          libraryId: 'lib-1',
+          scopes: [],
+          impacts: [],
+          inventoryComplete: true,
+          inventoryToken: 'inventory-1',
+          token: 'membership-1',
+        },
+      },
+    };
+    view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    execute.mockClear();
+    execute
+      .mockResolvedValueOnce({
+        status: 'failed',
+        failureSource: 'command',
+        error: { kind: 'staleContext' },
+        snapshot: {},
+      })
+      .mockResolvedValueOnce({ status: 'succeeded', snapshot: {} });
+
+    fireEvent.click(screen.getByRole('button', { name: 'common.delete' }));
+
+    await waitFor(() => expect(execute).toHaveBeenNthCalledWith(1, { kind: 'confirmRetire' }));
+    expect(execute).toHaveBeenNthCalledWith(2, {
+      kind: 'prepareRetire', libraryId: 'lib-1', skillName: 'api-design',
+    });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('retries unfinished propagation with one Library-level command', async () => {
+    membershipView.outcome = {
+      scopes: [{
+        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+        state: 'pending',
+        error: null,
+      }],
+      cleanup: [],
+      snapshotError: null,
+    };
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.membership.retry' }));
+
+    await waitFor(() => expect(execute).toHaveBeenCalledWith({
+      kind: 'resumeMembership', libraryId: 'lib-1',
+    }));
+  });
+
+  it.each([
+    { scopes: [], cleanup: [], snapshotError: null },
+    { scopes: [{ context: { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } }, state: 'synced' as const, error: null }], cleanup: [], snapshotError: null },
+  ])('does not reserve list space for an empty or successful outcome: %j', (outcome) => {
+    membershipView.outcome = outcome;
+    const { container } = render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    const list = container.querySelector('[data-slot="scroll-area-viewport"] > div > div');
+
+    expect(list).not.toBeNull();
+    expect(list?.children).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'libraries.membership.retry' })).toBeNull();
+  });
+
+  it('hides another Library outcome and restores the correct retry target when returning', async () => {
+    membershipView.outcome = { scopes: [], cleanup: [], snapshotError: { kind: 'staleTarget' } };
+    const view = render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    expect(screen.getByText('libraries.membership.snapshotError')).toBeTruthy();
+    workspaceView.selectedLibraryId = 'lib-2';
+    workspaceView.detail = { ...workspaceView.detail!, id: 'lib-2', name: 'Second' };
+    view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    expect(screen.queryByText('libraries.membership.snapshotError')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'libraries.membership.retry' })).toBeNull();
+
+    workspaceView.selectedLibraryId = 'lib-1';
+    workspaceView.detail = { ...workspaceView.detail!, id: 'lib-1', name: 'Backend' };
+    view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.membership.retry' }));
+    await waitFor(() => expect(execute).toHaveBeenCalledWith({ kind: 'resumeMembership', libraryId: 'lib-1' }));
+  });
+
+  it('restores unfinished membership from the current Library when opening without a local outcome', async () => {
+    workspaceView.detail!.usages = [{
+      context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+      project: null,
+      state: 'pendingAdjustment',
+    }];
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    expect(screen.getByText('libraries.membership.scopeResult.pending:{"count":1}')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.membership.retry' }));
+    await waitFor(() => expect(execute).toHaveBeenCalledWith({ kind: 'resumeMembership', libraryId: 'lib-1' }));
+  });
+
+  it('keeps known Libraries visible while reporting an incomplete application inventory', () => {
+    workspaceView.catalog = {
+      ...workspaceView.catalog!,
+      usageInventoryComplete: false,
+      usageInventoryProblemCount: 2,
+    };
+
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    expect(screen.getByText('libraries.usage.inventoryIncomplete:{"count":2}')).toBeTruthy();
+    expect(screen.getAllByText('Backend')).toHaveLength(2);
+  });
+
+  it('shows the concrete reason when the Library catalog cannot be loaded', () => {
+    workspaceView.catalog = null;
+    workspaceView.detail = null;
+    workspaceView.catalogError = {
+      kind: 'configurationCorrupted',
+      data: {
+        message: 'Skill Library catalog does not match the current data format: missing field `retiredSkills`',
+      },
+    };
+
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+
+    expect(screen.getByText(workspaceView.catalogError.data.message)).toBeTruthy();
   });
 
   it('selects the Library requested by a Skills-page application link', async () => {
@@ -283,7 +478,7 @@ describe('LibraryPage maintenance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'libraries.checkUpdates' }));
 
     // 全是最新时，摘要文字之外还需要一个就地的完成反馈，否则点击几乎没有可见变化。
-    expect(await screen.findByText('skills.checkCompleted')).toBeTruthy();
+    expect(await screen.findByText('skills.checkUpToDate')).toBeTruthy();
   });
 
   it('switches the list to compact navigation once a Skill is selected', async () => {
@@ -341,6 +536,8 @@ describe('LibraryPage maintenance', () => {
       ],
       revision: 'catalog-delete-target',
       usageProjection: [],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     };
     workspaceView.selectedLibraryId = 'lib-a';
     workspaceView.detail = { id: 'lib-a', name: 'Selected', skills: [], usages: [] };
@@ -363,6 +560,8 @@ describe('LibraryPage maintenance', () => {
       ],
       revision: 'catalog-locked-delete',
       usageProjection: [{ libraryId: 'lib-b', confirmedCount: 1, pendingCount: 0 }],
+      usageInventoryComplete: true,
+      usageInventoryProblemCount: 0,
     };
     workspaceView.selectedLibraryId = 'lib-a';
     workspaceView.detail = { id: 'lib-a', name: 'Selected', skills: [], usages: [] };

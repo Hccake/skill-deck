@@ -373,17 +373,17 @@ fn observe_physical_directory(
     use crate::environment::planning::TargetEntryKind;
 
     let fact = &group[0].fact;
+    if let Some(candidate) = libraries
+        .recognized()
+        .iter()
+        .find(|candidate| candidate.matches_target(fact))
+    {
+        return ObservedVersion::Library(candidate.clone());
+    }
     match fact.entry_kind {
         TargetEntryKind::Directory => ObservedVersion::Direct,
         TargetEntryKind::Symlink | TargetEntryKind::Junction | TargetEntryKind::BrokenLink => {
             if let Some(identity) = fact.link_target_identity.as_ref() {
-                if let Some(candidate) = libraries
-                    .recognized()
-                    .iter()
-                    .find(|candidate| identity.matches(candidate.locator()))
-                {
-                    return ObservedVersion::Library(candidate.clone());
-                }
                 if group
                     .iter()
                     .flat_map(|input| {
@@ -494,6 +494,35 @@ mod tests {
     }
 
     #[test]
+    fn directory_reached_through_a_library_root_keeps_library_ownership() {
+        let observed = fact(
+            "demo",
+            "/scope/agent/skills/demo",
+            TargetEntryKind::Directory,
+            None,
+        );
+        let library = LibraryVersionCandidate::new(
+            LibraryId::parse("library-one"),
+            "demo",
+            locator("/libraries/library-one/skills/demo"),
+            observed.key.clone(),
+        );
+        let input = SkillDirectoryPlacementInput::new(
+            DirectoryPlacementRef::Catalog(DirectoryPlacementId::Standard),
+            observed,
+            PlacementVersionDemand::library(),
+            PlacementVersionDemand::library(),
+        )
+        .unwrap();
+        let candidates =
+            LibraryCandidateSet::new(vec![library.clone()], vec![library.clone()]).unwrap();
+        assert_eq!(
+            observe_physical_directory(&[input], &candidates),
+            ObservedVersion::Library(library)
+        );
+    }
+
+    #[test]
     fn placement_request_rejects_missing_duplicate_standard_and_legacy_target_demand() {
         let skill = SkillDirectoryName::try_from("demo").unwrap();
         assert_eq!(
@@ -590,6 +619,20 @@ mod tests {
             LibraryId::parse("library-one"),
             "demo",
             locator("/libraries/library-one/skills/demo"),
+            PhysicalTargetKey {
+                physical_parent: if cfg!(windows) {
+                    PhysicalParentIdentity::Windows {
+                        volume_serial: 1,
+                        file_id: 10,
+                    }
+                } else {
+                    PhysicalParentIdentity::Unix {
+                        device: 1,
+                        inode: 10,
+                    }
+                },
+                ..key("demo")
+            },
         );
         let candidates =
             LibraryCandidateSet::new(vec![candidate.clone()], vec![candidate.clone()]).unwrap();

@@ -459,19 +459,23 @@ where
         let original_payload = if selection.add_options.is_empty() {
             None
         } else {
-            Some(
-                self.acquirer
-                    .acquire(
-                        &request.context,
-                        &request.skill_name,
-                        loaded
-                            .observed
-                            .plan
-                            .standard_fact()
-                            .map_err(|error| error.into_app_error())?,
-                    )
-                    .await?,
-            )
+            let candidates = loaded
+                .observed
+                .plan
+                .direct_content_candidates(&loaded.catalog);
+            let (source, hash) = self
+                .acquirer
+                .select_source(&request.context, &request.skill_name, &candidates)
+                .await?;
+            validate_shared_link_source(&selection, &loaded.observed.plan, &source)?;
+            let handle = self
+                .acquirer
+                .acquire(&request.context, &request.skill_name, &source)
+                .await?;
+            if handle.manifest_hash != hash {
+                return Err(AppError::StalePayload);
+            }
+            Some(handle)
         };
         Ok(ManageAgentsPreviewOutcome::Ready {
             preview: manage_preview(
@@ -595,6 +599,15 @@ where
             (Some(handle), false)
                 if same_environment_identity(&handle.environment, &request.context.environment) =>
             {
+                let candidates = observed.plan.direct_content_candidates(&catalog);
+                let (source, hash) = self
+                    .acquirer
+                    .select_source(&request.context, &request.skill_name, &candidates)
+                    .await?;
+                validate_shared_link_source(&selection, &observed.plan, &source)?;
+                if handle.manifest_hash != hash {
+                    return Err(AppError::StalePayload);
+                }
                 Some(self.payloads.pin_verified(handle).await?)
             }
             _ => return Err(AppError::StalePayload),
@@ -779,7 +792,7 @@ fn build_observed_agent_selection(
         }
         states.push(state);
     }
-    let initial_selected_option_ids = states
+    let baseline_selected_option_ids = states
         .iter()
         .filter(|state| state.initial_selected)
         .map(|state| state.option_id.clone())
@@ -822,7 +835,7 @@ fn build_observed_agent_selection(
         })
         .collect();
     let mut selection = catalog.snapshot().clone();
-    selection.initial_selected_option_ids = initial_selected_option_ids;
+    selection.baseline_selected_option_ids = baseline_selected_option_ids;
     selection.revision = revision;
     selection.user_mode_option_ids = user_mode_option_ids;
 
@@ -847,6 +860,26 @@ fn build_observed_agent_selection(
 struct ResolvedAdditions {
     options: Vec<ResolvedAgentInstallOption>,
     facts: Vec<ResolvedTargetFact>,
+}
+
+fn validate_shared_link_source(
+    selection: &ResolvedManageSelection,
+    plan: &crate::application::scope_skill_planning::ScopeSkillPlan,
+    source: &ResolvedTargetFact,
+) -> Result<(), AppError> {
+    if selection.requested_mode == InstallMode::Symlink
+        && selection
+            .add_options
+            .iter()
+            .any(|option| !option.placement.content.uses_eve_payload())
+        && !plan.has_shared_source(source)
+    {
+        return Err(AppError::CapabilityUnavailable {
+            capability: "sharedSkillLinkSource".into(),
+            path: Some(source.destination.native_path.clone()),
+        });
+    }
+    Ok(())
 }
 
 fn manage_preview(
@@ -1436,6 +1469,7 @@ mod tests {
                         environment: EnvironmentRef::Native,
                         native_path: (*path).to_string(),
                     },
+                    manage_target_fact("demo", path, TargetEntryKind::Directory, None).key,
                 )
             })
             .collect::<Vec<_>>();

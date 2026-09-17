@@ -89,7 +89,7 @@ Agent 的路径声明和实际路径也分开处理：相对于 Home 或 ConfigH
 
 ## 把 Skill 复制到其他项目
 
-普通安装、更新和来源修复都在能够直接管理目标文件的 Windows、macOS、Linux 或 WSL 用户空间中完成。把 Skill 复制到其他项目时，来源 Environment 先保存完整的 Skill 内容快照，目标 Environment 再根据项目路径和访问状态执行受保护写入。
+普通安装和更新都在能够直接管理目标文件的 Windows、macOS、Linux 或 WSL 用户空间中完成。把 Skill 复制到其他项目时，来源 Environment 先保存完整的 Skill 内容快照，目标 Environment 再根据项目路径和访问状态执行受保护写入。
 
 目标项目必须能够由用户选择的 Windows 用户空间或 WSL 发行版直接管理。目标项目处于跨文件系统状态时，复制流程会要求用户切换到项目文件所在的 Environment，而不会把当前 Environment 自动视为文件系统归属方。
 

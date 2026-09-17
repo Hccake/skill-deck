@@ -10,7 +10,6 @@ use crate::application::mutation::plan::{
 use crate::application::payload_session::PinnedPayloadLease;
 use crate::core::mutation::MutationKind;
 use crate::core::skill_payload::PayloadId;
-use crate::environment::runtime::ContextSnapshotRevision;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::storage::lock_plan::PreparedLockMutation;
@@ -84,23 +83,6 @@ where
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreviewScopeRevisions {
-    registry: String,
-    environment: String,
-    context: ContextSnapshotRevision,
-}
-
-impl From<&PreviewToken> for PreviewScopeRevisions {
-    fn from(token: &PreviewToken) -> Self {
-        Self {
-            registry: token.registry_revision.clone(),
-            environment: token.environment_revision.clone(),
-            context: token.context_revision.clone(),
-        }
-    }
-}
-
 pub fn validate_exact_preview(
     expected: &PreviewToken,
     actual: &PreviewToken,
@@ -119,22 +101,6 @@ pub fn validate_exact_preview(
     Ok(())
 }
 
-pub fn validate_same_scope_revisions(
-    expected: &PreviewScopeRevisions,
-    actual: &PreviewScopeRevisions,
-) -> Result<(), AppError> {
-    if expected.registry != actual.registry {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment != actual.environment {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context != actual.context {
-        return Err(AppError::StaleContext);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -142,9 +108,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        assemble_plan, issue_preview_token, validate_exact_preview, validate_same_scope_revisions,
-        MutationPlanDraft, MutationUnitDraft, PreparedMutationEntries, PreviewScopeRevisions,
-        PreviewTokenDraft,
+        assemble_plan, issue_preview_token, validate_exact_preview, MutationPlanDraft,
+        MutationUnitDraft, PreparedMutationEntries, PreviewTokenDraft,
     };
     use crate::application::mutation::plan::{
         ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation, PreviewToken,
@@ -208,59 +173,6 @@ mod tests {
             Err(AppError::StaleContext)
         );
         assert_eq!(validate_exact_preview(&expected, &expected), Ok(()));
-    }
-
-    #[test]
-    fn matching_scope_revisions_ignore_generation_but_do_not_authorize_an_update() {
-        let expected_token = token("registry-1", "environment-1", "context-1", "generation-1");
-        let expected = PreviewScopeRevisions::from(&expected_token);
-        let changed_generation = PreviewScopeRevisions::from(&token(
-            "registry-1",
-            "environment-1",
-            "context-1",
-            "generation-2",
-        ));
-        assert_eq!(
-            validate_same_scope_revisions(&expected, &changed_generation),
-            Ok(())
-        );
-
-        assert_eq!(
-            validate_same_scope_revisions(
-                &expected,
-                &PreviewScopeRevisions::from(&token(
-                    "registry-2",
-                    "environment-2",
-                    "context-2",
-                    "generation-2",
-                )),
-            ),
-            Err(AppError::StaleRegistry)
-        );
-        assert_eq!(
-            validate_same_scope_revisions(
-                &expected,
-                &PreviewScopeRevisions::from(&token(
-                    "registry-1",
-                    "environment-2",
-                    "context-2",
-                    "generation-2",
-                )),
-            ),
-            Err(AppError::StaleEnvironment)
-        );
-        assert_eq!(
-            validate_same_scope_revisions(
-                &expected,
-                &PreviewScopeRevisions::from(&token(
-                    "registry-1",
-                    "environment-1",
-                    "context-2",
-                    "generation-2",
-                )),
-            ),
-            Err(AppError::StaleContext)
-        );
     }
 
     #[test]

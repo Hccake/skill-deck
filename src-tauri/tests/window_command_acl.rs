@@ -373,14 +373,8 @@ fn main_window_applies_representative_business_command_permissions() {
         invoke(&main, "acquire_selected_payloads"),
         Ok(Value::from("acquire-selected-payloads"))
     );
-    assert_eq!(
-        invoke(&main, "preview_install"),
-        Ok(Value::from("preview-install"))
-    );
-    assert_eq!(
-        invoke(&main, "install_skills"),
-        Ok(Value::from("install-skills"))
-    );
+    assert_denied(invoke(&main, "preview_install"), "preview_install");
+    assert_denied(invoke(&main, "install_skills"), "install_skills");
     assert_eq!(
         invoke(&main, "preview_add_library_skills"),
         Ok(Value::from("preview-add-library-skills"))

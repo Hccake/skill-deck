@@ -82,7 +82,11 @@ export function ProjectsTab() {
       });
       if (!selected || typeof selected !== 'string') return;
       const result = await add(selected);
-      if (result.status === 'failed') toast.error(t('settings.addProjectError'));
+      if (result.status === 'failed') {
+        toast.error(t(result.error.kind === 'projectMatchesEnvironmentHome'
+          ? 'settings.projectHomeConflict'
+          : 'settings.addProjectError'));
+      }
     } catch (error) {
       console.error('Failed to add project:', error);
       toast.error(t('settings.addProjectError'));

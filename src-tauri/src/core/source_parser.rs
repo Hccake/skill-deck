@@ -16,9 +16,9 @@
 
 use crate::error::AppError;
 use crate::models::{ParsedSource, SourceType};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::Path;
+use std::sync::LazyLock;
 use url::Url;
 
 /// Source 别名映射
@@ -48,13 +48,13 @@ struct FragmentRefResult {
 }
 
 // Lazy regex patterns for looks_like_git_source
-static GITHUB_PATH_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^/[^/]+/[^/]+(?:\.git)?(?:/tree/[^/]+(?:/.*)?)?/?$").unwrap());
-static GITLAB_PATH_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^/.+?/[^/]+(?:\.git)?(?:/-/tree/[^/]+(?:/.*)?)?/?$").unwrap());
-static GIT_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.git(?:$|\?|/)").unwrap());
-static SHORTHAND_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[^/]+/[^/]+(?:/(.+)|@(.+))?$").unwrap());
+static GITHUB_PATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/[^/]+/[^/]+(?:\.git)?(?:/tree/[^/]+(?:/.*)?)?/?$").unwrap());
+static GITLAB_PATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/.+?/[^/]+(?:\.git)?(?:/-/tree/[^/]+(?:/.*)?)?/?$").unwrap());
+static GIT_URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.git(?:$|\?|/)").unwrap());
+static SHORTHAND_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[^/]+/[^/]+(?:/(.+)|@(.+))?$").unwrap());
 
 /// 判断输入是否看起来像 git 来源（用于决定是否提取 #fragment 作为分支引用）
 /// 只有 git-like 来源才应将 # 后的内容解释为分支 ref
@@ -529,7 +529,8 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
         }
         SourceType::Git => {
             // git@host:owner/repo.git → owner/repo
-            static SSH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^git@[^:]+:(.+)$").unwrap());
+            static SSH_RE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"^git@[^:]+:(.+)$").unwrap());
             if let Some(caps) = SSH_RE.captures(&parsed.url) {
                 let path = caps[1].trim_end_matches(".git");
                 if path.contains('/') {

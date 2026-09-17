@@ -123,7 +123,7 @@ describe('SkillCard', () => {
     expect(screen.queryByText('skills.updateStatusLabel.needsSourceInfo')).toBeNull();
   });
 
-  it('keeps an incomplete update check visible beside duplicate-install facts', () => {
+  it('keeps duplicate-install facts without repeating an incomplete background check', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -143,7 +143,7 @@ describe('SkillCard', () => {
     );
 
     const attention = screen.getByTestId('skill-card-attention');
-    expect(within(attention).getByText('skills.card.updateCheckIncomplete')).toBeTruthy();
+    expect(within(attention).queryByText('skills.card.updateCheckIncomplete')).toBeNull();
     expect(within(attention).getByText('skills.card.duplicateLocations')).toBeTruthy();
     expect(attention.querySelectorAll('svg')).toHaveLength(1);
   });
@@ -576,7 +576,7 @@ describe('SkillCard', () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it('keeps a reinstall status before agent badges', () => {
+  it('explains an unknown baseline on the source without adding a title status', async () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -586,6 +586,7 @@ describe('SkillCard', () => {
               canRunUpdate: true,
               canCheckForUpdates: false,
               updateReason: 'missingRemoteHash',
+              source: 'owner/repo',
               agents: ['claude-code', 'codex'],
               associatedAgents: ['claude-code', 'codex'],
             }),
@@ -600,18 +601,14 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.reinstallRequired')).toBeTruthy();
-    const diagnostic = screen.getByText('skills.updateStatusLabel.reinstallRequired');
-    const firstAgent = screen.getByText('Claude Code');
-
-    expect(diagnostic).toBeTruthy();
-    expect(
-      diagnostic.compareDocumentPosition(firstAgent) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    expect(screen.queryByText('skills.updateStatusLabel.reinstallRequired')).toBeNull();
+    fireEvent.focus(screen.getByText('owner/repo'));
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.updateHint.missingRemoteHashCanUpdate');
+    expect(screen.getByText('Claude Code')).toBeTruthy();
     expect(screen.getByText('Codex')).toBeTruthy();
   });
 
-  it('shows a temporary update failure reason from the focusable status label', async () => {
+  it('does not turn a temporary network failure into a permanent card warning', () => {
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       unobserve() {}
@@ -637,18 +634,12 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    const updateBadge = screen.getByTestId('skill-card-attention');
     const agent = screen.getByText('Claude Code');
-
-    expect(within(updateBadge).getByText('skills.card.updateCheckIncomplete')).toBeTruthy();
-    expect(updateBadge.getAttribute('tabindex')).toBe('0');
+    expect(screen.queryByTestId('skill-card-attention')).toBeNull();
     expect(agent).toBeTruthy();
-
-    fireEvent.focus(updateBadge);
-    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.updateHint.network-error');
   });
 
-  it('shows typed check diagnostics while keeping the last known update available', async () => {
+  it('keeps a known update available without showing network diagnostics', () => {
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       unobserve() {}
@@ -687,20 +678,13 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    const status = screen.getByTestId('skill-card-attention');
-    expect(within(status).getByText('skills.card.updateCheckIncomplete')).toBeTruthy();
-    expect(within(status).getByText('skills.card.updateCheckIncomplete').className).toContain('max-w-full');
-    expect(within(status).getByText('skills.card.updateCheckIncomplete').className).toContain('break-words');
+    expect(screen.queryByTestId('skill-card-attention')).toBeNull();
+    expect(screen.getByText('skills.updateStatusLabel.available')).toBeTruthy();
     expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
-    fireEvent.focus(status);
-    const tooltip = await screen.findByRole('tooltip');
-    expect(tooltip.textContent).toContain('skills.updateEvidence.failure.network');
-    expect(tooltip.textContent).toContain('skills.updateEvidence.nextStep.retry');
-    expect(tooltip.textContent).toContain('skills.updateEvidence.retryAt');
-    expect(tooltip.textContent).not.toContain('must not be shown');
+    expect(screen.queryByText('must not be shown')).toBeNull();
   });
 
-  it('keeps the committed update badge and adds a separate warning after a failed refresh', async () => {
+  it('keeps the committed update badge after a failed refresh', () => {
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       unobserve() {}
@@ -740,10 +724,10 @@ describe('SkillCard', () => {
     );
 
     expect(screen.getByText('skills.updateStatusLabel.available')).toBeDefined();
-    expect(screen.getByText('skills.card.updateCheckIncomplete')).toBeDefined();
+    expect(screen.queryByText('skills.card.updateCheckIncomplete')).toBeNull();
   });
 
-  it('crossfades a changed card update status for 160ms', async () => {
+  it('crossfades an execution result into an available update for 160ms', async () => {
     vi.useFakeTimers();
     const { rerender } = render(
       <TooltipProvider>
@@ -757,6 +741,7 @@ describe('SkillCard', () => {
             }),
             updateStatus: 'cannotCheck',
           } as never}
+          updateStatus="done"
           displayScope="global"
         />
       </TooltipProvider>
@@ -779,69 +764,15 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.reinstallRequired')).toBeDefined();
+    expect(screen.getByText('skills.updateDone')).toBeDefined();
     expect(screen.getByText('skills.updateStatusLabel.available')).toBeDefined();
 
     await act(async () => { await vi.advanceTimersByTimeAsync(160); });
-    expect(screen.queryByText('skills.updateStatusLabel.reinstallRequired')).toBeNull();
+    expect(screen.queryByText('skills.updateDone')).toBeNull();
     vi.useRealTimers();
   });
 
-  it('shows repair source action for missing skill path metadata', () => {
-    const onRepairSource = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <SkillCard
-          skill={{
-            ...makeSkill({
-              hasUpdate: false,
-              canRunUpdate: false,
-              canCheckForUpdates: false,
-              source: 'owner/repo',
-              sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missing-skill-path',
-            }),
-            updateStatus: 'cannotCheck',
-          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
-          displayScope="global"
-          onRepairSource={onRepairSource}
-        />
-      </TooltipProvider>
-    );
-
-    const repairAction = screen.getByTitle('skills.actions.repairSource');
-
-    fireEvent.click(repairAction);
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
-  });
-
-  it('shows repair source action for the typed missing source reason', () => {
-    render(
-      <TooltipProvider>
-        <SkillCard
-          skill={makeSkill({
-            hasUpdate: false,
-            canRunUpdate: false,
-            updateReason: 'missingSource',
-            source: 'owner/repo',
-            sourceUrl: 'https://github.com/owner/repo',
-          })}
-          displayScope="global"
-          onRepairSource={vi.fn()}
-        />
-      </TooltipProvider>
-    );
-
-    expect(screen.getByText('skills.card.sourceIncomplete')).toBeTruthy();
-    expect(screen.getByTitle('skills.actions.repairSource')).toBeTruthy();
-  });
-
-  it('uses direct reinstall for missing version metadata', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
+  it('keeps delete as the only maintenance action for missing version metadata', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -857,29 +788,18 @@ describe('SkillCard', () => {
             updateStatus: 'cannotCheck',
           } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
-          onUpdate={onUpdate}
-          onRepairSource={onRepairSource}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
         />
       </TooltipProvider>
     );
 
-    const reinstallAction = screen.getByTitle('skills.actions.reinstall');
-
-    fireEvent.click(reinstallAction);
-
-    expect(onUpdate).not.toHaveBeenCalled();
-    expect(screen.getByText('skills.reinstallConfirm.title')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'skills.reinstallConfirm.confirm' }));
-
-    expect(onUpdate).toHaveBeenCalledWith('toolkit');
-    expect(onRepairSource).not.toHaveBeenCalled();
+    expect(screen.getAllByRole('button', { name: /^skills\.actions\./ })).toEqual([
+      screen.getByTitle('skills.actions.delete'),
+    ]);
   });
 
   it('shows upstream-deleted state without ordinary update action', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
     render(
       <TooltipProvider>
         <SkillCard
@@ -895,8 +815,8 @@ describe('SkillCard', () => {
             updateStatus: 'deletedUpstream',
           } as InstalledSkill & { updateStatus?: 'deletedUpstream' }}
           displayScope="global"
-          onUpdate={onUpdate}
-          onRepairSource={onRepairSource}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
         />
       </TooltipProvider>
     );
@@ -905,11 +825,7 @@ describe('SkillCard', () => {
     expect(screen.queryByText('skills.updateStatusLabel.deletedUpstream')).toBeNull();
     expect(screen.queryByText('skills.updateHint.deletedUpstream')).toBeNull();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-
-    fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
-    expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByTitle('skills.actions.delete')).toBeTruthy();
   });
 
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
@@ -944,11 +860,11 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.autoCheckUnavailable')).toBeDefined();
+    expect(screen.queryByText('skills.updateStatusLabel.autoCheckUnavailable')).toBeNull();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
-  it('uses auto-check unavailable copy for local sources', () => {
+  it('shows local sources as local Skills without an attention warning', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -963,7 +879,8 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.autoCheckUnavailable')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatusLabel.localSource')).toBeTruthy();
+    expect(screen.queryByTestId('skill-card-attention')).toBeNull();
     expect(screen.queryByText('skills.updateHint.local-source')).toBeNull();
   });
 
@@ -972,7 +889,7 @@ describe('SkillCard', () => {
     ['auth', 'skills.updateHint.auth'],
     ['network-error', 'skills.updateHint.network-error'],
     ['http-404', 'skills.updateHint.http-error'],
-  ])('shows GitHub update reason %s', (reason, expectedKey) => {
+  ])('only keeps actionable legacy source issues visible: %s', (reason, expectedKey) => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -985,7 +902,8 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.card.updateCheckIncomplete')).toBeTruthy();
+    if (reason === 'auth') expect(screen.getByText('skills.updateEvidence.failure.authenticationRequired')).toBeTruthy();
+    else expect(screen.queryByTestId('skill-card-attention')).toBeNull();
     expect(screen.queryByText(expectedKey)).toBeNull();
   });
 });

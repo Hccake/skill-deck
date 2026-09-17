@@ -1,17 +1,16 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::environment::types::RegisteredProject;
 use crate::error::AppError;
 
 const PROJECTS_SCHEMA_VERSION: u32 = 1;
+const MAX_PROJECT_DOCUMENT_BYTES: usize = environment_protocol::MAX_DOCUMENT_BYTES as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProjectPathSemantics {
@@ -168,15 +167,28 @@ impl ProjectsStore {
     }
 
     pub fn read(&self) -> Result<Vec<RegisteredProject>, AppError> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
+        let content = match read_document_bytes(&self.path)? {
+            Some(content) => content,
+            None => return Ok(Vec::new()),
+        };
+        // Read the version before deserializing an older shape. Future versions
+        // may have changed the remaining fields and must never be rewritten.
+        let value: serde_json::Value = serde_json::from_slice(&content)?;
+        if value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(u64::from(PROJECTS_SCHEMA_VERSION))
+        {
+            return Err(AppError::ConfigurationReadOnly);
         }
-        let content = fs::read(&self.path)?;
-        let file: ProjectsFile = serde_json::from_slice(&content)?;
+        let file: ProjectsFile = serde_json::from_value(value)?;
         Ok(file.projects)
     }
 
     pub fn write(&self, projects: &[RegisteredProject]) -> Result<(), AppError> {
+        // Direct writes obey the same unreadable/corrupt/future-version guard as
+        // read/modify/write callers. The application still owns serialization.
+        self.read()?;
         let projects = deduplicate_projects(projects, self.semantics);
         let file = ProjectsFile {
             schema_version: PROJECTS_SCHEMA_VERSION,
@@ -215,15 +227,20 @@ pub fn migrate_legacy_projects(
     config_path: &Path,
     projects_path: &Path,
 ) -> Result<ProjectMigrationState, AppError> {
-    let store = ProjectsStore::new(projects_path.to_path_buf());
-    if projects_path.is_file() {
-        return Ok(ProjectMigrationState::NotNeeded);
-    }
-    if !config_path.exists() {
-        return Ok(ProjectMigrationState::NotNeeded);
-    }
+    migrate_legacy_projects_with_before_config_commit(config_path, projects_path, || {})
+}
 
-    let mut config: serde_json::Value = serde_json::from_slice(&fs::read(config_path)?)?;
+fn migrate_legacy_projects_with_before_config_commit(
+    config_path: &Path,
+    projects_path: &Path,
+    before_config_commit: impl FnOnce(),
+) -> Result<ProjectMigrationState, AppError> {
+    let store = ProjectsStore::new(projects_path.to_path_buf());
+    let original = match read_document_bytes(config_path)? {
+        Some(bytes) => bytes,
+        None => return Ok(ProjectMigrationState::NotNeeded),
+    };
+    let mut config: serde_json::Value = serde_json::from_slice(&original)?;
     let Some(root) = config.as_object_mut() else {
         return Err(AppError::Json {
             message: "config root must be a JSON object".to_string(),
@@ -244,23 +261,58 @@ pub fn migrate_legacy_projects(
         return Ok(ProjectMigrationState::NotNeeded);
     }
 
-    let projects = legacy_paths
-        .into_iter()
-        .map(|native_path| RegisteredProject {
-            id: Uuid::new_v4().to_string(),
-            native_path: normalize_native_path(&native_path, store.semantics),
-            display_name: None,
-            order: None,
-            suppress_cross_storage_warning: false,
-        })
-        .collect::<Vec<_>>();
+    let registry_exists = match fs::symlink_metadata(projects_path) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if registry_exists {
+        // Retrying after the new registry was published must not allocate new
+        // project IDs. Only finish cleanup when every old path is represented.
+        let current = store.read()?;
+        let keys = current
+            .iter()
+            .map(|project| normalize_project_path(&project.native_path, store.semantics).key)
+            .collect::<HashSet<_>>();
+        if legacy_paths
+            .iter()
+            .any(|path| !keys.contains(&normalize_project_path(path, store.semantics).key))
+        {
+            return Err(AppError::ConfigurationCorrupted {
+                message: "existing projects do not contain all legacy project paths; original config retained".to_string(),
+            });
+        }
+    } else {
+        let projects = legacy_paths
+            .into_iter()
+            .map(|native_path| RegisteredProject {
+                id: Uuid::new_v4().to_string(),
+                native_path: normalize_native_path(&native_path, store.semantics),
+                display_name: None,
+                order: None,
+                suppress_cross_storage_warning: false,
+            })
+            .collect::<Vec<_>>();
+        store.write(&projects)?;
+    }
 
-    store.write(&projects)?;
-
-    let backup_path = config_backup_path(config_path);
-    fs::copy(config_path, backup_path)?;
+    // Preserve the exact source bytes. A partial backup cannot authorize
+    // removing the last legacy representation.
+    crate::environment::native::atomic_file::write_native_atomic(
+        &config_backup_path(config_path),
+        &original,
+    )?;
     root.remove("projects");
-    atomic_write_json(config_path, &config)?;
+    before_config_commit();
+    let mut updated = serde_json::to_vec_pretty(&config)?;
+    updated.push(b'\n');
+    environment_engine::atomic_document::replace_if_unchanged(
+        config_path,
+        Some(&original),
+        &updated,
+    )
+    .map_err(crate::storage::atomic_document::DocumentWriteFailure::from_engine)
+    .map_err(crate::storage::atomic_document::DocumentWriteFailure::into_error)?;
 
     Ok(ProjectMigrationState::Succeeded)
 }
@@ -401,14 +453,14 @@ fn normalize_windows_project_path(path: &str) -> NormalizedProjectPath {
 }
 
 fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), AppError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let mut temp = NamedTempFile::new_in(parent)?;
-    serde_json::to_writer_pretty(&mut temp, value)?;
-    temp.write_all(b"\n")?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    crate::environment::native::atomic_file::write_native_atomic(path, &bytes)
+}
+
+fn read_document_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    environment_engine::atomic_document::read_optional_bounded(path, MAX_PROJECT_DOCUMENT_BYTES)
+        .map_err(Into::into)
 }
 
 fn config_backup_path(config_path: &Path) -> PathBuf {
@@ -424,7 +476,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        add_project_binding, migrate_legacy_projects, ProjectMigrationRegistry,
+        add_project_binding, migrate_legacy_projects,
+        migrate_legacy_projects_with_before_config_commit, ProjectMigrationRegistry,
         ProjectMigrationState, ProjectPathSemantics, ProjectsStore,
     };
     use crate::environment::types::RegisteredProject;
@@ -590,6 +643,48 @@ mod tests {
     }
 
     #[test]
+    fn migration_does_not_overwrite_a_config_changed_after_observation() {
+        let temp = tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let projects_path = temp.path().join("projects.json");
+        let original = serde_json::to_vec(&json!({
+            "projects": ["/demo"],
+            "gitCloneTimeoutSecs": 120
+        }))
+        .unwrap();
+        fs::write(&config_path, original).unwrap();
+        let externally_updated = serde_json::to_vec(&json!({
+            "projects": ["/demo"],
+            "gitCloneTimeoutSecs": 300
+        }))
+        .unwrap();
+
+        let result =
+            migrate_legacy_projects_with_before_config_commit(&config_path, &projects_path, || {
+                fs::write(&config_path, &externally_updated).unwrap()
+            });
+
+        assert!(matches!(result, Err(AppError::StaleTarget)));
+        assert_eq!(fs::read(&config_path).unwrap(), externally_updated);
+        let first_id = ProjectsStore::new(projects_path.clone()).read().unwrap()[0]
+            .id
+            .clone();
+
+        assert_eq!(
+            migrate_legacy_projects(&config_path, &projects_path).unwrap(),
+            ProjectMigrationState::Succeeded
+        );
+        assert_eq!(
+            ProjectsStore::new(projects_path).read().unwrap()[0].id,
+            first_id
+        );
+        let config: serde_json::Value =
+            serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
+        assert_eq!(config["gitCloneTimeoutSecs"], 300);
+        assert!(config.get("projects").is_none());
+    }
+
+    #[test]
     fn failed_migration_state_blocks_native_projects_until_replaced() {
         let registry = ProjectMigrationRegistry::new(ProjectMigrationState::Failed {
             error: AppError::Custom {
@@ -689,5 +784,98 @@ mod tests {
 
         assert_eq!(posix.project.native_path, "/");
         assert_eq!(windows.project.native_path, "C:\\");
+    }
+
+    #[test]
+    fn future_project_schema_is_read_only_even_for_direct_write() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("projects.json");
+        let original = br#"{"schemaVersion":2,"projects":[],"future":true}"#;
+        fs::write(&path, original).unwrap();
+        let store = ProjectsStore::new(path.clone());
+        assert!(matches!(store.read(), Err(AppError::ConfigurationReadOnly)));
+        assert!(matches!(
+            store.write(&[]),
+            Err(AppError::ConfigurationReadOnly)
+        ));
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn corrupt_project_registry_is_not_replaced_with_an_empty_registry() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("projects.json");
+        fs::write(&path, b"{broken").unwrap();
+        let store = ProjectsStore::new(path.clone());
+        assert!(store.write(&[]).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"{broken");
+    }
+
+    #[test]
+    fn migration_retry_preserves_existing_project_ids_and_finishes_config_cleanup() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("config.json");
+        let projects = temp.path().join("projects.json");
+        let project_path = temp.path().join("project").to_string_lossy().into_owned();
+        let store = ProjectsStore::new(projects.clone());
+        let existing = store.add(project_path.clone()).unwrap().project;
+        // Simulate an interruption after projects.json was published but before
+        // the legacy config field was removed. This is not a new migration.
+        fs::write(
+            &config,
+            serde_json::to_vec(&json!({
+                "projects": [project_path], "futureField": {"keep": true}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            migrate_legacy_projects(&config, &projects).unwrap(),
+            ProjectMigrationState::Succeeded
+        );
+        assert_eq!(store.read().unwrap()[0].id, existing.id);
+        let result: serde_json::Value = serde_json::from_slice(&fs::read(config).unwrap()).unwrap();
+        assert!(result.get("projects").is_none());
+        assert_eq!(result["futureField"], json!({"keep": true}));
+    }
+
+    #[test]
+    fn migration_does_not_merge_unknown_partial_state_into_an_existing_registry() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("config.json");
+        let projects = temp.path().join("projects.json");
+        let store = ProjectsStore::new(projects.clone());
+        store
+            .add(temp.path().join("new").to_string_lossy().into_owned())
+            .unwrap();
+        let original = serde_json::to_vec(&json!({
+            "projects": [temp.path().join("old").to_string_lossy()]
+        }))
+        .unwrap();
+        fs::write(&config, &original).unwrap();
+        assert!(migrate_legacy_projects(&config, &projects).is_err());
+        assert_eq!(fs::read(config).unwrap(), original);
+        assert_eq!(store.read().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn oversized_project_registry_is_rejected_before_deserialization() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("projects.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(u64::from(environment_protocol::MAX_DOCUMENT_BYTES) + 1)
+            .unwrap();
+        let store = ProjectsStore::new(path.clone());
+
+        let error = store.read().unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Io { ref message } if message.contains("exceeds its read limit")
+        ));
+        assert_eq!(
+            fs::metadata(path).unwrap().len(),
+            u64::from(environment_protocol::MAX_DOCUMENT_BYTES) + 1
+        );
     }
 }

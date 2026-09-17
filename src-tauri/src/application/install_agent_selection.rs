@@ -375,7 +375,7 @@ mod tests {
                     disabled_reason: None,
                 }],
                 groups: Vec::new(),
-                initial_selected_option_ids: Vec::new(),
+                baseline_selected_option_ids: Vec::new(),
                 unavailable_explicit_agents: Vec::new(),
                 user_mode_option_ids: vec![option_id.clone()],
                 revision: AgentSelectionRevision("latest".to_string()),
@@ -393,7 +393,7 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.selection.initial_selected_option_ids,
+            snapshot.selection.baseline_selected_option_ids,
             vec![option_id]
         );
         assert!(snapshot.selection.unavailable_explicit_agents.is_empty());

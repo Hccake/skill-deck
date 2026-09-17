@@ -8,7 +8,7 @@ import { projectAgentSelectionView } from '@/lib/agent-selection-view';
 
 export interface AgentSelectionSession {
   knownOptionIds: AgentInstallOptionId[];
-  initialSelectedOptionIds: AgentInstallOptionId[];
+  baselineSelectedOptionIds: AgentInstallOptionId[];
   selectedOptionIds: AgentInstallOptionId[];
   mode: InstallMode;
   initialMode: InstallMode;
@@ -23,7 +23,7 @@ export function createAgentSelectionSession(
   mode: InstallMode = 'symlink',
   optionStates: ManageInstallOptionState[] = [],
 ): AgentSelectionSession {
-  const selected = uniqueSelectable(snapshot, snapshot.initialSelectedOptionIds);
+  const selected = uniqueSelectable(snapshot, snapshot.baselineSelectedOptionIds);
   const selectedSet = new Set(selected);
   const { agentsById, additionalOptions } = projectAgentSelectionView(snapshot);
   const stateById = new Map(optionStates.map((state) => [state.optionId, state]));
@@ -36,6 +36,7 @@ export function createAgentSelectionSession(
   };
   const hasHiddenSelection = snapshot.installOptions.some((option) => (
     option.kind === 'standardDirectory'
+    && !selectedSet.has(option.id)
     && isVisibleByDefault(option.id)
     && option.agentIds.some((id) => agentsById.get(id)?.detection !== 'detected')
   ));
@@ -48,7 +49,7 @@ export function createAgentSelectionSession(
 
   return {
     knownOptionIds: snapshot.installOptions.map((option) => option.id),
-    initialSelectedOptionIds: selected,
+    baselineSelectedOptionIds: selected,
     selectedOptionIds: selected,
     mode,
     initialMode: mode,
@@ -114,7 +115,7 @@ export function refreshAgentSelectionSession(
   const retainedSet = new Set(retained);
   const selectedOptionIds = [
     ...retained,
-    ...snapshot.initialSelectedOptionIds.filter((id) => (
+    ...snapshot.baselineSelectedOptionIds.filter((id) => (
       !knownIds.has(id) && !retainedSet.has(id)
     )),
   ];
@@ -123,7 +124,7 @@ export function refreshAgentSelectionSession(
   return {
     ...session,
     knownOptionIds: snapshot.installOptions.map((option) => option.id),
-    initialSelectedOptionIds: uniqueSelectable(snapshot, snapshot.initialSelectedOptionIds),
+    baselineSelectedOptionIds: uniqueSelectable(snapshot, snapshot.baselineSelectedOptionIds),
     selectedOptionIds: uniqueSelectable(snapshot, selectedOptionIds),
     otherAgentsExpanded: session.otherAgentsExpanded || defaults.otherAgentsExpanded,
     additionalInstallExpanded: session.additionalInstallExpanded
@@ -140,7 +141,7 @@ export function hasUserSelectionChanges(
   session: AgentSelectionSession,
   snapshot: AgentSelectionSnapshot,
 ): boolean {
-  if (!sameSet(session.selectedOptionIds, session.initialSelectedOptionIds)) return true;
+  if (!sameSet(session.selectedOptionIds, session.baselineSelectedOptionIds)) return true;
   if (session.mode === session.initialMode) return false;
   const modeOptionIds = new Set(snapshot.userModeOptionIds);
   return session.selectedOptionIds.some((id) => modeOptionIds.has(id));
@@ -155,7 +156,7 @@ export function preserveOwnDirectoryOptions(
   agentIds: string[],
 ): AgentInstallOptionId[] {
   const requested = new Set(agentIds);
-  const selected = new Set(snapshot.initialSelectedOptionIds);
+  const selected = new Set(snapshot.baselineSelectedOptionIds);
   for (const option of snapshot.installOptions) {
     if (
       option.kind === 'standardDirectory'

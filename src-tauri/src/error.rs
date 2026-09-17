@@ -37,7 +37,7 @@ pub enum AgentSelectionInvalidReason {
     ResultNotAllowed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub enum SourceAcquisitionFailureReason {
@@ -47,6 +47,7 @@ pub enum SourceAcquisitionFailureReason {
     Network,
     LimitExceeded,
     InvalidContent,
+    DirectoryLinksUnsupported,
     Unavailable,
 }
 
@@ -92,6 +93,7 @@ impl SourceAcquisitionFailureReason {
             Self::Network => "network",
             Self::LimitExceeded => "limitExceeded",
             Self::InvalidContent => "invalidContent",
+            Self::DirectoryLinksUnsupported => "directoryLinksUnsupported",
             Self::Unavailable => "unavailable",
         }
     }
@@ -235,9 +237,6 @@ pub enum AppError {
     #[error("Direct download failed: {reason:?}")]
     DirectDownloadFailed { reason: DirectDownloadFailureReason },
 
-    #[error("Direct download sources only support new installs")]
-    DirectDownloadUnsupportedOperation,
-
     #[error("Direct download cannot replace an existing target: {target}")]
     DirectDownloadConflict { target: String },
 
@@ -320,7 +319,10 @@ pub enum AppError {
     WslOutputLimitExceeded { stream: String, limit: u32 },
 
     #[error("WSL command failed with exit code {exit_code:?}: {stderr}")]
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[allow(
+        dead_code,
+        reason = "保留已发布的 AppError IPC 形状；WSL 业务 shell 已由 typed Worker request 替代"
+    )]
     WslCommandFailed {
         #[serde(rename = "exitCode")]
         exit_code: Option<i32>,
@@ -341,6 +343,9 @@ pub enum AppError {
 
     #[error("Native project migration failed: {message}")]
     ProjectMigrationFailed { message: String },
+
+    #[error("The Environment home directory cannot be added as a Project")]
+    ProjectMatchesEnvironmentHome,
 
     #[error("{target}")]
     LockConflict { target: LockConflictTarget },
@@ -440,6 +445,9 @@ pub enum AppError {
 
     #[error("Configuration is corrupted: {message}")]
     ConfigurationCorrupted { message: String },
+
+    #[error("Configuration write could not be confirmed; reload the document before continuing")]
+    ConfigurationWriteUnconfirmed,
 
     #[error(
         "Agent runtime changed before mutation (registry {expected_registry_revision} -> {actual_registry_revision}, environment {expected_environment_revision} -> {actual_environment_revision})"

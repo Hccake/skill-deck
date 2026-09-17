@@ -23,15 +23,47 @@
       "appliedToLocation": "已应用到 {{location}}",
       "globalLocation": "全局 Skill",
       "pendingOnly": "应用调整未完成",
+      "inventoryIncomplete": "应用记录盘点不完整（{{count}} 项问题）",
       "viewDetails": "{{summary}}，查看全部使用位置",
       "unapplied": "未应用"
+    },
+    "membership": {
+      "affectedScopes": "将同步 {{count}} 个已应用位置",
+      "inventoryIncomplete": "已识别 {{count}} 个位置，另有位置当前无法验证",
+      "snapshotError": "库已保存，但无法读取最新展示信息。",
+      "retry": "重试同步",
+      "impact": {
+        "added": "新增 {{count}} 项",
+        "switched": "切换 {{count}} 项",
+        "fallback": "回退 {{count}} 项",
+        "removed": "移除 {{count}} 项",
+        "unchanged": "保持不变 {{count}} 项",
+        "unverified": "无法验证 {{count}} 项"
+      },
+      "scopeResult": {
+        "synced": "已同步 {{count}} 个位置",
+        "pending": "{{count}} 个位置待同步",
+        "unverified": "{{count}} 个位置无法验证",
+        "recoveryRequired": "{{count}} 个位置需要恢复",
+        "cancelled": "已取消 {{count}} 个位置"
+      },
+      "cleanupState": {
+        "purged": "已清理 {{count}} 个退役项",
+        "retained": "保留 {{count}} 个退役项",
+        "failed": "{{count}} 个退役项清理失败"
+      }
+    },
+    "syncState": {
+      "pending": "等待同步",
+      "unverified": "部分位置无法验证",
+      "recoveryRequired": "需要检查写入结果",
+      "synced": "已同步"
     },
     "appliedTo": "已应用到",
     "pendingAdjustment": "应用调整未完成",
     "pendingAdjustmentDescription": "上次库应用变更尚未完成，这些位置的内容可能与目标不一致。",
     "unappliedHint": "在 Skills 页的全局或项目区域应用此库后，Agent 才能读取其中的 Skill。",
     "moreUsages": "+{{count}}",
-    "lockedMembership": "使用中的库不能增删成员",
     "lockedDelete": "使用中的库不能删除",
     "lockedDeleteApplied": "此库正在被使用。请先在 Skills 页解除全局或项目应用。",
     "lockedDeletePending": "此库存在未完成的应用调整。请先在 Skills 页继续处理。",
@@ -70,7 +102,7 @@
         "alreadyInLibrary": "已在库中",
         "allExisting": "来源中的 Skill 已全部存在于当前库。",
         "agentIntentIgnored": "命令中的 Agent 参数不适用于 Skill 库；添加后可在 Skills 页应用此库。",
-        "review": "核对所选 Skill"
+        "review": "下一步"
       },
       "preparing": "正在准备添加内容…",
       "executing": "正在添加 Skill…",
@@ -79,13 +111,16 @@
         "previewMissing": "添加内容已失效，请返回重新选择。"
       },
       "review": {
-        "summary": "将添加 {{count}} 个 Skill",
-        "confirm": "添加 Skill"
+        "summary": "待添加 · {{count}} 个 Skill",
+        "syncCount": "同步 {{count}} 个位置",
+        "confirm": "确认添加",
+        "adding": "添加中…"
       },
       "result": {
         "succeeded": "已添加 {{count}} 个 Skill",
         "partial": "{{succeeded}} 个已添加，{{failed}} 个失败",
-        "retry": "重试失败项"
+        "retry": "重试失败项",
+        "done": "完成"
       }
     },
     "addAll": "添加发现的 Skill",
@@ -108,7 +143,7 @@
     "searchSkills": "搜索库内 Skill…",
     "searchResultCount": "{{visible}} / {{total}}",
     "noSearchResults": "没有匹配的库内 Skill。",
-    "skillContent": "{{name}} 的内容",
+    "skillContent": "「{{name}}」的内容",
     "contentError": "无法读取此 Skill 的内容。",
     "loadError": "无法加载 Skill 库。",
     "detailLoadError": "无法读取所选 Skill 库。",
@@ -121,7 +156,7 @@
     "manageGlobal": "管理全局 Skill 库",
     "manageProject": "管理「{{name}}」的 Skill 库",
     "manageProjectFallback": "管理项目 Skill 库",
-    "manageDescription": "选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。",
+    "manageDescription": "选择并排列此位置使用的 Skill 库，同时设置需要关联的 Agent。保存后，此位置会持续跟随库内成员变化。",
     "appliedSection": "应用的 Skill 库",
     "availableSection": "未应用的 Skill 库",
     "selectedCount": "已选择 {{count}} 个",
@@ -131,12 +166,19 @@
     "linkableAgents": "选择后关联",
     "linkableAgentsHelp": "所选 Skill 库会通过链接应用到这些 Agent 的专用 Skill 目录。",
     "noLinkableAgents": "当前没有可关联的 Agent",
+    "unavailableSavedAgents": "已保存但当前不可关联",
+    "unavailableAgentReasons": {
+      "definitionMissing": "Agent 定义已不存在。取消选择后会解除这项关联。",
+      "optionUnavailable": "此 Agent 当前不再使用可关联的专用 Skill 目录。"
+    },
     "selectionLoadError": "无法加载 Skill 库或关联 Agent。",
     "save": "保存",
     "saving": "正在保存…",
+    "reapply": "重新应用",
+    "reapplying": "正在重新应用…",
     "saveError": "无法保存 Skill 库设置，请重试。",
-    "targetConflictAgent": "{{agents}} 的专用 Skill 目录中存在无法安全处理的 {{skill}}，请取消关联后再保存。",
-    "targetConflictScope": "通用 Skill 目录中的 {{skill}} 不是可管理的 Skill，请处理该目录项后再保存。",
+    "targetConflictAgent": "{{agents}} 的专用 Skill 目录中存在无法安全处理的「{{skill}}」，请取消关联后再保存。",
+    "targetConflictScope": "通用 Skill 目录中的「{{skill}}」不是可管理的 Skill，请处理该目录项后再保存。",
     "cancelConflictingAgents": "取消关联 {{agents}}",
     "priorityOrder": "Skill 库优先级",
     "priorityHelp": "越靠前的 Skill 库优先级越高。",
@@ -159,10 +201,9 @@
     "confirmUpdateTitle": "更新库内 Skill",
     "confirmUpdateDescription": "将更新 {{count}} 个 Skill。已经应用此库的位置会通过现有链接直接使用新内容。",
     "maintenanceError": "库内容维护失败，请检查来源后重试。",
-    "inUse": "此库正在使用中。请先从以下位置移除应用关系，再调整库成员或删除库。",
-    "removeSkill": "从库中移除 {{name}}",
-    "removeSkillTitle": "移除 {{name}}",
-    "removeSkillDescription": "该 Skill 的独立库内容将被删除，其他库中的同名 Skill 不受影响。",
+    "removeSkill": "从库中移除「{{name}}」",
+    "removeSkillTitle": "移除「{{name}}」",
+    "removeSkillDescription": "该 Skill 将退出当前库。Skill Deck 会同步已应用位置，并在确认没有引用后清理库内内容。其他库中的同名 Skill 不受影响。",
     "deleteLibrary": "删除库",
     "deleteLibraryTitle": "删除 {{name}}",
     "deleteLibraryDescriptionWithCount": "将删除此库及其中的 {{count}} 个 Skill。",
@@ -183,6 +224,8 @@
     "title": "关联 Agent",
     "installTitle": "选择 Agent",
     "copyTitle": "关联 Agent",
+    "selectedTitle": "已选择",
+    "removeSelected": "取消选择 {{agent}}",
     "modeTitle": "安装方式",
     "modeHelp": "决定如何将 Skill 安装到所选 Agent 的 Skill 目录；仅支持复制的 Agent 不受此设置影响。",
     "link": "链接",
@@ -195,8 +238,8 @@
         "help": "Skill 会安装到通用 Skill 目录，这些 Agent 可以直接从该目录读取，无需额外设置。"
       },
       "manage": {
-        "title": "无需选择即可使用",
-        "help": "此 Skill 已安装在通用 Skill 目录，这些 Agent 可以直接读取，无需选择。"
+        "title": "读取通用目录的 Agent",
+        "help": "当前 Skill 位于通用目录时，这些 Agent 可直接使用；此处只调整专用目录中的关联。"
       },
       "copyToProject": {
         "title": "复制后可直接使用",
@@ -213,18 +256,6 @@
     },
     "ownDirectory": {
       "title": "同时安装到 Agent 自己的 Skill 目录（可选）",
-      "install": {
-        "description": "这些 Agent 安装后可以从通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。"
-      },
-      "manage": {
-        "description": "这些 Agent 已可从通用 Skill 目录读取此 Skill。选中后，它们会在自己的 Skill 目录中保留链接或副本。"
-      },
-      "copyToProject": {
-        "description": "复制完成后，这些 Agent 可以从目标 Project 的通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。"
-      },
-      "libraryApplication": {
-        "description": "选择后，Skill 库会通过链接应用到 Agent 自己的 Skill 目录。"
-      },
       "selectedCount": "已选择 {{count}} 个 Agent"
     },
     "otherAgents": "其他可选 Agent（{{count}}）",
@@ -299,14 +330,14 @@
       "refreshAll": "重新检查全部"
     },
     "itemTitle": {
-      "install": "“{{skillName}}”安装未完成",
-      "update": "“{{skillName}}”更新未完成",
-      "remove": "“{{skillName}}”移除未完成",
-      "copy": "“{{skillName}}”复制未完成",
-      "manageAgents": "“{{skillName}}”关联 Agent 修改未完成",
-      "duplicateCleanup": "“{{skillName}}”重复项清理未完成",
-      "repair": "“{{skillName}}”来源修复未完成",
-      "generic": "“{{skillName}}”操作未完成"
+      "install": "「{{skillName}}」安装未完成",
+      "update": "「{{skillName}}」更新未完成",
+      "remove": "「{{skillName}}」移除未完成",
+      "copy": "「{{skillName}}」复制未完成",
+      "manageAgents": "「{{skillName}}」关联 Agent 修改未完成",
+      "duplicateCleanup": "「{{skillName}}」重复项清理未完成",
+      "repair": "「{{skillName}}」来源修复未完成",
+      "generic": "「{{skillName}}」操作未完成"
     },
     "projectScope": "项目",
     "loading": "正在检查当前状态…",
@@ -375,6 +406,8 @@
     "emptyHint": "点击「添加」安装你的第一个 Skill",
     "loadError": "无法加载 Skills",
     "retry": "重试",
+    "readIncomplete": "{{count}} 个 Skill 位置暂时无法完整读取，其他结果仍可使用。",
+    "readIncompleteWithOmitted": "{{count}} 个 Skill 位置暂时无法完整读取，其中 {{omitted}} 项未展开；其他结果仍可使用。",
     "add": "添加",
     "enabled": "已启用: {{count}}/{{total}} 个 Agent",
     "scope": {
@@ -389,33 +422,7 @@
     "actions": {
       "update": "更新",
       "delete": "删除",
-      "copyToProject": "复制到项目",
-      "repairSource": "修复来源",
-      "reinstall": "重新安装"
-    },
-    "repairSourceDialog": {
-      "title": "修复 {{name}} 的来源",
-      "description": "从下方来源重新安装，以恢复更新检查所需信息。",
-      "sourceLabel": "来源",
-      "scopeLabel": "安装范围",
-      "projectLabel": "项目",
-      "agentsLabel": "关联 Agent",
-      "editSource": "更改来源",
-      "cancelEdit": "取消更改",
-      "validate": "检查来源",
-      "validating": "正在检查来源...",
-      "sourceContainsSkill": "来源中已找到 {{name}}。",
-      "sourceMissingSkill": "该来源中未找到 {{name}}，无法修复此 Skill。",
-      "sourceInvalid": "无法读取该来源，请检查 URL 或分支。",
-      "overwriteNotice": "修复会覆盖当前 Skill 内容，并保留当前关联的 Agent。",
-      "repair": "修复",
-      "repairing": "正在修复...",
-      "stop": "停止修复",
-      "stopping": "正在停止…",
-      "repairStopped": "修复已停止，已经完成的写入会保留当前结果。",
-      "stopFailed": "无法发送停止请求，修复仍在继续。",
-      "repairFailed": "修复失败，请检查结果后重试。",
-      "copyRetry": "来源已修复，请重新点击「复制」继续。"
+      "copyToProject": "复制到项目"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -451,6 +458,7 @@
     "updateCheckIncompleteCount": "{{count}} 个更新检查未完成",
     "card": {
       "sourceIncomplete": "来源信息不完整",
+      "sourceNeedsAttention": "无法检查更新",
       "sourceMissingUpstream": "来源中已找不到此 Skill",
       "updateCheckIncomplete": "更新检查未完成",
       "duplicateLocations": "全局和项目中重复安装",
@@ -479,22 +487,17 @@
       "extraCopiesHint": "这些 Agent 已经可以通过通用 Skill 目录使用此 Skill，同时自己的专用目录中也安装了此 Skill。",
       "extraCopiesNamedHint": "的专用 Skill 目录中也安装了此 Skill。",
       "extraCopiesAgentSummaryMore": "{{agents}} 等 {{count}} 个 Agent",
+      "libraryVersions": "当前范围还使用了同名库版本，可前往对应 Skill 库维护：",
       "extraCopiesCountHint": "{{count}} 个 Agent 的专用 Skill 目录中也安装了此 Skill。"
     },
     "deleteConfirm": {
-      "title": "删除 Skill",
-      "description": "将删除通用 Skill 目录中的“{{name}}”，以及各 Agent 目录中对应的链接或副本。",
+      "title": "删除「{{name}}」",
       "scopeLabel": "删除清单",
-      "scopeCount": "共 {{count}} 个位置",
-      "pathDisplayMode": "路径显示方式",
-      "relativePaths": "相对路径",
-      "fullPaths": "完整路径",
-      "standardDirSection": "通用 Skill 目录",
-      "mainDirectory": "Skill 目录",
+      "standardDirSection": "通用目录",
       "linkMode": "链接",
       "copyMode": "副本",
-      "copyWarning": "部分 Agent 的 Skill 目录中保留了独立副本，本次操作会将其一并删除。",
-      "restoresLibrary": "当前位置仍应用了包含此 Skill 的库。删除直接安装版本后，将在同一次操作中恢复当前胜出的库版本。",
+      "copyWarning": "独立副本也会一并删除。",
+      "restoresLibrary": "移除后，适用位置将恢复使用库版本。",
       "previewError": "无法加载当前删除范围，请重试。",
       "executionError": "删除未完成，当前范围仍保留，可以再次尝试。",
       "recoveryRequired": "删除未完成，相关文件需要检查。请先处理下方恢复项。",
@@ -529,7 +532,7 @@
     },
     "copyToProject": {
       "title": "复制「{{name}}」到其他项目",
-      "description": "将 \"{{name}}\" 复制到其他项目",
+      "description": "将「{{name}}」复制到其他项目",
       "ariaDescription": "配置目标项目、关联 Agent 和安装方式。",
       "targetProjects": "目标项目",
       "selectedProjects": "已选择 {{count}} 个",
@@ -541,6 +544,7 @@
       "unknown": "未知",
       "projectsLoadError": "无法加载所选系统中的项目。",
       "agentsLoadError": "无法加载 Agent 配置。",
+      "agentSelectionDescription": "Agent 会按照源 Skill 的关联状态预先勾选；目标项目已有的关联会保留。",
       "presenceUnknown": "无法确认这些项目是否已安装当前 Skill，已有文件可能会被覆盖。",
       "copy": "复制到 {{count}} 个项目",
       "overwriteWarning": "{{count}} 个选中的项目已安装此 skill，将被覆盖",
@@ -577,7 +581,9 @@
     "updateFailed": "更新失败",
     "checkUpdates": "检查更新",
     "checkCompleted": "检查完成",
+    "checkUpToDate": "已是最新",
     "checkUpdatesError": "检查更新失败：{{error}}",
+    "checkUpdatesFailed": "更新检查未完成。",
     "updateEvidence": {
       "title": "更新检查详情",
       "freshness": {
@@ -594,7 +600,7 @@
       "providerCooldownUntil": "来源服务冷却至 {{time}}",
       "failure": {
         "rateLimited": "请求次数已达上限",
-        "authenticationRequired": "需要完成身份认证",
+        "authenticationRequired": "无法访问来源",
         "refNotFound": "未找到已保存的 ref",
         "repositoryNotFound": "未找到仓库",
         "notFoundOrUnauthorized": "仓库不存在或当前无权访问",
@@ -603,14 +609,14 @@
         "sourceUnavailable": "来源暂不可用"
       },
       "nextStep": {
-        "configureTokenOrWait": "可等待限制解除，或配置 GitHub Token 后再试。",
-        "configureToken": "请在 Git 设置中配置有效的 GitHub Token。",
+        "configureTokenOrWait": "请等待限制解除，或检查来源的访问凭据。",
+        "configureToken": "请检查访问该来源所需的 Git 凭据。",
         "checkSource": "请确认仓库与 ref 是否仍然存在。",
-        "checkSourceOrToken": "请确认来源地址，或配置具有访问权限的 GitHub Token。",
+        "checkSourceOrToken": "请确认来源地址及访问权限。",
         "retry": "请在网络恢复后重新检查。"
       },
       "actions": {
-        "configureToken": "配置 GitHub Token",
+        "configureToken": "检查 Git 凭据",
         "openSource": "打开来源",
         "retry": "重新检查"
       }
@@ -627,18 +633,13 @@
       "deletedUpstream": "上游已删除",
       "deleted-upstream": "上游已删除"
     },
-    "reinstallConfirm": {
-      "title": "重新安装此 Skill？",
-      "description": "将从安装来源重新拉取并覆盖当前 Skill，完成后会恢复版本检查。",
-      "confirm": "重新安装"
-    },
     "updateStatusLabel": {
       "available": "新版本可用",
-      "needsSourceInfo": "需修复来源",
+      "needsSourceInfo": "来源信息不完整",
       "versionUnknown": "暂不能检查更新",
       "upstreamUnavailable": "来源暂不可用",
       "localSource": "本地 Skill",
-      "reinstallRequired": "需重新安装",
+      "reinstallRequired": "版本信息不完整",
       "autoCheckUnavailable": "无法自动检查",
       "checkFailed": "检查失败",
       "checkIncomplete": "更新检查未完成",
@@ -646,95 +647,113 @@
       "deleted-upstream": "上游已删除"
     },
     "updateHint": {
-      "missingRemoteHash": "本地版本信息不完整。重新安装后可恢复版本检查。",
-      "missingSource": "缺少安装来源信息。修复来源后可恢复版本检查。",
+      "missingRemoteHash": "缺少本地版本信息，无法判断是否有新版本。",
+      "missingRemoteHashCanUpdate": "缺少本地版本信息，无法判断是否有新版本。仍可从原来源更新。",
+      "missingSource": "安装来源信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
       "unsupportedSource": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "upstreamUnavailable": "暂时无法访问安装来源。稍后可重新检查。",
-      "deletedUpstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本、修复来源，或继续保留当前安装。",
-      "missing-skill-path": "缺少安装来源信息。修复来源后可恢复版本检查。",
-      "missing-remote-hash": "本地版本信息不完整。重新安装后可恢复版本检查。",
+      "deletedUpstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本，或继续保留当前安装。",
+      "missing-skill-path": "安装来源信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
+      "missing-remote-hash": "本地版本信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",
       "upstream-unavailable": "暂时无法访问安装来源。稍后可重新检查。",
-      "deleted-upstream": "来源可访问，但这个 skill 路径已不在上游。你可以删除本地副本、修复来源，或继续保留当前安装。",
+      "deleted-upstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本，或继续保留当前安装。",
       "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
-      "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN。",
+      "auth": "无法访问来源，请检查访问权限。",
       "network-error": "网络连接异常。稍后可重新检查。",
       "http-error": "版本检查失败。稍后可重新检查。"
     },
     "updateReason": {
-      "missingRemoteHash": "本地版本信息不完整。重新安装后可恢复版本检查。",
-      "missingSource": "缺少安装来源信息。修复来源后可恢复版本检查。",
+      "missingRemoteHash": "本地版本信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
+      "missingSource": "安装来源信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
       "unsupportedSource": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "upstreamUnavailable": "暂时无法访问安装来源。稍后可重新检查。",
-      "deletedUpstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本、修复来源，或继续保留当前安装。",
-      "missing-skill-path": "缺少安装来源信息。修复来源后可恢复版本检查。",
-      "missing-remote-hash": "本地版本信息不完整。重新安装后可恢复版本检查。",
+      "deletedUpstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本，或继续保留当前安装。",
+      "missing-skill-path": "安装来源信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
+      "missing-remote-hash": "本地版本信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",
       "upstream-unavailable": "暂时无法访问安装来源。稍后可重新检查。",
-      "deleted-upstream": "来源可访问，但这个 skill 路径已不在上游。你可以删除本地副本、修复来源，或继续保留当前安装。",
+      "deleted-upstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本，或继续保留当前安装。",
       "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
-      "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN。",
+      "auth": "无法访问来源，请检查访问权限。",
       "network-error": "网络连接异常。稍后可重新检查。",
       "http-error": "版本检查失败。稍后可重新检查。"
     },
     "updatePlan": {
-      "title": "更新计划",
+      "title": "更新 Skill",
       "description": "开始前检查分组更新和需要修复的条目。",
       "updatable": "可更新",
       "needsRepair": "需修复",
       "skipped": "跳过",
       "readyTitle": "即将更新 {{count}} 个 Skill",
-      "singleTitle": "更新“{{skillName}}”",
-      "readyDescription": "确认本次更新内容。已修改的副本默认保留。",
-      "executingTitle": "正在更新“{{skillName}}”",
+      "singleTitle": "更新「{{skillName}}」",
+      "readyDescription": "请确认本次更新的位置。",
+      "executingTitle": "正在更新「{{skillName}}」",
       "executingBatchTitle": "正在批量更新 Skill",
       "executionDescription": "正在获取、验证并写入最新内容。",
       "resultDescription": "更新范围以实际提交结果为准。",
       "groupNotice": "本次将从 {{count}} 个安装来源拉取最新内容并重新安装。",
       "skillCount": "{{count}} 个 Skill",
-      "source": "安装来源",
+      "source": "来源",
       "blocked": "暂时无法更新",
-      "standardSkillAction": "更新通用 Skill 目录中的 Skill",
-      "cleanCopiesAction": "同步 {{count}} 个未修改副本",
-      "adapterTargetsAction": "同步 {{agents}} 使用的项目内 Skill",
-      "conflictingCopies": "发现已修改的副本",
-      "preserveConflictDefault": "默认保留；勾选后使用最新内容覆盖",
-      "confirm": "开始更新",
+      "updateLocations": "将更新的位置",
+      "restoreLocation": "将恢复",
+      "preserveIndependentLocations": "保留引用 · 不参与本次更新",
+      "conflictingCopies": "内容不同的副本",
+      "preserveConflictDefault": "副本勾选后覆盖更新，未勾选不更新。",
+      "confirm": "确认更新",
       "stop": "停止更新",
       "stopping": "正在停止更新…",
       "starting": "正在启动更新…",
       "finishing": "正在完成关键写入，请稍候…",
-      "currentSkill": "正在处理 {{skillName}}",
-      "loadingPreview": "正在准备更新预览...",
+      "currentSkill": "正在处理「{{skillName}}」",
+      "loadingPreview": "正在准备所选 Skill 的更新内容...",
       "previewError": "无法准备更新预览。",
-      "deletedUpstreamTitle": "上游已删除",
-      "deletedUpstreamDescription": "这些 skill 本地仍存在，但 lock 记录的上游路径已经不存在。",
-      "deletedUpstreamActionRepair": "修复来源",
-      "deletedUpstreamActionRemove": "删除本地副本",
-      "deletedUpstreamActionKeep": "保留安装",
       "targetAgents": "目标 Agents",
       "privateCopiesTitle": "可选更新独立副本",
       "privateCopiesDescription": "仅勾选需要覆盖的 Agent 独立副本。链接会随通用 Skill 目录中的 Skill 一起更新。",
       "cleanCopyCount": "{{count}} 个独立副本会自动更新。",
       "cleanCopyCountForSkill": "{{skillName}}：{{count}} 个副本会自动更新。",
       "progress": "已处理 {{current}} / {{total}} 个 Skill。",
-      "overwritePrivateEntry": "覆盖这个独立副本",
       "retryFailed": "重试失败项",
       "resultTitle": "更新结果",
       "resultSuccess": "成功：{{count}}",
       "resultPartial": "部分成功：{{count}}",
       "resultFailed": "失败：{{count}}",
       "resultSkipped": "跳过：{{count}}",
-      "resultSummary": "成功 {{success}}，部分完成 {{partial}}，失败 {{failed}}，停止 {{skipped}}",
-      "preservedConflicts": "已保留本地修改的独立副本。",
+      "resultSummary": "成功 {{success}}，部分完成 {{partial}}，失败 {{failed}}，未执行或停止 {{skipped}}",
+      "preservedConflicts": "已保留内容不同的独立副本。",
       "resultOutcome": {
         "succeeded": "已完成",
         "partial": "部分完成",
         "failed": "失败",
         "cancelled": "更新已停止"
-      }
+      },
+      "contentDifferent": "需确认覆盖",
+      "globalTitle": "更新全局 Skill",
+      "projectTitle": "更新「{{project}}」的 Skill",
+      "commonDirectory": "通用目录",
+      "excludedLocation": "不更新",
+      "skippedCopies": "以下副本本次未更新：",
+      "updatedWithSkippedCopies": "已更新，部分副本未更新",
+      "preservedReferences": "独立引用保持原样，未参与本次更新。",
+      "copyKind": "副本",
+      "linkKind": "链接",
+      "preserved": "保留",
+      "installLocation": "安装位置",
+      "writeCount": "将更新 {{count}} 处",
+      "otherLocations": "其他位置（{{count}}）",
+      "locationDetails": "位置详情（{{count}}）",
+      "noUpdateLocations": "没有可更新位置",
+      "noUpdateLocationsDescription": "当前范围内没有可更新的安装位置，内容与来源记录保持原样。",
+      "selectConflict": "选择差异副本后可更新",
+      "linkDetails": "查看链接目标：{{path}}",
+      "linkTarget": "指向 {{path}}",
+      "linkTargetUpdated": "目标内容将更新，链接保持原样。",
+      "linkTargetPreserved": "目标内容与链接保持原样。",
+      "blockedCount": "{{count}} 个暂时无法更新"
     },
     "discover": {
       "searchPlaceholder": "搜索 Skill...",
@@ -782,7 +801,20 @@
         "fail": "失败",
         "unknown": "未知"
       }
-    }
+    },
+    "installPath": {
+      "viewFullPath": "查看完整路径：{{path}}",
+      "fullPath": "完整路径",
+      "copied": "已复制完整路径",
+      "copyFailed": "无法复制路径，请重试。",
+      "outsideProject": "项目外",
+      "outsideHome": "用户目录外",
+      "project": "项目：{{name}}",
+      "nativeEnvironment": "本机",
+      "copyPath": "复制路径"
+    },
+    "checkUpdatesNetworkFailed": "无法连接来源，请稍后重试。",
+    "checkUpdatesAccessFailed": "无法访问来源，请检查访问权限。"
   },
   "settings": {
     "title": "设置",
@@ -894,7 +926,13 @@
       "saveError": "无法保存代理设置，请检查填写内容后重试。",
       "testError": "连接测试未能完成，请检查代理设置后重试。",
       "errors": {
-        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。"
+        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。",
+        "invalidFormat": "配置字段的格式无效。",
+        "unsupportedFormat": "当前版本不支持这份代理配置的格式。",
+        "unreadableDocument": "无法读取配置文件，请检查路径和访问权限。",
+        "invalidDocument": "配置文件内容损坏或结构不完整。",
+        "writeUnconfirmed": "文件可能已写入，但保存结果尚未确认。当前连接方式保持不变，请重新读取配置后检查。",
+        "configurationUnavailable": "此连接方式的代理配置无效，请到代理设置中修复。"
       },
       "test": {
         "targets": {
@@ -924,7 +962,14 @@
           "wsl_unavailable": "所选 WSL 发行版当前不可用。"
         },
         "wslProxyHint": "当前测试使用了 WSL Git 代理。如果该地址无法从 WSL 访问，请更换地址，或将连接方式改为“保持原有连接方式”。"
-      }
+      },
+      "configurationIssueTitle": "代理设置需要修复",
+      "affectedRequestsPaused": "相关网络操作已暂停，请检查设置后重新保存。",
+      "usingPrevious": "相关操作继续使用上一次有效设置。",
+      "reviewBeforeRepair": "请检查下方设置；保存后将用它们替换文件中的代理配置。",
+      "documentRepairRequired": "配置文件无法安全修改。请先修复文件，再重新读取配置。",
+      "reload": "重新读取配置",
+      "fileChanged": "配置文件已被其他操作修改。请重新读取配置，检查当前草稿后再保存。"
     },
     "agents": {
       "title": "Agents",
@@ -1275,6 +1320,7 @@
     "projectsEmptyHint": "添加项目以管理项目级 Skills",
     "addProject": "添加项目",
     "addProjectError": "无法添加此项目，请重试。",
+    "projectHomeConflict": "用户主目录已用于全局 Skill，请选择具体项目目录。",
     "removeProject": "移除项目",
     "about": "关于",
     "aboutSections": {
@@ -1412,11 +1458,19 @@
       "errors": {
         "unknown": "操作因未知原因失败。",
         "validation": "当前请求已失效，请检查后重试。",
-        "skillPlacementTargetConflict": "{{skillName}} 的目标 Skill 目录 {{targetPath}} 中存在无法管理的{{targetKind}}，请处理后重试。",
+        "noUpdateTargets": "没有已确认的更新位置，已保留现有内容。",
+        "eveSingleFile": "当前仅支持 Eve 目录型 Skill，暂不支持此单文件安装：{{path}}",
+        "installedSkillSourceAmbiguous": "无法唯一确定此 Skill 的来源或安装位置：{{path}}",
+        "installedSkillFormat": "源 Skill 缺少有效的名称或描述，无法复制或新增 Agent 关联：{{path}}",
+        "sharedSkillLinkSource": "当前 Skill 没有可共享的通用安装位置，请选择复制方式。",
+        "libraryContentTarget": "目标实际位于 Skill 库中，请从库页面维护该成员：{{path}}",
+        "skillPlacementTargetConflict": "「{{skillName}}」的目标 Skill 目录 {{targetPath}} 中存在无法管理的{{targetKind}}，请处理后重试。",
         "wellKnownScopeNotFound": "{{rootUrl}} 的 {{scopePath}} 下没有可用 Skill，请检查 scoped 地址。",
         "environmentUnavailable": "所选环境当前不可用。",
         "storageUnsupported": "此存储位置不支持当前操作。",
         "capabilityUnavailable": "所选环境无法执行当前操作。",
+        "preparedContentCapacity": "临时内容保留额度不足，请减少选择的 Skill，或使用较小的来源后重试。",
+        "sourceContentCapacity": "来源大小超过临时内容保留额度，请使用较小的来源。",
         "unsafePath": "目标路径不在允许的 Skill 目录中。",
         "unsafeSourceLink": "来源中包含无法安全复制的链接。",
         "selfCopy": "来源和目标指向同一个物理位置。",
@@ -1424,7 +1478,7 @@
         "staleContext": "Skill 位置在预览后发生变化，请检查刷新后的计划。",
         "staleRegistry": "Agent Registry 在预览后发生变化，请检查刷新后的计划。",
         "staleEnvironment": "环境在预览后发生变化，请检查刷新后的计划。",
-        "stalePayload": "Skill 内容在预览后发生变化，请检查刷新后的计划。",
+        "stalePayload": "准备内容已失效，请重新准备并确认。",
         "staleTarget": "目标在预览后发生变化，请检查刷新后的计划。",
         "externalLockChanged": "Skill 信息已发生变化，请刷新后重试。",
         "mutationCancelled": "操作已取消。",
@@ -1433,7 +1487,8 @@
         "recoveryRequired": "继续前请先检查恢复数据。",
         "configurationReadOnly": "配置版本高于当前应用，现以只读方式打开。",
         "configurationCorrupted": "无法安全读取配置。",
-        "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。"
+        "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。",
+        "configurationWriteUnconfirmed": "配置的保存结果尚未确认。应用继续使用原设置，请重新读取配置后检查。"
       },
       "fallbacks": {
         "symlinkUnavailable": "由于符号链接不可用，已改为复制。",
@@ -1515,6 +1570,7 @@
           "network": "网络请求失败",
           "limitExceeded": "内容超过安全限制",
           "invalidContent": "内容不是有效的 Skill",
+          "directoryLinksUnsupported": "更新 Skill 时不支持通过目录链接定位来源内容。请使用真实目录，或将内容作为本地 Skill 导入。",
           "unavailable": "来源不可用"
         },
         "downloadFailure": {
@@ -1529,7 +1585,6 @@
           "invalidContent": "下载内容不是有效的 SKILL.md、ZIP、tar 或 tar.gz 来源。",
           "emptyContent": "下载内容为空。"
         },
-        "downloadUnsupportedOperation": "直接下载来源只支持全新安装。",
         "downloadConflict": "目标目录已有同名 Skill，直接下载无法覆盖：{{target}}"
       }
     },
@@ -1553,8 +1608,8 @@
       "privateCopySelected": "已选 {{count}} 个",
       "targetTitle": "目标 Agent",
       "loadError": "无法加载所选系统中的 Agent。",
-      "historyLoadWarning": "未能读取最近使用的 Agent。你仍可为本次安装选择目标。",
-      "historySaveWarning": "可以继续安装，但未能保存最近使用的 Agent。",
+      "historyLoadWarning": "未能读取最近确认的 Agent 选择。本次安装仍可继续选择目标。",
+      "historySaveWarning": "可以继续安装，但未能保存本次确认的 Agent 选择。",
       "historySaveError": "未能确认 Agent 选择，请重试。",
       "concreteTargetsTitle": "项目内目标",
       "concreteTargetsHint": "选择要安装到的项目内目标，例如 Eve root 或 subagent。",
@@ -1588,7 +1643,8 @@
       "global": "全局",
       "globalHint": "安装到全局位置 · {{path}}",
       "environmentGlobalHint": "安装到 {{environment}} 的全局位置",
-      "localProjects": "项目"
+      "localProjects": "项目",
+      "noProjects": "当前环境尚未添加项目。可以前往 Skills 页面添加项目。"
     },
     "mode": {
       "title": "安装方式",
@@ -1635,6 +1691,8 @@
         "preview": "无法根据当前目标生成安装预览。"
       },
       "retryPreparation": "重新准备",
+      "rediscoverSource": "重新获取 Skill 列表",
+      "sourceNeedsRefresh": "来源信息或 Skill 内容已失效，请重新获取列表并确认选择。",
       "conflictZone": "已有目标目录",
       "freshZone": "新增写入",
       "overwriteGroup": "目标目录已存在",
@@ -1653,7 +1711,7 @@
       "connecting": "正在连接...",
       "cloning": "正在克隆仓库...",
       "cloningWithTime": "正在克隆... ({{elapsed}}秒 / {{timeout}}秒)",
-      "installingSkill": "正在安装 {{skill}} ({{completed}}/{{total}})",
+      "installingSkill": "正在安装「{{skill}}」 ({{completed}}/{{total}})",
       "writingConfig": "正在保存配置..."
     },
     "complete": {

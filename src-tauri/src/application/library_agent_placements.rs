@@ -28,6 +28,7 @@ impl LibraryAgentPlacement {
 pub(crate) struct LibraryAgentPlacementMap {
     selection: AgentSelectionSnapshot,
     placements: BTreeMap<DirectoryPlacementId, LibraryAgentPlacement>,
+    saved_placements: BTreeMap<DirectoryPlacementId, Vec<AgentId>>,
 }
 
 impl LibraryAgentPlacementMap {
@@ -41,12 +42,20 @@ impl LibraryAgentPlacementMap {
             .collect::<BTreeSet<_>>();
         let mut projected_options = Vec::new();
         let mut placements = BTreeMap::new();
+        let mut saved_placements = BTreeMap::new();
         for option in catalog.options() {
             if option.public.kind != AgentInstallOptionKind::StandardDirectory
-                || option.public.mode_constraint != AgentSelectionModeConstraint::UserSelectable
-                || !option.public.selectable
                 || option.placement.storage_access != StorageAccess::Native
                 || option.placement.content != DirectoryContentKind::Original
+            {
+                continue;
+            }
+            if !option.public.agent_ids.is_empty() {
+                saved_placements
+                    .insert(option.placement.id.clone(), option.public.agent_ids.clone());
+            }
+            if option.public.mode_constraint != AgentSelectionModeConstraint::UserSelectable
+                || !option.public.selectable
             {
                 continue;
             }
@@ -80,12 +89,13 @@ impl LibraryAgentPlacementMap {
             .retain(|agent| available_agents.contains(&agent.id));
         selection.install_options = projected_options;
         selection.groups.clear();
-        selection.initial_selected_option_ids.clear();
+        selection.baseline_selected_option_ids.clear();
         selection.unavailable_explicit_agents.clear();
         selection.user_mode_option_ids.clear();
         Self {
             selection,
             placements,
+            saved_placements,
         }
     }
 
@@ -131,6 +141,54 @@ impl LibraryAgentPlacementMap {
             }
         }
         Ok(result)
+    }
+
+    pub(crate) fn placements_for_saved(
+        &self,
+        selected_agent_ids: &[AgentId],
+    ) -> BTreeSet<DirectoryPlacementId> {
+        let selected = selected_agent_ids.iter().collect::<BTreeSet<_>>();
+        self.saved_placements
+            .iter()
+            .filter(|(_, agent_ids)| agent_ids.iter().any(|agent_id| selected.contains(agent_id)))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub(crate) fn validate_selection_with_persisted(
+        &self,
+        requested_agent_ids: &[AgentId],
+        persisted_agent_ids: &BTreeSet<AgentId>,
+    ) -> Result<(), LibraryAgentPlacementError> {
+        let requested = requested_agent_ids.iter().collect::<BTreeSet<_>>();
+        let available = self
+            .placements
+            .values()
+            .flat_map(|placement| placement.selection_agent_ids.iter())
+            .collect::<BTreeSet<_>>();
+        if let Some(agent_id) = requested.iter().find(|agent_id| {
+            !available.contains(**agent_id) && !persisted_agent_ids.contains(**agent_id)
+        }) {
+            return Err(LibraryAgentPlacementError::UnknownAgent(
+                (*agent_id).clone(),
+            ));
+        }
+        for (id, placement) in &self.placements {
+            let selected = placement
+                .selection_agent_ids
+                .iter()
+                .filter(|agent_id| requested.contains(agent_id))
+                .collect::<Vec<_>>();
+            if !selected.is_empty()
+                && selected.len() != placement.selection_agent_ids.len()
+                && selected
+                    .iter()
+                    .any(|agent_id| !persisted_agent_ids.contains(*agent_id))
+            {
+                return Err(LibraryAgentPlacementError::PartialSelection(id.clone()));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -233,7 +291,7 @@ mod tests {
                 agents: vec![private_one, private_two, both],
                 install_options: vec![public.clone()],
                 groups: Vec::new(),
-                initial_selected_option_ids: Vec::new(),
+                baseline_selected_option_ids: Vec::new(),
                 unavailable_explicit_agents: Vec::new(),
                 user_mode_option_ids: Vec::new(),
                 revision: AgentSelectionRevision("revision".to_string()),
@@ -282,5 +340,22 @@ mod tests {
             ])
             .unwrap()
             .contains(&placement_id));
+        assert!(map
+            .placements_for_saved(&[AgentId::parse("both").unwrap()])
+            .contains(&placement_id));
+        let persisted = BTreeSet::from([AgentId::parse("private-one").unwrap()]);
+        assert!(map
+            .validate_selection_with_persisted(
+                &[AgentId::parse("private-one").unwrap()],
+                &persisted,
+            )
+            .is_ok());
+        assert!(matches!(
+            map.validate_selection_with_persisted(
+                &[AgentId::parse("private-two").unwrap()],
+                &BTreeSet::new(),
+            ),
+            Err(LibraryAgentPlacementError::PartialSelection(id)) if id == placement_id
+        ));
     }
 }

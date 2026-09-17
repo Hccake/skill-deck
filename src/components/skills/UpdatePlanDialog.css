@@ -1,0 +1,102 @@
+.update-plan-dialog {
+  width: min(760px, calc(100vw - 48px));
+  max-width: min(760px, calc(100vw - 48px));
+  text-align: left;
+  grid-template-columns: minmax(0, 1fr);
+}
+.update-plan-dialog [data-slot="dialog-header"] { min-width: 0; }
+.update-plan-dialog [data-slot="dialog-title"] { min-width: 0; flex: 1; }
+.update-plan-dialog .update-source-group + .update-source-group {
+  margin-top: 24px;
+}
+.update-plan-dialog .update-source-heading {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.update-plan-dialog .update-skill-section + .update-skill-section {
+  margin-top: 16px;
+}
+.update-plan-dialog .update-skill-heading {
+  margin: 0 0 6px;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.update-plan-dialog .update-skill-positions {
+  padding-left: 16px;
+  container-type: inline-size;
+}
+.update-plan-dialog .update-position-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 64px;
+  align-items: center;
+  column-gap: 8px;
+  min-height: 50px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.update-plan-dialog .update-position-name {
+  text-align: left;
+  font-weight: 400;
+  grid-column: 2;
+  grid-row: 1;
+}
+.update-plan-dialog .update-position-path {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+}
+.update-plan-dialog .update-position-status {
+  grid-column: 3;
+  grid-row: 1;
+  text-align: right;
+}
+.update-plan-dialog .update-position-mode {
+  grid-column: 4;
+  grid-row: 1;
+}
+.update-plan-dialog [role="checkbox"]:disabled {
+  opacity: 1;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-color: var(--border);
+}
+/* 固定列及间距共 320 px，路径至少预留 200 px。 */
+@container (min-width: 520px) {
+  .update-plan-dialog .update-position-row {
+    grid-template-columns: 16px 112px minmax(0, 1fr) 96px 64px;
+    min-height: 36px;
+    padding: 0;
+  }
+  .update-plan-dialog .update-position-path { grid-column: 3; grid-row: 1; }
+  .update-plan-dialog .update-position-status { grid-column: 4; }
+  .update-plan-dialog .update-position-mode { grid-column: 5; }
+}
+
+.update-plan-dialog .update-position-name,
+.update-plan-dialog .update-position-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.update-plan-dialog .update-position-status {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.update-plan-dialog .update-position-mode {
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}

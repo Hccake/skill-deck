@@ -68,6 +68,34 @@ jobs:
     with:
       target_sha: ${{ needs.validate.outputs.commit_sha }}
 
+  build-wsl-worker:
+    needs: [validate, quality]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.commit_sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - name: Build WSL Worker artifact
+        run: node scripts/prepare-wsl-worker.mjs
+      - name: Verify WSL Worker artifact
+        run: node scripts/prepare-wsl-worker.mjs --verify src-tauri/target/wsl-worker/current
+      - name: Upload WSL Worker artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wsl-worker-${{ needs.validate.outputs.commit_sha }}
+          path: src-tauri/target/wsl-worker/current
+          if-no-files-found: error
+          retention-days: 7
+
   prepare-release:
     needs: [validate, quality]
     runs-on: ubuntu-22.04
@@ -184,7 +212,7 @@ jobs:
           echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
   build-release:
-    needs: [validate, quality, prepare-release]
+    needs: [validate, quality, prepare-release, build-wsl-worker]
     permissions:
       contents: write
     strategy:
@@ -229,6 +257,15 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
       - run: pnpm install --frozen-lockfile
+      - name: Download WSL Worker artifact
+        if: ${{ runner.os == 'Windows' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: wsl-worker-${{ needs.validate.outputs.commit_sha }}
+          path: src-tauri/target/wsl-worker/current
+      - name: Verify WSL Worker artifact
+        if: ${{ runner.os == 'Windows' }}
+        run: pnpm verify:wsl-worker
       - name: Build and upload release bundles
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
@@ -244,6 +281,12 @@ jobs:
           retryAttempts: 3
           releaseAssetNamePattern: skill-deck_[version]_${{ matrix.asset_platform }}_[arch][setup][ext]
           args: ${{ needs.validate.outputs.prerelease == 'true' && matrix.prerelease_args || matrix.args }}
+      - name: Verify NSIS WSL Worker resource
+        if: ${{ runner.os == 'Windows' }}
+        run: pwsh -NoProfile -File scripts/verify-windows-worker-bundle.ps1 -BundleKind nsis
+      - name: Verify MSI WSL Worker resource
+        if: ${{ runner.os == 'Windows' && needs.validate.outputs.prerelease != 'true' }}
+        run: pwsh -NoProfile -File scripts/verify-windows-worker-bundle.ps1 -BundleKind msi
 
   verify-release:
     needs: [validate, prepare-release, build-release]

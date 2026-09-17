@@ -101,7 +101,6 @@ describe('Skill dialog containers', () => {
   beforeEach(() => {
     useSkillDialogStore.getState().closeManageAgents();
     useSkillDialogStore.getState().closeCopyToProject();
-    useSkillDialogStore.getState().closeRepairSource();
     useSkillUpdateWorkflow.getState().reset();
   });
 

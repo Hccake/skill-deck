@@ -155,6 +155,20 @@ describe('ProjectsTab', () => {
     expect(screen.getByText('/home/me/app')).toBeDefined();
   });
 
+  it('explains why the Environment home cannot be added as a Project', async () => {
+    mocks.open.mockResolvedValue('/home/me');
+    mocks.add.mockResolvedValue({
+      status: 'failed',
+      error: { kind: 'projectMatchesEnvironmentHome' },
+    });
+
+    render(<ProjectsTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.addProject' }));
+
+    await waitFor(() => expect(mocks.toastError)
+      .toHaveBeenCalledWith('settings.projectHomeConflict'));
+  });
+
   it('captures removal identity and revision before opening the shared dialog', () => {
     const request = {
       environment: ubuntu,

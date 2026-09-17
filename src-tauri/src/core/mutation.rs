@@ -21,6 +21,7 @@ pub enum MutationKind {
     // Kept so persisted recovery records from the retired cleanup operation remain readable.
     #[allow(dead_code)]
     DuplicateCleanup,
+    // Kept so recovery records created by the retired source-repair flow remain readable.
     Repair,
     ManageAgentDefinitions,
     ProjectMigration,

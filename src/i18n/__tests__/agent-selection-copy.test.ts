@@ -21,6 +21,17 @@ describe('Agent selection copy', () => {
     expect(en.skills.manageAgents.title).toBe('Manage Agents Linked to “{{name}}”');
   });
 
+  it('describes install history as a confirmed choice instead of an install result', () => {
+    expect(zhCN.addSkill.agents.historyLoadWarning)
+      .toBe('未能读取最近确认的 Agent 选择。本次安装仍可继续选择目标。');
+    expect(zhCN.addSkill.agents.historySaveWarning)
+      .toBe('可以继续安装，但未能保存本次确认的 Agent 选择。');
+    expect(en.addSkill.agents.historyLoadWarning)
+      .toBe('Recent confirmed Agent choices could not be loaded. You can still choose targets for this installation.');
+    expect(en.addSkill.agents.historySaveWarning)
+      .toBe('The installation can continue, but the confirmed Agent choices could not be saved.');
+  });
+
   it('distinguishes Library availability from a direct Agent association', () => {
     expect(zhCN.agentSelection.current.library).toBe('通过 Skill 库可用');
     expect(zhCN.agentSelection.effect.restoreLibrary).toBe('将改用 Skill 库版本');
@@ -47,26 +58,28 @@ describe('Agent selection copy', () => {
     expect(zhCN.agentSelection.automatic.install.title).toBe('安装后可直接使用');
     expect(zhCN.agentSelection.automatic.install.help)
       .toBe('Skill 会安装到通用 Skill 目录，这些 Agent 可以直接从该目录读取，无需额外设置。');
-    expect(zhCN.agentSelection.automatic.manage.title).toBe('无需选择即可使用');
+    expect(zhCN.agentSelection.automatic.manage.title).toBe('读取通用目录的 Agent');
     expect(zhCN.agentSelection.automatic.manage.help)
-      .toBe('此 Skill 已安装在通用 Skill 目录，这些 Agent 可以直接读取，无需选择。');
+      .toBe('当前 Skill 位于通用目录时，这些 Agent 可直接使用；此处只调整专用目录中的关联。');
     expect(zhCN.agentSelection.automatic.copyToProject.title).toBe('复制后可直接使用');
     expect(zhCN.agentSelection.automatic.copyToProject.help)
       .toBe('Skill 会复制到目标 Project 的通用 Skill 目录，这些 Agent 可以直接读取，无需额外设置。');
     expect(zhCN.agentSelection.selectable.title).toBe('选择后可使用');
     expect(zhCN.agentSelection.selectable.help)
       .toBe('这些 Agent 不读取通用 Skill 目录。选择后，Skill Deck 会在其 Skill 目录中创建链接或副本。');
+    expect(zhCN.skills.copyToProject.agentSelectionDescription)
+      .toBe('Agent 会按照源 Skill 的关联状态预先勾选；目标项目已有的关联会保留。');
+    expect(en.skills.copyToProject.agentSelectionDescription)
+      .toBe('Agents are preselected from the source Skill. Existing target-project associations are preserved.');
   });
 
   it('presents own-directory installations as an optional nested setting', () => {
     expect(zhCN.agentSelection.ownDirectory.title)
       .toBe('同时安装到 Agent 自己的 Skill 目录（可选）');
-    expect(zhCN.agentSelection.ownDirectory.install.description)
-      .toBe('这些 Agent 安装后可以从通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。');
-    expect(zhCN.agentSelection.ownDirectory.manage.description)
-      .toBe('这些 Agent 已可从通用 Skill 目录读取此 Skill。选中后，它们会在自己的 Skill 目录中保留链接或副本。');
-    expect(zhCN.agentSelection.ownDirectory.copyToProject.description)
-      .toBe('复制完成后，这些 Agent 可以从目标 Project 的通用 Skill 目录读取此 Skill。仅在还需要于其 Skill 目录中创建链接或副本时选择。');
+    for (const usage of ['install', 'manage', 'copyToProject', 'libraryApplication']) {
+      expect(usage in zhCN.agentSelection.ownDirectory).toBe(false);
+      expect(usage in en.agentSelection.ownDirectory).toBe(false);
+    }
     expect(zhCN.agentSelection.ownDirectory.selectedCount)
       .toBe('已选择 {{count}} 个 Agent');
     expect(en.agentSelection.ownDirectory.title)

@@ -6,7 +6,7 @@ use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, PayloadSessionManager,
 };
 use crate::application::skill_changes::ValidatedSkillPayload;
-use crate::application::source_evidence::{RemoteEvidenceKey, SourceSnapshotFacts};
+use crate::application::source_evidence::RemoteEvidenceKey;
 use crate::application::source_snapshot_reuse::PayloadAcquisitionKey;
 use crate::core::mutation::CancellationSignal;
 use crate::core::{NormalizedUpdateMetadata, SourceIdentity};
@@ -25,6 +25,7 @@ impl SavedSkillSource {
     }
 }
 
+#[derive(Clone)]
 pub struct SavedSkillSourceGroup {
     pub source_result_id: String,
     pub source: String,
@@ -35,13 +36,16 @@ pub struct SavedSkillSourceGroup {
     pub skills: Vec<SavedSkillSource>,
 }
 
+#[derive(Clone)]
 pub struct AcquiredSavedSkillSource {
-    pub facts: SourceSnapshotFacts,
+    pub discovery_session: DiscoverySessionHandle,
     pub payloads: Vec<(String, AcquiredPayloadHandle)>,
     pub skill_errors: Vec<(String, AppError)>,
-    pub redirected_download_host: Option<String>,
+    pub redirected_download_hosts: Vec<String>,
+    pub(crate) _leases: Vec<Arc<crate::application::payload_session::PinnedPayloadLease>>,
 }
 
+#[derive(Clone)]
 pub struct SavedSkillSourceAcquisition {
     pub source_result_id: String,
     pub source: String,
@@ -49,26 +53,31 @@ pub struct SavedSkillSourceAcquisition {
     pub result: Result<AcquiredSavedSkillSource, AppError>,
 }
 
-pub struct SavedPayloadCandidate {
-    pub source_result_id: String,
-    pub discovery_session: DiscoverySessionHandle,
-    pub skill_name: String,
-    pub handle: AcquiredPayloadHandle,
-}
-
-pub struct ValidatedSavedPayload {
-    pub payload: ValidatedSkillPayload,
-}
-
-pub struct FailedSavedPayload {
-    pub source_result_id: String,
-    pub skill_name: String,
-    pub error: AppError,
-}
-
-pub struct SavedPayloadValidation {
-    pub validated: Vec<ValidatedSavedPayload>,
-    pub failed: Vec<FailedSavedPayload>,
+impl AcquiredSavedSkillSource {
+    pub async fn validate_member(
+        &self,
+        sessions: &PayloadSessionManager,
+        environment: &EnvironmentRef,
+        name: &str,
+    ) -> Result<ValidatedSkillPayload, AppError> {
+        if let Some((_, error)) = self.skill_errors.iter().find(|(skill, _)| skill == name) {
+            return Err(error.clone());
+        }
+        let handle = self
+            .payloads
+            .iter()
+            .find(|(skill, _)| skill == name)
+            .map(|(_, handle)| handle)
+            .ok_or(AppError::StalePayload)?;
+        ValidatedSkillPayload::validate(
+            handle.clone(),
+            &self.discovery_session,
+            environment,
+            name,
+            sessions.pin_verified(handle).await?,
+        )
+        .await
+    }
 }
 
 pub type SkillSourceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -138,39 +147,6 @@ pub fn group_saved_skills(
         });
     }
     Ok(groups)
-}
-
-pub async fn validate_saved_payloads(
-    payloads: &PayloadSessionManager,
-    environment: &EnvironmentRef,
-    candidates: Vec<SavedPayloadCandidate>,
-) -> SavedPayloadValidation {
-    let mut validated = Vec::new();
-    let mut failed = Vec::new();
-    for candidate in candidates {
-        let result = match payloads.pin_verified(&candidate.handle).await {
-            Ok(lease) => {
-                ValidatedSkillPayload::validate(
-                    candidate.handle,
-                    &candidate.discovery_session,
-                    environment,
-                    &candidate.skill_name,
-                    lease,
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        };
-        match result {
-            Ok(payload) => validated.push(ValidatedSavedPayload { payload }),
-            Err(error) => failed.push(FailedSavedPayload {
-                source_result_id: candidate.source_result_id,
-                skill_name: candidate.skill_name,
-                error,
-            }),
-        }
-    }
-    SavedPayloadValidation { validated, failed }
 }
 
 #[cfg(test)]

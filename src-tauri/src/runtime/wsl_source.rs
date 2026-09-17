@@ -21,8 +21,7 @@ use crate::core::mutation::CancellationSignal;
 use crate::core::plugin_manifest::get_relative_plugin_search_dirs;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::{
-    resolve_clone_timeout_secs, select_discovered_skills, DiscoverOptions, DiscoveryDocument,
-    DiscoveryInventory,
+    select_discovered_skills, DiscoverOptions, DiscoveryDocument, DiscoveryInventory,
 };
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
@@ -65,6 +64,38 @@ impl RuntimeWslSourceAccess {
 }
 
 impl WslSourceAccess for RuntimeWslSourceAccess {
+    fn probe_ref<'a>(
+        &'a self,
+        distro_name: &'a str,
+        source: &'a str,
+        git_ref: Option<&'a str>,
+        cancellation: CancellationSignal,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, AppError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let workspace = self.environments.workspace(distro_name)?;
+            let timeout = Duration::from_secs(self.settings.clone_timeout_secs());
+            self.environments
+                .with_session(distro_name, |_| {
+                    let proxy = self.settings.wsl_git_proxy(distro_name, source);
+                    let workspace = workspace.clone();
+                    let cancellation = cancellation.clone();
+                    async move {
+                        crate::environment::wsl::operations::source_acquisition::probe_wsl_git_ref(
+                            &workspace,
+                            source,
+                            git_ref,
+                            proxy?,
+                            timeout,
+                            cancellation,
+                        )
+                        .await
+                    }
+                })
+                .await
+        })
+    }
+
     fn discover<'a>(
         &'a self,
         distro_name: &'a str,
@@ -76,6 +107,18 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
         Box::pin(async move {
             match parsed.source_type {
                 SourceType::WellKnown => {
+                    if policy.selected_skill_names.is_some() {
+                        return self
+                            .discover_wellknown(
+                                distro_name,
+                                parsed,
+                                requested_source,
+                                policy,
+                                cancellation,
+                            )
+                            .await
+                            .map_err(WellKnownFetchError::into_error);
+                    }
                     attempt_wellknown_then_download(
                         self.discover_wellknown(
                             distro_name,
@@ -135,7 +178,14 @@ impl RuntimeWslSourceAccess {
             .environments
             .workspace(distro_name)
             .map_err(WellKnownFetchError::unproven)?;
-        let fetched = self.wellknown.fetch(&parsed.url, &cancellation).await?;
+        let fetched = match policy.selected_skill_names.as_ref() {
+            Some(names) => {
+                self.wellknown
+                    .fetch_selected(&parsed.url, names, &cancellation)
+                    .await?
+            }
+            None => self.wellknown.fetch(&parsed.url, &cancellation).await?,
+        };
         let root = fetched.repo_path.clone();
         let owner = ManagedDownloadedDirectory::new(root.clone());
         let environment = EnvironmentRef::Wsl {
@@ -162,6 +212,9 @@ impl RuntimeWslSourceAccess {
                         RetainedSourceOptions {
                             storage: Some(storage),
                             trust_metadata: Some(fetched.trust_metadata),
+                            redirected_download_host: fetched.redirected_download_host,
+                            redirected_download_hosts: fetched.redirected_download_hosts,
+                            member_failures: fetched.member_failures,
                             full_depth: policy.full_depth,
                             internal_skill_visibility: policy.internal_skill_visibility,
                             ..Default::default()
@@ -240,9 +293,9 @@ impl RuntimeWslSourceAccess {
         let sessions = self.sessions.clone();
         let settings = self.settings.clone();
         let proxy_distro = distro_name.to_string();
-        let git_timeout = Duration::from_secs(resolve_clone_timeout_secs());
+        let git_timeout = Duration::from_secs(self.settings.clone_timeout_secs());
         self.environments
-            .with_session_retry(distro_name, move |session| {
+            .with_session(distro_name, move |session| {
                 let workspace = workspace.clone();
                 let parsed = parsed.clone();
                 let requested_source = requested_source.clone();
@@ -262,7 +315,7 @@ impl RuntimeWslSourceAccess {
                     };
                     let proxy = match &acquisition {
                         WslAcquisitionSource::Git { url, .. } => {
-                            settings.wsl_git_proxy(&proxy_distro, url)
+                            settings.wsl_git_proxy(&proxy_distro, url)?
                         }
                         WslAcquisitionSource::Local { .. } => None,
                     };
@@ -353,7 +406,8 @@ async fn prepare_native_wsl_source(
         stat_only_root_indexes.insert(1);
     }
     let mut response = scan(
-        &session,
+        &workspace,
+        &native,
         ScanRequest {
             roots,
             stat_only_root_indexes,
@@ -370,7 +424,8 @@ async fn prepare_native_wsl_source(
     );
     if !plugin_search_dirs.is_empty() {
         let priority = scan_priority_directories(
-            &session,
+            &workspace,
+            &native,
             ScanRequest {
                 roots: plugin_search_dirs
                     .iter()
@@ -398,16 +453,15 @@ async fn prepare_native_wsl_source(
         &policy.internal_skill_visibility,
         policy.full_depth,
     )?;
-    let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+    let storage = Arc::new(WslPayloadSessionStorage::for_source(workspace, &native));
     for skill in catalog.values_mut() {
         let source_root = format!(
             "{}/{}",
             native.native_root().trim_end_matches('/'),
             normalize_skill_folder_path(&skill.relative_path)
         );
-        skill.source_metadata_fingerprint = storage
-            .source_metadata_fingerprint_in_active_session(&session, &source_root)
-            .await?;
+        skill.source_metadata_fingerprint =
+            storage.source_metadata_fingerprint(&source_root).await?;
     }
     let descriptor = DiscoverySourceDescriptor {
         source: source_identifier(&parsed, &requested_source),
@@ -417,6 +471,7 @@ async fn prepare_native_wsl_source(
         redirected_download_host: None,
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
+    let managed_bytes = native.managed_bytes();
     let retained = RetainedDiscoverySource::new(
         DiscoverySourceLocation::WslNative {
             distro_name: session.distro_name.clone(),
@@ -426,7 +481,8 @@ async fn prepare_native_wsl_source(
         descriptor,
         catalog,
         native,
-    );
+    )
+    .with_managed_storage(managed_bytes, storage.clone());
     Ok(PreparedWslDiscovery {
         source_fingerprint,
         storage,
@@ -613,6 +669,69 @@ pub(crate) fn wsl_acquisition_source(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn saved_wellknown_source_does_not_fall_back_to_direct_download() {
+        struct MissingIndex;
+        impl WellKnownAccess for MissingIndex {
+            fn fetch<'a>(
+                &'a self,
+                _url: &'a str,
+                _cancellation: &'a CancellationSignal,
+            ) -> crate::application::wellknown_access::WellKnownFetchFuture<'a> {
+                Box::pin(async { Err(WellKnownFetchError::unproven(AppError::NoSkillsFound)) })
+            }
+        }
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/catalog", server.server_addr());
+        let requests = std::thread::spawn(move || {
+            let request = server.recv_timeout(Duration::from_millis(300)).unwrap();
+            if let Some(request) = request {
+                request.respond(tiny_http::Response::empty(404)).unwrap();
+                true
+            } else {
+                false
+            }
+        });
+        let settings = Arc::new(ProxySettingsStore::new(
+            crate::models::NetworkProxySettings::default(),
+        ));
+        let access = RuntimeWslSourceAccess::new(
+            Arc::new(PayloadSessionManager::in_memory(
+                crate::application::payload_session::PayloadSessionLimits {
+                    ttl_ms: 60_000,
+                    max_sessions: 4,
+                    max_bytes: 1_000_000,
+                },
+                || 1_000,
+            )),
+            Arc::new(WslRuntime::new_with_support(true, true)),
+            settings.clone(),
+            Arc::new(MissingIndex),
+            RuntimeDownloadAccess::new(crate::runtime::http_transport::HttpTransport::new(
+                settings,
+            )),
+        );
+        let mut parsed = crate::core::parse_source(&url).unwrap();
+        parsed.source_type = SourceType::WellKnown;
+        let error = access
+            .discover(
+                "Ubuntu",
+                parsed,
+                url,
+                SourceDiscoveryPolicy {
+                    allow_empty_catalog: true,
+                    full_depth: true,
+                    internal_skill_visibility: InternalSkillVisibility::All,
+                    selected_skill_names: Some(vec!["demo".into()]),
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, AppError::NoSkillsFound);
+        assert!(!requests.join().unwrap());
+    }
+
     #[test]
     fn wsl_proxy_selection_is_isolated_by_distro_and_transport() {
         let policy = ProxySettingsStore::new(crate::models::NetworkProxySettings {
@@ -638,19 +757,27 @@ mod tests {
         });
 
         assert_eq!(
-            policy.wsl_git_proxy("Ubuntu", "https://github.com/owner/repo.git"),
+            policy
+                .wsl_git_proxy("Ubuntu", "https://github.com/owner/repo.git")
+                .expect("valid proxy settings"),
             Some("http://ubuntu.proxy:7890".to_string())
         );
         assert_eq!(
-            policy.wsl_git_proxy("Debian", "http://github.com/owner/repo.git"),
+            policy
+                .wsl_git_proxy("Debian", "http://github.com/owner/repo.git")
+                .expect("valid proxy settings"),
             Some("https://debian.proxy:7890".to_string())
         );
         assert_eq!(
-            policy.wsl_git_proxy("Ubuntu", "git@github.com:owner/repo.git"),
+            policy
+                .wsl_git_proxy("Ubuntu", "git@github.com:owner/repo.git")
+                .expect("valid proxy settings"),
             None
         );
         assert_eq!(
-            policy.wsl_git_proxy("Fedora", "https://github.com/owner/repo.git"),
+            policy
+                .wsl_git_proxy("Fedora", "https://github.com/owner/repo.git")
+                .expect("valid proxy settings"),
             None
         );
     }

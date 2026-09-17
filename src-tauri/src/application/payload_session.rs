@@ -1,13 +1,16 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use specta::Type;
+use tokio::sync::watch;
 use uuid::Uuid;
 
 use crate::application::agent_intent::AgentWriteIntent;
@@ -15,9 +18,10 @@ use crate::application::mutation::plan::RuntimeRevisions;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{SkillPayload, SkillPayloadManifest};
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
-use crate::environment::runtime::ExecutionBackend;
+use crate::environment::runtime::{ExecutionBackend, PhysicalParentIdentity};
 use crate::environment::types::{
-    same_environment_identity, EnvironmentKey, EnvironmentRef, SkillLocation, SkillLocationRef,
+    normalized_wsl_distro_name, same_environment_identity, EnvironmentKey, EnvironmentRef,
+    SkillLocation, SkillLocationRef,
 };
 use crate::error::AppError;
 
@@ -59,7 +63,16 @@ pub struct RetainedDiscoverySource {
     skills: BTreeMap<String, DiscoverySkillSnapshot>,
     well_known_metadata:
         HashMap<String, crate::application::wellknown_access::WellKnownTrustMetadata>,
+    member_failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
+    redirected_download_hosts: Vec<String>,
     _owner: Arc<dyn Send + Sync>,
+    managed_bytes: u64,
+    cleanup: Option<Arc<dyn RetainedSourceCleanup>>,
+    available: bool,
+}
+
+pub trait RetainedSourceCleanup: Send + Sync {
+    fn remove(&self) -> PayloadStorageFuture<'_, Result<(), AppError>>;
 }
 
 impl RetainedDiscoverySource {
@@ -74,8 +87,23 @@ impl RetainedDiscoverySource {
             descriptor,
             skills,
             well_known_metadata: HashMap::new(),
+            member_failures: BTreeMap::new(),
+            redirected_download_hosts: Vec::new(),
             _owner: Arc::new(owner),
+            managed_bytes: 0,
+            cleanup: None,
+            available: true,
         }
+    }
+
+    pub(crate) fn with_managed_storage(
+        mut self,
+        bytes: u64,
+        cleanup: Arc<dyn RetainedSourceCleanup>,
+    ) -> Self {
+        self.managed_bytes = bytes;
+        self.cleanup = Some(cleanup);
+        self
     }
 
     pub(crate) fn with_well_known_metadata(
@@ -91,6 +119,33 @@ impl RetainedDiscoverySource {
         skill_name: &str,
     ) -> Option<&crate::application::wellknown_access::WellKnownTrustMetadata> {
         self.well_known_metadata.get(skill_name)
+    }
+
+    pub(crate) fn with_source_outcomes(
+        mut self,
+        failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
+        hosts: Vec<String>,
+    ) -> Self {
+        self.member_failures = failures;
+        self.redirected_download_hosts = hosts;
+        self
+    }
+
+    pub(crate) fn member_failure(
+        &self,
+        name: &str,
+    ) -> Option<crate::error::SourceAcquisitionFailureReason> {
+        self.member_failures.get(name).copied()
+    }
+
+    pub(crate) fn download_hosts(&self) -> Vec<String> {
+        self.redirected_download_hosts
+            .iter()
+            .cloned()
+            .chain(self.descriptor.redirected_download_host.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     pub fn location(&self) -> &DiscoverySourceLocation {
@@ -138,6 +193,7 @@ pub struct CopySourceSnapshot {
     pub revisions: RuntimeRevisions,
     pub lock_entry: Option<Value>,
     pub project_identity: ResolvedTargetFact,
+    /// 本次复制选定的实际直接安装目录。
     pub standard_identity: ResolvedTargetFact,
     pub agent_intents: Vec<AgentWriteIntent>,
 }
@@ -236,7 +292,8 @@ pub enum PayloadLocalSource {
     },
     WslManaged {
         distro_name: String,
-        payload_root: String,
+        worker_generation: u64,
+        worker_payload_id: u64,
     },
 }
 
@@ -299,7 +356,20 @@ pub struct BackendAcquiredPayload {
     pub computed_hash: String,
 }
 
+pub(crate) struct StoredPayload {
+    pub manifest: SkillPayloadManifest,
+    pub total_bytes: u64,
+    pub planning_metadata: PayloadPlanningMetadata,
+}
+
 pub trait PayloadSessionStorage: Send + Sync {
+    fn read_source_skill_md<'a>(
+        &'a self,
+        _source_root: &'a str,
+        _cancellation: CancellationSignal,
+    ) -> PayloadStorageFuture<'a, Result<Vec<u8>, AppError>> {
+        Box::pin(async { Err(AppError::StalePayload) })
+    }
     fn local_source(&self, _key: &PayloadStorageKey) -> Result<PayloadLocalSource, AppError> {
         Ok(PayloadLocalSource::InProcess)
     }
@@ -319,6 +389,20 @@ pub trait PayloadSessionStorage: Send + Sync {
         Box::pin(async {
             Err(AppError::CapabilityUnavailable {
                 capability: "backendPayloadAcquisition".to_string(),
+                path: None,
+            })
+        })
+    }
+
+    fn acquire_from_path<'a>(
+        &'a self,
+        _key: &'a PayloadStorageKey,
+        _source_root: &'a str,
+        _cancellation: Option<CancellationSignal>,
+    ) -> PayloadStorageFuture<'a, Result<BackendAcquiredPayload, AppError>> {
+        Box::pin(async {
+            Err(AppError::CapabilityUnavailable {
+                capability: "backendPathPayloadAcquisition".to_string(),
                 path: None,
             })
         })
@@ -475,18 +559,56 @@ struct SessionRecord {
     total_bytes: u64,
     pin_count: usize,
     busy_count: usize,
-    pending_payloads: HashSet<String>,
+    pending_payloads:
+        HashMap<String, watch::Receiver<Option<Result<AcquiredPayloadHandle, AppError>>>>,
     payloads: HashMap<String, PayloadRecord>,
     copy_source_snapshots: HashMap<String, CopySourceSnapshot>,
     storage: Arc<dyn PayloadSessionStorage>,
     retained_source: Option<RetainedDiscoverySource>,
+    source_bytes: u64,
+    source_optional: bool,
 }
 
-#[derive(Clone)]
+impl SessionRecord {
+    async fn remove_storage(&mut self, session_id: &str) -> Result<(), AppError> {
+        self.invalidated = true;
+        if let Some(source) = &mut self.retained_source {
+            source.available = false;
+            if let Some(cleanup) = &source.cleanup {
+                cleanup.remove().await?;
+            }
+        }
+        self.retained_source = None;
+        self.total_bytes = self.total_bytes.saturating_sub(self.source_bytes);
+        self.source_bytes = 0;
+        self.storage.remove_session(session_id).await
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 struct PayloadRecord {
     payload_id: String,
     manifest_hash: String,
     planning_metadata: PayloadPlanningMetadata,
+}
+
+struct PayloadIoGuard {
+    manager: Arc<PayloadSessionManagerInner>,
+    session_id: String,
+    skill_path: Option<String>,
+}
+
+impl Drop for PayloadIoGuard {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = self.manager.sessions.lock() {
+            if let Some(session) = sessions.get_mut(&self.session_id) {
+                if let Some(skill_path) = &self.skill_path {
+                    session.pending_payloads.remove(skill_path);
+                }
+                session.busy_count = session.busy_count.saturating_sub(1);
+            }
+        }
+    }
 }
 
 pub struct PinnedPayloadLease {
@@ -610,9 +732,31 @@ impl PayloadSessionManager {
         storage: Arc<dyn PayloadSessionStorage>,
         retained_source: Option<RetainedDiscoverySource>,
     ) -> Result<DiscoverySessionHandle, AppError> {
+        let manager = self.clone();
+        tokio::spawn(async move {
+            manager
+                .discover_owned(environment, source_fingerprint, storage, retained_source)
+                .await
+        })
+        .await
+        .map_err(|error| AppError::ExecutionFailed {
+            message: error.to_string(),
+        })?
+    }
+
+    async fn discover_owned(
+        &self,
+        environment: EnvironmentRef,
+        source_fingerprint: String,
+        storage: Arc<dyn PayloadSessionStorage>,
+        retained_source: Option<RetainedDiscoverySource>,
+    ) -> Result<DiscoverySessionHandle, AppError> {
         let now = (self.inner.now)();
         let session_id = Uuid::new_v4().simple().to_string();
         let expires_at_epoch_ms = now.saturating_add(self.inner.limits.ttl_ms);
+        let source_bytes = retained_source
+            .as_ref()
+            .map_or(0, |source| source.managed_bytes);
         let record = SessionRecord {
             environment: environment.clone(),
             environment_key: EnvironmentKey::from_ref(&environment),
@@ -620,10 +764,12 @@ impl PayloadSessionManager {
             source_fingerprint: source_fingerprint.clone(),
             expires_at_epoch_ms,
             created_at_epoch_ms: now,
-            total_bytes: 0,
+            total_bytes: source_bytes,
+            source_bytes,
+            source_optional: false,
             pin_count: 0,
             busy_count: 0,
-            pending_payloads: HashSet::new(),
+            pending_payloads: HashMap::new(),
             payloads: HashMap::new(),
             copy_source_snapshots: HashMap::new(),
             storage: storage.clone(),
@@ -631,8 +777,23 @@ impl PayloadSessionManager {
         };
         lock(&self.inner.sessions)?.insert(session_id.clone(), record);
         if let Err(error) = self.enforce_capacity(Some(&session_id)).await {
-            lock(&self.inner.sessions)?.remove(&session_id);
-            storage.remove_session(&session_id).await?;
+            let error = if source_bytes > self.inner.limits.max_bytes
+                && matches!(&error, AppError::CapabilityUnavailable { capability, .. } if capability == "payloadSessionCapacity")
+            {
+                AppError::CapabilityUnavailable {
+                    capability: "sourceSessionCapacity".into(),
+                    path: None,
+                }
+            } else {
+                error
+            };
+            let removed = lock(&self.inner.sessions)?.remove(&session_id);
+            if let Some(mut record) = removed {
+                if let Err(cleanup_error) = record.remove_storage(&session_id).await {
+                    lock(&self.inner.sessions)?.insert(session_id, record);
+                    return Err(cleanup_error);
+                }
+            }
             return Err(error);
         }
 
@@ -653,7 +814,103 @@ impl PayloadSessionManager {
         valid_discovery_session(&mut sessions, discovery, now)?
             .retained_source
             .clone()
+            .filter(|source| source.available)
             .ok_or(AppError::StalePayload)
+    }
+
+    pub async fn release_source_snapshot(
+        &self,
+        discovery: &DiscoverySessionHandle,
+    ) -> Result<(), AppError> {
+        let manager = self.clone();
+        let discovery = discovery.clone();
+        tokio::spawn(async move { manager.release_source_snapshot_owned(&discovery).await })
+            .await
+            .map_err(|error| AppError::ExecutionFailed {
+                message: error.to_string(),
+            })?
+    }
+
+    async fn release_source_snapshot_owned(
+        &self,
+        discovery: &DiscoverySessionHandle,
+    ) -> Result<(), AppError> {
+        let source = {
+            let mut sessions = lock(&self.inner.sessions)?;
+            let session = sessions
+                .get_mut(&discovery.session_id)
+                .ok_or(AppError::StalePayload)?;
+            if session.source_fingerprint != discovery.source_fingerprint {
+                return Err(AppError::StalePayload);
+            }
+            if session
+                .retained_source
+                .as_ref()
+                .is_some_and(|source| Arc::strong_count(&source._owner) > 1)
+            {
+                return Err(AppError::StalePayload);
+            }
+            session.busy_count += 1;
+            session.retained_source.take()
+        };
+        let result =
+            if let Some(cleanup) = source.as_ref().and_then(|source| source.cleanup.as_ref()) {
+                cleanup.remove().await
+            } else {
+                Ok(())
+            };
+        let mut sessions = lock(&self.inner.sessions)?;
+        let session = sessions
+            .get_mut(&discovery.session_id)
+            .ok_or(AppError::StalePayload)?;
+        session.busy_count = session.busy_count.saturating_sub(1);
+        match result {
+            Ok(()) => {
+                session.total_bytes = session.total_bytes.saturating_sub(session.source_bytes);
+                session.source_bytes = 0;
+            }
+            Err(_) => {
+                session.retained_source = source.map(|mut source| {
+                    source.available = false;
+                    source
+                });
+            }
+        }
+        result
+    }
+
+    pub(crate) async fn make_source_optional(
+        &self,
+        discovery: &DiscoverySessionHandle,
+    ) -> Result<(), AppError> {
+        {
+            let mut sessions = lock(&self.inner.sessions)?;
+            let session = sessions
+                .get_mut(&discovery.session_id)
+                .ok_or(AppError::StalePayload)?;
+            if session.source_fingerprint != discovery.source_fingerprint {
+                return Err(AppError::StalePayload);
+            }
+            session.source_optional = true;
+        }
+        self.enforce_capacity(Some(&discovery.session_id)).await
+    }
+
+    pub(crate) fn register_saved_source_skill(
+        &self,
+        discovery: &DiscoverySessionHandle,
+        skill: DiscoverySkillSnapshot,
+    ) -> Result<(), AppError> {
+        let mut sessions = lock(&self.inner.sessions)?;
+        let source = valid_discovery_session(&mut sessions, discovery, (self.inner.now)())?
+            .retained_source
+            .as_mut()
+            .ok_or(AppError::StalePayload)?;
+        source
+            .skills
+            .entry(skill.relative_path.clone())
+            .or_insert(skill);
+        Ok(())
     }
 
     pub fn storage_for_discovery(
@@ -675,6 +932,9 @@ impl PayloadSessionManager {
         let now = (self.inner.now)();
         let mut sessions = lock(&self.inner.sessions)?;
         let session = valid_discovery_session(&mut sessions, discovery, now)?;
+        if session.pending_payloads.contains_key(skill_path) {
+            return Ok(None);
+        }
         Ok(session
             .payloads
             .get(skill_path)
@@ -856,222 +1116,220 @@ impl PayloadSessionManager {
         payload: SkillPayload,
         planning_metadata: PayloadPlanningMetadata,
     ) -> Result<AcquiredPayloadHandle, AppError> {
-        let now = (self.inner.now)();
-        let payload_id = payload.payload_id.as_str().to_string();
-        let manifest_hash = payload.payload_root_hash.clone();
-        let key = PayloadStorageKey::new(&discovery.session_id, &skill_path);
-
-        let (existing, storage) = {
-            let mut sessions = lock(&self.inner.sessions)?;
-            let session = valid_discovery_session(&mut sessions, discovery, now)?;
-            let storage = session.storage.clone();
-            if let Some(existing) = session.payloads.get(&skill_path) {
-                if existing.payload_id != payload_id
-                    || existing.manifest_hash != manifest_hash
-                    || existing.planning_metadata != planning_metadata
-                {
-                    return Err(AppError::StalePayload);
-                }
-                (true, storage)
-            } else {
-                if !session.pending_payloads.insert(skill_path.clone()) {
-                    return Err(AppError::MutationBusy);
-                }
-                session.busy_count = session.busy_count.saturating_add(1);
-                (false, storage)
-            }
+        let expected = PayloadRecord {
+            payload_id: payload.payload_id.as_str().to_string(),
+            manifest_hash: payload.payload_root_hash.clone(),
+            planning_metadata: planning_metadata.clone(),
         };
-        if !existing {
-            let stored = storage.store(&key, payload).await;
-            let bytes = match stored {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    finish_payload_io(&self.inner.sessions, discovery, &skill_path)?;
-                    return Err(error);
-                }
-            };
-            {
-                let mut sessions = lock(&self.inner.sessions)?;
-                let session = valid_discovery_session(&mut sessions, discovery, now)?;
-                session.pending_payloads.remove(&skill_path);
-                session.busy_count = session.busy_count.saturating_sub(1);
-                session.total_bytes = session.total_bytes.saturating_add(bytes);
-                session.payloads.insert(
-                    skill_path.clone(),
-                    PayloadRecord {
-                        payload_id: payload_id.clone(),
-                        manifest_hash: manifest_hash.clone(),
-                        planning_metadata: planning_metadata.clone(),
-                    },
-                );
-            }
-            if let Err(error) = self.enforce_capacity(Some(&discovery.session_id)).await {
-                storage.remove(&key).await?;
-                if let Some(session) = lock(&self.inner.sessions)?.get_mut(&discovery.session_id) {
-                    session.payloads.remove(&skill_path);
-                    session.total_bytes = session.total_bytes.saturating_sub(bytes);
-                }
-                return Err(error);
-            }
-        }
-
-        Ok(AcquiredPayloadHandle {
-            session_id: discovery.session_id.clone(),
-            skill_path,
-            environment: discovery.environment.clone(),
-            payload_id,
-            manifest_hash,
-            source_fingerprint: discovery.source_fingerprint.clone(),
-            expires_at_epoch_ms: discovery.expires_at_epoch_ms,
-        })
+        let handle = self
+            .prepare_payload(discovery, skill_path, move |storage, key| async move {
+                let manifest = payload.manifest();
+                let total_bytes = storage.store(&key, payload).await?;
+                Ok(StoredPayload {
+                    manifest,
+                    total_bytes,
+                    planning_metadata,
+                })
+            })
+            .await?;
+        self.validate_record(&handle, &expected)?;
+        Ok(handle)
     }
 
-    #[cfg(test)]
-    pub async fn register_existing_payload(
+    fn validate_record(
         &self,
-        discovery: &DiscoverySessionHandle,
-        skill_path: impl Into<String>,
-        manifest: SkillPayloadManifest,
-        total_bytes: u64,
-    ) -> Result<AcquiredPayloadHandle, AppError> {
-        let skill_path = skill_path.into();
-        let metadata = PayloadPlanningMetadata::legacy_incomplete(&skill_path);
-        self.register_existing_payload_record(
-            discovery,
-            skill_path,
-            manifest,
-            total_bytes,
-            metadata,
-        )
-        .await
-    }
-
-    pub async fn register_existing_payload_with_metadata(
-        &self,
-        discovery: &DiscoverySessionHandle,
-        skill_path: impl Into<String>,
-        manifest: SkillPayloadManifest,
-        total_bytes: u64,
-        planning_metadata: PayloadPlanningMetadata,
-    ) -> Result<AcquiredPayloadHandle, AppError> {
-        let skill_path = skill_path.into();
-        planning_metadata.validate()?;
-        if planning_metadata.skill_path != skill_path {
+        handle: &AcquiredPayloadHandle,
+        expected: &PayloadRecord,
+    ) -> Result<(), AppError> {
+        let sessions = lock(&self.inner.sessions)?;
+        validate_payload_handle(&sessions, handle, (self.inner.now)())?;
+        if sessions[&handle.session_id]
+            .payloads
+            .get(&handle.skill_path)
+            != Some(expected)
+        {
             return Err(AppError::StalePayload);
         }
-        self.register_existing_payload_record(
-            discovery,
-            skill_path,
-            manifest,
-            total_bytes,
-            planning_metadata,
-        )
-        .await
+        Ok(())
     }
 
-    async fn register_existing_payload_record(
+    /// 同一发现会话中的一个 Skill 只由一个任务准备。调用方离开后，该任务继续负责 I/O 和收尾。
+    pub(crate) async fn prepare_payload<F, Fut>(
         &self,
         discovery: &DiscoverySessionHandle,
         skill_path: String,
-        manifest: SkillPayloadManifest,
-        total_bytes: u64,
-        planning_metadata: PayloadPlanningMetadata,
-    ) -> Result<AcquiredPayloadHandle, AppError> {
-        crate::core::skill_payload::verify_skill_payload_manifest(&manifest)?;
-        let now = (self.inner.now)();
-        let payload_id = manifest.payload_id().as_str().to_string();
-        let manifest_hash = manifest.payload_root_hash.clone();
-        let key = PayloadStorageKey::new(&discovery.session_id, &skill_path);
-        let (inserted, storage) = {
+        prepare: F,
+    ) -> Result<AcquiredPayloadHandle, AppError>
+    where
+        F: FnOnce(Arc<dyn PayloadSessionStorage>, PayloadStorageKey) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<StoredPayload, AppError>> + Send + 'static,
+    {
+        self.ensure_maintenance_ready(&discovery.environment)?;
+        let (mut receiver, producer) = {
             let mut sessions = lock(&self.inner.sessions)?;
-            let session = valid_discovery_session(&mut sessions, discovery, now)?;
-            let storage = session.storage.clone();
-            if session.pending_payloads.contains(&skill_path) {
-                return Err(AppError::MutationBusy);
-            }
-            if let Some(existing) = session.payloads.get(&skill_path) {
-                if existing.payload_id != payload_id
-                    || existing.manifest_hash != manifest_hash
-                    || existing.planning_metadata != planning_metadata
-                {
-                    return Err(AppError::StalePayload);
-                }
-                (false, storage)
+            let session = valid_discovery_session(&mut sessions, discovery, (self.inner.now)())?;
+            if let Some(receiver) = session.pending_payloads.get(&skill_path) {
+                (receiver.clone(), None)
+            } else if let Some(record) = session.payloads.get(&skill_path) {
+                return Ok(payload_handle(discovery, &skill_path, record));
             } else {
-                session.total_bytes = session.total_bytes.saturating_add(total_bytes);
-                session.payloads.insert(
-                    skill_path.clone(),
-                    PayloadRecord {
-                        payload_id: payload_id.clone(),
-                        manifest_hash: manifest_hash.clone(),
-                        planning_metadata: planning_metadata.clone(),
-                    },
-                );
-                (true, storage)
+                let (sender, receiver) = watch::channel(None);
+                session
+                    .pending_payloads
+                    .insert(skill_path.clone(), receiver.clone());
+                session.busy_count += 1;
+                let guard = PayloadIoGuard {
+                    manager: self.inner.clone(),
+                    session_id: discovery.session_id.clone(),
+                    skill_path: Some(skill_path.clone()),
+                };
+                (
+                    receiver,
+                    Some((
+                        sender,
+                        session.storage.clone(),
+                        session.retained_source.clone(),
+                        guard,
+                    )),
+                )
             }
         };
-        if inserted {
-            if let Err(error) = self.enforce_capacity(Some(&discovery.session_id)).await {
-                storage.remove(&key).await?;
-                if let Some(session) = lock(&self.inner.sessions)?.get_mut(&discovery.session_id) {
-                    session.payloads.remove(&skill_path);
-                    session.total_bytes = session.total_bytes.saturating_sub(total_bytes);
-                }
-                return Err(error);
-            }
+        if let Some((sender, storage, retained_source, guard)) = producer {
+            let manager = self.clone();
+            let discovery = discovery.clone();
+            tokio::spawn(async move {
+                let _source = retained_source;
+                let key = PayloadStorageKey::new(&discovery.session_id, &skill_path);
+                let prepared =
+                    AssertUnwindSafe(async { prepare(storage.clone(), key.clone()).await })
+                        .catch_unwind()
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(AppError::ExecutionFailed {
+                                message: "payload preparation task panicked".to_string(),
+                            })
+                        });
+                let mut reserved_bytes = 0;
+                let result = match prepared {
+                    Ok(prepared) => {
+                        manager
+                            .publish_payload(&discovery, &skill_path, prepared, &mut reserved_bytes)
+                            .await
+                    }
+                    Err(error) => Err(error),
+                };
+                let result = if result.is_err() {
+                    let cleanup = storage.remove(&key).await;
+                    if let Ok(mut sessions) = manager.inner.sessions.lock() {
+                        if let Some(session) = sessions.get_mut(&discovery.session_id) {
+                            if cleanup.is_ok() {
+                                session.total_bytes =
+                                    session.total_bytes.saturating_sub(reserved_bytes);
+                            } else {
+                                // 清理失败的内容仍由该会话持有，后续容量清理会再次尝试。
+                                session.invalidated = true;
+                            }
+                        }
+                    }
+                    cleanup.and(result)
+                } else {
+                    result
+                };
+                drop(guard);
+                sender.send_replace(Some(result));
+            });
         }
-        Ok(AcquiredPayloadHandle {
-            session_id: discovery.session_id.clone(),
-            skill_path,
-            environment: discovery.environment.clone(),
-            payload_id,
-            manifest_hash,
-            source_fingerprint: discovery.source_fingerprint.clone(),
-            expires_at_epoch_ms: discovery.expires_at_epoch_ms,
-        })
+        loop {
+            if let Some(result) = receiver.borrow().clone() {
+                let handle = result?;
+                let sessions = lock(&self.inner.sessions)?;
+                validate_payload_handle(&sessions, &handle, (self.inner.now)())?;
+                return Ok(handle);
+            }
+            receiver
+                .changed()
+                .await
+                .map_err(|_| AppError::ExecutionFailed {
+                    message: "payload preparation ended without a result".to_string(),
+                })?;
+        }
+    }
+
+    async fn publish_payload(
+        &self,
+        discovery: &DiscoverySessionHandle,
+        skill_path: &str,
+        prepared: StoredPayload,
+        reserved_bytes: &mut u64,
+    ) -> Result<AcquiredPayloadHandle, AppError> {
+        crate::core::skill_payload::verify_skill_payload_manifest(&prepared.manifest)?;
+        {
+            let mut sessions = lock(&self.inner.sessions)?;
+            let session = valid_discovery_session(&mut sessions, discovery, (self.inner.now)())?;
+            session.total_bytes = session.total_bytes.saturating_add(prepared.total_bytes);
+            *reserved_bytes = prepared.total_bytes;
+        }
+        self.enforce_capacity(Some(&discovery.session_id)).await?;
+        let mut sessions = lock(&self.inner.sessions)?;
+        let session = valid_discovery_session(&mut sessions, discovery, (self.inner.now)())?;
+        let record = PayloadRecord {
+            payload_id: prepared.manifest.payload_id().as_str().to_string(),
+            manifest_hash: prepared.manifest.payload_root_hash,
+            planning_metadata: prepared.planning_metadata,
+        };
+        let handle = payload_handle(discovery, skill_path, &record);
+        session.payloads.insert(skill_path.to_string(), record);
+        Ok(handle)
     }
 
     pub async fn pin_verified(
         &self,
         handle: &AcquiredPayloadHandle,
     ) -> Result<PinnedPayloadLease, AppError> {
+        let manager = self.clone();
+        let handle = handle.clone();
+        tokio::spawn(async move { manager.pin_verified_owned(&handle).await })
+            .await
+            .map_err(|error| AppError::ExecutionFailed {
+                message: format!("payload verification task failed: {error}"),
+            })?
+    }
+
+    async fn pin_verified_owned(
+        &self,
+        handle: &AcquiredPayloadHandle,
+    ) -> Result<PinnedPayloadLease, AppError> {
         self.ensure_maintenance_ready(&handle.environment)?;
         let now = (self.inner.now)();
         let key = PayloadStorageKey::new(&handle.session_id, &handle.skill_path);
-        let storage = {
+        let (storage, _guard) = {
             let mut sessions = lock(&self.inner.sessions)?;
             validate_payload_handle(&sessions, handle, now)?;
             let session = sessions
                 .get_mut(&handle.session_id)
                 .expect("validated session");
             session.busy_count += 1;
-            session.storage.clone()
+            (
+                session.storage.clone(),
+                PayloadIoGuard {
+                    manager: self.inner.clone(),
+                    session_id: handle.session_id.clone(),
+                    skill_path: None,
+                },
+            )
         };
-        let verified = storage.verify(&key).await;
-        let manifest = match verified {
-            Ok(Some(manifest)) => manifest,
-            Ok(None) => {
-                finish_handle_io(&self.inner.sessions, handle)?;
-                return Err(AppError::StalePayload);
-            }
-            Err(error) => {
-                finish_handle_io(&self.inner.sessions, handle)?;
-                return Err(error);
-            }
-        };
+        let manifest = storage.verify(&key).await?.ok_or(AppError::StalePayload)?;
         if manifest.payload_id().as_str() != handle.payload_id
             || manifest.payload_root_hash != handle.manifest_hash
         {
-            finish_handle_io(&self.inner.sessions, handle)?;
             return Err(AppError::StalePayload);
         }
         let planning_metadata = {
             let mut sessions = lock(&self.inner.sessions)?;
-            validate_payload_handle(&sessions, handle, now)?;
+            validate_payload_handle(&sessions, handle, (self.inner.now)())?;
             let session = sessions
                 .get_mut(&handle.session_id)
                 .expect("validated session");
-            session.busy_count = session.busy_count.saturating_sub(1);
             session.pin_count = session.pin_count.saturating_add(1);
             session
                 .payloads
@@ -1195,6 +1453,47 @@ impl PayloadSessionManager {
             }
         }
         self.cleanup_internal(protected_session_id).await?;
+        loop {
+            let candidate = {
+                let sessions = lock(&self.inner.sessions)?;
+                if sessions
+                    .values()
+                    .map(|session| session.total_bytes)
+                    .sum::<u64>()
+                    .saturating_add(
+                        lock(&self.inner.maintenance)?
+                            .values()
+                            .map(|state| state.external_retained_bytes)
+                            .sum::<u64>(),
+                    )
+                    <= self.inner.limits.max_bytes
+                {
+                    None
+                } else {
+                    sessions
+                        .iter()
+                        .find(|(_, session)| {
+                            session.source_optional
+                                && session.source_bytes > 0
+                                && session.busy_count == 0
+                                && session
+                                    .retained_source
+                                    .as_ref()
+                                    .is_some_and(|source| Arc::strong_count(&source._owner) == 1)
+                        })
+                        .map(|(id, session)| DiscoverySessionHandle {
+                            session_id: id.clone(),
+                            environment: session.environment.clone(),
+                            source_fingerprint: session.source_fingerprint.clone(),
+                            expires_at_epoch_ms: session.expires_at_epoch_ms,
+                        })
+                }
+            };
+            let Some(candidate) = candidate else {
+                break;
+            };
+            self.release_source_snapshot_owned(&candidate).await?;
+        }
         let sessions = lock(&self.inner.sessions)?;
         let session_bytes = sessions
             .values()
@@ -1258,6 +1557,10 @@ impl PayloadSessionManager {
                     .filter(|(session_id, session)| {
                         session.pin_count == 0
                             && session.busy_count == 0
+                            && session
+                                .retained_source
+                                .as_ref()
+                                .is_none_or(|source| Arc::strong_count(&source._owner) == 1)
                             && protected_session_id != Some(session_id.as_str())
                             && (session.invalidated
                                 || session.expires_at_epoch_ms < now
@@ -1279,10 +1582,10 @@ impl PayloadSessionManager {
                         .map(|record| (session_id.clone(), record))
                 })
             };
-            let Some((session_id, record)) = candidate else {
+            let Some((session_id, mut record)) = candidate else {
                 break;
             };
-            if let Err(error) = record.storage.remove_session(&session_id).await {
+            if let Err(error) = record.remove_storage(&session_id).await {
                 lock(&self.inner.sessions)?.insert(session_id, record);
                 return Err(error);
             }
@@ -1349,43 +1652,68 @@ fn validate_copy_source_snapshot_binding(
         &snapshot.source_context.scope,
         SkillLocation::Project { project_id } if !project_id.trim().is_empty()
     );
-    let native_identity = matches!(
-        snapshot.project_identity.key.backend,
-        ExecutionBackend::NativeWindows | ExecutionBackend::NativeUnix
-    ) && matches!(
-        snapshot.project_identity.destination.environment,
-        EnvironmentRef::Native
-    ) && snapshot.project_identity.entry_kind == TargetEntryKind::Directory;
+    let project_identity = &snapshot.project_identity;
+    let matching_identity = match (
+        &project_identity.key.backend,
+        &project_identity.key.physical_parent,
+        &project_identity.destination.environment,
+    ) {
+        (
+            ExecutionBackend::NativeWindows,
+            PhysicalParentIdentity::Windows { .. },
+            EnvironmentRef::Native,
+        )
+        | (
+            ExecutionBackend::NativeUnix,
+            PhysicalParentIdentity::Unix { .. },
+            EnvironmentRef::Native,
+        ) => true,
+        (
+            ExecutionBackend::WslPosix {
+                distro_name: backend,
+            },
+            PhysicalParentIdentity::Wsl {
+                distro_name: owner, ..
+            },
+            EnvironmentRef::Wsl { distro_name },
+        ) => {
+            let distro = normalized_wsl_distro_name(distro_name);
+            !distro.is_empty()
+                && normalized_wsl_distro_name(backend) == distro
+                && normalized_wsl_distro_name(owner) == distro
+                && match &snapshot.source_context.environment {
+                    EnvironmentRef::Native => true,
+                    EnvironmentRef::Wsl { distro_name } => {
+                        normalized_wsl_distro_name(distro_name) == distro
+                    }
+                }
+        }
+        _ => false,
+    } && project_identity.entry_kind == TargetEntryKind::Directory;
     if !valid_project
         || !same_environment_identity(&snapshot.source_context.environment, &handle.environment)
         || snapshot.skill_name != payload.planning_metadata.skill_name
-        || !native_identity
+        || !matching_identity
     {
         return Err(AppError::StalePayload);
     }
     Ok(())
 }
 
-fn finish_payload_io(
-    sessions: &Mutex<HashMap<String, SessionRecord>>,
+fn payload_handle(
     discovery: &DiscoverySessionHandle,
     skill_path: &str,
-) -> Result<(), AppError> {
-    if let Some(session) = lock(sessions)?.get_mut(&discovery.session_id) {
-        session.pending_payloads.remove(skill_path);
-        session.busy_count = session.busy_count.saturating_sub(1);
+    record: &PayloadRecord,
+) -> AcquiredPayloadHandle {
+    AcquiredPayloadHandle {
+        session_id: discovery.session_id.clone(),
+        skill_path: skill_path.to_string(),
+        environment: discovery.environment.clone(),
+        payload_id: record.payload_id.clone(),
+        manifest_hash: record.manifest_hash.clone(),
+        source_fingerprint: discovery.source_fingerprint.clone(),
+        expires_at_epoch_ms: discovery.expires_at_epoch_ms,
     }
-    Ok(())
-}
-
-fn finish_handle_io(
-    sessions: &Mutex<HashMap<String, SessionRecord>>,
-    handle: &AcquiredPayloadHandle,
-) -> Result<(), AppError> {
-    if let Some(session) = lock(sessions)?.get_mut(&handle.session_id) {
-        session.busy_count = session.busy_count.saturating_sub(1);
-    }
-    Ok(())
 }
 
 pub(crate) async fn load_payload_from_storage(
@@ -1460,6 +1788,164 @@ mod tests {
             },
             move || now.load(Ordering::SeqCst),
         )
+    }
+
+    struct SourceCleanupFixture {
+        fail: std::sync::atomic::AtomicBool,
+        calls: AtomicU64,
+    }
+
+    impl RetainedSourceCleanup for SourceCleanupFixture {
+        fn remove(&self) -> PayloadStorageFuture<'_, Result<(), AppError>> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail.load(Ordering::SeqCst) {
+                    Err(AppError::Io {
+                        message: "source is occupied".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn source_capacity_reclaims_optional_checkout_without_evicting_ready_payload() {
+        let root = tempdir().unwrap();
+        let manager = PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000,
+            },
+            || 1_000,
+        );
+        let cleanup = Arc::new(SourceCleanupFixture {
+            fail: std::sync::atomic::AtomicBool::new(true),
+            calls: AtomicU64::new(0),
+        });
+        let retained = || {
+            RetainedDiscoverySource::new(
+                DiscoverySourceLocation::Native {
+                    root: root.path().to_path_buf(),
+                    ref_revision: None,
+                },
+                DiscoverySourceDescriptor {
+                    source: "source".into(),
+                    source_type: "git".into(),
+                    source_url: None,
+                    ref_name: None,
+                    redirected_download_host: None,
+                },
+                BTreeMap::new(),
+                (),
+            )
+            .with_managed_storage(900, cleanup.clone())
+        };
+        let first = manager
+            .discover_with_retained_source(EnvironmentRef::Native, "first", retained())
+            .await
+            .unwrap();
+        let handle = manager
+            .acquire_payload(&first, "demo", payload())
+            .await
+            .unwrap();
+        let lease = manager.pin_verified(&handle).await.unwrap();
+        manager.make_source_optional(&first).await.unwrap();
+        assert!(manager.release_source_snapshot(&first).await.is_err());
+        assert_eq!(
+            lock(&manager.inner.sessions).unwrap()[&first.session_id].source_bytes,
+            900
+        );
+        assert!(manager.pin_verified(&handle).await.is_ok());
+        cleanup.fail.store(false, Ordering::SeqCst);
+        let second = manager
+            .discover_with_retained_source(EnvironmentRef::Native, "second", retained())
+            .await
+            .unwrap();
+        assert_eq!(
+            lock(&manager.inner.sessions).unwrap()[&first.session_id].source_bytes,
+            0
+        );
+        assert!(manager.source_snapshot(&first).is_err());
+        assert!(manager.source_snapshot(&second).is_ok());
+        assert!(manager.pin_verified(&handle).await.is_ok());
+        assert_eq!(cleanup.calls.load(Ordering::SeqCst), 2);
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn oversized_source_is_rejected_without_invalidating_prepared_content() {
+        let root = tempdir().unwrap();
+        let manager = PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000,
+            },
+            || 1_000,
+        );
+        let cleanup = Arc::new(SourceCleanupFixture {
+            fail: std::sync::atomic::AtomicBool::new(false),
+            calls: AtomicU64::new(0),
+        });
+        let ready = manager
+            .discover(EnvironmentRef::Native, "ready")
+            .await
+            .unwrap();
+        let handle = manager
+            .acquire_payload(&ready, "demo", payload())
+            .await
+            .unwrap();
+        let lease = manager.pin_verified(&handle).await.unwrap();
+        let source = RetainedDiscoverySource::new(
+            DiscoverySourceLocation::Native {
+                root: root.path().to_path_buf(),
+                ref_revision: None,
+            },
+            DiscoverySourceDescriptor {
+                source: "large".into(),
+                source_type: "git".into(),
+                source_url: None,
+                ref_name: None,
+                redirected_download_host: None,
+            },
+            BTreeMap::new(),
+            (),
+        )
+        .with_managed_storage(2_000, cleanup.clone());
+        let error = manager
+            .discover_with_retained_source(EnvironmentRef::Native, "large", source)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, AppError::CapabilityUnavailable { capability, .. } if capability == "sourceSessionCapacity")
+        );
+        assert_eq!(cleanup.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(lock(&manager.inner.sessions).unwrap().len(), 1);
+        assert!(manager.pin_verified(&handle).await.is_ok());
+        drop(lease);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn managed_source_size_does_not_follow_directory_links() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("managed");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::File::create(outside.join("large"))
+            .unwrap()
+            .set_len(1_000_000)
+            .unwrap();
+        fs::write(root.join("small"), b"small").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        #[cfg(windows)]
+        junction::create(&outside, root.join("link")).unwrap();
+        assert!(environment_engine::directory::size_no_follow(&root).unwrap() < 100_000);
     }
 
     fn copy_source_snapshot(environment: EnvironmentRef) -> CopySourceSnapshot {
@@ -1643,6 +2129,355 @@ mod tests {
 
     struct DropCounter(Arc<AtomicU64>);
 
+    #[tokio::test]
+    async fn different_skills_prepare_concurrently_in_the_same_native_session() {
+        use crate::environment::native::acquire::NativePayloadSessionStorage;
+        use crate::payload_storage_test_support::PausedPayloadStorage;
+
+        let root = tempdir().unwrap();
+        let storage = Arc::new(PausedPayloadStorage::new(Arc::new(
+            NativePayloadSessionStorage::new(root.path()).unwrap(),
+        )));
+        let manager = manager_with_storage(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 1,
+                max_bytes: 1024 * 1024,
+            },
+            Arc::new(AtomicU64::new(1_000)),
+        );
+        let discovery = manager
+            .discover(EnvironmentRef::Native, "source-v1")
+            .await
+            .unwrap();
+        let mut tasks = Vec::new();
+        for index in 0..8 {
+            tasks.push(tokio::spawn({
+                let manager = manager.clone();
+                let discovery = discovery.clone();
+                async move {
+                    manager
+                        .acquire_payload(&discovery, format!("skills/demo-{index}"), payload())
+                        .await
+                }
+            }));
+            storage.store_pause.wait_until_started().await;
+        }
+        for _ in &tasks {
+            storage.store_pause.resume();
+        }
+        let mut paths = HashSet::new();
+        for task in tasks {
+            let handle = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            paths.insert(handle.skill_path.clone());
+            let lease = manager.pin_verified(&handle).await.unwrap();
+            assert!(lease
+                .load_payload()
+                .await
+                .unwrap()
+                .blobs
+                .values()
+                .any(|bytes| bytes == b"skill"));
+        }
+        assert_eq!(paths.len(), 8);
+        assert_eq!(storage.stores.load(Ordering::SeqCst), 8);
+    }
+
+    #[tokio::test]
+    async fn abandoned_preparation_completes_io_and_recovers_capacity() {
+        use crate::environment::native::acquire::NativePayloadSessionStorage;
+        use crate::payload_storage_test_support::PausedPayloadStorage;
+
+        let root = tempdir().unwrap();
+        let storage = Arc::new(PausedPayloadStorage::new(Arc::new(
+            NativePayloadSessionStorage::new(root.path()).unwrap(),
+        )));
+        let now = Arc::new(AtomicU64::new(1_000));
+        let manager = manager_with_storage(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 1,
+                max_bytes: 1024 * 1024,
+            },
+            now.clone(),
+        );
+        let discovery = manager
+            .discover(EnvironmentRef::Native, "source-v1")
+            .await
+            .unwrap();
+        let acquisition = tokio::spawn({
+            let manager = manager.clone();
+            let discovery = discovery.clone();
+            async move {
+                manager
+                    .acquire_payload(&discovery, "skills/demo", payload())
+                    .await
+            }
+        });
+        storage.store_pause.wait_until_started().await;
+        acquisition.abort();
+        assert!(acquisition.await.unwrap_err().is_cancelled());
+
+        now.store(1_101, Ordering::SeqCst);
+        assert_eq!(manager.cleanup().await.unwrap(), 0);
+        storage.store_pause.resume();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while manager.cleanup().await.unwrap() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("abandoned acquisition must release the session after I/O");
+        assert!(root.path().read_dir().unwrap().next().is_none());
+        manager
+            .discover(EnvironmentRef::Native, "source-v2")
+            .await
+            .expect("capacity recovered");
+    }
+
+    #[tokio::test]
+    async fn preparation_failure_is_shared_and_partial_storage_can_be_retried() {
+        use crate::environment::native::acquire::NativePayloadSessionStorage;
+        use crate::payload_storage_test_support::PausedPayloadStorage;
+
+        let root = tempdir().unwrap();
+        let storage = Arc::new(PausedPayloadStorage::new(Arc::new(
+            NativePayloadSessionStorage::new(root.path()).unwrap(),
+        )));
+        storage.fail_after_store.store(true, Ordering::SeqCst);
+        let manager = manager_with_storage(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 1,
+                max_bytes: 1024 * 1024,
+            },
+            Arc::new(AtomicU64::new(1_000)),
+        );
+        let discovery = manager
+            .discover(EnvironmentRef::Native, "source-v1")
+            .await
+            .unwrap();
+        let first = tokio::spawn({
+            let manager = manager.clone();
+            let discovery = discovery.clone();
+            async move {
+                manager
+                    .acquire_payload(&discovery, "skills/demo", payload())
+                    .await
+            }
+        });
+        storage.store_pause.wait_until_started().await;
+        let second = manager.acquire_payload(&discovery, "skills/demo", payload());
+        tokio::pin!(second);
+        assert!(futures_util::poll!(&mut second).is_pending());
+        storage.store_pause.resume();
+        let first_error = first.await.unwrap().unwrap_err();
+        assert_eq!(
+            first_error,
+            AppError::Io {
+                message: "injected store failure".to_string()
+            }
+        );
+        assert_eq!(second.await.unwrap_err(), first_error);
+
+        storage.store_pause.resume();
+        let retried = manager
+            .acquire_payload(&discovery, "skills/demo", payload())
+            .await
+            .unwrap();
+        let lease = manager.pin_verified(&retried).await.unwrap();
+        assert!(lease
+            .load_payload()
+            .await
+            .unwrap()
+            .blobs
+            .values()
+            .any(|bytes| bytes == b"skill"));
+        assert_eq!(storage.stores.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn dropping_one_waiter_keeps_other_waiters_and_conflicting_content_is_rejected() {
+        use crate::environment::native::acquire::NativePayloadSessionStorage;
+        use crate::payload_storage_test_support::PausedPayloadStorage;
+
+        let root = tempdir().unwrap();
+        let storage = Arc::new(PausedPayloadStorage::new(Arc::new(
+            NativePayloadSessionStorage::new(root.path().join("payloads")).unwrap(),
+        )));
+        let manager = manager_with_storage(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 1,
+                max_bytes: 1024 * 1024,
+            },
+            Arc::new(AtomicU64::new(1_000)),
+        );
+        let discovery = manager
+            .discover(EnvironmentRef::Native, "source-v1")
+            .await
+            .unwrap();
+        let first = tokio::spawn({
+            let manager = manager.clone();
+            let discovery = discovery.clone();
+            async move {
+                manager
+                    .acquire_payload(&discovery, "skills/demo", payload())
+                    .await
+            }
+        });
+        storage.store_pause.wait_until_started().await;
+        let second = manager.acquire_payload(&discovery, "skills/demo", payload());
+        tokio::pin!(second);
+        assert!(futures_util::poll!(&mut second).is_pending());
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+
+        let changed_root = root.path().join("changed");
+        fs::create_dir(&changed_root).unwrap();
+        fs::write(changed_root.join("SKILL.md"), b"changed").unwrap();
+        let conflicting = manager.acquire_payload(
+            &discovery,
+            "skills/demo",
+            build_skill_payload(&changed_root).unwrap(),
+        );
+        tokio::pin!(conflicting);
+        assert!(futures_util::poll!(&mut conflicting).is_pending());
+        storage.store_pause.resume();
+
+        let handle = second.await.unwrap();
+        assert_eq!(conflicting.await.unwrap_err(), AppError::StalePayload);
+        assert_eq!(storage.stores.load(Ordering::SeqCst), 1);
+        assert!(manager.pin_verified(&handle).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn abandoned_verification_finishes_before_releasing_the_session() {
+        use crate::environment::native::acquire::NativePayloadSessionStorage;
+        use crate::payload_storage_test_support::{PausedPayloadStorage, PayloadIoPause};
+
+        let root = tempdir().unwrap();
+        let mut storage = PausedPayloadStorage::new(Arc::new(
+            NativePayloadSessionStorage::new(root.path()).unwrap(),
+        ));
+        storage.verify_pause = Some(PayloadIoPause::default());
+        let storage = Arc::new(storage);
+        let now = Arc::new(AtomicU64::new(1_000));
+        let manager = manager_with_storage(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 1,
+                max_bytes: 1024 * 1024,
+            },
+            now.clone(),
+        );
+        let discovery = manager
+            .discover(EnvironmentRef::Native, "source-v1")
+            .await
+            .unwrap();
+        storage.store_pause.resume();
+        let handle = manager
+            .acquire_payload(&discovery, "skills/demo", payload())
+            .await
+            .unwrap();
+        let verification = tokio::spawn({
+            let manager = manager.clone();
+            async move { manager.pin_verified(&handle).await }
+        });
+        let pause = storage.verify_pause.as_ref().unwrap();
+        pause.wait_until_started().await;
+        verification.abort();
+        assert!(verification.await.err().unwrap().is_cancelled());
+
+        now.store(1_101, Ordering::SeqCst);
+        assert_eq!(
+            manager.cleanup().await.unwrap(),
+            0,
+            "I/O still owns the session"
+        );
+        pause.resume();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while manager.cleanup().await.unwrap() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("completed verification must release its temporary hold");
+        manager
+            .discover(EnvironmentRef::Native, "source-v2")
+            .await
+            .expect("capacity recovered");
+    }
+
+    #[tokio::test]
+    async fn concurrent_payload_requests_share_one_native_snapshot() {
+        use crate::environment::native::acquire::NativePayloadSessionStorage;
+        use crate::payload_storage_test_support::PausedPayloadStorage;
+
+        let root = tempdir().unwrap();
+        let storage = Arc::new(PausedPayloadStorage::new(Arc::new(
+            NativePayloadSessionStorage::new(root.path()).unwrap(),
+        )));
+        let manager = manager_with_storage(
+            storage.clone(),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 4,
+                max_bytes: 1024 * 1024,
+            },
+            Arc::new(AtomicU64::new(1_000)),
+        );
+        let discovery = manager
+            .discover(EnvironmentRef::Native, "source-v1")
+            .await
+            .unwrap();
+        let content = payload();
+        let first = tokio::spawn({
+            let manager = manager.clone();
+            let discovery = discovery.clone();
+            let content = content.clone();
+            async move {
+                manager
+                    .acquire_payload(&discovery, "skills/demo", content)
+                    .await
+            }
+        });
+        storage.store_pause.wait_until_started().await;
+
+        let second = manager.acquire_payload(&discovery, "skills/demo", content);
+        tokio::pin!(second);
+        assert!(
+            futures_util::poll!(&mut second).is_pending(),
+            "duplicate acquisition must wait"
+        );
+        storage.store_pause.resume();
+        let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(first, second)
+        })
+        .await
+        .unwrap();
+        let first = first.unwrap().unwrap();
+        let second = second.unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&first).unwrap(),
+            serde_json::to_value(second).unwrap()
+        );
+        assert_eq!(storage.stores.load(Ordering::SeqCst), 1);
+        let lease = manager.pin_verified(&first).await.unwrap();
+        let restored = lease.load_payload().await.unwrap();
+        assert!(restored.blobs.values().any(|bytes| bytes == b"skill"));
+    }
+
     impl Drop for DropCounter {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -1800,6 +2635,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn copy_source_snapshot_accepts_matching_wsl_identity_and_rejects_mixed_types() {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".into(),
+        };
+        let manager = manager(Arc::new(AtomicU64::new(2_500)));
+        let discovery = manager
+            .discover(environment.clone(), "source-v1")
+            .await
+            .unwrap();
+        let handle = manager
+            .acquire_payload(&discovery, "skills/demo", payload())
+            .await
+            .unwrap();
+        let mut snapshot = copy_source_snapshot(environment.clone());
+        snapshot.project_identity.destination.environment = environment;
+        snapshot.project_identity.key.backend = ExecutionBackend::WslPosix {
+            distro_name: "ubuntu".into(),
+        };
+        snapshot.project_identity.key.physical_parent = PhysicalParentIdentity::Wsl {
+            distro_name: "ubuntu".into(),
+            device: 1,
+            inode: 2,
+        };
+
+        let mut wrong_backend = snapshot.clone();
+        wrong_backend.project_identity.key.backend = ExecutionBackend::NativeUnix;
+        let mut wrong_parent = snapshot.clone();
+        wrong_parent.project_identity.key.physical_parent = PhysicalParentIdentity::Unix {
+            device: 1,
+            inode: 2,
+        };
+        let mut wrong_distro = snapshot.clone();
+        wrong_distro.project_identity.destination.environment = EnvironmentRef::Wsl {
+            distro_name: "Debian".into(),
+        };
+        let mut missing = snapshot.clone();
+        missing.project_identity.entry_kind = TargetEntryKind::Missing;
+        for invalid in [wrong_backend, wrong_parent, wrong_distro, missing] {
+            assert!(matches!(
+                manager.bind_copy_source_snapshot(&handle, invalid),
+                Err(AppError::StalePayload)
+            ));
+        }
+        manager
+            .bind_copy_source_snapshot(&handle, snapshot.clone())
+            .expect("WSL project snapshot");
+        assert_eq!(manager.copy_source_snapshot(&handle).unwrap(), snapshot);
+    }
+
+    #[tokio::test]
     async fn copy_source_snapshot_rejects_conflicting_or_forged_bindings() {
         let now = Arc::new(AtomicU64::new(3_000));
         let manager = manager(now);
@@ -1920,7 +2805,19 @@ mod tests {
         );
 
         let handle = manager
-            .register_existing_payload(&discovery, "skills/demo", manifest, 5)
+            .prepare_payload(
+                &discovery,
+                "skills/demo".to_string(),
+                move |_, _| async move {
+                    Ok(StoredPayload {
+                        manifest,
+                        total_bytes: 5,
+                        planning_metadata: PayloadPlanningMetadata::legacy_incomplete(
+                            "skills/demo",
+                        ),
+                    })
+                },
+            )
             .await
             .expect("register existing");
         let lease = manager.pin_verified(&handle).await.expect("pin");

@@ -15,7 +15,7 @@ const eventMocks = vi.hoisted(() => ({
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, values?: { path?: string }) => values?.path ? `${key}:${values.path}` : key,
     i18n: { language: 'en' },
   }),
 }));
@@ -29,7 +29,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }));
 
-const makeSkill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
+const makeSkill = (overrides: Partial<SkillListItem> = {}): SkillListItem => ({
   name: 'brainstorming',
   description: 'Brainstorm ideas',
   path: '/skills/brainstorming',
@@ -43,6 +43,48 @@ const makeSkill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => (
 });
 
 describe('SkillDetailPanel', () => {
+  it('does not call a completed check up to date when the source Skill was deleted', async () => {
+    render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, updateStatus: 'deletedUpstream', updateReason: 'deletedUpstream' })}
+      content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
+      onUpdate={vi.fn()} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()}
+      onCheckUpdates={vi.fn(async () => 'completed' as const)} /></TooltipProvider>);
+    await act(async () => { fireEvent.click(screen.getByTitle('skills.checkUpdates')); });
+    expect(screen.queryByTitle('skills.checkCompleted')).toBeNull();
+    expect(screen.queryByTitle('skills.checkUpToDate')).toBeNull();
+    expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
+  });
+  it('keeps an update entry for remaining copies after the source is already current', () => {
+    const onUpdate = vi.fn();
+    render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, canRunUpdate: true })}
+      content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
+      onUpdate={onUpdate} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()} /></TooltipProvider>);
+    fireEvent.click(screen.getByTitle('skills.actions.update'));
+    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
+  });
+  it('shows the same-name library version with its own maintenance entry', () => {
+    const version = { libraryId: 'team', libraryName: 'Team Skills', skillName: 'brainstorming' };
+    const onOpenLibraryVersion = vi.fn();
+    render(<TooltipProvider><SkillDetailPanel
+      skill={makeSkill({ libraryVersions: [version] })} content="Direct content" loading={false}
+      agentDisplayNames={new Map()} onClose={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()}
+      onRetry={vi.fn()} onManageAgents={vi.fn()} onOpenLibraryVersion={onOpenLibraryVersion}
+    /></TooltipProvider>);
+    fireEvent.click(screen.getByRole('button', { name: /Team Skills/ }));
+    expect(onOpenLibraryVersion).toHaveBeenCalledWith(version);
+    expect(screen.getByText('Direct content')).toBeTruthy();
+  });
+
+  it('explains an unsupported Eve file and disables maintenance writes', () => {
+    render(<TooltipProvider><SkillDetailPanel
+      skill={makeSkill({ maintenanceError: { kind: 'capabilityUnavailable', data: { capability: 'eveSingleFile', path: '/project/agent/skills/demo.md' } } })}
+      content={null} loading={false} agentDisplayNames={new Map()} onClose={vi.fn()} onUpdate={vi.fn()}
+      onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()}
+    /></TooltipProvider>);
+    expect(screen.getByRole('alert').textContent).toContain('mutation.result.errors.eveSingleFile');
+    expect((screen.getByTitle('skills.manageAgents.action') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTitle('skills.actions.delete') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     eventMocks.callback = null;
@@ -53,13 +95,16 @@ describe('SkillDetailPanel', () => {
     vi.useRealTimers();
   });
 
-  it('keeps a long install path on one line and reveals the full path on focus', async () => {
+  it('shows a scoped install path and reveals its full address on demand', async () => {
     const canonicalPath = 'C:\\Users\\cheng\\AppData\\Roaming\\Skill Deck\\skills\\a-very-long-skill-name';
+    const root = { environment: { kind: 'native' as const }, nativePath: 'C:\\Users\\cheng' };
 
     render(
       <TooltipProvider>
         <SkillDetailPanel
           skill={makeSkill({ canonicalPath })}
+          context={{ environment: root.environment, scope: { scope: 'global' } }}
+          pathBase={{ logicalRoot: root, physicalRoot: root, pathStyle: 'windows' }}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -72,11 +117,8 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    const path = screen.getByText(canonicalPath, { selector: 'code' });
-    expect(path.className).toContain('truncate');
-    expect(path.getAttribute('tabindex')).toBe('0');
-    expect(path.getAttribute('title')).toBeNull();
-
+    const path = screen.getByRole('button', { name: 'skills.installPath.viewFullPath:~\\AppData\\Roaming\\Skill Deck\\skills\\a-very-long-skill-name' });
+    expect(screen.queryByText(canonicalPath)).toBeNull();
     fireEvent.focus(path);
     expect((await screen.findByRole('tooltip')).textContent).toContain(canonicalPath);
   });
@@ -246,47 +288,6 @@ describe('SkillDetailPanel', () => {
     expect(check.disabled).toBe(true);
   });
 
-  it('keeps Force disabled when another source in the Context established provider cooldown', () => {
-    const retryAtEpochMs = Date.now() + 60_000;
-    render(
-      <TooltipProvider>
-        <SkillDetailPanel
-          skill={makeSkill({ source: 'other/repo', hasUpdate: false }) as never}
-          sourceDiagnostics={[{
-            source: 'github.com/owner/rate-limited',
-            requestedRef: 'HEAD',
-            resolvedRef: null,
-            refRevision: null,
-            checkedAtEpochMs: null,
-            expiresAtEpochMs: null,
-            freshness: 'coolingDown',
-            lastAttempt: {
-              checkedAtEpochMs: Date.now(),
-              failure: {
-                reason: 'rateLimited',
-                message: 'rate limited',
-                retryAtEpochMs,
-                providerCooldown: true,
-              },
-            },
-          }]}
-          content="# Brainstorming"
-          loading={false}
-          agentDisplayNames={new Map()}
-          onClose={vi.fn()}
-          onUpdate={vi.fn()}
-          onDelete={vi.fn()}
-          onRetry={vi.fn()}
-          onManageAgents={vi.fn()}
-          onCheckUpdates={vi.fn(async () => 'notCompleted' as const)}
-        />
-      </TooltipProvider>
-    );
-
-    expect((screen.getByTitle('skills.updateEvidence.retryAt') as HTMLButtonElement).disabled)
-      .toBe(true);
-  });
-
   it('re-enables Force when the observed provider cooldown is already expired', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
@@ -362,7 +363,7 @@ describe('SkillDetailPanel', () => {
     vi.useRealTimers();
   });
 
-  it('shows the latest typed failure, valid evidence time, retry time, and next action', () => {
+  it('keeps update and credential actions without expanding rate-limit diagnostics', () => {
     const onConfigureGitCredentials = vi.fn();
     render(
       <TooltipProvider>
@@ -410,11 +411,10 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.checkIncomplete')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.failure.rateLimited')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.lastChecked')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.lastAttempt')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.retryAt')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatusLabel.available')).toBeTruthy();
+    expect(screen.queryByText('skills.updateStatusLabel.checkIncomplete')).toBeNull();
+    expect(screen.queryByText('skills.updateEvidence.lastChecked')).toBeNull();
+    expect(screen.queryByText('skills.updateEvidence.lastAttempt')).toBeNull();
     // 桌面应用里 <a href> 会整页重载，配置凭据改为由页面提供的路由回调。
     const configureToken = screen.getByRole('button', {
       name: 'skills.updateEvidence.actions.configureToken',
@@ -425,7 +425,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByText('must not be shown')).toBeNull();
   });
 
-  it('shows cannotCheck status and reason without exposing update action when no update is available', () => {
+  it('shows cannotCheck reason while preserving a backend-authorized manual update', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -449,92 +449,12 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatus.cannotCheck')).toBeTruthy();
-    expect(screen.getByText('skills.updateReason.missing-skill-path')).toBeTruthy();
-    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-  });
-
-  it('shows repair source action for missing skill path metadata', () => {
-    const onRepairSource = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <SkillDetailPanel
-          skill={{
-            ...makeSkill({
-              hasUpdate: false,
-              canRunUpdate: false,
-              canCheckForUpdates: false,
-              source: 'owner/repo',
-              sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missing-skill-path',
-            }),
-            updateStatus: 'cannotCheck',
-          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
-          content="# Brainstorming"
-          loading={false}
-          agentDisplayNames={new Map()}
-          onClose={vi.fn()}
-          onUpdate={vi.fn()}
-          onDelete={vi.fn()}
-          onRetry={vi.fn()}
-          onManageAgents={vi.fn()}
-          onRepairSource={onRepairSource}
-        />
-      </TooltipProvider>
-    );
-
-    fireEvent.click(screen.getByTitle('skills.actions.repairSource'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'brainstorming' }));
-  });
-
-  it('uses direct reinstall for missing version metadata', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <SkillDetailPanel
-          skill={{
-            ...makeSkill({
-              hasUpdate: false,
-              canRunUpdate: true,
-              canCheckForUpdates: false,
-              source: 'owner/repo',
-              sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missingRemoteHash',
-            }),
-            updateStatus: 'cannotCheck',
-          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
-          content="# Brainstorming"
-          loading={false}
-          agentDisplayNames={new Map()}
-          onClose={vi.fn()}
-          onUpdate={onUpdate}
-          onDelete={vi.fn()}
-          onRetry={vi.fn()}
-          onManageAgents={vi.fn()}
-          onRepairSource={onRepairSource}
-        />
-      </TooltipProvider>
-    );
-
-    fireEvent.click(screen.getByTitle('skills.actions.reinstall'));
-
-    expect(onUpdate).not.toHaveBeenCalled();
-    expect(screen.getByText('skills.reinstallConfirm.title')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'skills.reinstallConfirm.confirm' }));
-
-    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
-    expect(onRepairSource).not.toHaveBeenCalled();
+    expect(screen.getByText('skills.card.sourceIncomplete')).toBeTruthy();
+    expect(screen.queryByText('skills.updateStatus.cannotCheck')).toBeNull();
+    expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
   });
 
   it('shows upstream-deleted state without ordinary update action', () => {
-    const onUpdate = vi.fn();
-    const onRepairSource = vi.fn();
-
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -553,23 +473,18 @@ describe('SkillDetailPanel', () => {
           loading={false}
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
-          onUpdate={onUpdate}
+          onUpdate={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
-          onRepairSource={onRepairSource}
         />
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatus.deletedUpstream')).toBeTruthy();
-    expect(screen.getByText('skills.updateReason.deletedUpstream')).toBeTruthy();
+    expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
+    expect(screen.queryByText('skills.updateReason.deletedUpstream')).toBeNull();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-
-    fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'brainstorming' }));
-    expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByTitle('skills.actions.delete')).toBeTruthy();
   });
 
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
@@ -596,7 +511,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
-  it('hides update action for manual-only sources when no update is available', () => {
+  it('keeps manual update available when the backend cannot compare versions', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -618,7 +533,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+    expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
   });
 
   it.each([
@@ -626,7 +541,7 @@ describe('SkillDetailPanel', () => {
     ['auth', 'skills.updateReason.auth'],
     ['network-error', 'skills.updateReason.network-error'],
     ['http-404', 'skills.updateReason.http-error'],
-  ])('shows GitHub update reason %s', (reason, expectedKey) => {
+  ])('keeps legacy diagnostics compact: %s', (reason, expectedKey) => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -650,7 +565,8 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText(expectedKey)).toBeTruthy();
+    expect(screen.queryByText(expectedKey)).toBeNull();
+    if (reason === 'auth') expect(screen.getByText('skills.updateEvidence.failure.authenticationRequired')).toBeTruthy();
   });
 
   it('hides the check-updates action when update-check capability metadata is missing', () => {
@@ -782,7 +698,7 @@ describe('SkillDetailPanel', () => {
       <TooltipProvider>
         <SkillDetailPanel
           key="global:brainstorming"
-          skill={makeSkill({ name: 'brainstorming', hasUpdate: false })}
+          skill={makeSkill({ name: 'brainstorming', hasUpdate: false, updateStatus: 'upToDate' })}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -800,7 +716,7 @@ describe('SkillDetailPanel', () => {
     fireEvent.click(screen.getByTitle('skills.checkUpdates'));
 
     await waitFor(() => {
-      expect(screen.getByTitle('skills.checkCompleted')).toBeTruthy();
+      expect(screen.getByTitle('skills.checkUpToDate')).toBeTruthy();
     });
 
     rerender(
@@ -822,7 +738,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.checkCompleted')).toBeNull();
+    expect(screen.queryByTitle('skills.checkUpToDate')).toBeNull();
   });
 
   it('resets the updating phase when switching to a different skill identity', () => {

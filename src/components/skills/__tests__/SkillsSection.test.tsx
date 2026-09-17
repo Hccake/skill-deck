@@ -30,20 +30,15 @@ vi.mock('../SkillCard', () => ({
     skill,
     updateStatus,
     onUpdate,
-    onRepairSource,
   }: {
     skill: InstalledSkill;
     updateStatus?: 'acquiring' | 'validating' | 'updating' | 'done' | 'failed';
     onUpdate?: (skillName: string) => void;
-    onRepairSource?: (skill: InstalledSkill) => void;
   }) => (
     <div data-testid={`skill-card:${skill.scope}:${skill.name}`}>
       <span data-testid={`status:${skill.scope}:${skill.name}`}>{updateStatus ?? 'idle'}</span>
       <button type="button" data-testid={`update:${skill.scope}:${skill.name}`} onClick={() => onUpdate?.(skill.name)}>
         update
-      </button>
-      <button type="button" data-testid={`repair:${skill.scope}:${skill.name}`} onClick={() => onRepairSource?.(skill)}>
-        repair
       </button>
     </div>
   ),
@@ -86,7 +81,7 @@ describe('SkillsSection', () => {
         libraryApplication={{
           orderedLibraries: [{ id: 'frontend', name: 'Frontend', skillCount: 3 }],
           selectedAgentIds: [],
-          pending: true,
+          pending: true, syncState: 'pending',
         }}
         onSkillClick={vi.fn()}
         onPrepareUpdate={vi.fn(async () => true)}
@@ -106,7 +101,7 @@ describe('SkillsSection', () => {
     const libraryName = within(library).getByText('Frontend');
     expect(libraryName).toBeTruthy();
     expect(within(library).getByText('libraries.skillCount')).toBeTruthy();
-    expect(screen.getByRole('status').textContent).toBe('libraries.pending');
+    expect(screen.getByRole('status').textContent).toBe('libraries.syncState.pending');
     fireEvent.click(within(actions).getByRole('button', { name: 'libraries.manage' }));
     expect(onManageLibraries).toHaveBeenCalledOnce();
   });
@@ -337,6 +332,39 @@ describe('SkillsSection', () => {
     expect(screen.getByText('skills.uncheckableUpdateCount')).toBe(summary);
   });
 
+  it('does not report local Skills as update maintenance', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            name: 'remote',
+            hasUpdate: false,
+            updateStatus: 'upToDate',
+          }),
+          makeSkill('global', {
+            name: 'local-draft',
+            hasUpdate: false,
+            canRunUpdate: false,
+            canCheckForUpdates: false,
+            updateStatus: 'cannotCheck',
+            updateReason: 'local-source',
+          }),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        hasCommittedComparison
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.upToDate')).toBeTruthy();
+    expect(screen.queryByText('skills.uncheckableUpdateCount')).toBeNull();
+  });
+
   it('crossfades changed polite live-region content and removes the outgoing summary after 160ms', async () => {
     vi.useFakeTimers();
     const props = {
@@ -420,7 +448,7 @@ describe('SkillsSection', () => {
     expect(screen.getAllByTestId('update-summary-prefix')).toHaveLength(2);
   });
 
-  it('disables Force during provider cooldown and exposes the retry time', () => {
+  it('keeps manual checking available during a provider cooldown', () => {
     const retryAtEpochMs = Date.now() + 60_000;
     render(
       <SkillsSection
@@ -460,113 +488,8 @@ describe('SkillsSection', () => {
     );
 
     const button = screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.title).toContain('skills.updateEvidence.retryAt');
+    expect(button.disabled).toBe(false);
     expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
-  });
-
-  it('keeps Force disabled when filtering hides the source that established provider cooldown', () => {
-    const retryAtEpochMs = Date.now() + 60_000;
-    render(
-      <SkillsSection
-        title="Global"
-        skills={[makeSkill('global', { source: 'other/repo', hasUpdate: false })]}
-        sourceDiagnostics={[{
-          source: 'github.com/owner/rate-limited',
-          requestedRef: 'HEAD',
-          resolvedRef: null,
-          refRevision: null,
-          checkedAtEpochMs: null,
-          expiresAtEpochMs: null,
-          freshness: 'coolingDown',
-          lastAttempt: {
-            checkedAtEpochMs: Date.now(),
-            failure: {
-              reason: 'rateLimited',
-              message: 'rate limited',
-              retryAtEpochMs,
-              providerCooldown: true,
-            },
-          },
-        }]}
-        scope="global"
-        updatingSkills={new Map()}
-        onSkillClick={vi.fn()}
-        onPrepareUpdate={vi.fn(async () => true)}
-        onDelete={vi.fn()}
-        onAdd={vi.fn()}
-        onCheckUpdates={async () => 'notCompleted' as const}
-      />
-    );
-
-    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled)
-      .toBe(true);
-  });
-
-  it('re-enables Force when the observed provider cooldown is already expired', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000_000);
-    const retryAtEpochMs = 1_060_000;
-    const skill = makeSkill('global', {
-      hasUpdate: false,
-      updateStatus: 'cannotCheck',
-      updateReason: 'upstreamUnavailable',
-      updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
-      updateEvidence: {
-        source: 'github.com/owner/repo',
-        requestedRef: 'main',
-        resolvedRef: null,
-        refRevision: null,
-        checkedAtEpochMs: null,
-        expiresAtEpochMs: null,
-        freshness: 'coolingDown',
-        lastAttempt: {
-          checkedAtEpochMs: 1_000_000,
-          failure: {
-            reason: 'rateLimited',
-            message: 'rate limited',
-            retryAtEpochMs,
-            providerCooldown: true,
-          },
-        },
-      },
-    });
-    const props = {
-      title: 'Global',
-      skills: [skill],
-      scope: 'global' as const,
-      updatingSkills: new Map<string, never>(),
-      onSkillClick: vi.fn(),
-      onPrepareUpdate: vi.fn(async () => true),
-      onDelete: vi.fn(),
-      onAdd: vi.fn(),
-      onCheckUpdates: vi.fn(async () => 'notCompleted' as const),
-    };
-    const { rerender } = render(<SkillsSection {...props} />);
-
-    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(true);
-
-    vi.setSystemTime(1_120_000);
-    rerender(<SkillsSection
-      {...props}
-      skills={[{
-        ...skill,
-        updateEvidence: {
-          ...skill.updateEvidence!,
-          lastAttempt: {
-            ...skill.updateEvidence!.lastAttempt!,
-            failure: {
-              ...skill.updateEvidence!.lastAttempt!.failure!,
-              retryAtEpochMs: 1_050_000,
-            },
-          },
-        },
-      }]}
-    />);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(false);
-    vi.useRealTimers();
   });
 
   it('disables write actions but keeps update checks available during another mutation', () => {
@@ -891,29 +814,6 @@ describe('SkillsSection', () => {
     expect(screen.queryByText('skills.checkUpdates')).toBeNull();
   });
 
-  it('passes repair source actions to skill cards', () => {
-    const onRepairSource = vi.fn();
-
-    render(
-      <SkillsSection
-        title="Project"
-        skills={[makeSkill('project', { hasUpdate: false, updateReason: 'missing-skill-path' })]}
-        scope="project"
-        projectPath="D:\\Code\\project-a"
-        updatingSkills={new Map()}
-        onSkillClick={vi.fn()}
-        onPrepareUpdate={vi.fn(async () => true)}
-        onDelete={vi.fn()}
-        onRepairSource={onRepairSource}
-        onAdd={vi.fn()}
-      />
-    );
-
-    fireEvent.click(screen.getByTestId('repair:project:toolkit'));
-
-    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project', name: 'toolkit' }));
-  });
-
   it('delegates update-all preview to the page-level update workflow owner', async () => {
     const onPrepareUpdate = vi.fn(async () => true);
 
@@ -1059,7 +959,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
-        onRepairSource={vi.fn()}
         onAdd={vi.fn()}
       />
     );

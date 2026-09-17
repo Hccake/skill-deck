@@ -129,6 +129,7 @@ export async function executeSkillRemoval(): Promise<SkillRemovalOutcome> {
     await useSkillsDataStore.getState().syncSkills(context, {
       origin: 'selfMutation',
       mutatedSkillNames: [deleteTarget.skill.name],
+      invalidateUpdates: true,
     });
     return { status: 'succeeded' };
   } catch (error) {

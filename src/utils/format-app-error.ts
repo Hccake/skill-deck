@@ -54,8 +54,6 @@ export function formatAppError(error: AppError, t: TFunction): string {
       });
     case 'directDownloadFailed':
       return t(`addSkill.source.error.downloadFailure.${error.data.reason}`);
-    case 'directDownloadUnsupportedOperation':
-      return t('addSkill.source.error.downloadUnsupportedOperation');
     case 'directDownloadConflict':
       return t('addSkill.source.error.downloadConflict', { target: error.data.target });
     case 'invalidProxySettings':
@@ -110,6 +108,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       });
     case 'projectMigrationFailed':
       return error.data.message;
+    case 'projectMatchesEnvironmentHome':
+      return t('settings.projectHomeConflict');
     case 'configurationReadOnly':
       return t('addSkill.error.configurationReadOnly');
     case 'payloadStorageRequiresCleanup':
@@ -129,6 +129,14 @@ export function formatAppError(error: AppError, t: TFunction): string {
     case 'unsafeSourceLink':
       return t('addSkill.error.storageUnsupported');
     case 'capabilityUnavailable':
+      if (error.data.capability === 'libraryContentTarget') return t('mutation.result.errors.libraryContentTarget', { path: error.data.path });
+      if (error.data.capability === 'installedSkillFormat') return t('mutation.result.errors.installedSkillFormat', { path: error.data.path });
+      if (error.data.capability === 'sharedSkillLinkSource') return t('mutation.result.errors.sharedSkillLinkSource', { path: error.data.path });
+      if (error.data.capability === 'eveSingleFile') return t('mutation.result.errors.eveSingleFile', { path: error.data.path });
+      if (error.data.capability === 'installedSkillSourceAmbiguous') return t('mutation.result.errors.installedSkillSourceAmbiguous', { path: error.data.path });
+      if (error.data.capability === 'sourceDirectoryLinks') return t('addSkill.source.error.acquisitionReason.directoryLinksUnsupported');
+      if (error.data.capability === 'sourceSessionCapacity') return t('mutation.result.errors.sourceContentCapacity');
+      if (error.data.capability === 'payloadSessionCapacity') return t('mutation.result.errors.preparedContentCapacity');
       if (error.kind === 'capabilityUnavailable'
         && (error.data.capability === 'runtimeMaintenancePending'
           || error.data.capability === 'runtimeMaintenanceFailed')) {
@@ -149,6 +157,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('libraries.updateStatus.nameChangeBlocked');
     case 'upstreamSkillDeleted':
       return t('libraries.updateStatus.deletedUpstream');
+    case 'configurationWriteUnconfirmed':
+      return t('mutation.result.errors.configurationWriteUnconfirmed');
     case 'executionFailed':
     case 'restoreFailed':
     case 'recoveryRequired':

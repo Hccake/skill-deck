@@ -9,29 +9,32 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use crate::application::collection_records::CollectionRecordReader;
 use crate::application::installed_skill_resolver::InstalledSkillResolver;
 use crate::application::library_application::{
-    library_usage_state, LibraryApplicationFuture, LibraryApplicationRecord,
-    LibraryApplicationRepository, LibraryUsageAccumulator, LIBRARY_APPLICATION_SCHEMA_VERSION,
+    library_usage_state, validate_application_record, ApplicationInventory,
+    ApplicationInventoryProblem, ApplicationRegistry, LibraryApplicationFuture,
+    LibraryApplicationRecord, LibraryApplicationResources, LibraryUsageAccumulator,
+    VersionedApplicationRecord,
+};
+use crate::application::library_membership::{apply_membership_change, MembershipChange};
+use crate::application::payload_session::{
+    PayloadLocalSource, PayloadSessionStorage, PayloadStorageKey,
 };
 use crate::application::skill_libraries::{
     validate_catalog, CommitLibraryMemberRequest, LibraryCatalog, LibraryFuture, LibraryId,
-    LibraryMemberMutation, LibraryUsage, LibraryUsageProjection, LibraryUsageProvider,
-    LibraryUsageState, SkillLibraryRepository,
+    LibraryMemberMutation, LibraryUsage, LibraryUsageProvider, LibraryUsageSnapshot,
+    LibraryUsageState, PurgeRetiredLibraryMemberRequest, SkillLibraryRepository,
 };
 use crate::application::skill_paths::{ResolvedSkillRoot, SkillPathObserver};
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::skill_payload::SkillPayload;
 use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
 use crate::environment::native::entry::{materialize_payload, verify_materialized_payload};
+use crate::environment::runtime::PhysicalParentIdentity;
 use crate::environment::types::{
     EnvironmentKey, EnvironmentRef, ProjectInfo, RegisteredProject, ResourceLocator,
 };
 use crate::environment::types::{SkillLocation, SkillLocationRef};
+use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::operations::library_content::{
-    ensure_library_roots, finalize_library_catalog, prepare_library_catalog,
-    recover_library_content, remove_library as remove_wsl_library, remove_library_application,
-    replace_library_skill, stage_library_skill_deletion,
-};
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::storage::atomic_document::AtomicDocumentIo;
@@ -143,6 +146,19 @@ impl RuntimeSkillLibraryRepository {
         );
         Ok(candidates)
     }
+
+    async fn usage_metadata(
+        &self,
+        environment: &EnvironmentRef,
+    ) -> HashMap<SkillLocationRef, Option<RegisteredProject>> {
+        match self.usage_candidates(environment).await {
+            Ok(candidates) => candidates.into_iter().collect(),
+            Err(error) => {
+                log::warn!("Skill Library project metadata is unavailable: {error}");
+                HashMap::new()
+            }
+        }
+    }
 }
 
 impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
@@ -167,7 +183,7 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     let distro_name = distro_name.clone();
                     let library_id = library_id.as_str().to_string();
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             async move {
                                 Ok((
@@ -207,23 +223,17 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                         })??
                 }
                 EnvironmentRef::Wsl { distro_name } => {
-                    let distro_name = distro_name.clone();
                     self.wsl
-                        .with_session_retry(&distro_name, |session| async move {
-                            recover_wsl_library_content(&session).await?;
-                            let target = wsl_catalog_locator(&session);
-                            WslAtomicDocumentIo::from_active_session(session.clone())
-                                .read_optional(&target)
-                                .await
-                        })
+                        .workspace(distro_name)?
+                        .read_library_catalog()
                         .await?
                 }
             };
-            let catalog = bytes
-                .map(|bytes| serde_json::from_slice(&bytes).map_err(AppError::from))
-                .unwrap_or_else(|| Ok(LibraryCatalog::default()))?;
-            validate_catalog(&catalog)?;
-            Ok(catalog)
+            bytes
+                .as_deref()
+                .map(parse_library_catalog)
+                .transpose()
+                .map(|catalog| catalog.unwrap_or_default())
         })
     }
 
@@ -235,7 +245,6 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
         Box::pin(async move {
             let _io = self.io.acquire(environment).await;
             let bytes = serde_json::to_vec_pretty(catalog)?;
-            let catalog_hash = bytes_sha256(&bytes);
             match environment {
                 EnvironmentRef::Native => {
                     let root = self.native_root.clone();
@@ -253,37 +262,27 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     })?
                 }
                 EnvironmentRef::Wsl { distro_name } => {
-                    let distro_name = distro_name.clone();
-                    self.wsl
-                        .with_session_retry(&distro_name, move |session| {
-                            let bytes = bytes.clone();
-                            let catalog_hash = catalog_hash.clone();
-                            let library_ids = catalog
-                                .libraries
-                                .iter()
-                                .map(|library| library.id.as_str().to_string())
-                                .collect::<Vec<_>>();
-                            async move {
-                                let result = async {
-                                    recover_wsl_library_content(&session).await?;
-                                    ensure_library_roots(&session, &library_ids).await?;
-                                    prepare_library_catalog(&session, &catalog_hash).await?;
-                                    let target = wsl_catalog_locator(&session);
-                                    WslAtomicDocumentIo::from_active_session(session.clone())
-                                        .write_atomic(&target, bytes)
-                                        .await?;
-                                    finalize_library_catalog(&session, &catalog_hash).await
-                                }
-                                .await;
-                                let result = if result.is_err() {
-                                    recover_wsl_library_content(&session).await.and(result)
-                                } else {
-                                    result
-                                };
-                                result
-                            }
-                        })
+                    let workspace = self.wsl.workspace(distro_name)?;
+                    let snapshot = workspace.read_library_catalog_once().await?;
+                    workspace
+                        .execute_library_operation(
+                            snapshot.generation,
+                            environment_protocol::LibraryOperationRequest {
+                                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                                expected_catalog_revision: snapshot.revision,
+                                catalog_bytes: bytes,
+                                action: environment_protocol::LibraryOperationAction::SaveCatalog {
+                                    library_ids: catalog
+                                        .libraries
+                                        .iter()
+                                        .map(|library| library.id.as_str().to_string())
+                                        .collect(),
+                                },
+                                deadline_millis: 60_000,
+                            },
+                        )
                         .await
+                        .map(|_| ())
                 }
             }
         })
@@ -307,12 +306,44 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                 return Err(AppError::StaleEnvironment);
             };
             let distro_name = distro_name.clone();
+            let workspace = self.wsl.workspace(&distro_name)?;
             self.wsl
-                .with_session_retry(&distro_name, move |session| {
+                .with_session(&distro_name, move |session| {
                     let request = request.clone();
-                    async move { commit_wsl_member(&session, request).await }
+                    let workspace = workspace.clone();
+                    async move { commit_wsl_member(&session, &workspace, request).await }
                 })
                 .await
+        })
+    }
+
+    fn purge_retired<'a>(
+        &'a self,
+        request: PurgeRetiredLibraryMemberRequest,
+    ) -> LibraryFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            let _io = self.io.acquire(&request.environment).await;
+            match &request.environment {
+                EnvironmentRef::Native => {
+                    let root = self.native_root.clone();
+                    tokio::task::spawn_blocking(move || purge_native_retired(&root, request))
+                        .await
+                        .map_err(|error| AppError::ExecutionFailed {
+                            message: format!("retired Library member purge task failed: {error}"),
+                        })?
+                }
+                EnvironmentRef::Wsl { distro_name } => {
+                    let distro_name = distro_name.clone();
+                    let workspace = self.wsl.workspace(&distro_name)?;
+                    self.wsl
+                        .with_session(&distro_name, move |session| {
+                            let workspace = workspace.clone();
+                            let request = request.clone();
+                            async move { purge_wsl_retired(&session, &workspace, request).await }
+                        })
+                        .await
+                }
+            }
         })
     }
 
@@ -337,10 +368,14 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                 EnvironmentRef::Wsl { distro_name } => {
                     let distro_name = distro_name.clone();
                     let library_id = library_id.as_str().to_string();
+                    let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session(&distro_name, move |session| {
                             let library_id = library_id.clone();
-                            async move { delete_wsl_library(&session, &library_id).await }
+                            let workspace = workspace.clone();
+                            async move {
+                                delete_wsl_library(&session, &workspace, &library_id).await
+                            }
                         })
                         .await
                 }
@@ -373,22 +408,28 @@ impl SkillLibraryRepository for RuntimeSkillLibraryRepository {
                     let distro_name = distro_name.clone();
                     let library_id = library_id.as_str().to_string();
                     let skill_name = install_dir_name;
-                    self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                    let path = self
+                        .wsl
+                        .with_session_read_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             let skill_name = skill_name.clone();
                             async move {
-                                let path = format!(
+                                Ok(format!(
                                     "{}/.skill-deck/skill-libraries/libraries/{}/skills/{}",
                                     session.home.trim_end_matches('/'),
                                     library_id,
                                     skill_name
-                                );
-                                let markdown = crate::environment::wsl::operations::skill_content::read_skill_markdown(&session, &path).await?;
-                                Ok(crate::core::skill::skill_content_from_markdown(&markdown))
+                                ))
                             }
                         })
-                        .await
+                        .await?;
+                    let workspace = self.wsl.workspace(&distro_name)?;
+                    let markdown =
+                        crate::environment::wsl::operations::skill_content::read_skill_markdown(
+                            &workspace, &path,
+                        )
+                        .await?;
+                    Ok(crate::core::skill::skill_content_from_markdown(&markdown))
                 }
             }
         })
@@ -403,12 +444,16 @@ impl LibraryUsageProvider for RuntimeSkillLibraryRepository {
     ) -> LibraryFuture<'a, Result<Vec<LibraryUsage>, AppError>> {
         Box::pin(async move {
             let mut usages = Vec::new();
-            for (context, project) in self.usage_candidates(environment).await? {
-                let record = self.load_application(&context).await?;
-                if let Some(state) = library_usage_state(&record, library_id) {
+            let inventory = self.enumerate(environment).await?;
+            report_inventory_problems(&inventory);
+            require_complete_inventory(&inventory)?;
+            let projects = self.usage_metadata(environment).await;
+            for application in inventory.records {
+                if let Some(state) = library_usage_state(&application.record, library_id) {
+                    let context = application.context;
                     usages.push(LibraryUsage {
+                        project: projects.get(&context).cloned().flatten(),
                         context,
-                        project,
                         state,
                     });
                 }
@@ -420,13 +465,21 @@ impl LibraryUsageProvider for RuntimeSkillLibraryRepository {
     fn usage_projection<'a>(
         &'a self,
         environment: &'a EnvironmentRef,
-    ) -> LibraryFuture<'a, Result<Vec<LibraryUsageProjection>, AppError>> {
+    ) -> LibraryFuture<'a, Result<LibraryUsageSnapshot, AppError>> {
         Box::pin(async move {
             let mut accumulator = LibraryUsageAccumulator::default();
-            for (context, _) in self.usage_candidates(environment).await? {
-                accumulator.observe(&self.load_application(&context).await?);
+            let inventory = self.enumerate(environment).await?;
+            report_inventory_problems(&inventory);
+            let inventory_complete = inventory.complete;
+            let problem_count = u32::try_from(inventory.problems.len()).unwrap_or(u32::MAX);
+            for application in inventory.records {
+                accumulator.observe(&application.record);
             }
-            Ok(accumulator.finish())
+            Ok(LibraryUsageSnapshot {
+                projections: accumulator.finish(),
+                inventory_complete,
+                problem_count,
+            })
         })
     }
 
@@ -437,11 +490,19 @@ impl LibraryUsageProvider for RuntimeSkillLibraryRepository {
     ) -> LibraryFuture<'a, Result<Vec<LibraryUsage>, AppError>> {
         Box::pin(async move {
             let mut usages = Vec::new();
-            for (context, project) in self.usage_candidates(environment).await? {
-                let record = self.load_application(&context).await?;
-                let state = if record.current.selected_agent_ids.contains(agent_id) {
+            let inventory = self.enumerate(environment).await?;
+            report_inventory_problems(&inventory);
+            require_complete_inventory(&inventory)?;
+            let projects = self.usage_metadata(environment).await;
+            for application in inventory.records {
+                let state = if application
+                    .record
+                    .current
+                    .selected_agent_ids
+                    .contains(agent_id)
+                {
                     Some(LibraryUsageState::Confirmed)
-                } else if record.pending_operation.as_ref().is_some_and(|pending| {
+                } else if application.record.pending.as_ref().is_some_and(|pending| {
                     pending
                         .before_application
                         .selected_agent_ids
@@ -456,9 +517,10 @@ impl LibraryUsageProvider for RuntimeSkillLibraryRepository {
                     None
                 };
                 if let Some(state) = state {
+                    let context = application.context;
                     usages.push(LibraryUsage {
+                        project: projects.get(&context).cloned().flatten(),
                         context,
-                        project,
                         state,
                     });
                 }
@@ -468,80 +530,194 @@ impl LibraryUsageProvider for RuntimeSkillLibraryRepository {
     }
 }
 
-impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
+fn report_inventory_problems(inventory: &ApplicationInventory) {
+    if inventory.complete {
+        return;
+    }
+    for problem in &inventory.problems {
+        log::warn!(
+            "Skill Library application inventory skipped {}: {}",
+            problem.storage_key,
+            problem.error
+        );
+    }
+}
+
+fn require_complete_inventory(inventory: &ApplicationInventory) -> Result<(), AppError> {
+    if inventory.complete {
+        Ok(())
+    } else {
+        Err(AppError::ConfigurationCorrupted {
+            message: "Skill Library application inventory is incomplete".to_string(),
+        })
+    }
+}
+
+impl ApplicationRegistry for RuntimeSkillLibraryRepository {
     fn load_application<'a>(
         &'a self,
         context: &'a SkillLocationRef,
-    ) -> LibraryApplicationFuture<'a, Result<LibraryApplicationRecord, AppError>> {
+    ) -> LibraryApplicationFuture<'a, Result<VersionedApplicationRecord, AppError>> {
         Box::pin(async move {
-            let bytes = match &context.environment {
+            let (target, snapshot) = match &context.environment {
                 EnvironmentRef::Native => {
-                    NativeAtomicDocumentIo
-                        .read_optional(&self.native_application(context)?)
-                        .await?
+                    let target = self.native_application(context)?;
+                    let snapshot = NativeAtomicDocumentIo
+                        .observe(&target, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                        .await?;
+                    (target, snapshot)
                 }
                 EnvironmentRef::Wsl { distro_name } => {
                     let distro_name = distro_name.clone();
                     let context = context.clone();
+                    let workspace = self.wsl.workspace(&distro_name)?;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let context = context.clone();
+                            let workspace = workspace.clone();
                             async move {
                                 let target = wsl_application_locator(&session, &context.scope)?;
-                                WslAtomicDocumentIo::from_active_session(session)
-                                    .read_optional(&target)
-                                    .await
+                                let snapshot =
+                                    WslAtomicDocumentIo::from_active_session(session, workspace)
+                                        .observe(
+                                            &target,
+                                            u64::from(environment_protocol::MAX_DOCUMENT_BYTES),
+                                        )
+                                        .await?;
+                                Ok((target, snapshot))
                             }
                         })
                         .await?
                 }
             };
-            let record = bytes
-                .map(|bytes| serde_json::from_slice(&bytes).map_err(AppError::from))
-                .unwrap_or_else(|| Ok(LibraryApplicationRecord::empty(context.clone())))?;
-            if record.schema_version != LIBRARY_APPLICATION_SCHEMA_VERSION
-                || record.target != *context
-            {
-                return Err(AppError::ConfigurationCorrupted {
-                    message: "invalid Skill Library application record".to_string(),
-                });
-            }
-            Ok(record)
+            let record = snapshot
+                .bytes
+                .as_deref()
+                .map(parse_library_application_record)
+                .unwrap_or_else(|| Ok(LibraryApplicationRecord::empty()))?;
+            Ok(VersionedApplicationRecord {
+                context: context.clone(),
+                record,
+                target,
+                snapshot,
+            })
         })
     }
 
-    fn save_application<'a>(
+    fn save_application_if<'a>(
         &'a self,
+        observed: &'a VersionedApplicationRecord,
         record: &'a LibraryApplicationRecord,
-    ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
+    ) -> LibraryApplicationFuture<'a, Result<VersionedApplicationRecord, AppError>> {
         Box::pin(async move {
+            validate_application_record(record)?;
             let bytes = serde_json::to_vec_pretty(record)?;
-            match &record.target.environment {
-                EnvironmentRef::Native => {
-                    NativeAtomicDocumentIo
-                        .write_atomic(&self.native_application(&record.target)?, bytes)
+            let snapshot = match &observed.context.environment {
+                EnvironmentRef::Native => NativeAtomicDocumentIo
+                    .replace(&observed.target, observed.snapshot.clone(), bytes)
+                    .await
+                    .map_err(crate::storage::atomic_document::DocumentWriteFailure::into_error)?,
+                EnvironmentRef::Wsl { distro_name } => {
+                    let workspace = self.wsl.workspace(distro_name)?;
+                    WslAtomicDocumentIo::new(workspace)
+                        .replace(&observed.target, observed.snapshot.clone(), bytes)
                         .await
+                        .map_err(
+                            crate::storage::atomic_document::DocumentWriteFailure::into_error,
+                        )?
+                }
+            };
+            Ok(VersionedApplicationRecord {
+                context: observed.context.clone(),
+                record: record.clone(),
+                target: observed.target.clone(),
+                snapshot,
+            })
+        })
+    }
+
+    fn enumerate<'a>(
+        &'a self,
+        environment: &'a EnvironmentRef,
+    ) -> LibraryApplicationFuture<'a, Result<ApplicationInventory, AppError>> {
+        Box::pin(async move {
+            let contexts = match environment {
+                EnvironmentRef::Native => {
+                    let root = self.native_root.join("applications");
+                    tokio::task::spawn_blocking(move || native_application_contexts(&root))
+                        .await
+                        .map_err(|error| AppError::ExecutionFailed {
+                            message: format!("application inventory task failed: {error}"),
+                        })??
                 }
                 EnvironmentRef::Wsl { distro_name } => {
-                    let distro_name = distro_name.clone();
-                    let scope = record.target.scope.clone();
-                    self.wsl
-                        .with_session_retry(&distro_name, move |session| {
-                            let bytes = bytes.clone();
-                            let scope = scope.clone();
-                            async move {
-                                let target = wsl_application_locator(&session, &scope)?;
-                                WslAtomicDocumentIo::from_active_session(session)
-                                    .write_atomic(&target, bytes)
-                                    .await
-                            }
+                    let index = self
+                        .wsl
+                        .workspace(distro_name)?
+                        .list_library_applications()
+                        .await?;
+                    let mut scopes = vec![("global".to_string(), SkillLocation::Global)];
+                    let mut problems = index
+                        .problem_keys
+                        .into_iter()
+                        .map(|storage_key| ApplicationInventoryProblem {
+                            storage_key,
+                            error: AppError::ConfigurationCorrupted {
+                                message: "invalid Skill Library application Scope key".to_string(),
+                            },
                         })
-                        .await
+                        .collect::<Vec<_>>();
+                    for project_id in index.project_ids {
+                        if let Err(error) = validate_storage_component(&project_id) {
+                            problems.push(ApplicationInventoryProblem {
+                                storage_key: format!("projects/{project_id}.json"),
+                                error,
+                            });
+                            continue;
+                        }
+                        scopes.push((
+                            format!("projects/{project_id}.json"),
+                            SkillLocation::Project { project_id },
+                        ));
+                    }
+                    if !index.complete && problems.is_empty() {
+                        problems.push(ApplicationInventoryProblem {
+                            storage_key: "applications".to_string(),
+                            error: AppError::ConfigurationCorrupted {
+                                message: "incomplete Skill Library application inventory"
+                                    .to_string(),
+                            },
+                        });
+                    }
+                    ApplicationContexts { scopes, problems }
+                }
+            };
+            let mut records = Vec::new();
+            let mut problems = contexts.problems;
+            for (storage_key, scope) in contexts.scopes {
+                let context = SkillLocationRef {
+                    environment: environment.clone(),
+                    scope,
+                };
+                match self.load_application(&context).await {
+                    Ok(record) => records.push(record),
+                    Err(error) => problems.push(ApplicationInventoryProblem { storage_key, error }),
                 }
             }
+            records.sort_by(|left, right| {
+                application_scope_key(&left.context.scope)
+                    .cmp(&application_scope_key(&right.context.scope))
+            });
+            Ok(ApplicationInventory {
+                complete: problems.is_empty(),
+                records,
+                problems,
+            })
         })
     }
+}
 
+impl LibraryApplicationResources for RuntimeSkillLibraryRepository {
     fn library_skill_locator<'a>(
         &'a self,
         context: &'a SkillLocationRef,
@@ -564,7 +740,7 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
                     let library_id = library_id.as_str().to_string();
                     let skill_name = install_dir_name;
                     self.wsl
-                        .with_session_retry(&distro_name, move |session| {
+                        .with_session_read_retry(&distro_name, move |session| {
                             let library_id = library_id.clone();
                             let skill_name = skill_name.clone();
                             async move {
@@ -594,42 +770,31 @@ impl LibraryApplicationRepository for RuntimeSkillLibraryRepository {
         Box::pin(async move { SkillLibraryRepository::load(self, &context.environment).await })
     }
 
-    fn remove_application<'a>(
+    fn remove_application_if<'a>(
         &'a self,
-        context: &'a SkillLocationRef,
+        observed: &'a VersionedApplicationRecord,
     ) -> LibraryApplicationFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
-            let SkillLocation::Project { project_id } = &context.scope else {
+            let SkillLocation::Project { project_id } = &observed.context.scope else {
                 return Err(AppError::Validation {
                     field: Some("context".to_string()),
                     message: "only Project Skill Library applications can be removed".to_string(),
                 });
             };
             validate_storage_component(project_id)?;
-            match &context.environment {
+            let result = match &observed.context.environment {
                 EnvironmentRef::Native => {
-                    let path = PathBuf::from(self.native_application(context)?.native_path);
-                    tokio::task::spawn_blocking(move || match fs::remove_file(path) {
-                        Ok(()) => Ok(()),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                        Err(error) => Err(AppError::from(error)),
-                    })
-                    .await
-                    .map_err(|error| AppError::ExecutionFailed {
-                        message: format!("Skill Library application cleanup task failed: {error}"),
-                    })?
-                }
-                EnvironmentRef::Wsl { distro_name } => {
-                    let distro_name = distro_name.clone();
-                    let project_id = project_id.clone();
-                    self.wsl
-                        .with_session_retry(&distro_name, move |session| {
-                            let project_id = project_id.clone();
-                            async move { remove_library_application(&session, &project_id).await }
-                        })
+                    NativeAtomicDocumentIo
+                        .remove(&observed.target, observed.snapshot.clone())
                         .await
                 }
-            }
+                EnvironmentRef::Wsl { distro_name } => {
+                    WslAtomicDocumentIo::new(self.wsl.workspace(distro_name)?)
+                        .remove(&observed.target, observed.snapshot.clone())
+                        .await
+                }
+            };
+            result.map_err(crate::storage::atomic_document::DocumentWriteFailure::into_error)
         })
     }
 }
@@ -671,6 +836,26 @@ fn load_native_catalog_bytes(root: &Path) -> Result<Option<Vec<u8>>, AppError> {
     Ok(bytes)
 }
 
+fn parse_library_catalog(bytes: &[u8]) -> Result<LibraryCatalog, AppError> {
+    let catalog = serde_json::from_slice(bytes)
+        .map_err(|error| invalid_library_document("catalog", error))?;
+    validate_catalog(&catalog)?;
+    Ok(catalog)
+}
+
+fn parse_library_application_record(bytes: &[u8]) -> Result<LibraryApplicationRecord, AppError> {
+    let record = serde_json::from_slice(bytes)
+        .map_err(|error| invalid_library_document("application record", error))?;
+    validate_application_record(&record)?;
+    Ok(record)
+}
+
+fn invalid_library_document(kind: &str, error: serde_json::Error) -> AppError {
+    AppError::ConfigurationCorrupted {
+        message: format!("Skill Library {kind} does not match the current data format: {error}"),
+    }
+}
+
 fn save_native_catalog(
     root: &Path,
     library_ids: &[LibraryId],
@@ -690,6 +875,20 @@ fn save_native_catalog(
     crate::environment::native::atomic_file::write_native_atomic(&root.join("catalog.json"), bytes)
 }
 
+fn save_native_catalog_if_unchanged(
+    root: &Path,
+    expected: Option<&[u8]>,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    environment_engine::atomic_document::replace_if_unchanged(
+        &root.join("catalog.json"),
+        expected,
+        bytes,
+    )
+    .map_err(crate::storage::atomic_document::DocumentWriteFailure::from_engine)
+    .map_err(crate::storage::atomic_document::DocumentWriteFailure::into_error)
+}
+
 fn delete_native_library(root: &Path, library_id: &LibraryId) -> Result<LibraryCatalog, AppError> {
     let original_bytes = match fs::read(root.join("catalog.json")) {
         Ok(bytes) => bytes,
@@ -702,56 +901,93 @@ fn delete_native_library(root: &Path, library_id: &LibraryId) -> Result<LibraryC
     };
     let original_hash = bytes_sha256(&original_bytes);
     recover_native_library_transactions(root, Some(&original_hash))?;
-    let mut catalog: LibraryCatalog = serde_json::from_slice(&original_bytes)?;
-    validate_catalog(&catalog)?;
+    let mut catalog = parse_library_catalog(&original_bytes)?;
     remove_catalog_library(&mut catalog, library_id.as_str())?;
     let updated_bytes = serde_json::to_vec_pretty(&catalog)?;
-    crate::environment::native::atomic_file::write_native_atomic(
-        &root.join("catalog.json"),
-        &updated_bytes,
-    )?;
     let destination = root.join("libraries").join(library_id.as_str());
-    match fs::remove_dir_all(destination) {
-        Ok(()) => Ok(catalog),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(catalog),
-        Err(error) => {
-            crate::environment::native::atomic_file::write_native_atomic(
-                &root.join("catalog.json"),
-                &original_bytes,
-            )?;
-            Err(error.into())
+    let metadata = match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Some(metadata),
+        Ok(_) => return Err(AppError::StaleTarget),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.is_none() {
+        save_native_catalog_if_unchanged(root, Some(&original_bytes), &updated_bytes)?;
+        return Ok(catalog);
+    }
+    let catalog_hash = bytes_sha256(&updated_bytes);
+    let commit = (|| {
+        stage_native_skill_deletion(root, &destination)?;
+        prepare_native_catalog_commit(root, &catalog_hash)?;
+        save_native_catalog_if_unchanged(root, Some(&original_bytes), &updated_bytes)?;
+        finalize_native_catalog_commit(root, &catalog_hash)
+    })();
+    if let Err(error) = commit {
+        let current_hash = fs::read(root.join("catalog.json"))
+            .ok()
+            .map(|bytes| bytes_sha256(&bytes));
+        recover_native_library_transactions(root, current_hash.as_deref())?;
+        if current_hash.as_deref() != Some(&catalog_hash) {
+            return Err(error);
         }
     }
+    Ok(catalog)
 }
 
 async fn delete_wsl_library(
     session: &crate::environment::wsl::WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     library_id: &str,
 ) -> Result<LibraryCatalog, AppError> {
-    recover_wsl_library_content(session).await?;
-    let target = wsl_catalog_locator(session);
-    let io = WslAtomicDocumentIo::from_active_session(session.clone());
-    let original_bytes =
-        io.read_optional(&target)
-            .await?
-            .ok_or_else(|| AppError::PathNotFound {
-                path: library_id.to_string(),
-            })?;
-    let mut catalog: LibraryCatalog = serde_json::from_slice(&original_bytes)?;
-    validate_catalog(&catalog)?;
+    let snapshot = workspace.read_library_catalog_once().await?;
+    if snapshot.generation != session.runtime_generation {
+        return Err(AppError::StaleEnvironment);
+    }
+    let original_bytes = snapshot.bytes.ok_or_else(|| AppError::PathNotFound {
+        path: library_id.to_string(),
+    })?;
+    let mut catalog = parse_library_catalog(&original_bytes)?;
     remove_catalog_library(&mut catalog, library_id)?;
     let updated_bytes = serde_json::to_vec_pretty(&catalog)?;
-    let updated_hash = bytes_sha256(&updated_bytes);
-    prepare_library_catalog(session, &updated_hash).await?;
-    io.write_atomic(&target, updated_bytes).await?;
-    finalize_library_catalog(session, &updated_hash).await?;
-    if let Err(error) = remove_wsl_library(session, library_id).await {
-        let original_hash = bytes_sha256(&original_bytes);
-        prepare_library_catalog(session, &original_hash).await?;
-        io.write_atomic(&target, original_bytes).await?;
-        finalize_library_catalog(session, &original_hash).await?;
-        return Err(error);
-    }
+    let destination = format!(
+        "{}/.skill-deck/skill-libraries/libraries/{library_id}",
+        session.home.trim_end_matches('/'),
+    );
+    let target = crate::environment::planning::resolve_wsl_targets(
+        session,
+        workspace,
+        std::slice::from_ref(&destination),
+        None,
+    )
+    .await?
+    .pop()
+    .ok_or(AppError::StaleTarget)?;
+    let (expected_anchor_device, expected_anchor_inode) = match &target.key.physical_parent {
+        PhysicalParentIdentity::Wsl {
+            distro_name,
+            device,
+            inode,
+        } if distro_name.eq_ignore_ascii_case(&session.distro_name) => (*device, *inode),
+        _ => return Err(AppError::StaleTarget),
+    };
+    workspace
+        .execute_library_operation(
+            snapshot.generation,
+            environment_protocol::LibraryOperationRequest {
+                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                expected_catalog_revision: snapshot.revision,
+                catalog_bytes: updated_bytes,
+                action: environment_protocol::LibraryOperationAction::DeleteLibrary {
+                    library_id: library_id.to_string(),
+                    expected_anchor_device,
+                    expected_anchor_inode,
+                    expected_fingerprint: target.fingerprint.0,
+                    expected_content_hash: None,
+                },
+                deadline_millis: 60_000,
+            },
+        )
+        .await?;
     Ok(catalog)
 }
 
@@ -768,11 +1004,209 @@ fn remove_catalog_library(catalog: &mut LibraryCatalog, library_id: &str) -> Res
     Ok(())
 }
 
+fn retired_member<'a>(
+    catalog: &'a LibraryCatalog,
+    request: &PurgeRetiredLibraryMemberRequest,
+) -> Result<&'a crate::application::skill_libraries::RetiredLibrarySkillRecord, AppError> {
+    let retired = catalog
+        .libraries
+        .iter()
+        .find(|library| library.id == request.library_id)
+        .and_then(|library| {
+            library
+                .retired_skills
+                .iter()
+                .find(|retired| retired.member.name == request.skill_name)
+        })
+        .ok_or_else(|| AppError::PathNotFound {
+            path: request.skill_name.clone(),
+        })?;
+    if retired.retirement_id != request.retirement_id {
+        return Err(AppError::StaleTarget);
+    }
+    Ok(retired)
+}
+
+fn purge_native_retired(
+    root: &Path,
+    request: PurgeRetiredLibraryMemberRequest,
+) -> Result<(), AppError> {
+    let original_bytes = fs::read(root.join("catalog.json"))?;
+    let original_hash = bytes_sha256(&original_bytes);
+    recover_native_library_transactions(root, Some(&original_hash))?;
+    let mut catalog = parse_library_catalog(&original_bytes)?;
+    let expected_hash = retired_member(&catalog, &request)?
+        .member
+        .content_manifest_hash
+        .clone();
+    let destination = root
+        .join("libraries")
+        .join(request.library_id.as_str())
+        .join("skills")
+        .join(InstalledSkillResolver::install_dir_name(
+            &request.skill_name,
+        )?);
+    let locator = ResourceLocator {
+        environment: EnvironmentRef::Native,
+        native_path: destination.to_string_lossy().into_owned(),
+    };
+    let target = crate::environment::planning::resolve_native_targets(&[locator])?
+        .pop()
+        .ok_or(AppError::StaleTarget)?;
+    match target.entry_kind {
+        crate::environment::planning::TargetEntryKind::Directory => {
+            let actual =
+                crate::environment::native::content_manifest::read_directory(&destination)?;
+            if actual.hash().as_str() != expected_hash {
+                return Err(AppError::StaleTarget);
+            }
+        }
+        crate::environment::planning::TargetEntryKind::Missing => {}
+        _ => return Err(AppError::StaleTarget),
+    }
+    apply_membership_change(
+        &mut catalog,
+        &request.library_id,
+        &request.skill_name,
+        MembershipChange::Purge {
+            retirement_id: request.retirement_id,
+        },
+    )?;
+    let catalog_bytes = serde_json::to_vec_pretty(&catalog)?;
+    let catalog_hash = bytes_sha256(&catalog_bytes);
+    if target.entry_kind == crate::environment::planning::TargetEntryKind::Missing {
+        return save_native_catalog_if_unchanged(root, Some(&original_bytes), &catalog_bytes);
+    }
+    let commit = (|| {
+        stage_native_skill_deletion(root, &destination)?;
+        prepare_native_catalog_commit(root, &catalog_hash)?;
+        save_native_catalog_if_unchanged(root, Some(&original_bytes), &catalog_bytes)?;
+        finalize_native_catalog_commit(root, &catalog_hash)
+    })();
+    if let Err(error) = commit {
+        let current_hash = fs::read(root.join("catalog.json"))
+            .ok()
+            .map(|bytes| bytes_sha256(&bytes));
+        recover_native_library_transactions(root, current_hash.as_deref())?;
+        if current_hash.as_deref() == Some(&catalog_hash) {
+            return Ok(());
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn purge_wsl_retired(
+    session: &crate::environment::wsl::WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
+    request: PurgeRetiredLibraryMemberRequest,
+) -> Result<(), AppError> {
+    let snapshot = workspace.read_library_catalog_once().await?;
+    if snapshot.generation != session.runtime_generation {
+        return Err(AppError::StaleEnvironment);
+    }
+    let mut catalog = snapshot
+        .bytes
+        .as_deref()
+        .map(parse_library_catalog)
+        .transpose()?
+        .ok_or_else(|| AppError::PathNotFound {
+            path: request.library_id.as_str().to_string(),
+        })?;
+    let expected_hash = retired_member(&catalog, &request)?
+        .member
+        .content_manifest_hash
+        .clone();
+    let destination = format!(
+        "{}/.skill-deck/skill-libraries/libraries/{}/skills/{}",
+        session.home.trim_end_matches('/'),
+        request.library_id.as_str(),
+        InstalledSkillResolver::install_dir_name(&request.skill_name)?,
+    );
+    let target = crate::environment::planning::resolve_wsl_targets(
+        session,
+        workspace,
+        std::slice::from_ref(&destination),
+        None,
+    )
+    .await?
+    .pop()
+    .ok_or(AppError::StaleTarget)?;
+    let expected_content_hash = match target.entry_kind {
+        crate::environment::planning::TargetEntryKind::Directory => {
+            let manifest = crate::environment::wsl::operations::content_manifest::inspect(
+                workspace,
+                &crate::environment::content_manifest::ContentManifestTarget {
+                    key: target.key.clone(),
+                    location: target.destination.clone(),
+                },
+                None,
+            )
+            .await?;
+            if manifest.hash().as_str() != expected_hash {
+                return Err(AppError::StaleTarget);
+            }
+            Some(expected_hash)
+        }
+        crate::environment::planning::TargetEntryKind::Missing => None,
+        _ => return Err(AppError::StaleTarget),
+    };
+    apply_membership_change(
+        &mut catalog,
+        &request.library_id,
+        &request.skill_name,
+        MembershipChange::Purge {
+            retirement_id: request.retirement_id,
+        },
+    )?;
+    let catalog_bytes = serde_json::to_vec_pretty(&catalog)?;
+    let action = if target.entry_kind == crate::environment::planning::TargetEntryKind::Missing {
+        environment_protocol::LibraryOperationAction::SaveCatalog {
+            library_ids: catalog
+                .libraries
+                .iter()
+                .map(|library| library.id.as_str().to_string())
+                .collect(),
+        }
+    } else {
+        let (expected_anchor_device, expected_anchor_inode) = match target.key.physical_parent {
+            PhysicalParentIdentity::Wsl {
+                ref distro_name,
+                device,
+                inode,
+            } if distro_name.eq_ignore_ascii_case(&session.distro_name) => (device, inode),
+            _ => return Err(AppError::StaleTarget),
+        };
+        environment_protocol::LibraryOperationAction::CommitMember {
+            library_id: request.library_id.as_str().to_string(),
+            skill_name: InstalledSkillResolver::install_dir_name(&request.skill_name)?,
+            expected_anchor_device,
+            expected_anchor_inode,
+            expected_fingerprint: target.fingerprint.0,
+            expected_content_hash,
+            mutation: environment_protocol::LibraryMemberAction::Delete,
+        }
+    };
+    workspace
+        .execute_library_operation(
+            snapshot.generation,
+            environment_protocol::LibraryOperationRequest {
+                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                expected_catalog_revision: snapshot.revision,
+                catalog_bytes,
+                action,
+                deadline_millis: 60_000,
+            },
+        )
+        .await
+        .map(|_| ())
+}
+
 async fn commit_wsl_member(
     session: &crate::environment::wsl::WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     request: CommitLibraryMemberRequest,
 ) -> Result<(), AppError> {
-    recover_wsl_library_content(session).await?;
     validate_storage_component(request.library_id.as_str())?;
     let install_dir_name = InstalledSkillResolver::install_dir_name(&request.skill_name)?;
     let destination = format!(
@@ -783,6 +1217,7 @@ async fn commit_wsl_member(
     );
     let target = crate::environment::planning::resolve_wsl_targets(
         session,
+        workspace,
         std::slice::from_ref(&destination),
         None,
     )
@@ -793,7 +1228,7 @@ async fn commit_wsl_member(
     {
         Some(
             crate::environment::wsl::operations::content_manifest::inspect(
-                session,
+                workspace,
                 &crate::environment::content_manifest::ContentManifestTarget {
                     key: target.key.clone(),
                     location: target.destination.clone(),
@@ -809,7 +1244,8 @@ async fn commit_wsl_member(
     };
     let (target_revision, content_revision) =
         crate::application::skill_paths::SkillPathObserver::revisions_for_observation(
-            &target, manifest,
+            &target,
+            manifest.clone(),
         )?;
     if target_revision != request.expected.target_revision
         || content_revision != request.expected.content_revision
@@ -817,16 +1253,28 @@ async fn commit_wsl_member(
         return Err(AppError::StaleTarget);
     }
 
-    let catalog_target = wsl_catalog_locator(session);
-    let bytes = WslAtomicDocumentIo::from_active_session(session.clone())
-        .read_optional(&catalog_target)
-        .await?;
-    let mut catalog = bytes
+    let (expected_anchor_device, expected_anchor_inode) = match &target.key.physical_parent {
+        PhysicalParentIdentity::Wsl {
+            distro_name,
+            device,
+            inode,
+        } if distro_name.eq_ignore_ascii_case(&session.distro_name) => (*device, *inode),
+        _ => return Err(AppError::StaleTarget),
+    };
+    let expected_fingerprint = target.fingerprint.0.clone();
+    let expected_content_hash = manifest
+        .as_ref()
+        .map(|manifest| manifest.as_str().to_string());
+    let catalog_snapshot = workspace.read_library_catalog_once().await?;
+    if catalog_snapshot.generation != session.runtime_generation {
+        return Err(AppError::StaleEnvironment);
+    }
+    let mut catalog = catalog_snapshot
+        .bytes
         .as_deref()
-        .map(serde_json::from_slice)
+        .map(parse_library_catalog)
         .transpose()?
         .unwrap_or_default();
-    validate_catalog(&catalog)?;
     let snapshot = crate::application::collection_records::LibraryCatalogRecordReader::new(
         &catalog,
         &request.library_id,
@@ -839,103 +1287,107 @@ async fn commit_wsl_member(
         return Err(AppError::StaleTarget);
     }
     let _document_changed = snapshot.document_revision != request.expected.document_revision;
-    let library = catalog
-        .libraries
-        .iter_mut()
-        .find(|library| library.id == request.library_id)
-        .ok_or_else(|| AppError::PathNotFound {
-            path: request.library_id.as_str().to_string(),
-        })?;
     match &request.mutation {
         LibraryMemberMutation::Upsert { record, .. } => {
-            let mut record = (**record).clone();
-            if let Some(current) = library
-                .skills
-                .iter()
-                .find(|skill| skill.name == request.skill_name)
-            {
-                record.extra = current.extra.clone();
-                crate::application::skill_libraries::merge_unknown_source_fields(
-                    &mut record.source_record,
-                    &current.source_record,
-                );
-            }
-            if let Some(current) = library
-                .skills
-                .iter_mut()
-                .find(|skill| skill.name == request.skill_name)
-            {
-                *current = record;
-            } else {
-                library.skills.push(record);
-                library
-                    .skills
-                    .sort_by(|left, right| left.name.cmp(&right.name));
-            }
+            apply_membership_change(
+                &mut catalog,
+                &request.library_id,
+                &request.skill_name,
+                MembershipChange::Upsert((**record).clone()),
+            )?;
         }
-        LibraryMemberMutation::Delete => {
-            let before = library.skills.len();
-            library
-                .skills
-                .retain(|skill| skill.name != request.skill_name);
-            if before == library.skills.len() {
-                return Err(AppError::StaleTarget);
-            }
+        LibraryMemberMutation::Retire {
+            retirement_id,
+            retired_at,
+        } => {
+            apply_membership_change(
+                &mut catalog,
+                &request.library_id,
+                &request.skill_name,
+                MembershipChange::Retire {
+                    retirement_id: retirement_id.clone(),
+                    retired_at: retired_at.clone(),
+                },
+            )?;
         }
     }
     let catalog_bytes = serde_json::to_vec_pretty(&catalog)?;
-    let catalog_hash = bytes_sha256(&catalog_bytes);
-    let commit = async {
-        match &request.mutation {
-            LibraryMemberMutation::Upsert { content, .. } => {
-                replace_library_skill(
-                    session,
-                    request.library_id.as_str(),
-                    &install_dir_name,
-                    payload_archive(content)?,
-                )
+    if matches!(request.mutation, LibraryMemberMutation::Retire { .. }) {
+        return workspace
+            .execute_library_operation(
+                catalog_snapshot.generation,
+                environment_protocol::LibraryOperationRequest {
+                    operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                    expected_catalog_revision: catalog_snapshot.revision,
+                    catalog_bytes,
+                    action: environment_protocol::LibraryOperationAction::SaveCatalog {
+                        library_ids: catalog
+                            .libraries
+                            .iter()
+                            .map(|library| library.id.as_str().to_string())
+                            .collect(),
+                    },
+                    deadline_millis: 60_000,
+                },
+            )
+            .await
+            .map(|_| ());
+    }
+    let payload_storage = WslPayloadSessionStorage::new(workspace.clone());
+    let payload_key = PayloadStorageKey::new(
+        format!("library-{}", uuid::Uuid::new_v4().simple()),
+        install_dir_name.clone(),
+    );
+    let mutation = match &request.mutation {
+        LibraryMemberMutation::Upsert { content, .. } => {
+            payload_storage
+                .store(&payload_key, (**content).clone())
                 .await?;
-            }
-            LibraryMemberMutation::Delete => {
-                stage_library_skill_deletion(
-                    session,
-                    request.library_id.as_str(),
-                    &install_dir_name,
-                )
-                .await?;
+            match payload_storage.local_source(&payload_key)? {
+                PayloadLocalSource::WslManaged {
+                    distro_name,
+                    worker_generation,
+                    worker_payload_id,
+                } if distro_name.eq_ignore_ascii_case(&session.distro_name)
+                    && worker_generation == catalog_snapshot.generation =>
+                {
+                    environment_protocol::LibraryMemberAction::Upsert {
+                        payload_id: worker_payload_id,
+                    }
+                }
+                _ => {
+                    let _ = payload_storage.remove(&payload_key).await;
+                    return Err(AppError::StalePayload);
+                }
             }
         }
-        prepare_library_catalog(session, &catalog_hash).await?;
-        WslAtomicDocumentIo::from_active_session(session.clone())
-            .write_atomic(&catalog_target, catalog_bytes)
-            .await?;
-        finalize_library_catalog(session, &catalog_hash).await
-    }
-    .await;
-    if let Err(error) = commit {
-        recover_wsl_library_content(session).await?;
-        let current = WslAtomicDocumentIo::from_active_session(session.clone())
-            .read_optional(&catalog_target)
-            .await?;
-        if current.as_deref().map(bytes_sha256).as_deref() == Some(&catalog_hash) {
-            return Ok(());
-        }
-        return Err(error);
-    }
-    Ok(())
-}
-
-async fn recover_wsl_library_content(
-    session: &crate::environment::wsl::WslSession,
-) -> Result<(), AppError> {
-    recover_library_content(session)
-        .await
-        .map_err(|error| AppError::LibraryRecoveryIncomplete {
-            environment: EnvironmentRef::Wsl {
-                distro_name: session.distro_name.clone(),
+        LibraryMemberMutation::Retire { .. } => unreachable!("retire returns before payload I/O"),
+    };
+    let result = workspace
+        .execute_library_operation(
+            catalog_snapshot.generation,
+            environment_protocol::LibraryOperationRequest {
+                operation_id: uuid::Uuid::new_v4().simple().to_string(),
+                expected_catalog_revision: catalog_snapshot.revision,
+                catalog_bytes,
+                action: environment_protocol::LibraryOperationAction::CommitMember {
+                    library_id: request.library_id.as_str().to_string(),
+                    skill_name: install_dir_name,
+                    expected_anchor_device,
+                    expected_anchor_inode,
+                    expected_fingerprint,
+                    expected_content_hash,
+                    mutation,
+                },
+                deadline_millis: 60_000,
             },
-            message: error.to_string(),
-        })
+        )
+        .await
+        .map(|_| ());
+    if matches!(request.mutation, LibraryMemberMutation::Upsert { .. }) {
+        let _ = payload_storage.remove(&payload_key).await;
+    }
+    result
 }
 
 fn commit_native_member(root: &Path, request: CommitLibraryMemberRequest) -> Result<(), AppError> {
@@ -949,10 +1401,9 @@ fn commit_native_member(root: &Path, request: CommitLibraryMemberRequest) -> Res
 
     let mut catalog = current_catalog_bytes
         .as_deref()
-        .map(serde_json::from_slice)
+        .map(parse_library_catalog)
         .transpose()?
         .unwrap_or_default();
-    validate_catalog(&catalog)?;
     let snapshot = crate::application::collection_records::LibraryCatalogRecordReader::new(
         &catalog,
         &request.library_id,
@@ -997,67 +1448,50 @@ fn commit_native_member(root: &Path, request: CommitLibraryMemberRequest) -> Res
     }
     let _document_changed = snapshot.document_revision != request.expected.document_revision;
 
-    let library = catalog
-        .libraries
-        .iter_mut()
-        .find(|library| library.id == request.library_id)
-        .ok_or_else(|| AppError::PathNotFound {
-            path: request.library_id.as_str().to_string(),
-        })?;
     match &request.mutation {
         LibraryMemberMutation::Upsert { record, .. } => {
-            let mut record = (**record).clone();
-            if let Some(current) = library
-                .skills
-                .iter()
-                .find(|skill| skill.name == request.skill_name)
-            {
-                record.extra = current.extra.clone();
-                crate::application::skill_libraries::merge_unknown_source_fields(
-                    &mut record.source_record,
-                    &current.source_record,
-                );
-            }
-            if let Some(current) = library
-                .skills
-                .iter_mut()
-                .find(|skill| skill.name == request.skill_name)
-            {
-                *current = record;
-            } else {
-                library.skills.push(record);
-                library
-                    .skills
-                    .sort_by(|left, right| left.name.cmp(&right.name));
-            }
+            apply_membership_change(
+                &mut catalog,
+                &request.library_id,
+                &request.skill_name,
+                MembershipChange::Upsert((**record).clone()),
+            )?;
         }
-        LibraryMemberMutation::Delete => {
-            let before = library.skills.len();
-            library
-                .skills
-                .retain(|skill| skill.name != request.skill_name);
-            if before == library.skills.len() {
-                return Err(AppError::StaleTarget);
-            }
+        LibraryMemberMutation::Retire {
+            retirement_id,
+            retired_at,
+        } => {
+            apply_membership_change(
+                &mut catalog,
+                &request.library_id,
+                &request.skill_name,
+                MembershipChange::Retire {
+                    retirement_id: retirement_id.clone(),
+                    retired_at: retired_at.clone(),
+                },
+            )?;
         }
     }
     let catalog_bytes = serde_json::to_vec_pretty(&catalog)?;
     let catalog_hash = bytes_sha256(&catalog_bytes);
+
+    if matches!(request.mutation, LibraryMemberMutation::Retire { .. }) {
+        return save_native_catalog_if_unchanged(
+            root,
+            current_catalog_bytes.as_deref(),
+            &catalog_bytes,
+        );
+    }
 
     let commit = (|| {
         match &request.mutation {
             LibraryMemberMutation::Upsert { content, .. } => {
                 replace_native_skill(root, &destination, content)?;
             }
-            LibraryMemberMutation::Delete => {
-                stage_native_skill_deletion(root, &destination)?;
-            }
+            LibraryMemberMutation::Retire { .. } => unreachable!("retire returns before staging"),
         }
         prepare_native_catalog_commit(root, &catalog_hash)?;
-        crate::environment::native::atomic_file::write_native_atomic(
-            &root.join("catalog.json"),
-            &catalog_bytes,
-        )?;
+        save_native_catalog_if_unchanged(root, current_catalog_bytes.as_deref(), &catalog_bytes)?;
         finalize_native_catalog_commit(root, &catalog_hash)
     })();
     if let Err(error) = commit {
@@ -1230,6 +1664,18 @@ fn recover_native_transactions(root: &Path, catalog_hash: Option<&str>) -> Resul
         let destination = PathBuf::from(record.destination);
         let stage = transaction.join("stage");
         let backup = transaction.join("backup");
+        if matches!(
+            record.phase,
+            NativeLibraryTransactionPhase::CatalogCommitted
+        ) {
+            if let Err(error) = cleanup_native_committed_transaction(&transaction) {
+                log::warn!(
+                    "Skill Library committed transaction cleanup remains pending at {}: {error}",
+                    transaction.display()
+                );
+            }
+            continue;
+        }
         match record.phase {
             NativeLibraryTransactionPhase::Preparing => {}
             NativeLibraryTransactionPhase::Staged if destination.exists() || stage.exists() => {}
@@ -1237,6 +1683,14 @@ fn recover_native_transactions(root: &Path, catalog_hash: Option<&str>) -> Resul
             }
             NativeLibraryTransactionPhase::BackedUp
                 if !destination.exists() && backup.exists() && stage.exists() =>
+            {
+                fs::rename(&backup, &destination)?;
+            }
+            NativeLibraryTransactionPhase::BackedUp
+                if !record.desired_presence
+                    && !destination.exists()
+                    && backup.exists()
+                    && !stage.exists() =>
             {
                 fs::rename(&backup, &destination)?;
             }
@@ -1257,8 +1711,6 @@ fn recover_native_transactions(root: &Path, catalog_hash: Option<&str>) -> Resul
                     rollback_native_library_content(&destination, &backup)?;
                 }
             }
-            NativeLibraryTransactionPhase::CatalogCommitted
-                if destination.exists() == record.desired_presence => {}
             _ => {
                 return Err(AppError::ConfigurationCorrupted {
                     message: format!(
@@ -1327,13 +1779,27 @@ fn finalize_native_catalog_commit(root: &Path, catalog_hash: &str) -> Result<(),
                 record.desired_presence,
                 record.expected_catalog_hash,
             )?;
-            let backup = transaction.join("backup");
-            if backup.exists() {
-                fs::remove_dir_all(backup)?;
+            if let Err(error) = cleanup_native_committed_transaction(&transaction) {
+                log::warn!(
+                    "Skill Library commit succeeded but cleanup remains pending at {}: {error}",
+                    transaction.display()
+                );
             }
-            fs::remove_dir_all(transaction)?;
         }
     }
+    Ok(())
+}
+
+fn cleanup_native_committed_transaction(transaction: &Path) -> Result<(), AppError> {
+    let stage = transaction.join("stage");
+    if stage.exists() {
+        fs::remove_dir_all(stage)?;
+    }
+    let backup = transaction.join("backup");
+    if backup.exists() {
+        fs::remove_dir_all(backup)?;
+    }
+    fs::remove_dir_all(transaction)?;
     Ok(())
 }
 
@@ -1356,35 +1822,6 @@ fn bytes_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn payload_archive(payload: &SkillPayload) -> Result<Vec<u8>, AppError> {
-    crate::core::skill_payload::verify_skill_payload_integrity(payload)?;
-    let mut builder = tar::Builder::new(Vec::new());
-    for entry in &payload.entries {
-        let mut header = tar::Header::new_gnu();
-        header.set_path(Path::new("stage").join(&entry.relative_path))?;
-        match entry.kind {
-            crate::core::skill_payload::PayloadEntryKind::Directory => {
-                header.set_entry_type(tar::EntryType::Directory);
-                header.set_mode(0o755);
-                header.set_size(0);
-                header.set_cksum();
-                builder.append(&header, std::io::empty())?;
-            }
-            crate::core::skill_payload::PayloadEntryKind::File => {
-                let blob_id = entry.blob_id.as_deref().ok_or(AppError::StalePayload)?;
-                let content = payload.blobs.get(blob_id).ok_or(AppError::StalePayload)?;
-                header.set_entry_type(tar::EntryType::Regular);
-                header.set_mode(if entry.executable { 0o755 } else { 0o644 });
-                header.set_size(content.len() as u64);
-                header.set_cksum();
-                builder.append(&header, content.as_slice())?;
-            }
-        }
-    }
-    builder.finish()?;
-    Ok(builder.into_inner()?)
-}
-
 fn validate_storage_component(value: &str) -> Result<(), AppError> {
     if value.is_empty() || matches!(value, "." | "..") || value.contains(['/', '\\', '\0']) {
         return Err(AppError::Validation {
@@ -1395,18 +1832,6 @@ fn validate_storage_component(value: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn wsl_catalog_locator(session: &crate::environment::wsl::WslSession) -> ResourceLocator {
-    ResourceLocator {
-        environment: EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
-        },
-        native_path: format!(
-            "{}/.skill-deck/skill-libraries/catalog.json",
-            session.home.trim_end_matches('/')
-        ),
-    }
-}
-
 fn application_relative_path(scope: &SkillLocation) -> Result<PathBuf, AppError> {
     match scope {
         SkillLocation::Global => Ok(PathBuf::from("global.json")),
@@ -1414,6 +1839,113 @@ fn application_relative_path(scope: &SkillLocation) -> Result<PathBuf, AppError>
             validate_storage_component(project_id)?;
             Ok(PathBuf::from("projects").join(format!("{project_id}.json")))
         }
+    }
+}
+
+struct ApplicationContexts {
+    scopes: Vec<(String, SkillLocation)>,
+    problems: Vec<ApplicationInventoryProblem>,
+}
+
+fn native_application_contexts(root: &Path) -> Result<ApplicationContexts, AppError> {
+    let mut scopes = vec![("global".to_string(), SkillLocation::Global)];
+    let mut problems = Vec::new();
+    match fs::read_dir(root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        problems.push(ApplicationInventoryProblem {
+                            storage_key: "applications".to_string(),
+                            error: error.into(),
+                        });
+                        continue;
+                    }
+                };
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name == "global.json" || name == "projects" {
+                    continue;
+                }
+                problems.push(ApplicationInventoryProblem {
+                    storage_key: name,
+                    error: AppError::ConfigurationCorrupted {
+                        message: "unknown Skill Library application entry".to_string(),
+                    },
+                });
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ApplicationContexts { scopes, problems });
+        }
+        Err(error) => {
+            problems.push(ApplicationInventoryProblem {
+                storage_key: "applications".to_string(),
+                error: error.into(),
+            });
+            return Ok(ApplicationContexts { scopes, problems });
+        }
+    }
+
+    let projects = root.join("projects");
+    match fs::read_dir(&projects) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        problems.push(ApplicationInventoryProblem {
+                            storage_key: "projects".to_string(),
+                            error: error.into(),
+                        });
+                        continue;
+                    }
+                };
+                let name = entry.file_name();
+                let display = name.to_string_lossy().into_owned();
+                let project_id = Path::new(&name)
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .filter(|_| {
+                        Path::new(&name)
+                            .extension()
+                            .is_some_and(|value| value == "json")
+                    });
+                let valid = entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && project_id
+                        .is_some_and(|project_id| validate_storage_component(project_id).is_ok());
+                if let Some(project_id) = project_id.filter(|_| valid) {
+                    scopes.push((
+                        format!("projects/{display}"),
+                        SkillLocation::Project {
+                            project_id: project_id.to_string(),
+                        },
+                    ));
+                } else {
+                    problems.push(ApplicationInventoryProblem {
+                        storage_key: format!("projects/{display}"),
+                        error: AppError::ConfigurationCorrupted {
+                            message: "invalid Skill Library application Scope key".to_string(),
+                        },
+                    });
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => problems.push(ApplicationInventoryProblem {
+            storage_key: "projects".to_string(),
+            error: error.into(),
+        }),
+    }
+    scopes.sort_by(|left, right| left.0.cmp(&right.0));
+    problems.sort_by(|left, right| left.storage_key.cmp(&right.storage_key));
+    Ok(ApplicationContexts { scopes, problems })
+}
+
+fn application_scope_key(scope: &SkillLocation) -> String {
+    match scope {
+        SkillLocation::Global => "global".to_string(),
+        SkillLocation::Project { project_id } => format!("project:{project_id}"),
     }
 }
 
@@ -1440,9 +1972,10 @@ mod tests {
 
     use super::*;
     use crate::application::library_application::{
-        LibraryApplicationRecord, LibraryApplicationRepository, LibraryApplicationState,
+        ApplicationRegistry, LibraryApplicationRecord, LibraryApplicationState,
     };
     use crate::application::skill_libraries::SkillLibraryModule;
+    use crate::application::skill_libraries::LIBRARY_SCHEMA_VERSION;
     use crate::application::skill_paths::{SkillPathObserver, SkillTargetRequest};
     use crate::core::projects::ProjectMigrationState;
     use crate::core::skill_payload::build_skill_payload;
@@ -1583,6 +2116,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_repository_rejects_catalog_without_retired_members() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("catalog.json"),
+            br#"{
+              "schemaVersion": 3,
+              "libraries": [{
+                "id": "backend",
+                "name": "Backend",
+                "skills": []
+              }]
+            }"#,
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+
+        let error = repository.load(&EnvironmentRef::Native).await.unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::ConfigurationCorrupted { message }
+                if message.contains("Skill Library catalog")
+                    && message.contains("retiredSkills")
+        ));
+    }
+
+    #[tokio::test]
     async fn native_repository_deletes_one_library_as_a_single_intent() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("libraries");
@@ -1639,6 +2204,157 @@ mod tests {
         assert_eq!(catalog.libraries.len(), 1);
         assert_eq!(catalog.libraries[0].id, library_id);
         assert!(library_path.is_file());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_library_delete_stays_committed_when_backup_cleanup_is_blocked() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = Arc::new(RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        ));
+        let created = SkillLibraryModule::new(repository.clone())
+            .create(EnvironmentRef::Native, "Backend".to_string())
+            .await
+            .unwrap();
+        let library_id = created.libraries[0].id.clone();
+        let library_path = root.join("libraries").join(library_id.as_str());
+        let locked = library_path.join("skills/locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("SKILL.md"), b"content").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = repository
+            .delete_library(&EnvironmentRef::Native, &library_id)
+            .await;
+
+        assert!(result.is_ok(), "delete must stay committed: {result:?}");
+        assert!(repository
+            .load(&EnvironmentRef::Native)
+            .await
+            .expect("load committed catalog")
+            .libraries
+            .is_empty());
+        assert!(!library_path.exists());
+
+        if let Ok(entries) = fs::read_dir(root.join(".transactions")) {
+            for entry in entries.flatten() {
+                let locked = entry.path().join("backup/skills/locked");
+                if locked.exists() {
+                    fs::set_permissions(locked, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn committed_cleanup_does_not_depend_on_a_later_destination_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let transaction = root.join(".transactions/committed-cleanup");
+        let destination = root.join("libraries/lib-one/skills/demo");
+        fs::create_dir_all(transaction.join("backup")).unwrap();
+        fs::write(transaction.join("backup/SKILL.md"), b"old").unwrap();
+        fs::write(
+            transaction.join("transaction.json"),
+            serde_json::to_vec(&NativeLibraryTransaction {
+                destination: destination.to_string_lossy().into_owned(),
+                phase: NativeLibraryTransactionPhase::CatalogCommitted,
+                desired_presence: true,
+                expected_catalog_hash: Some("committed".to_string()),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let catalog = LibraryCatalog {
+            schema_version: LIBRARY_SCHEMA_VERSION,
+            libraries: Vec::new(),
+            extra: serde_json::Map::new(),
+        };
+        fs::write(
+            root.join("catalog.json"),
+            serde_json::to_vec_pretty(&catalog).unwrap(),
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+
+        let loaded = repository.load(&EnvironmentRef::Native).await;
+
+        assert!(loaded.is_ok());
+        assert!(!transaction.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn native_library_delete_keeps_the_original_while_a_member_file_is_open() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING,
+        };
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = Arc::new(RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        ));
+        let created = SkillLibraryModule::new(repository.clone())
+            .create(EnvironmentRef::Native, "Backend".to_string())
+            .await
+            .unwrap();
+        let library_id = created.libraries[0].id.clone();
+        let library_path = root.join("libraries").join(library_id.as_str());
+        let member_file = library_path.join("skills/locked/SKILL.md");
+        fs::create_dir_all(member_file.parent().unwrap()).unwrap();
+        fs::write(&member_file, b"content").unwrap();
+        let wide = member_file
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_GENERIC_READ,
+                FILE_SHARE_READ,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(handle, INVALID_HANDLE_VALUE);
+
+        let result = repository
+            .delete_library(&EnvironmentRef::Native, &library_id)
+            .await;
+
+        assert!(result.is_err(), "open member must block the directory move");
+        let catalog = repository
+            .load(&EnvironmentRef::Native)
+            .await
+            .expect("load original catalog");
+        assert_eq!(catalog.libraries.len(), 1);
+        assert_eq!(catalog.libraries[0].id, library_id);
+        assert!(member_file.exists());
+
+        unsafe { CloseHandle(handle) };
+        repository
+            .delete_library(&EnvironmentRef::Native, &library_id)
+            .await
+            .expect("delete after releasing the file");
+        assert!(!library_path.exists());
     }
 
     #[tokio::test]
@@ -1809,7 +2525,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_conditional_commit_upserts_and_deletes_one_complete_member() {
+    async fn native_conditional_commit_upserts_and_retires_one_complete_member() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("libraries");
         let repository = Arc::new(RuntimeSkillLibraryRepository::new(
@@ -1829,6 +2545,11 @@ mod tests {
             b"---\nname: demo\ndescription: Demo\n---\nbody\n",
         )
         .unwrap();
+        let manifest_hash = crate::environment::native::content_manifest::read_directory(&source)
+            .unwrap()
+            .hash()
+            .as_str()
+            .to_string();
         let payload = build_skill_payload(&source).unwrap();
 
         repository
@@ -1854,7 +2575,7 @@ mod tests {
                             "pluginName": null,
                             "wellKnown": null
                         }),
-                        content_manifest_hash: "hash".to_string(),
+                        content_manifest_hash: manifest_hash,
                         updated_at: None,
                         extra: serde_json::Map::new(),
                     }),
@@ -1884,7 +2605,28 @@ mod tests {
                 library_id: library_id.clone(),
                 skill_name: "demo".to_string(),
                 expected: native_member_expectation(repository.as_ref(), &library_id, "demo").await,
-                mutation: LibraryMemberMutation::Delete,
+                mutation: LibraryMemberMutation::Retire {
+                    retirement_id: crate::application::skill_libraries::RetirementId::parse(
+                        "retirement-1",
+                    ),
+                    retired_at: "2026-09-06T00:00:00Z".to_string(),
+                },
+            })
+            .await
+            .unwrap();
+        assert!(destination.join("SKILL.md").is_file());
+        let catalog = repository.load(&EnvironmentRef::Native).await.unwrap();
+        assert!(catalog.libraries[0].skills.is_empty());
+        assert_eq!(catalog.libraries[0].retired_skills.len(), 1);
+
+        repository
+            .purge_retired(PurgeRetiredLibraryMemberRequest {
+                environment: EnvironmentRef::Native,
+                library_id: library_id.clone(),
+                skill_name: "demo".to_string(),
+                retirement_id: crate::application::skill_libraries::RetirementId::parse(
+                    "retirement-1",
+                ),
             })
             .await
             .unwrap();
@@ -1894,7 +2636,7 @@ mod tests {
             .await
             .unwrap()
             .libraries[0]
-            .skills
+            .retired_skills
             .is_empty());
     }
 
@@ -1951,27 +2693,325 @@ mod tests {
                 project_id: "project-1".to_string(),
             },
         };
-        let mut global_record = LibraryApplicationRecord::empty(global.clone());
+        let mut global_record = LibraryApplicationRecord::empty();
         global_record.current = LibraryApplicationState {
             ordered_library_ids: vec![LibraryId::parse("global-library")],
             selected_agent_ids: Vec::new(),
         };
-        let mut project_record = LibraryApplicationRecord::empty(project.clone());
+        let mut project_record = LibraryApplicationRecord::empty();
         project_record.current = LibraryApplicationState {
             ordered_library_ids: vec![LibraryId::parse("project-library")],
             selected_agent_ids: Vec::new(),
         };
 
-        repository.save_application(&global_record).await.unwrap();
-        repository.save_application(&project_record).await.unwrap();
+        let global_snapshot = repository.load_application(&global).await.unwrap();
+        repository
+            .save_application_if(&global_snapshot, &global_record)
+            .await
+            .unwrap();
+        let project_snapshot = repository.load_application(&project).await.unwrap();
+        repository
+            .save_application_if(&project_snapshot, &project_record)
+            .await
+            .unwrap();
 
         assert_eq!(
-            repository.load_application(&global).await.unwrap(),
+            repository.load_application(&global).await.unwrap().record,
             global_record
         );
         assert_eq!(
-            repository.load_application(&project).await.unwrap(),
+            repository.load_application(&project).await.unwrap().record,
             project_record
         );
+    }
+
+    #[tokio::test]
+    async fn project_application_removal_is_bound_to_the_loaded_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            temp.path().join("libraries"),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        let project = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
+                project_id: "project-1".to_string(),
+            },
+        };
+        let missing = repository.load_application(&project).await.unwrap();
+        let saved = repository
+            .save_application_if(&missing, &LibraryApplicationRecord::empty())
+            .await
+            .unwrap();
+        fs::write(&saved.target.native_path, b"external change").unwrap();
+
+        let error = repository.remove_application_if(&saved).await.unwrap_err();
+
+        assert!(matches!(error, AppError::StaleTarget));
+        assert_eq!(
+            fs::read(&saved.target.native_path).unwrap(),
+            b"external change"
+        );
+    }
+
+    #[test]
+    fn existing_schema_one_application_record_is_accepted() {
+        let record = parse_library_application_record(
+            br#"{
+              "schemaVersion": 1,
+              "current": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+              "checkpoint": { "members": [] },
+              "pending": null
+            }"#,
+        )
+        .expect("schema 1 is the current application record format");
+
+        assert_eq!(record.schema_version, 1);
+    }
+
+    #[tokio::test]
+    async fn application_record_accepts_unknown_route_fields_and_saves_canonical_schema() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let applications = root.join("applications");
+        fs::create_dir_all(&applications).unwrap();
+        fs::write(
+            applications.join("global.json"),
+            br#"{
+              "schemaVersion": 1,
+              "target": {
+                "environment": { "kind": "wsl", "distro_name": "Ubuntu" },
+                "scope": { "scope": "global" }
+              },
+              "current": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+              "checkpoint": { "members": [] },
+              "pending": null
+            }"#,
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+
+        let record = repository.load_application(&context).await.unwrap();
+        assert_eq!(record.current, LibraryApplicationState::default());
+        repository
+            .save_application_if(&record, &record.record)
+            .await
+            .unwrap();
+
+        let stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(applications.join("global.json")).unwrap()).unwrap();
+        assert!(stored.get("target").is_none());
+    }
+
+    #[tokio::test]
+    async fn application_record_without_checkpoint_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let applications = root.join("applications");
+        fs::create_dir_all(&applications).unwrap();
+        fs::write(
+            applications.join("global.json"),
+            br#"{
+              "schemaVersion": 1,
+              "current": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+              "pendingOperation": null
+            }"#,
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+
+        let error = repository.load_application(&context).await.unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::ConfigurationCorrupted { message }
+                if message.contains("Skill Library application record")
+                    && message.contains("checkpoint")
+        ));
+    }
+
+    #[tokio::test]
+    async fn application_record_with_incomplete_pending_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let applications = root.join("applications");
+        fs::create_dir_all(&applications).unwrap();
+        fs::write(
+            applications.join("global.json"),
+            br#"{
+              "schemaVersion": 1,
+              "current": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+              "checkpoint": { "members": [] },
+              "pending": {
+                "reconciliationId": "",
+                "attention": "pending",
+                "reasons": [],
+                "beforeApplication": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+                "targetApplication": { "orderedLibraryIds": [], "selectedAgentIds": [] },
+                "recognizedMembers": [],
+                "targetMembers": [{ "libraryId": "library-a", "memberName": "demo" }]
+              }
+            }"#,
+        )
+        .unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+
+        assert!(matches!(
+            repository.load_application(&context).await,
+            Err(AppError::ConfigurationCorrupted { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn application_commit_rejects_a_changed_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let observed = repository.load_application(&context).await.unwrap();
+        let external = LibraryApplicationRecord::empty();
+        let path = root.join("applications/global.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec_pretty(&external).unwrap()).unwrap();
+        let mut replacement = LibraryApplicationRecord::empty();
+        replacement.current.ordered_library_ids = vec![LibraryId::parse("library-a")];
+
+        assert!(matches!(
+            repository
+                .save_application_if(&observed, &replacement)
+                .await,
+            Err(AppError::StaleTarget)
+        ));
+        assert_eq!(
+            serde_json::from_slice::<LibraryApplicationRecord>(&fs::read(path).unwrap()).unwrap(),
+            external
+        );
+    }
+
+    #[tokio::test]
+    async fn native_application_inventory_includes_orphans_and_reports_problems() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let applications = root.join("applications");
+        let project_records = applications.join("projects");
+        fs::create_dir_all(&project_records).unwrap();
+        let bytes = serde_json::to_vec_pretty(&LibraryApplicationRecord::empty()).unwrap();
+        fs::write(applications.join("global.json"), &bytes).unwrap();
+        fs::write(project_records.join("registered.json"), &bytes).unwrap();
+        fs::write(project_records.join("orphan.json"), &bytes).unwrap();
+        fs::write(project_records.join("broken.json"), b"{").unwrap();
+        let mut future: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        future["schemaVersion"] = serde_json::json!(
+            crate::application::library_application::LIBRARY_APPLICATION_SCHEMA_VERSION + 1
+        );
+        fs::write(
+            project_records.join("future.json"),
+            serde_json::to_vec_pretty(&future).unwrap(),
+        )
+        .unwrap();
+        fs::create_dir(project_records.join("not-a-record.json")).unwrap();
+        fs::write(applications.join("unexpected.json"), &bytes).unwrap();
+        let repository = RuntimeSkillLibraryRepository::new(
+            root,
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+
+        let inventory = repository.enumerate(&EnvironmentRef::Native).await.unwrap();
+
+        assert!(!inventory.complete);
+        assert_eq!(inventory.records.len(), 3);
+        assert!(inventory
+            .records
+            .iter()
+            .any(|entry| { matches!(entry.context.scope, SkillLocation::Global) }));
+        assert!(inventory.records.iter().any(|entry| {
+            matches!(
+                &entry.context.scope,
+                SkillLocation::Project { project_id } if project_id == "registered"
+            )
+        }));
+        assert!(inventory.records.iter().any(|entry| {
+            matches!(
+                &entry.context.scope,
+                SkillLocation::Project { project_id } if project_id == "orphan"
+            )
+        }));
+        assert_eq!(inventory.problems.len(), 4);
+
+        let usage = repository
+            .usage_projection(&EnvironmentRef::Native)
+            .await
+            .unwrap();
+        assert!(!usage.inventory_complete);
+        assert_eq!(usage.problem_count, 4);
+    }
+
+    #[tokio::test]
+    async fn native_repository_restores_a_retired_member_if_delete_crashes_after_rename() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("libraries");
+        let repository = RuntimeSkillLibraryRepository::new(
+            root.clone(),
+            Arc::new(WslRuntime::new_with_support(false, false)),
+            projects(),
+        );
+        repository
+            .save(&EnvironmentRef::Native, &LibraryCatalog::default())
+            .await
+            .unwrap();
+        let destination = root.join("libraries/library-1/skills/demo");
+        let transaction = root.join(".transactions/interrupted-delete");
+        let backup = transaction.join("backup");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::create_dir_all(&backup).unwrap();
+        fs::write(backup.join("SKILL.md"), b"retired content").unwrap();
+        write_native_transaction(
+            &transaction.join("transaction.json"),
+            &destination,
+            NativeLibraryTransactionPhase::BackedUp,
+            false,
+            None,
+        )
+        .unwrap();
+
+        repository.load(&EnvironmentRef::Native).await.unwrap();
+
+        assert_eq!(
+            fs::read(destination.join("SKILL.md")).unwrap(),
+            b"retired content"
+        );
+        assert!(!transaction.exists());
     }
 }

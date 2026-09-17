@@ -1,20 +1,22 @@
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::application::library_application::{
     ApplyLibraryApplicationRequest, LibraryAgentOptions, LibraryApplicationDraft,
     LibraryApplicationPreview, LibraryApplicationResponse, LibraryApplicationSummary,
 };
+use crate::application::library_membership::LibraryMembershipOutcome;
 use crate::application::library_update::{
-    ExecuteLibraryUpdateRequest, LibraryUpdateExecutionOutcome, LibraryUpdateExecutionStage,
-    LibraryUpdatePreview,
+    LibraryUpdateExecutionStage, LibraryUpdateResponse, PreparedLibraryUpdatePreview,
 };
 use crate::application::skill_libraries::{
-    ExecuteAddLibrarySkillsRequest, LibraryAddPreview, LibraryAddResponse, LibraryId,
+    ExecuteAddLibrarySkillsRequest, ExecuteRetireLibrarySkillRequest, LibraryAddPreview,
+    LibraryAddResponse, LibraryId, LibraryRetirePreview, LibraryRetireResponse,
     LibraryWorkspaceSnapshot, PreviewAddLibrarySkillsRequest, RemoveLibrarySkillRequest,
     SkillLibraryDetail, UpdateLibrarySkillsRequest,
 };
 use crate::application::update::{UpdateCheckMode, UpdateCheckResponse};
-use crate::core::mutation::{MutationKind, MutationPhase};
+use crate::application::update_preparation::{PreparationTarget, PreparedUpdates};
+use crate::core::mutation::{CancellationSignal, MutationKind, MutationPhase};
 use crate::environment::types::EnvironmentRef;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
@@ -88,14 +90,9 @@ pub async fn add_skills_to_library(
     request: ExecuteAddLibrarySkillsRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<LibraryAddResponse, AppError> {
-    let _permit = runtime.admission().begin_exclusive_action()?;
     runtime
-        .skill_libraries()
-        .execute_add_skills(
-            runtime.payloads(),
-            runtime.agent_selection_targets(),
-            request,
-        )
+        .library_membership()
+        .execute_add_skills(request, CancellationSignal::default())
         .await
 }
 
@@ -106,12 +103,8 @@ pub async fn preview_add_library_skills(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<LibraryAddPreview, AppError> {
     runtime
-        .skill_libraries()
-        .preview_add_skills(
-            runtime.payloads(),
-            runtime.agent_selection_targets(),
-            request,
-        )
+        .library_membership()
+        .preview_add_skills(request)
         .await
 }
 
@@ -138,30 +131,53 @@ pub async fn check_library_skill_updates(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn preview_library_skill_updates(
+pub async fn prepare_library_skill_updates(
+    operation_id: String,
     request: UpdateLibrarySkillsRequest,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<LibraryUpdatePreview, AppError> {
-    runtime.library_update().preview(&request).await
+) -> Result<PreparedLibraryUpdatePreview, AppError> {
+    let ticket = runtime
+        .update_preparations()
+        .begin(operation_id, window.label())?;
+    let prepared = runtime
+        .library_update()
+        .prepare(&request, ticket.cancellation.clone())
+        .await?;
+    let preview = prepared.preview.clone();
+    ticket.publish(PreparedUpdates::Library(prepared))?;
+    Ok(preview)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn update_library_skills(
-    request: ExecuteLibraryUpdateRequest,
+    operation_id: String,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<LibraryUpdateExecutionOutcome, AppError> {
+) -> Result<LibraryUpdateResponse, AppError> {
+    let PreparationTarget::Library(request) = runtime
+        .update_preparations()
+        .target(&operation_id, window.label())?
+    else {
+        return Err(AppError::StaleContext);
+    };
     let permit = runtime.admission().begin_library_mutation(
         MutationKind::ManageLibraries,
-        request.request.environment.clone(),
-        request.request.library_id.as_str().to_string(),
+        request.environment.clone(),
+        request.library_id.as_str().to_string(),
     )?;
-    permit.transition(MutationPhase::Acquiring, None, true);
+    let PreparedUpdates::Library(prepared) = runtime
+        .update_preparations()
+        .take(&operation_id, window.label())?
+    else {
+        return Err(AppError::StaleContext);
+    };
+    permit.transition(MutationPhase::Validating, None, true);
     let result = runtime
         .library_update()
-        .execute_with_stage_observer(&request, permit.cancellation(), |stage| {
+        .execute_prepared(prepared, permit.cancellation(), |stage| {
             let (phase, cancelable) = match stage {
-                LibraryUpdateExecutionStage::Acquiring => (MutationPhase::Acquiring, true),
                 LibraryUpdateExecutionStage::Validating => (MutationPhase::Validating, true),
                 LibraryUpdateExecutionStage::Committing => (MutationPhase::Committing, false),
             };
@@ -174,15 +190,40 @@ pub async fn update_library_skills(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn remove_library_skill(
+pub async fn preview_remove_library_skill(
     request: RemoveLibrarySkillRequest,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<SkillLibraryDetail, AppError> {
-    let _permit = runtime.admission().begin_exclusive_action()?;
+) -> Result<LibraryRetirePreview, AppError> {
     runtime
-        .skill_libraries()
-        .remove_skill(runtime.agent_selection_targets(), request)
+        .library_membership()
+        .preview_retire_skill(request)
         .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_library_skill(
+    request: ExecuteRetireLibrarySkillRequest,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<LibraryRetireResponse, AppError> {
+    runtime
+        .library_membership()
+        .retire_skill(request, CancellationSignal::default())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn resume_library_membership(
+    environment: EnvironmentRef,
+    library_id: Option<LibraryId>,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<LibraryMembershipOutcome, AppError> {
+    let execution = runtime
+        .library_membership()
+        .resume(environment, library_id, CancellationSignal::default())
+        .await?;
+    Ok(execution.into_parts().1)
 }
 
 #[tauri::command]

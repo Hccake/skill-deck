@@ -137,6 +137,7 @@ pub struct AgentSelectionGroup {
 #[specta(rename_all = "camelCase")]
 pub enum UnavailableAgentSelectionReason {
     DefinitionMissing,
+    OptionUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -154,7 +155,7 @@ pub struct AgentSelectionSnapshot {
     pub agents: Vec<AgentSelectionAgent>,
     pub install_options: Vec<AgentInstallOption>,
     pub groups: Vec<AgentSelectionGroup>,
-    pub initial_selected_option_ids: Vec<AgentInstallOptionId>,
+    pub baseline_selected_option_ids: Vec<AgentInstallOptionId>,
     pub unavailable_explicit_agents: Vec<UnavailableAgentSelection>,
     pub user_mode_option_ids: Vec<AgentInstallOptionId>,
     pub revision: AgentSelectionRevision,
@@ -609,7 +610,7 @@ pub(crate) fn apply_initial_agent_selection(
         .iter()
         .map(|agent| (&agent.id, agent.directory_access))
         .collect::<BTreeMap<_, _>>();
-    snapshot.initial_selected_option_ids = catalog
+    snapshot.baseline_selected_option_ids = catalog
         .snapshot()
         .install_options
         .iter()
@@ -926,7 +927,7 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             agents,
             install_options,
             groups,
-            initial_selected_option_ids: Vec::new(),
+            baseline_selected_option_ids: Vec::new(),
             unavailable_explicit_agents: Vec::new(),
             user_mode_option_ids,
             revision,
@@ -978,7 +979,7 @@ pub(crate) async fn test_submission_for_agents<T: TargetFactResolver>(
     );
     AgentSelectionSubmission {
         revision: snapshot.revision,
-        selected_option_ids: snapshot.initial_selected_option_ids,
+        selected_option_ids: snapshot.baseline_selected_option_ids,
         requested_mode,
     }
 }
@@ -1007,7 +1008,7 @@ pub(crate) async fn test_submission_for_agents_and_own_directories<T: TargetFact
             .map(|id| id.to_string())
             .collect::<Vec<_>>(),
     );
-    snapshot.initial_selected_option_ids = catalog
+    snapshot.baseline_selected_option_ids = catalog
         .snapshot()
         .install_options
         .iter()
@@ -1021,7 +1022,7 @@ pub(crate) async fn test_submission_for_agents_and_own_directories<T: TargetFact
         .collect();
     AgentSelectionSubmission {
         revision: snapshot.revision,
-        selected_option_ids: snapshot.initial_selected_option_ids,
+        selected_option_ids: snapshot.baseline_selected_option_ids,
         requested_mode,
     }
 }
@@ -1271,6 +1272,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selection_snapshot_serializes_the_baseline_selection_name() {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &runtime(Vec::new()),
+            &[],
+            &standard_root(),
+            &DistinctTargetResolver,
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(catalog.snapshot()).unwrap();
+
+        assert!(value.get("baselineSelectedOptionIds").is_some());
+        assert!(value.get("initialSelectedOptionIds").is_none());
+    }
+
+    #[tokio::test]
     async fn catalog_classifies_direct_separate_and_additional_agents() {
         let context = SkillLocationRef {
             environment: EnvironmentRef::Native,
@@ -1335,8 +1358,8 @@ mod tests {
         let mut snapshot = catalog.snapshot().clone();
         apply_initial_agent_selection(&catalog, &mut snapshot, &["cursor".to_string()]);
 
-        assert!(snapshot.initial_selected_option_ids.is_empty());
-        assert!(catalog.snapshot().initial_selected_option_ids.is_empty());
+        assert!(snapshot.baseline_selected_option_ids.is_empty());
+        assert!(catalog.snapshot().baseline_selected_option_ids.is_empty());
     }
 
     #[tokio::test]

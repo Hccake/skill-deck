@@ -1,12 +1,12 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
-import type { SkillLocationRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import type { SkillLocationRef, InstalledLibraryVersion, InstalledSkill, ProjectInfo } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -44,7 +44,7 @@ const mocks = vi.hoisted(() => ({
       error: string | null;
       requestId: number;
     }>,
-    checkingUpdateScopes: new Set<string>(),
+    forceUpdateScopes: new Set<string>(),
     forceCheckUpdates: vi.fn(),
   },
   skillDetailState: {
@@ -62,7 +62,6 @@ const mocks = vi.hoisted(() => ({
     manageAgentsSkill: null,
     copySkill: null as InstalledSkill | null,
     copyContext: null as SkillLocationRef | null,
-    repairSourceTarget: null,
     openCopyToProject: vi.fn(),
     closeCopyToProject: vi.fn(),
     executeCopy: vi.fn(),
@@ -155,11 +154,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 vi.mock('@/stores/skills-data', () => ({
-  sourceDiagnosticsForEnvironment: (snapshots: typeof mocks.skillsDataState.snapshots) => (
-    Object.values(snapshots).flatMap((item) => (
-      (item as typeof item & { updateCheck?: { sources: unknown[] } }).updateCheck?.sources ?? []
-    ))
-  ),
   useSkillsDataStore: (selector: (state: typeof mocks.skillsDataState) => unknown) => selector(mocks.skillsDataState),
 }));
 
@@ -193,6 +187,7 @@ vi.mock('@/components/skills', () => ({
     onCheckUpdates,
     onUpdate,
     onManageAgents,
+    onOpenLibraryVersion,
   }: {
     skill: InstalledSkill;
     updateStatus?: string;
@@ -200,6 +195,7 @@ vi.mock('@/components/skills', () => ({
     onCheckUpdates?: () => void;
     onUpdate?: (name: string, scope: 'global' | 'project') => void;
     onManageAgents?: (skill: InstalledSkill) => void;
+    onOpenLibraryVersion?: (version: InstalledLibraryVersion) => void;
   }) => (
     <div>
       <button
@@ -217,6 +213,11 @@ vi.mock('@/components/skills', () => ({
       <button type="button" onClick={() => onManageAgents?.(skill)}>
         detail-manage-agents
       </button>
+      {skill.libraryVersions?.map((version) => (
+        <button key={version.libraryId} type="button" onClick={() => onOpenLibraryVersion?.(version)}>
+          {version.libraryName} · {version.skillName}
+        </button>
+      ))}
     </div>
   ),
 }));
@@ -267,7 +268,7 @@ describe('SkillsPage', () => {
     mocks.tauriApi.listSkills.mockReset();
     mocks.tauriApi.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
     mocks.skillsDataState.snapshots = { 'native/global': snapshot() };
-    mocks.skillsDataState.checkingUpdateScopes = new Set();
+    mocks.skillsDataState.forceUpdateScopes = new Set();
     mocks.skillsDataState.forceCheckUpdates.mockReset();
     mocks.updateWorkflowState.phase = 'closed';
     mocks.updateWorkflowState.context = null;
@@ -291,6 +292,29 @@ describe('SkillsPage', () => {
     mocks.resizable.getLayout.mockReset();
     mocks.resizable.getLayout.mockReturnValue({});
     mocks.skillsPanelLifecycle.length = 0;
+  });
+
+  it('opens the referenced member through the registered Libraries route', async () => {
+    mocks.skillDetailState.selectedSkillRef = { name: 'toolkit', scope: 'global' };
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit', {
+      libraryVersions: [{ libraryId: 'lib-1', libraryName: 'QA Library', skillName: 'toolkit' }],
+    })]);
+    function LibraryDestination() {
+      const [params] = useSearchParams();
+      return <h1>{params.get('library')} · {params.get('skill')}</h1>;
+    }
+    const view = render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<SkillsPage />} />
+          <Route path="/libraries" element={<LibraryDestination />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(view.getByRole('button', { name: 'QA Library · toolkit' }));
+
+    expect(await view.findByRole('heading', { name: 'lib-1 · toolkit' })).toBeTruthy();
   });
 
   it('updates the panel layout without remounting the group when entering split view', () => {
@@ -369,7 +393,7 @@ describe('SkillsPage', () => {
       scope: 'global',
     };
     mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
-    mocks.skillsDataState.checkingUpdateScopes = new Set(['native/global']);
+    mocks.skillsDataState.forceUpdateScopes = new Set(['native/global']);
 
     const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
     const detailButton = getByText('skill-detail-panel');
@@ -435,7 +459,7 @@ describe('SkillsPage', () => {
     mocks.skillsDataState.snapshots = {
       'wsl:ubuntu/global': snapshot([makeSkill('toolkit')]),
     };
-    mocks.skillsDataState.checkingUpdateScopes = new Set(['wsl:ubuntu/global']);
+    mocks.skillsDataState.forceUpdateScopes = new Set(['wsl:ubuntu/global']);
 
     const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 

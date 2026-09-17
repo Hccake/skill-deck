@@ -1,7 +1,12 @@
-import type { LibraryUpdateSkillStatus } from '@/bindings';
+import type { LibraryUpdateSkillStatus, LibraryUpdateSkillResult } from '@/bindings';
 import type { SkillUpdateDisplayStatus } from '@/stores/skills-utils';
 
 export type LibraryUpdatePhase = 'idle' | 'checking' | 'preparing' | 'ready' | 'executing';
+
+export function canRetryLibraryUpdate(result?: LibraryUpdateSkillResult): boolean {
+  return result?.status === 'cancelled' || result?.status === 'notRun'
+    || (result?.status === 'failed' && result.error?.retryable === true);
+}
 
 /**
  * 把整库更新的批次阶段投影到每个成员的展示状态。

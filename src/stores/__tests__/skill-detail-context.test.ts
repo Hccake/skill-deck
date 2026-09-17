@@ -8,6 +8,7 @@ import { useSkillDetailStore } from '../skill-detail';
 
 const mocks = vi.hoisted(() => ({
   readSkillContent: vi.fn(),
+  listSkills: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', async (importOriginal) => {
@@ -15,6 +16,7 @@ vi.mock('@/hooks/useTauriApi', async (importOriginal) => {
   return {
     ...actual,
     readSkillContent: (...args: unknown[]) => mocks.readSkillContent(...args),
+    listSkills: (...args: unknown[]) => mocks.listSkills(...args),
   };
 });
 
@@ -93,6 +95,11 @@ describe('Skill detail workspace context', () => {
       loadingContent: false,
     });
     mocks.readSkillContent.mockResolvedValue('# Toolkit');
+    mocks.listSkills.mockImplementation(async (context: SkillLocationRef) => ({
+      skills: [context.scope.scope === 'project' ? toolkit : globalToolkit],
+      agents: [],
+      pathExists: true,
+    }));
   });
 
   it('derives project identity and reloads content from the committed context snapshot', async () => {
@@ -107,6 +114,33 @@ describe('Skill detail workspace context', () => {
     expect(mocks.readSkillContent).toHaveBeenLastCalledWith(
       { context: projectContext, skillName: 'toolkit' },
     );
+  });
+
+  it('reloads the selected Skill after its actual installation changes', async () => {
+    await useSkillDetailStore.getState().selectSkill(toolkit);
+    mocks.readSkillContent.mockResolvedValue('# Updated private installation');
+
+    await useSkillsDataStore.getState().refreshContext(projectContext, {
+      origin: 'selfMutation', mutatedSkillNames: ['toolkit'],
+    });
+
+    expect(useSkillDetailStore.getState().skillContent).toBe('# Updated private installation');
+    expect(mocks.readSkillContent).toHaveBeenLastCalledWith({ context: projectContext, skillName: 'toolkit' });
+  });
+
+  it('keeps the selected content when another Skill or Scope changes', async () => {
+    await useSkillDetailStore.getState().selectSkill(toolkit);
+    mocks.readSkillContent.mockClear();
+
+    await useSkillsDataStore.getState().refreshContext(globalContext(projectContext.environment), {
+      origin: 'selfMutation', mutatedSkillNames: ['toolkit'],
+    });
+    await useSkillsDataStore.getState().refreshContext(projectContext, {
+      origin: 'selfMutation', mutatedSkillNames: ['another-skill'],
+    });
+
+    expect(mocks.readSkillContent).not.toHaveBeenCalled();
+    expect(useSkillDetailStore.getState().skillContent).toBe('# Toolkit');
   });
 
   it('reads a global Skill from the Environment global Context while a project is selected', async () => {

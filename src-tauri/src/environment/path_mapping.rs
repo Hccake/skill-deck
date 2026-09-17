@@ -1,6 +1,5 @@
 use crate::environment::types::EnvironmentRef;
-use crate::environment::wsl::operations::path;
-use crate::environment::wsl::WslSession;
+use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
 
 pub(crate) fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
@@ -100,19 +99,10 @@ pub fn map_wsl_input_without_wslpath(
 }
 
 pub async fn map_windows_path_with_wslpath(
-    session: &WslSession,
+    workspace: &WslWorkspace,
     path: &str,
 ) -> Result<String, AppError> {
-    match path::map_host_bridge_path(session, path, None).await {
-        Ok(mapped) => Ok(mapped),
-        Err(AppError::WslCommandFailed { .. }) => Err(AppError::StorageMappingUnsupported {
-            path: path.to_string(),
-            environment: EnvironmentRef::Wsl {
-                distro_name: session.distro_name.clone(),
-            },
-        }),
-        Err(error) => Err(error),
-    }
+    workspace.map_host_path(path.to_string(), None).await
 }
 
 #[cfg(test)]

@@ -73,7 +73,6 @@ export interface ProjectBackend {
 }
 
 export interface ProjectEnvironmentAccess {
-  isAvailable(environment: EnvironmentRef): boolean;
   revision(environment: EnvironmentRef): number;
   ensureAvailable(environment: EnvironmentRef): Promise<void>;
 }
@@ -226,12 +225,6 @@ export function createProjectWorkspace(
     environment: EnvironmentRef,
     environmentRevision: number,
   ): Promise<ProjectWorkspaceResult> => {
-    if (!dependencies.environment.isAvailable(environment)) {
-      return failed(environment, {
-        kind: 'environmentUnavailable',
-        data: { environment, message: 'Environment is unavailable' },
-      } satisfies AppError, 'environment');
-    }
     const key = environmentKey(environment);
     const generation = invalidateRequests(environment);
     commit(environment, (current) => ({

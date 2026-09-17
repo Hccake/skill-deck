@@ -46,7 +46,7 @@ test("reports missing local files and anchors with their source locations", asyn
   }, async (root) => {
     const problems = await checkDocumentation(root, ["README.md", "docs/guide.md"]);
     assert.equal(problems.length, 2);
-    assert.match(problems[0], /README\.md:3: missing file: docs\/missing\.md/);
-    assert.match(problems[1], /README\.md:4: missing anchor: docs\/guide\.md#not-present/);
+    assert.match(problems[0], /README\.md:3: missing file: docs[\\/]missing\.md/);
+    assert.match(problems[1], /README\.md:4: missing anchor: docs[\\/]guide\.md#not-present/);
   });
 });

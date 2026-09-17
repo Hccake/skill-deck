@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
@@ -15,8 +16,8 @@ use crate::environment::runtime::{
     PhysicalTargetKey,
 };
 use crate::environment::types::{
-    normalized_wsl_distro_name, same_environment_identity, EnvironmentRef, ResourceLocator,
-    SkillLocationRef, StorageAccess,
+    normalized_wsl_distro_name, same_environment_identity, EnvironmentKey, EnvironmentRef,
+    ResourceLocator, SkillLocationRef, StorageAccess,
 };
 use crate::environment::wsl::operations::content_manifest as wsl_content_manifest;
 use crate::environment::wsl::operations::entry::inspect_entries;
@@ -53,17 +54,63 @@ pub struct ResolvedLinkTargetIdentity {
 }
 
 impl ResolvedLinkTargetIdentity {
+    fn from_locator(target: &ResourceLocator) -> Option<Self> {
+        let comparison_path = normalized_comparison_path(&target.environment, &target.native_path)?;
+        Some(Self {
+            environment: target.environment.clone(),
+            comparison_path,
+        })
+    }
+
     pub(crate) fn matches(&self, target: &ResourceLocator) -> bool {
         same_environment_identity(&self.environment, &target.environment)
             && normalized_comparison_path(&target.environment, &target.native_path)
                 .is_some_and(|candidate| candidate == self.comparison_path)
     }
+
+    pub(crate) fn comparison_key(&self) -> (EnvironmentKey, String) {
+        (
+            EnvironmentKey::from_ref(&self.environment),
+            self.comparison_path.clone(),
+        )
+    }
+}
+
+pub(crate) fn locator_comparison_key(
+    locator: &ResourceLocator,
+) -> Option<(EnvironmentKey, String)> {
+    normalized_comparison_path(&locator.environment, &locator.native_path)
+        .map(|path| (EnvironmentKey::from_ref(&locator.environment), path))
 }
 
 pub(crate) fn resolve_link_target_identity(
     destination: &ResourceLocator,
     raw_target: &str,
 ) -> Option<ResolvedLinkTargetIdentity> {
+    let target = resolved_link_target_path(destination, raw_target)?;
+    ResolvedLinkTargetIdentity::from_locator(&target)
+}
+
+fn resolve_native_link_target_identity(
+    destination: &ResourceLocator,
+    raw_target: &str,
+    backend: ExecutionBackend,
+) -> Option<ResolvedLinkTargetIdentity> {
+    let target = resolved_link_target_path(destination, raw_target)?;
+    let projected = project_target(Path::new(&target.native_path), backend).ok()?;
+    ResolvedLinkTargetIdentity::from_locator(&ResourceLocator {
+        environment: EnvironmentRef::Native,
+        native_path: projected
+            .physical_destination
+            .to_string_lossy()
+            .into_owned(),
+    })
+}
+
+pub(crate) fn resolved_link_target_path(
+    destination: &ResourceLocator,
+    raw_target: &str,
+) -> Option<ResourceLocator> {
     let native_path = match &destination.environment {
         EnvironmentRef::Native => {
             let raw = Path::new(raw_target);
@@ -86,10 +133,9 @@ pub(crate) fn resolve_link_target_identity(
             lexical_normalize_posix(&joined)
         }
     };
-    let comparison_path = normalized_comparison_path(&destination.environment, &native_path)?;
-    Some(ResolvedLinkTargetIdentity {
+    Some(ResourceLocator {
         environment: destination.environment.clone(),
-        comparison_path,
+        native_path,
     })
 }
 
@@ -165,7 +211,126 @@ fn native_comparison_path(path: &Path) -> String {
     without_verbatim.to_lowercase()
 }
 
+/// 比较已完成物理投影的路径；本机路径和 WSL 协议路径各自使用对应的组件规则。
+pub(crate) fn is_within_resolved_root(
+    root: &ResourceLocator,
+    target: &ResourceLocator,
+) -> Result<bool, AppError> {
+    if !same_environment_identity(&root.environment, &target.environment) {
+        return Err(AppError::StaleEnvironment);
+    }
+    let invalid = |path: &str| AppError::UnsafePath {
+        path: path.into(),
+        reason: "scope comparison requires an absolute resolved path".into(),
+    };
+    match &root.environment {
+        EnvironmentRef::Native => {
+            for locator in [root, target] {
+                let path = Path::new(&locator.native_path);
+                if !path.is_absolute()
+                    || path
+                        .components()
+                        .any(|part| matches!(part, Component::ParentDir))
+                {
+                    return Err(invalid(&locator.native_path));
+                }
+            }
+            let root = PathBuf::from(native_comparison_path(Path::new(&root.native_path)));
+            let target = PathBuf::from(native_comparison_path(Path::new(&target.native_path)));
+            Ok(target
+                .strip_prefix(&root)
+                .is_ok_and(|suffix| suffix.components().next().is_some()))
+        }
+        EnvironmentRef::Wsl { .. } => {
+            for locator in [root, target] {
+                if !locator.native_path.starts_with('/')
+                    || locator.native_path.split('/').any(|part| part == "..")
+                {
+                    return Err(invalid(&locator.native_path));
+                }
+            }
+            let components = |path: &str| {
+                path.split('/')
+                    .filter(|part| !part.is_empty() && *part != ".")
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            };
+            let root = components(&root.native_path);
+            let target = components(&target.native_path);
+            Ok(target.len() > root.len() && target.starts_with(&root))
+        }
+    }
+}
+
 pub type TargetFactFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// 记录解析根目录时经过的链接本身，供既有执行协议复核链接是否被改指。
+pub(crate) async fn observe_root_links(
+    targets: &dyn TargetFactResolver,
+    context: &SkillLocationRef,
+    roots: &[ResourceLocator],
+) -> Result<Vec<ResolvedTargetFact>, AppError> {
+    let mut pending = roots.to_vec();
+    let mut visited = BTreeSet::new();
+    let mut links = BTreeMap::new();
+    while !pending.is_empty() {
+        let mut paths = BTreeSet::new();
+        for root in pending.drain(..) {
+            if !same_environment_identity(&root.environment, &context.environment) {
+                return Err(AppError::StaleEnvironment);
+            }
+            match &context.environment {
+                EnvironmentRef::Native => paths.extend(
+                    Path::new(&root.native_path)
+                        .ancestors()
+                        .filter(|path| path.file_name().is_some())
+                        .map(|path| path.to_string_lossy().into_owned()),
+                ),
+                EnvironmentRef::Wsl { .. } => {
+                    let mut path = root.native_path.trim_end_matches('/');
+                    while let Some((parent, _)) = path.rsplit_once('/') {
+                        paths.insert(path.to_string());
+                        path = parent;
+                    }
+                }
+            }
+        }
+        let locations = paths
+            .into_iter()
+            .filter(|path| visited.insert(path.clone()))
+            .map(|native_path| ResourceLocator {
+                environment: context.environment.clone(),
+                native_path,
+            })
+            .collect::<Vec<_>>();
+        if locations.is_empty() {
+            break;
+        }
+        let facts = targets.resolve(context, &locations, None).await?;
+        if facts.len() != locations.len() {
+            return Err(AppError::StaleTarget);
+        }
+        for fact in facts.into_iter().filter(|fact| {
+            matches!(
+                fact.entry_kind,
+                TargetEntryKind::Symlink | TargetEntryKind::Junction
+            )
+        }) {
+            if links.contains_key(&fact.key) {
+                continue;
+            }
+            if let Some(target) = fact
+                .link_target
+                .as_deref()
+                .and_then(|raw| resolved_link_target_path(&fact.destination, raw))
+            {
+                pending.push(target);
+            }
+            links.insert(fact.key.clone(), fact);
+        }
+    }
+    Ok(links.into_values().collect())
+}
 
 pub trait TargetFactResolver: Send + Sync {
     fn resolve<'a>(
@@ -236,11 +401,15 @@ impl TargetFactResolver for RuntimeTargetFactResolver {
                         .map(|target| target.native_path.clone())
                         .collect::<Vec<_>>();
                     let cancellation_for_retry = cancellation.clone();
+                    let workspace = self.environments.workspace(distro_name)?;
                     self.environments
-                        .with_session_retry(distro_name, move |session| {
+                        .with_session_read_retry(distro_name, move |session| {
                             let destinations = destinations.clone();
                             let cancellation = cancellation_for_retry.clone();
-                            async move { resolve_wsl(&session, &destinations, cancellation).await }
+                            let workspace = workspace.clone();
+                            async move {
+                                resolve_wsl(&session, &workspace, &destinations, cancellation).await
+                            }
                         })
                         .await
                 }
@@ -258,15 +427,8 @@ impl ContentManifestReader for RuntimeTargetFactResolver {
             match &target.location.environment {
                 EnvironmentRef::Native => NativeContentManifestReader.read(target).await,
                 EnvironmentRef::Wsl { distro_name } => {
-                    let target = target.clone();
-                    self.environments
-                        .with_session_retry(distro_name, move |session| {
-                            let target = target.clone();
-                            async move {
-                                wsl_content_manifest::inspect(&session, &target, None).await
-                            }
-                        })
-                        .await
+                    let workspace = self.environments.workspace(distro_name)?;
+                    wsl_content_manifest::inspect(&workspace, target, None).await
                 }
             }
         })
@@ -296,9 +458,9 @@ fn resolve_native(
             let link_target = inspection
                 .link_target
                 .map(|target| target.to_string_lossy().into_owned());
-            let link_target_identity = link_target
-                .as_deref()
-                .and_then(|raw| resolve_link_target_identity(&destination, raw));
+            let link_target_identity = link_target.as_deref().and_then(|raw| {
+                resolve_native_link_target_identity(&destination, raw, backend.clone())
+            });
             Ok(ResolvedTargetFact {
                 key: projected.key,
                 destination,
@@ -320,15 +482,16 @@ pub(crate) fn resolve_native_targets(
 
 async fn resolve_wsl(
     session: &WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     logical_destinations: &[String],
     cancellation: Option<CancellationSignal>,
 ) -> Result<Vec<ResolvedTargetFact>, AppError> {
-    let projected = project_targets(session, logical_destinations, cancellation.clone()).await?;
+    let projected = project_targets(workspace, logical_destinations, cancellation.clone()).await?;
     let physical_paths = projected
         .iter()
         .map(|target| target.physical_destination.clone())
         .collect::<Vec<_>>();
-    let entries = inspect_entries(session, &physical_paths, cancellation).await?;
+    let entries = inspect_entries(workspace, &physical_paths, cancellation).await?;
     if entries.len() != projected.len() {
         return Err(protocol_mismatch());
     }
@@ -368,10 +531,11 @@ async fn resolve_wsl(
 
 pub(crate) async fn resolve_wsl_targets(
     session: &WslSession,
+    workspace: &crate::environment::wsl::WslWorkspace,
     logical_destinations: &[String],
     cancellation: Option<CancellationSignal>,
 ) -> Result<Vec<ResolvedTargetFact>, AppError> {
-    resolve_wsl(session, logical_destinations, cancellation).await
+    resolve_wsl(session, workspace, logical_destinations, cancellation).await
 }
 
 fn wsl_fact(
@@ -514,6 +678,119 @@ mod tests {
     };
     use crate::environment::wsl::WslRuntime;
 
+    #[test]
+    fn resolved_root_contains_only_its_native_descendants() {
+        let root = std::env::temp_dir().join("scope-root");
+        let locator = |path: &Path| ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: path.to_string_lossy().into_owned(),
+        };
+        let root_locator = locator(&root);
+        assert!(is_within_resolved_root(
+            &root_locator,
+            &locator(&root.join(".claude/skills/demo"))
+        )
+        .unwrap());
+        assert!(!is_within_resolved_root(&root_locator, &locator(&root)).unwrap());
+        assert!(!is_within_resolved_root(
+            &root_locator,
+            &locator(&root.with_file_name("scope-root-other").join("demo"))
+        )
+        .unwrap());
+        assert!(
+            is_within_resolved_root(&root_locator, &locator(&root.join("..").join("other")))
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn root_link_observations_include_intermediate_link_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let actual = temp.path().join("actual");
+        let middle = temp.path().join("middle");
+        let first = temp.path().join("first");
+        std::fs::create_dir_all(actual.join("skills")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&actual, &middle).unwrap();
+            std::os::unix::fs::symlink(&middle, &first).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            junction::create(&actual, &middle).unwrap();
+            junction::create(&middle, &first).unwrap();
+        }
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: crate::environment::types::SkillLocation::Global,
+        };
+        let targets = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
+        let links = observe_root_links(
+            &targets,
+            &context,
+            &[ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: first.join("skills").to_string_lossy().into_owned(),
+            }],
+        )
+        .await
+        .unwrap();
+        let expected = targets
+            .resolve(
+                &context,
+                &[ResourceLocator {
+                    environment: EnvironmentRef::Native,
+                    native_path: middle.to_string_lossy().into_owned(),
+                }],
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(links.iter().any(|fact| fact.key == expected[0].key));
+    }
+
+    #[test]
+    fn resolved_root_uses_posix_components_for_wsl() {
+        let locator = |path: &str| ResourceLocator {
+            environment: EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".into(),
+            },
+            native_path: path.into(),
+        };
+        let root = locator("/work/a\\b");
+        assert!(
+            is_within_resolved_root(&root, &locator("/work/a\\b/.claude/skills/demo")).unwrap()
+        );
+        assert!(
+            !is_within_resolved_root(&root, &locator("/work/a/b/.claude/skills/demo")).unwrap()
+        );
+        assert!(!is_within_resolved_root(&root, &locator("/work/A\\b/demo")).unwrap());
+        assert!(is_within_resolved_root(&root, &locator("/work/a\\b/../other/demo")).is_err());
+        assert!(is_within_resolved_root(&locator("/"), &locator("/skills/demo")).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolved_root_handles_windows_case_unc_and_verbatim_forms() {
+        let locator = |path: &str| ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: path.into(),
+        };
+        assert!(is_within_resolved_root(
+            &locator(r"\\?\C:\Scope"),
+            &locator("c:/scope/.claude/skills/demo")
+        )
+        .unwrap());
+        assert!(is_within_resolved_root(
+            &locator(r"\\?\UNC\Server\Share\Scope"),
+            &locator(r"\\server\share\scope\demo")
+        )
+        .unwrap());
+        assert!(
+            !is_within_resolved_root(&locator(r"C:\Scope"), &locator(r"D:\Scope\demo")).unwrap()
+        );
+    }
+
     fn wsl_session() -> WslSession {
         WslSession {
             distro_name: "Ubuntu-24.04".to_string(),
@@ -548,6 +825,55 @@ mod tests {
         let identity = resolve_link_target_identity(&destination, "../shared/toolkit").unwrap();
 
         assert!(identity.matches(&target));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_link_identity_resolves_a_symlinked_target_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let physical = temp.path().join("physical");
+        let alias = temp.path().join("alias");
+        let links = physical.join("links");
+        let target = physical.join("shared/toolkit");
+        std::fs::create_dir_all(&links).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        symlink(&physical, &alias).unwrap();
+        symlink(alias.join("shared/toolkit"), links.join("demo")).unwrap();
+
+        let resolved = resolve_native_targets(&[
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: links.join("demo").to_string_lossy().into_owned(),
+            },
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: target.to_string_lossy().into_owned(),
+            },
+        ])
+        .unwrap();
+        let identity = resolved[0].link_target_identity.as_ref().unwrap();
+
+        assert!(identity.matches(&resolved[1].destination));
+
+        std::fs::remove_dir_all(&target).unwrap();
+        let broken = resolve_native_targets(&[
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: links.join("demo").to_string_lossy().into_owned(),
+            },
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: target.to_string_lossy().into_owned(),
+            },
+        ])
+        .unwrap();
+        assert!(broken[0]
+            .link_target_identity
+            .as_ref()
+            .unwrap()
+            .matches(&broken[1].destination));
     }
 
     #[test]

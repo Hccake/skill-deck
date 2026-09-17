@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 mod election;
 
@@ -6,9 +6,7 @@ use crate::application::agent_selection::{
     AgentInstallOptionKind, AgentSelectionCatalog, DirectoryPlacementId,
 };
 use crate::application::installed_skill_resolver::SkillDirectoryName;
-use crate::application::library_agent_placements::{
-    LibraryAgentPlacementError, LibraryAgentPlacementMap,
-};
+use crate::application::library_agent_placements::LibraryAgentPlacementMap;
 use crate::application::library_candidates::{LibraryCandidateError, LibraryCandidateSet};
 use crate::application::mutation::plan::{
     stable_digest, ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation,
@@ -108,6 +106,7 @@ pub(crate) struct LibrarySkillChangeRequest<'a> {
     pub(crate) placements: ScopeSkillPlacementSet,
     pub(crate) before: LibraryElectionState<'a>,
     pub(crate) after: LibraryElectionState<'a>,
+    pub(crate) before_applied: bool,
     pub(crate) legacy: Vec<LegacyLibraryPlacement>,
 }
 
@@ -119,11 +118,13 @@ pub(crate) enum ScopeSkillPlanningError {
     CatalogPlacementMismatch(DirectoryPlacementId),
     LibraryCandidate(LibraryCandidateError),
     InvalidInput(SkillDirectoryInputError),
-    LibraryAgentPlacement(LibraryAgentPlacementError),
     ConflictingDirectContent {
         target_path: String,
     },
     ConflictingDirectMaterialization {
+        target_path: String,
+    },
+    LibraryContentTarget {
         target_path: String,
     },
     ExternalTarget {
@@ -156,20 +157,14 @@ impl ScopeSkillPlanningError {
             Self::InvalidInput(error) => AppError::ConfigurationCorrupted {
                 message: format!("Scope Skill planning input is inconsistent: {error:?}"),
             },
-            Self::LibraryAgentPlacement(LibraryAgentPlacementError::UnknownAgent(agent)) => {
-                AppError::InvalidAgent {
-                    agent: agent.as_str().to_string(),
-                }
-            }
-            Self::LibraryAgentPlacement(LibraryAgentPlacementError::PartialSelection(_)) => {
-                AppError::AgentSelectionInvalid {
-                    reason: crate::error::AgentSelectionInvalidReason::OptionUnavailable,
-                }
-            }
             Self::ConflictingDirectContent { target_path }
             | Self::ConflictingDirectMaterialization { target_path } => AppError::Validation {
                 field: Some("skillName".to_string()),
                 message: format!("direct Skill content conflicts at {target_path}"),
+            },
+            Self::LibraryContentTarget { target_path } => AppError::CapabilityUnavailable {
+                capability: "libraryContentTarget".into(),
+                path: Some(target_path),
             },
             Self::ExternalTarget {
                 skill_name,
@@ -253,6 +248,60 @@ pub(crate) struct ScopeSkillPlan {
 impl ScopeSkillPlan {
     pub(crate) fn directories(&self) -> &[ScopePlannedDirectory] {
         &self.directories
+    }
+
+    pub(crate) fn direct_content_candidates(
+        &self,
+        catalog: &AgentSelectionCatalog,
+    ) -> Vec<ResolvedTargetFact> {
+        let mut candidates = Vec::new();
+        for directory in &self.directories {
+            if !matches!(directory.observed, ObservedVersion::Direct)
+                || directory.fact.entry_kind != TargetEntryKind::Directory
+            {
+                continue;
+            }
+            if directory
+                .placements
+                .contains(&DirectoryPlacementRef::Catalog(
+                    DirectoryPlacementId::Standard,
+                ))
+            {
+                return vec![directory.fact.clone()];
+            }
+            let original = directory
+                .placements
+                .iter()
+                .any(|placement| match placement {
+                    DirectoryPlacementRef::Catalog(id) => catalog
+                        .placement(id)
+                        .is_some_and(|placement| !placement.content.uses_eve_payload()),
+                    DirectoryPlacementRef::Legacy => false,
+                });
+            candidates.push((original, directory.fact.clone()));
+        }
+        let has_original = candidates.iter().any(|(original, _)| *original);
+        candidates.retain(|(original, _)| *original || !has_original);
+        candidates
+            .sort_by(|(_, a), (_, b)| a.destination.native_path.cmp(&b.destination.native_path));
+        candidates.into_iter().map(|(_, fact)| fact).collect()
+    }
+
+    pub(crate) fn has_shared_source(&self, source: &ResolvedTargetFact) -> bool {
+        self.directories.iter().any(|directory| {
+            matches!(directory.observed, ObservedVersion::Direct)
+                && directory
+                    .placements
+                    .contains(&DirectoryPlacementRef::Catalog(
+                        DirectoryPlacementId::Standard,
+                    ))
+                && (directory.fact.key == source.key
+                    || directory
+                        .fact
+                        .link_target_identity
+                        .as_ref()
+                        .is_some_and(|identity| identity.matches(&source.destination)))
+        })
     }
 
     pub(crate) fn standard_fact(&self) -> Result<&ResolvedTargetFact, ScopeSkillPlanningError> {
@@ -367,8 +416,7 @@ impl ScopeSkillPlanner {
             request.placements,
             request.libraries,
             request.libraries,
-            request.direct_changes,
-            Vec::new(),
+            ScopeSkillChange::Direct(request.direct_changes),
         )
     }
 
@@ -381,10 +429,39 @@ impl ScopeSkillPlanner {
             request.placements,
             request.before,
             request.after,
-            BTreeMap::new(),
-            request.legacy,
+            ScopeSkillChange::Library {
+                before_applied: request.before_applied,
+                legacy: request.legacy,
+            },
         )
     }
+
+    pub(crate) fn conflicting_mutations<'a>(
+        entries: impl IntoIterator<Item = (&'a PhysicalTargetKey, &'a PreparedEntryAction)>,
+    ) -> BTreeSet<PhysicalTargetKey> {
+        let mut expected = BTreeMap::<PhysicalTargetKey, PreparedEntryAction>::new();
+        let mut conflicts = BTreeSet::new();
+        for (key, action) in entries {
+            match expected.get(key) {
+                Some(existing) if existing != action => {
+                    conflicts.insert(key.clone());
+                }
+                Some(_) => {}
+                None => {
+                    expected.insert(key.clone(), action.clone());
+                }
+            }
+        }
+        conflicts
+    }
+}
+
+enum ScopeSkillChange {
+    Direct(BTreeMap<DirectoryPlacementId, DirectPlacementChange>),
+    Library {
+        before_applied: bool,
+        legacy: Vec<LegacyLibraryPlacement>,
+    },
 }
 
 fn plan(
@@ -393,9 +470,15 @@ fn plan(
     placements: ScopeSkillPlacementSet,
     before: LibraryElectionState<'_>,
     after: LibraryElectionState<'_>,
-    direct_changes: BTreeMap<DirectoryPlacementId, DirectPlacementChange>,
-    legacy: Vec<LegacyLibraryPlacement>,
+    change: ScopeSkillChange,
 ) -> Result<ScopeSkillPlan, ScopeSkillPlanningError> {
+    let (before_applied, direct_changes, legacy) = match change {
+        ScopeSkillChange::Direct(changes) => (None, changes, Vec::new()),
+        ScopeSkillChange::Library {
+            before_applied,
+            legacy,
+        } => (Some(before_applied), BTreeMap::new(), legacy),
+    };
     if catalog.context() != &placements.context {
         return Err(ScopeSkillPlanningError::ScopeMismatch);
     }
@@ -415,12 +498,8 @@ fn plan(
         }
     }
     let library_placements = LibraryAgentPlacementMap::from_catalog(catalog);
-    let before_library = library_placements
-        .placements_for(before.selected_agent_ids)
-        .map_err(ScopeSkillPlanningError::LibraryAgentPlacement)?;
-    let after_library = library_placements
-        .placements_for(after.selected_agent_ids)
-        .map_err(ScopeSkillPlanningError::LibraryAgentPlacement)?;
+    let before_library = library_placements.placements_for_saved(before.selected_agent_ids);
+    let after_library = library_placements.placements_for_saved(after.selected_agent_ids);
     validate_prepared_direct_changes(&placements.resolved, &direct_changes)?;
 
     let mut recognized = before.candidates.recognized().to_vec();
@@ -431,7 +510,8 @@ fn plan(
     }
     let candidates = LibraryCandidateSet::new(recognized, after.candidates.ordered().to_vec())
         .map_err(ScopeSkillPlanningError::LibraryCandidate)?;
-    let before_has_library = !before.candidates.ordered().is_empty();
+    let before_has_library =
+        before_applied.unwrap_or_else(|| !before.candidates.ordered().is_empty());
     let after_has_library = !after.candidates.ordered().is_empty();
     let prepared_keys = direct_changes
         .iter()
@@ -572,6 +652,14 @@ fn plan(
     })?;
     let mut directories = Vec::new();
     for directory in physical.directories() {
+        if directory.fact().entry_kind == TargetEntryKind::Directory
+            && matches!(directory.observed(), ObservedVersion::Library(_))
+            && !matches!(directory.action(), PreparedEntryAction::Keep)
+        {
+            return Err(ScopeSkillPlanningError::LibraryContentTarget {
+                target_path: directory.fact().destination.native_path.clone(),
+            });
+        }
         let mut readers = readers_by_key
             .remove(&directory.fact().key)
             .unwrap_or_default();
@@ -652,17 +740,18 @@ fn current_direct_version(
     standard: &ResolvedTargetFact,
     libraries: &LibraryCandidateSet,
 ) -> Option<CurrentDirectVersion> {
-    let link_is_library = fact.link_target_identity.as_ref().is_some_and(|identity| {
-        libraries
-            .recognized()
-            .iter()
-            .any(|candidate| identity.matches(candidate.locator()))
-    });
+    if libraries
+        .recognized()
+        .iter()
+        .any(|candidate| candidate.matches_target(fact))
+    {
+        return None;
+    }
     let source =
         (placement != &DirectoryPlacementId::Standard).then_some(standard.destination.clone());
     let direct = match fact.entry_kind {
         TargetEntryKind::Directory => Some(DirectVersionCandidate::existing(source)),
-        TargetEntryKind::Symlink | TargetEntryKind::Junction if !link_is_library => {
+        TargetEntryKind::Symlink | TargetEntryKind::Junction => {
             Some(DirectVersionCandidate::existing(source))
         }
         TargetEntryKind::BrokenLink
@@ -820,7 +909,7 @@ mod tests {
                 agents: Vec::new(),
                 install_options: Vec::new(),
                 groups: Vec::new(),
-                initial_selected_option_ids: Vec::new(),
+                baseline_selected_option_ids: Vec::new(),
                 unavailable_explicit_agents: Vec::new(),
                 user_mode_option_ids: Vec::new(),
                 revision: AgentSelectionRevision("revision".to_string()),
@@ -864,7 +953,7 @@ mod tests {
                 }],
                 install_options: vec![public.clone()],
                 groups: Vec::new(),
-                initial_selected_option_ids: Vec::new(),
+                baseline_selected_option_ids: Vec::new(),
                 unavailable_explicit_agents: Vec::new(),
                 user_mode_option_ids: Vec::new(),
                 revision: AgentSelectionRevision("revision".to_string()),
@@ -940,7 +1029,7 @@ mod tests {
                 }],
                 install_options: vec![first.clone(), second.clone()],
                 groups: Vec::new(),
-                initial_selected_option_ids: Vec::new(),
+                baseline_selected_option_ids: Vec::new(),
                 unavailable_explicit_agents: Vec::new(),
                 user_mode_option_ids: Vec::new(),
                 revision: AgentSelectionRevision("revision".to_string()),
@@ -1136,6 +1225,51 @@ mod tests {
     }
 
     #[test]
+    fn library_member_directory_is_neither_a_direct_source_nor_a_scope_write_target() {
+        let catalog = catalog();
+        let standard = fact("demo", TargetEntryKind::Directory, None);
+        let member = LibraryVersionCandidate::new(
+            LibraryId::parse("library-one"),
+            "demo",
+            locator("/libraries/library-one/skills/demo"),
+            standard.key.clone(),
+        );
+        let candidates = LibraryCandidateSet::new(vec![member.clone()], vec![member]).unwrap();
+        assert!(current_direct_version(
+            &standard,
+            &DirectoryPlacementId::Standard,
+            &standard,
+            &candidates
+        )
+        .is_none());
+        let result = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+            skill: SkillDirectoryName::try_from("demo").unwrap(),
+            catalog: &catalog,
+            placements: ScopeSkillPlacementSet::new(
+                context(),
+                [(DirectoryPlacementId::Standard, standard)].into(),
+            ),
+            libraries: LibraryElectionState {
+                candidates: &candidates,
+                selected_agent_ids: &[],
+            },
+            direct_changes: [(
+                DirectoryPlacementId::Standard,
+                DirectPlacementChange::Set(PreparedDirectVersion::new(
+                    DirectContentIdentity::Existing(key("new")),
+                    PreparedEntryAction::Link {
+                        target: locator("/new/demo"),
+                    },
+                )),
+            )]
+            .into(),
+        });
+        assert!(
+            matches!(result.map_err(|error| error.into_app_error()), Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "libraryContentTarget")
+        );
+    }
+
+    #[test]
     fn direct_change_uses_prepared_content_over_preserved_existing_content() {
         let catalog = catalog();
         let standard = fact("demo", TargetEntryKind::Directory, None);
@@ -1173,6 +1307,7 @@ mod tests {
             LibraryId::parse("library-one"),
             "demo",
             locator("/libraries/library-one/skills/demo"),
+            library_key(10),
         );
         let candidates = LibraryCandidateSet::for_skill(
             &EnvironmentRef::Native,
@@ -1214,11 +1349,13 @@ mod tests {
             LibraryId::parse("library-before"),
             "demo",
             locator("/libraries/library-before/skills/demo"),
+            library_key(11),
         );
         let target_candidate = LibraryVersionCandidate::new(
             LibraryId::parse("library-target"),
             "demo",
             locator("/libraries/library-target/skills/demo"),
+            library_key(12),
         );
         let before_candidates = LibraryCandidateSet::for_skill(
             &EnvironmentRef::Native,
@@ -1253,6 +1390,7 @@ mod tests {
                 candidates: &target_candidates,
                 selected_agent_ids: &[],
             },
+            before_applied: true,
             legacy: vec![LegacyLibraryPlacement {
                 fact: fact(
                     "legacy-demo",
@@ -1270,5 +1408,69 @@ mod tests {
             .find(|directory| directory.placements() == [DirectoryPlacementRef::Legacy])
             .expect("legacy directory remains in the plan");
         assert_eq!(legacy.action(), &PreparedEntryAction::Keep);
+    }
+
+    #[test]
+    fn cross_scope_conflicts_are_grouped_by_physical_target_and_elected_version() {
+        let first = plan_with_library("shared", "library-a");
+        let same = plan_with_library("shared", "library-a");
+        let different = plan_with_library("shared", "library-b");
+
+        assert!(ScopeSkillPlanner::conflicting_mutations(
+            [&first, &same]
+                .into_iter()
+                .flat_map(|plan| plan.directories().iter())
+                .map(|directory| (&directory.fact.key, &directory.action))
+        )
+        .is_empty());
+        assert_eq!(
+            ScopeSkillPlanner::conflicting_mutations(
+                [&first, &different]
+                    .into_iter()
+                    .flat_map(|plan| plan.directories().iter())
+                    .map(|directory| (&directory.fact.key, &directory.action))
+            ),
+            std::collections::BTreeSet::from([key("shared")])
+        );
+    }
+
+    fn library_key(identity: u64) -> PhysicalTargetKey {
+        PhysicalTargetKey {
+            physical_parent: if cfg!(windows) {
+                PhysicalParentIdentity::Windows {
+                    volume_serial: 1,
+                    file_id: identity.into(),
+                }
+            } else {
+                PhysicalParentIdentity::Unix {
+                    device: 1,
+                    inode: identity,
+                }
+            },
+            ..key("demo")
+        }
+    }
+
+    fn plan_with_library(target_key: &str, library_id: &str) -> ScopeSkillPlan {
+        let candidate = LibraryVersionCandidate::new(
+            LibraryId::parse(library_id),
+            "demo",
+            locator(&format!("/libraries/{library_id}/skills/demo")),
+            library_key(10),
+        );
+        ScopeSkillPlan {
+            directories: vec![ScopePlannedDirectory {
+                fact: fact(target_key, TargetEntryKind::Missing, None),
+                placements: vec![DirectoryPlacementRef::Catalog(
+                    DirectoryPlacementId::Standard,
+                )],
+                observed: ObservedVersion::Unknown,
+                elected: ElectedVersion::Library(candidate.clone()),
+                action: PreparedEntryAction::Link {
+                    target: candidate.locator().clone(),
+                },
+                readers: Vec::new(),
+            }],
+        }
     }
 }

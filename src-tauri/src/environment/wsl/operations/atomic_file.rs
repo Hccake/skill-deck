@@ -1,21 +1,10 @@
-#[cfg(all(test, target_os = "linux"))]
-use std::path::{Path, PathBuf};
-
-use tokio::time::Duration;
-
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
-use crate::environment::wsl::protocol::{
-    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
-    DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
-};
 use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
-use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
-
-const READ_SCRIPT: &str = include_str!("../scripts/atomic-file.sh");
-pub(crate) const WRITE_SCRIPT: &str = include_str!("../scripts/atomic-file.sh");
-const READ_OPERATION: WslOperationDescriptor = wsl_operation("atomic-file", "read", READ_SCRIPT);
-const WRITE_OPERATION: WslOperationDescriptor = wsl_operation("atomic-file", "write", WRITE_SCRIPT);
+use crate::storage::atomic_document::{
+    AtomicDocumentIo, DocumentSnapshot, DocumentWriteFailure, IoFuture,
+};
+use sha2::{Digest, Sha256};
 
 pub struct WslAtomicDocumentIo {
     access: WslAtomicDocumentAccess,
@@ -23,7 +12,10 @@ pub struct WslAtomicDocumentIo {
 
 enum WslAtomicDocumentAccess {
     Workspace(WslWorkspace),
-    Session(WslSession),
+    Active {
+        session: WslSession,
+        workspace: WslWorkspace,
+    },
 }
 
 impl WslAtomicDocumentIo {
@@ -33,49 +25,23 @@ impl WslAtomicDocumentIo {
         }
     }
 
-    pub(crate) fn from_active_session(session: WslSession) -> Self {
+    pub(crate) fn from_active_session(session: WslSession, workspace: WslWorkspace) -> Self {
         Self {
-            access: WslAtomicDocumentAccess::Session(session),
+            access: WslAtomicDocumentAccess::Active { session, workspace },
         }
     }
 
-    async fn run(
-        &self,
-        operation: &WslOperationDescriptor,
-        path: &str,
-        stdin: Vec<u8>,
-        stdout_limit: usize,
-    ) -> Result<Vec<u8>, AppError> {
-        let execute = |session, stdin: Vec<u8>| async move {
-            WslOperationExecutor::execute(
-                operation,
-                WslOperationRequest {
-                    session,
-                    args: vec![path.to_string()],
-                    stdin,
-                    timeout: Duration::from_secs(10),
-                    stdout_limit,
-                    stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                    cancellation: None,
-                },
-            )
-            .await
-            .map(|output| output.stdout)
-        };
+    fn workspace(&self) -> &WslWorkspace {
         match &self.access {
-            WslAtomicDocumentAccess::Workspace(workspace) => {
-                workspace
-                    .with_session_retry(move |session| execute(session, stdin.clone()))
-                    .await
-            }
-            WslAtomicDocumentAccess::Session(session) => execute(session.clone(), stdin).await,
+            WslAtomicDocumentAccess::Workspace(workspace)
+            | WslAtomicDocumentAccess::Active { workspace, .. } => workspace,
         }
     }
 
     fn path<'a>(&self, target: &'a ResourceLocator) -> Result<&'a str, AppError> {
         let expected_distro_name = match &self.access {
             WslAtomicDocumentAccess::Workspace(workspace) => workspace.distro_name(),
-            WslAtomicDocumentAccess::Session(session) => &session.distro_name,
+            WslAtomicDocumentAccess::Active { session, .. } => &session.distro_name,
         };
         match &target.environment {
             EnvironmentRef::Wsl { distro_name }
@@ -92,230 +58,118 @@ impl WslAtomicDocumentIo {
 }
 
 impl AtomicDocumentIo for WslAtomicDocumentIo {
-    fn read_optional<'a>(
+    fn observe<'a>(
         &'a self,
         target: &'a ResourceLocator,
-    ) -> IoFuture<'a, Result<Option<Vec<u8>>, AppError>> {
+        max_bytes: u64,
+    ) -> IoFuture<'a, Result<DocumentSnapshot, AppError>> {
         Box::pin(async move {
-            let output = self
-                .run(
-                    &READ_OPERATION,
-                    self.path(target)?,
-                    Vec::new(),
-                    DEFAULT_WSL_STDOUT_LIMIT,
-                )
+            let max_bytes = u32::try_from(max_bytes).map_err(|_| AppError::Validation {
+                field: Some("documentRead".to_string()),
+                message: "document read limit exceeds the WSL protocol".to_string(),
+            })?;
+            let snapshot = self
+                .workspace()
+                .read_optional_document_snapshot_once(self.path(target)?.to_string(), max_bytes)
                 .await?;
-            parse_read_response(&output)
+            Ok(DocumentSnapshot {
+                bytes: snapshot.bytes,
+                generation: Some(snapshot.generation),
+            })
         })
     }
 
-    fn write_atomic<'a>(
+    fn replace<'a>(
         &'a self,
         target: &'a ResourceLocator,
+        expected: DocumentSnapshot,
         bytes: Vec<u8>,
-    ) -> IoFuture<'a, Result<(), AppError>> {
+    ) -> IoFuture<'a, Result<DocumentSnapshot, DocumentWriteFailure>> {
         Box::pin(async move {
-            let output = self
-                .run(&WRITE_OPERATION, self.path(target)?, bytes, 32)
+            let path = self
+                .path(target)
+                .map_err(DocumentWriteFailure::not_published)?
+                .to_string();
+            let (generation, revision) = snapshot_binding(&expected)?;
+            // The request stays bound to the generation and original bytes.
+            // A transport error is not proof that the Worker did not publish.
+            self.workspace()
+                .commit_document_atomic(generation, path, revision, bytes.clone())
                 .await?;
-            parse_write_response(&output)
+            Ok(DocumentSnapshot {
+                bytes: Some(bytes),
+                generation: Some(generation),
+            })
+        })
+    }
+
+    fn remove<'a>(
+        &'a self,
+        target: &'a ResourceLocator,
+        expected: DocumentSnapshot,
+    ) -> IoFuture<'a, Result<(), DocumentWriteFailure>> {
+        Box::pin(async move {
+            let path = self
+                .path(target)
+                .map_err(DocumentWriteFailure::not_published)?
+                .to_string();
+            let (generation, revision) = snapshot_binding(&expected)?;
+            self.workspace()
+                .remove_document_if_revision(generation, path, revision)
+                .await
         })
     }
 }
 
-pub fn parse_read_response(bytes: &[u8]) -> Result<Option<Vec<u8>>, AppError> {
-    let (version, rest) = take_field(bytes)?;
-    let (exists, body) = take_field(rest)?;
-    if version != b"1" {
-        return Err(protocol_error());
-    }
-    match exists {
-        b"0" if body.is_empty() => Ok(None),
-        b"1" => Ok(Some(body.to_vec())),
-        _ => Err(protocol_error()),
-    }
+fn snapshot_binding(
+    snapshot: &DocumentSnapshot,
+) -> Result<(u64, Option<String>), DocumentWriteFailure> {
+    let generation = snapshot
+        .generation
+        .ok_or_else(|| DocumentWriteFailure::not_published(AppError::StaleEnvironment))?;
+    let revision = snapshot
+        .bytes
+        .as_deref()
+        .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)));
+    Ok((generation, revision))
 }
 
-pub fn parse_write_response(bytes: &[u8]) -> Result<(), AppError> {
-    (bytes == b"1\0").then_some(()).ok_or_else(protocol_error)
-}
-
-fn take_field(bytes: &[u8]) -> Result<(&[u8], &[u8]), AppError> {
-    let index = bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .ok_or_else(protocol_error)?;
-    Ok((&bytes[..index], &bytes[index + 1..]))
-}
-
-fn protocol_error() -> AppError {
-    AppError::ConfigurationCorrupted {
-        message: "invalid WSL atomic document protocol response".to_string(),
-    }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-fn backup_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".bak");
-    path.with_file_name(name)
-}
-
-#[cfg(all(test, target_os = "linux"))]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "原子文件协议测试需要直接运行待验证的 shell 测试脚本"
-)]
+#[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    use tempfile::tempdir;
-
     use super::*;
+    use crate::storage::atomic_document::{DocumentSnapshot, PublicationState};
 
-    fn run_write(path: &Path, content: &[u8]) {
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(WRITE_SCRIPT)
-            .arg("--")
-            .arg("write")
-            .arg(path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("write script");
-        child.stdin.take().unwrap().write_all(content).unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        parse_write_response(&output.stdout).expect("write response");
-    }
-
-    fn run_read(path: &Path) -> Vec<u8> {
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(READ_SCRIPT)
-            .arg("--")
-            .arg("read")
-            .arg(path)
-            .output()
-            .expect("read script");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output.stdout
+    #[test]
+    fn snapshot_binding_rejects_missing_worker_generation() {
+        let failure = snapshot_binding(&DocumentSnapshot {
+            bytes: None,
+            generation: None,
+        })
+        .unwrap_err();
+        assert_eq!(failure.publication, PublicationState::NotPublished);
+        assert!(matches!(failure.error, AppError::StaleEnvironment));
     }
 
     #[test]
-    fn posix_atomic_write_leaves_no_sidecar() {
-        let temp = tempdir().expect("temp");
-        let path = temp.path().join("state/document.json");
-        run_write(&path, &[0, 1, 2]);
-        assert_eq!(fs::read(&path).unwrap(), [0, 1, 2]);
-        assert!(!backup_path(&path).exists());
-
-        fs::write(backup_path(&path), b"legacy backup").expect("legacy backup");
-        run_write(&path, &[3, 0, 4]);
-        assert_eq!(fs::read(&path).unwrap(), [3, 0, 4]);
-        assert!(!backup_path(&path).exists());
-
-        run_write(&path, &[5]);
-        assert_eq!(fs::read(&path).unwrap(), [5]);
-        assert!(!backup_path(&path).exists());
-        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn optional_read_parser_preserves_binary_body_and_rejects_invalid_header() {
-        assert_eq!(parse_read_response(b"1\0\x30\0").unwrap(), None);
+    fn snapshot_binding_distinguishes_missing_and_empty_documents() {
+        let absent = DocumentSnapshot {
+            bytes: None,
+            generation: Some(7),
+        };
+        let empty = DocumentSnapshot {
+            bytes: Some(Vec::new()),
+            generation: Some(7),
+        };
+        assert_eq!(snapshot_binding(&absent).unwrap(), (7, None));
         assert_eq!(
-            parse_read_response(&[b'1', 0, b'1', 0, 0, 255, 1]).unwrap(),
-            Some(vec![0, 255, 1])
+            snapshot_binding(&empty).unwrap(),
+            (
+                7,
+                Some(
+                    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        .to_string()
+                )
+            )
         );
-        assert!(parse_read_response(b"2\0\x31\0data").is_err());
-    }
-
-    #[test]
-    fn optional_read_script_separates_protocol_fields_before_file_content() {
-        let temp = tempdir().expect("temp");
-        let path = temp.path().join("projects.json");
-        fs::write(&path, br#"{"schemaVersion":1}"#).expect("fixture document");
-
-        assert_eq!(
-            parse_read_response(&run_read(&path)).expect("read response"),
-            Some(br#"{"schemaVersion":1}"#.to_vec())
-        );
-        assert_eq!(
-            parse_read_response(&run_read(&temp.path().join("missing.json")))
-                .expect("missing response"),
-            None
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn atomic_write_does_not_replace_the_document_when_durability_fails() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempdir().expect("temp");
-        let path = temp.path().join("state/document.json");
-        fs::create_dir_all(path.parent().expect("parent")).expect("state directory");
-        fs::write(&path, b"previous").expect("existing document");
-        let bin = temp.path().join("bin");
-        fs::create_dir(&bin).expect("bin");
-        let sync = bin.join("sync");
-        fs::write(&sync, b"#!/bin/sh\nexit 1\n").expect("failing sync");
-        fs::set_permissions(&sync, fs::Permissions::from_mode(0o755)).expect("sync mode");
-        let path_env = format!(
-            "{}:{}",
-            bin.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(WRITE_SCRIPT)
-            .arg("--")
-            .arg("write")
-            .arg(&path)
-            .env("PATH", path_env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("write script");
-        child
-            .stdin
-            .take()
-            .expect("stdin")
-            .write_all(b"replacement")
-            .expect("replacement");
-        let output = child.wait_with_output().expect("write result");
-
-        assert!(!output.status.success());
-        assert_eq!(fs::read(&path).expect("preserved document"), b"previous");
-    }
-}
-
-#[cfg(all(test, not(target_os = "linux")))]
-mod portable_tests {
-    use super::parse_read_response;
-
-    #[test]
-    fn optional_read_parser_preserves_binary_body_and_rejects_invalid_header() {
-        assert_eq!(parse_read_response(b"1\0\x30\0").unwrap(), None);
-        assert_eq!(
-            parse_read_response(&[b'1', 0, b'1', 0, 0, 255, 1]).unwrap(),
-            Some(vec![0, 255, 1])
-        );
-        assert!(parse_read_response(b"2\0\x31\0data").is_err());
     }
 }

@@ -35,7 +35,7 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
-    let cancelled = false;
+    const controller = new AbortController();
     if (!state.discoverySession || state.selectedSkills.length === 0) {
       updateStateRef.current({ overwrites: {}, preparation: { status: 'idle' } });
       return;
@@ -46,6 +46,7 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
     });
     updateStateRef.current({ preparation: { status: 'preparing' } });
     void prepareInstall({
+      signal: controller.signal,
       context: state.context,
       source: state.source,
       discoverySession: state.discoverySession,
@@ -56,7 +57,8 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       acknowledgeRedirect:
         !state.redirectedDownloadHost || state.redirectAcknowledged === true,
     }).then((outcome) => {
-      if (cancelled || requestId !== requestIdRef.current) return;
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+      if (outcome.status === 'cancelled') return;
       if (outcome.status === 'selectionStale') {
         agentSelection.acceptSnapshot(outcome.snapshot);
         updateStateRef.current({
@@ -77,7 +79,7 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       );
       updateStateRef.current({ preparation: outcome, overwrites });
     });
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [agentSelection, preparationAttempt, selection, state.agentSelectionIntent, state.availableSkills, state.context, state.discoverySession, state.redirectAcknowledged, state.redirectedDownloadHost, state.selectedSkills, state.source]);
 
   const availableSkillMap = useMemo(
@@ -108,6 +110,26 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       || option.modeConstraint === 'copyOnly',
   );
   const isPreparing = state.preparation.status === 'idle' || state.preparation.status === 'preparing';
+  const requiresSourceRefresh = state.preparation.status === 'failed'
+    && ['payloadSessionExpired', 'stalePayload', 'staleEnvironment'].includes(state.preparation.error.kind);
+  const retryPreparation = () => {
+    if (requiresSourceRefresh) {
+      updateState({
+        step: 'source',
+        fetchStatus: 'idle',
+        fetchError: null,
+        discoverySession: undefined,
+        gitRef: null,
+        skillFilter: null,
+        redirectedDownloadHost: null,
+        redirectAcknowledged: false,
+        preparation: { status: 'idle' },
+        overwrites: {},
+      });
+      return;
+    }
+    setPreparationAttempt((value) => value + 1);
+  };
 
   return (
     <div className="space-y-4">
@@ -117,9 +139,9 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
           <AlertTitle>{t('addSkill.confirm.preparationFailed')}</AlertTitle>
           <AlertDescription>
             <p>{t(`addSkill.confirm.preparationStage.${state.preparation.stage}`)}</p>
-            <p>{formatAppError(state.preparation.error, t)}</p>
-            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => setPreparationAttempt((value) => value + 1)}>
-              {t('addSkill.confirm.retryPreparation')}
+            <p>{requiresSourceRefresh ? t('addSkill.confirm.sourceNeedsRefresh') : formatAppError(state.preparation.error, t)}</p>
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={retryPreparation}>
+              {t(requiresSourceRefresh ? 'addSkill.confirm.rediscoverSource' : 'addSkill.confirm.retryPreparation')}
             </Button>
           </AlertDescription>
         </Alert>

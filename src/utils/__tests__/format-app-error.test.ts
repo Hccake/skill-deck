@@ -6,6 +6,10 @@ const t = (key: string, params?: Record<string, unknown>) =>
   `${key}${params ? JSON.stringify(params) : ''}`;
 
 describe('formatAppError', () => {
+  it.each(['installedSkillFormat', 'sharedSkillLinkSource', 'libraryContentTarget'])('explains the installed-source restriction %s', (capability) => {
+    expect(formatAppError({ kind: 'capabilityUnavailable', data: { capability, path: '/private/demo' } }, t as never))
+      .toBe(`mutation.result.errors.${capability}{"path":"/private/demo"}`);
+  });
   it('formats a Skill placement conflict with its target path', () => {
     expect(formatAppError({
       kind: 'skillPlacementTargetConflict',

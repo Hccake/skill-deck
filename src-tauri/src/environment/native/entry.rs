@@ -108,6 +108,52 @@ pub fn stage_entry_set(intents: &[NativeEntryIntent]) -> Result<NativeEntrySet, 
     Ok(NativeEntrySet { entries })
 }
 
+pub fn preflight_entry_writes(intents: &[NativeEntryIntent]) -> Result<(), AppError> {
+    preflight_initial_intents(intents)?;
+    for intent in intents {
+        if matches!(intent.action, NativeEntryAction::Keep) {
+            continue;
+        }
+        let mut parent = intent
+            .destination
+            .parent()
+            .ok_or_else(|| unsafe_destination(&intent.destination))?;
+        while matches!(fs::symlink_metadata(parent), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            parent = parent
+                .parent()
+                .ok_or_else(|| unsafe_destination(&intent.destination))?;
+        }
+        if !fs::metadata(parent).is_ok_and(|metadata| metadata.is_dir()) {
+            return Err(unsafe_destination(&intent.destination));
+        }
+        let probe = parent.join(format!(".skill-deck-preflight-{}", Uuid::new_v4().simple()));
+        let renamed = parent.join(format!(
+            ".skill-deck-preflight-renamed-{}",
+            Uuid::new_v4().simple()
+        ));
+        let result = (|| {
+            match &intent.action {
+                NativeEntryAction::Symlink { target } => {
+                    create_directory_link(target, &probe)?;
+                }
+                NativeEntryAction::Keep => unreachable!(),
+                NativeEntryAction::Materialize { .. } | NativeEntryAction::Remove => {
+                    fs::create_dir(&probe)?;
+                }
+            }
+            fs::rename(&probe, &renamed)?;
+            remove_entry_no_follow(&renamed)
+        })();
+        if result.is_err() {
+            let _ = remove_entry_no_follow(&probe);
+            let _ = remove_entry_no_follow(&renamed);
+        }
+        result?;
+    }
+    Ok(())
+}
+
 pub fn planned_recovery_paths(entries: &NativeEntrySet) -> Vec<NativeRecoveryPath> {
     entries
         .entries
@@ -548,7 +594,8 @@ fn staged_directory_link_matches(_link: &Path, _target: &Path) -> Result<bool, A
 #[cfg(unix)]
 fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
     let from = fs::canonicalize(from).ok()?;
-    let to = fs::canonicalize(to).ok()?;
+    // 目标目录项可能在本次事务中被替换，链接必须继续指向该目录项。
+    let to = fs::canonicalize(to.parent()?).ok()?.join(to.file_name()?);
     let from_components = from.components().collect::<Vec<_>>();
     let to_components = to.components().collect::<Vec<_>>();
     let common = from_components

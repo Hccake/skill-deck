@@ -1,11 +1,10 @@
 // src/components/skills/SkillsPanel.tsx
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
-  sourceDiagnosticsForEnvironment,
   useSkillsDataStore,
   type ContextSkillSnapshot,
 } from '@/stores/skills-data';
@@ -16,7 +15,6 @@ import { SkillsSection } from './SkillsSection';
 import { CompactSkillList } from './CompactSkillList';
 import { CrossStorageWarningBanner } from './CrossStorageWarningBanner';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
-import { RepairSourceDialog } from './RepairSourceDialog';
 import { ManageLibraryApplicationDialog } from './ManageLibraryApplicationDialog';
 import { GlobalEmptyState, ProjectEmptyState, SkillFilterEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -42,7 +40,7 @@ import type { AgentId, InstalledSkill, LibraryApplicationSummary, ResolvedAgent,
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
   agents: [],
-  libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false },
+  libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
   pathExists: true,
   loading: false,
   error: null,
@@ -83,31 +81,36 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const projectSnapshot = projectContextKey
     ? snapshots[projectContextKey] ?? EMPTY_SNAPSHOT
     : EMPTY_SNAPSHOT;
-  const environmentSourceDiagnostics = useMemo(
-    () => sourceDiagnosticsForEnvironment(snapshots, selectedContext.environment),
-    [selectedContext.environment, snapshots],
-  );
   const globalSkills = globalSnapshot.skills;
   const projectSkills = isProjectSelected ? projectSnapshot.skills : EMPTY_SNAPSHOT.skills;
   const projectPathExists = projectSnapshot.pathExists;
+  const incompleteReadStatuses = [globalSnapshot.readStatus, isProjectSelected ? projectSnapshot.readStatus : null]
+    .filter((status) => status && !status.complete);
+  const readIssueCount = incompleteReadStatuses.reduce(
+    (total, status) => total + status!.counts.reduce((count, item) => count + item.count, 0),
+    0,
+  );
+  const omittedReadIssueCount = incompleteReadStatuses.reduce(
+    (total, status) => total + status!.omittedCount,
+    0,
+  );
   const loading = (globalSnapshot.loading && globalSkills.length === 0)
     || (isProjectSelected && projectSnapshot.loading && projectSkills.length === 0);
   const error = projectSnapshot.error ?? globalSnapshot.error;
   const isSyncing = useSkillsDataStore((s) => s.isSyncing);
   const isAutomaticCheckingGlobal = useSkillsDataStore((s) => (
-    s.automaticUpdateScopes?.has(globalContextKey)
-      ?? s.checkingUpdateScopes.has(globalContextKey)
+    s.automaticUpdateScopes.has(globalContextKey)
   ));
   const isAutomaticCheckingProject = useSkillsDataStore((s) => (
     projectContextKey
-      ? (s.automaticUpdateScopes?.has(projectContextKey) ?? s.checkingUpdateScopes.has(projectContextKey))
+      ? s.automaticUpdateScopes.has(projectContextKey)
       : false
   ));
-  const isForceCheckingGlobal = useSkillsDataStore((s) => s.forceUpdateScopes?.has(globalContextKey) ?? false);
+  const isForceCheckingGlobal = useSkillsDataStore((s) => s.forceUpdateScopes.has(globalContextKey));
   const isForceCheckingProject = useSkillsDataStore((s) => (
-    projectContextKey ? s.forceUpdateScopes?.has(projectContextKey) ?? false : false
+    projectContextKey ? s.forceUpdateScopes.has(projectContextKey) : false
   ));
-  const activateAutomaticChecks = useSkillsDataStore((s) => s.activateAutomaticChecks ?? s.syncUpdates);
+  const activateAutomaticChecks = useSkillsDataStore((s) => s.activateAutomaticChecks);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const activeUpdatePhase = useSkillUpdateWorkflow((s) => (
     s.phase === 'executing' ? 'updating' : null
@@ -126,7 +129,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   // 分栏视图需要知道详情属于哪一行，卡片据此显示选中态。
   const openAdd = useSkillDialogStore((s) => s.openAdd);
-  const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
 
@@ -147,8 +149,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
   }, [selectedContextKey]);
 
-  // 长生命周期 store 会在 Context snapshot 加载后统一决定是否准入 Automatic。
-  // 组件不监听 focus，也不在重新挂载时安排 timer；同一应用会话返回页面不得新增 IPC 请求。
   useEffect(() => {
     let ignore = false;
     void refreshWorkspace(selectedContext).then(() => {
@@ -156,6 +156,18 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     });
     return () => { ignore = true; };
   }, [selectedContext, selectedContextKey, refreshWorkspace, activateAutomaticChecks]);
+
+  useEffect(() => {
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') void activateAutomaticChecks(selectedContext);
+    };
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [selectedContext, activateAutomaticChecks]);
 
   // ③a 仅在 context 真正切换时关闭详情面板
   const previousContextRef = useRef(selectedContextKey);
@@ -299,14 +311,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const handleAddProject = useCallback(() => {
     openAdd(selectedContext, projectPath);
   }, [openAdd, projectPath, selectedContext]);
-
-  const handleRepairGlobal = useCallback((skill: InstalledSkill) => {
-    openRepairSource(skill, selectedGlobalContext);
-  }, [openRepairSource, selectedGlobalContext]);
-
-  const handleRepairProject = useCallback((skill: InstalledSkill) => {
-    openRepairSource(skill, selectedContext, projectPath);
-  }, [openRepairSource, projectPath, selectedContext]);
 
   const handleCopyToProject = useCallback((skill: InstalledSkill) => {
     openCopyToProject(skill, selectedContext);
@@ -452,6 +456,28 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
       <CrossStorageWarningBanner />
 
+      {incompleteReadStatuses.length > 0 && (
+        <div role="status" className="flex items-center gap-3 border-y border-warning/30 bg-warning/10 px-4 py-2.5 text-sm sm:px-6">
+          <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
+          <p className="min-w-0 flex-1 text-warning">
+            {t(omittedReadIssueCount > 0 ? 'skills.readIncompleteWithOmitted' : 'skills.readIncomplete', {
+              count: readIssueCount,
+              omitted: omittedReadIssueCount,
+            })}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            onClick={() => { void refreshWorkspace(selectedContext); }}
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+            {t('skills.retry')}
+          </Button>
+        </div>
+      )}
+
       {/* Skills list content */}
       {compact ? (
         /* 紧凑列表 — 选中 skill 时 */
@@ -468,16 +494,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           onSkillClick={selectSkill}
           projectEmptyState={projectFilterEmptyState}
           globalEmptyState={globalFilterEmptyState}
-          projectLibraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
-          globalLibraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+          projectLibraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
+          globalLibraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
           onManageProjectLibraries={isProjectSelected ? () => setManageLibraries({
             context: selectedContext,
-            application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+            application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
             projectName: selectedProjectName,
           }) : undefined}
           onManageGlobalLibraries={() => setManageLibraries({
             context: selectedGlobalContext,
-            application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+            application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
           })}
         />
       ) : (
@@ -488,7 +514,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             <SkillsSection
               title={t('skills.projectSkills')}
               skills={filteredProjectSkills}
-              sourceDiagnostics={environmentSourceDiagnostics}
               scope="project"
               filterActive={hasActiveFilters}
               duplicateLocationSkillNames={duplicateLocationSkillNames}
@@ -504,14 +529,13 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               onDelete={handleDeleteProject}
               onCopyToProject={handleCopyToProject}
               onManageAgents={handleManageAgentsProject}
-              onRepairSource={handleRepairProject}
               onAdd={handleAddProject}
               onCheckUpdates={handleCheckProjectUpdates}
               emptyState={projectEmptyState}
-              libraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+              libraryApplication={projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
               onManageLibraries={() => setManageLibraries({
                 context: selectedContext,
-                application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+                application: projectSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
                 projectName: selectedProjectName,
               })}
             />
@@ -521,7 +545,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           <SkillsSection
             title={t('skills.globalSkills')}
             skills={filteredGlobalSkills}
-            sourceDiagnostics={environmentSourceDiagnostics}
             scope="global"
             filterActive={hasActiveFilters}
             duplicateLocationSkillNames={duplicateLocationSkillNames}
@@ -534,21 +557,19 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             onPrepareUpdate={handlePrepareGlobalUpdate}
             onDelete={handleDeleteGlobal}
             onManageAgents={handleManageAgentsGlobal}
-            onRepairSource={handleRepairGlobal}
             onAdd={handleAddGlobal}
             onCheckUpdates={handleCheckGlobalUpdates}
             emptyState={globalEmptyState}
-            libraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false }}
+            libraryApplication={globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' }}
             onManageLibraries={() => setManageLibraries({
               context: selectedGlobalContext,
-              application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false },
+              application: globalSnapshot.libraryApplication ?? { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
             })}
           />
         </div>
       )}
 
       <DeleteSkillDialog />
-      <RepairSourceDialog />
       <ManageLibraryApplicationDialog
         open={manageLibraries !== null}
         context={manageLibraries?.context ?? null}

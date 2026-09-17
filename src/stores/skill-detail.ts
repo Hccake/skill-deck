@@ -63,6 +63,10 @@ async function resolveSelectedSkill(
   );
 }
 
+// Identity alone cannot distinguish two requests for A across A → B → A.
+// Keep the ticket private: it is request lifetime, not persisted UI state.
+let contentRequestGeneration = 0;
+
 export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
   selectedSkillRef: null,
   selectedContext: null,
@@ -84,6 +88,9 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
     );
     if (currentSelectionKey === nextSelectedSkillKey) return;
 
+    const requestGeneration = ++contentRequestGeneration;
+    const isCurrentRequest = () => requestGeneration === contentRequestGeneration
+      && getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === nextSelectedSkillKey;
     set({
       selectedSkillRef: nextSelectedSkillRef,
       selectedContext,
@@ -96,31 +103,37 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
         context: selectedContext,
         skillName: skill.name,
       });
-      // Race condition guard: only apply if still the same skill
-      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === nextSelectedSkillKey) {
+      // Check both selection and request generation, including the error path.
+      if (isCurrentRequest()) {
         set({ skillContent: content, loadingContent: false });
       }
     } catch (e) {
-      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === nextSelectedSkillKey) {
+      if (isCurrentRequest()) {
         console.error('[selectSkill] Failed to read content:', e);
         set({ skillContent: null, loadingContent: false });
       }
     }
   },
 
-  deselectSkill: () => set({ selectedSkillRef: null, selectedContext: null, skillContent: null, loadingContent: false }),
+  deselectSkill: () => {
+    contentRequestGeneration += 1;
+    set({ selectedSkillRef: null, selectedContext: null, skillContent: null, loadingContent: false });
+  },
 
   reloadContent: async () => {
     const { selectedSkillRef, selectedContext } = get();
     if (!selectedSkillRef || !selectedContext) return;
 
     const selectedSkillKey = getContextualSelectionKey(selectedContext, selectedSkillRef);
+    const requestGeneration = ++contentRequestGeneration;
+    const isCurrentRequest = () => requestGeneration === contentRequestGeneration
+      && getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey;
     set({ skillContent: null, loadingContent: true });
 
     try {
       const selectedSkill = await resolveSelectedSkill(selectedSkillRef, selectedContext);
       if (!selectedSkill) {
-        if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey) {
+        if (isCurrentRequest()) {
           set({ skillContent: null, loadingContent: false });
         }
         return;
@@ -130,11 +143,11 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
         context: selectedContext,
         skillName: selectedSkill.name,
       });
-      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey) {
+      if (isCurrentRequest()) {
         set({ skillContent: content, loadingContent: false });
       }
     } catch {
-      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey) {
+      if (isCurrentRequest()) {
         set({ skillContent: null, loadingContent: false });
       }
     }

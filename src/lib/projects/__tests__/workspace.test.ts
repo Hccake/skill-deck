@@ -51,7 +51,6 @@ function setup(overrides: Partial<ProjectWorkspaceDependencies> = {}) {
     setCrossStorageWarning: vi.fn(),
   };
   const environment = {
-    isAvailable: vi.fn(() => true),
     revision: vi.fn(() => 0),
     ensureAvailable: vi.fn(async () => undefined),
   };
@@ -217,7 +216,6 @@ describe('Project workspace', () => {
     const older = deferred<ProjectInfo[]>();
     const current = deferred<ProjectInfo[]>();
     const environment: ProjectWorkspaceDependencies['environment'] = {
-      isAvailable: () => true,
       ensureAvailable: async () => undefined,
       revision: () => revision,
     };
@@ -355,7 +353,6 @@ describe('Project workspace', () => {
       data: { environment: ubuntu, message: 'stopped' },
     };
     const environment: ProjectWorkspaceDependencies['environment'] = {
-      isAvailable: () => true,
       revision: () => 1,
       ensureAvailable: vi.fn().mockRejectedValue(connectionError),
     };

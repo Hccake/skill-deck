@@ -13,11 +13,13 @@ use crate::application::library_application::LibraryApplicationModule;
 use crate::application::library_candidates::{
     LibraryCandidateSource, RepositoryLibraryCandidateSource,
 };
+use crate::application::library_membership::LibraryMembershipModule;
 use crate::application::payload_session::{PayloadSessionLimits, PayloadSessionManager};
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::skill_libraries::{LibraryUsageProvider, SkillLibraryModule};
 use crate::application::wellknown_access::WellKnownAccess;
 use crate::application::wsl_source_access::WslSourceAccess;
+use crate::core::app_config::ConfigStore;
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::GithubTokenProvider;
 use crate::environment::native::acquire::NativePayloadSessionStorage;
@@ -83,8 +85,8 @@ struct RuntimeNetworkServices {
 }
 
 impl RuntimeNetworkServices {
-    fn new(settings: crate::models::NetworkProxySettings) -> Self {
-        let proxy_settings = Arc::new(ProxySettingsStore::new(settings));
+    fn new(config: Arc<ConfigStore>) -> Self {
+        let proxy_settings = Arc::new(ProxySettingsStore::from_config(config));
         let http = HttpTransport::new(proxy_settings.clone());
         let discovery = DiscoveryGateway::new(http.clone());
         let wellknown = Arc::new(wellknown::RuntimeWellKnownAccess::new(http.clone()));
@@ -116,6 +118,7 @@ impl RuntimeNetworkServices {
 }
 
 pub struct RuntimeServiceGraph {
+    config: Arc<ConfigStore>,
     wsl: Arc<WslRuntime>,
     agents: ManagedAgentRegistry,
     projects: Arc<ProjectMigrationRegistry>,
@@ -129,6 +132,7 @@ pub struct RuntimeServiceGraph {
     library_update_check: crate::runtime::update_service::RuntimeLibraryUpdateCheckService,
     library_update: RuntimeLibraryUpdateService,
     update: RuntimeUpdateService,
+    update_preparations: crate::application::update_preparation::UpdatePreparations,
     remove: RuntimeRemoveService,
     manage_agents: RuntimeManageAgentsService,
     copy: RuntimeCopyService,
@@ -147,6 +151,7 @@ pub struct RuntimeServiceGraph {
             RuntimePlanExecutor,
         >,
     >,
+    library_membership: Arc<LibraryMembershipModule>,
     connection_probe: network_connection::RuntimeNetworkConnectionProbe,
 }
 
@@ -156,16 +161,19 @@ impl RuntimeServiceGraph {
         recovery_root: std::path::PathBuf,
         library_root: std::path::PathBuf,
         agents: ManagedAgentRegistry,
+        worker_artifact_directory: Option<std::path::PathBuf>,
     ) -> Result<Self, AppError> {
-        let config = crate::core::read_config()?;
-        let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
-        let network_services = RuntimeNetworkServices::new(config.network_proxy);
+        let config = Arc::new(ConfigStore::open(crate::core::get_config_path()?));
+        let wsl_integration_enabled =
+            cfg!(target_os = "windows") && config.config().wsl_integration_enabled;
+        let network_services = RuntimeNetworkServices::new(config.clone());
         let http = network_services.http_client();
         let download = download::RuntimeDownloadAccess::new(http.clone());
         let git_source = network_services.git_source();
-        let wsl = Arc::new(WslRuntime::new_with_support(
+        let wsl = Arc::new(WslRuntime::new_with_worker_artifact_directory(
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
+            worker_artifact_directory,
         ));
         let connection_probe = network_connection::RuntimeNetworkConnectionProbe::new(wsl.clone());
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
@@ -220,10 +228,6 @@ impl RuntimeServiceGraph {
             wsl.clone(),
             admission.clone(),
         ));
-        let maintenance = Arc::new(RuntimeMaintenanceCoordinator::new(
-            payloads.clone(),
-            maintenance_backend,
-        ));
         let update_evidence = build_runtime_source_evidence_coordinator(
             payloads.clone(),
             source_snapshots.clone(),
@@ -238,14 +242,28 @@ impl RuntimeServiceGraph {
         let library_update_check =
             crate::runtime::update_service::build_runtime_library_update_check_service(
                 library_repository.clone(),
-                agent_selection_targets.clone(),
                 update_evidence.clone(),
             );
-        let library_application = Arc::new(LibraryApplicationModule::new(
+        let library_application = Arc::new(LibraryApplicationModule::with_recovery_status(
             library_repository.clone(),
             agent_selection_facts.clone(),
             agent_selection_targets.clone(),
             execution.executor(wsl.clone(), Arc::new(agent_selection_facts.clone())),
+            Arc::new(execution.recovery_service()),
+        ));
+        let library_membership = Arc::new(LibraryMembershipModule::new(
+            library_repository.clone(),
+            library_application.clone(),
+            library_repository.clone(),
+            admission.clone(),
+            skill_libraries.clone(),
+            payloads.clone(),
+            Arc::new(agent_selection_targets.clone()),
+        ));
+        let maintenance = Arc::new(RuntimeMaintenanceCoordinator::with_membership(
+            payloads.clone(),
+            maintenance_backend,
+            library_membership.clone(),
         ));
         let library_candidates: Arc<dyn LibraryCandidateSource> =
             Arc::new(RepositoryLibraryCandidateSource::new(
@@ -264,6 +282,7 @@ impl RuntimeServiceGraph {
             wsl.clone(),
             registry.clone(),
             update_evidence.clone(),
+            library_repository.clone(),
         );
         let skill_source = RuntimeSkillSourceModule::new(
             payloads.clone(),
@@ -275,7 +294,7 @@ impl RuntimeServiceGraph {
         );
         let library_update = build_runtime_library_update_service(
             payloads.clone(),
-            library_repository,
+            library_repository.clone(),
             agent_selection_targets.clone(),
             skill_source.clone(),
             skill_libraries.clone(),
@@ -286,6 +305,7 @@ impl RuntimeServiceGraph {
             registry.clone(),
             execution.clone(),
             skill_source,
+            library_repository.clone(),
         );
         let remove = build_runtime_remove_service(
             wsl.clone(),
@@ -300,7 +320,8 @@ impl RuntimeServiceGraph {
             execution.clone(),
             library_candidates.clone(),
         );
-        let resources = build_runtime_resource_service(wsl.clone(), registry.clone());
+        let resources =
+            build_runtime_resource_service(wsl.clone(), registry.clone(), library_repository);
         let copy = build_runtime_copy_service(
             payloads.clone(),
             wsl.clone(),
@@ -316,6 +337,7 @@ impl RuntimeServiceGraph {
             }),
         );
         Ok(Self {
+            config,
             wsl,
             agents,
             projects,
@@ -329,6 +351,7 @@ impl RuntimeServiceGraph {
             library_update_check,
             library_update,
             update,
+            update_preparations: Default::default(),
             remove,
             manage_agents,
             copy,
@@ -341,6 +364,7 @@ impl RuntimeServiceGraph {
             skill_libraries,
             library_usages,
             library_application,
+            library_membership,
             connection_probe,
         })
     }
@@ -363,6 +387,12 @@ impl RuntimeServiceGraph {
 
     pub fn admission(&self) -> &RuntimeAdmissionCoordinator {
         self.admission.as_ref()
+    }
+
+    pub fn update_preparations(
+        &self,
+    ) -> &crate::application::update_preparation::UpdatePreparations {
+        &self.update_preparations
     }
 
     pub fn install_wizard(&self) -> &Arc<InstallWizardWorkflow> {
@@ -431,10 +461,8 @@ impl RuntimeServiceGraph {
         &self.agent_selection_targets
     }
 
-    pub(crate) fn activate_network_settings(&self, settings: crate::models::NetworkProxySettings) {
-        self.network_services
-            .proxy_settings
-            .replace_settings(settings);
+    pub(crate) fn config(&self) -> &ConfigStore {
+        &self.config
     }
 
     pub(crate) fn source_discovery(&self) -> &SourceDiscoveryService {
@@ -457,6 +485,10 @@ impl RuntimeServiceGraph {
         RuntimePlanExecutor,
     > {
         self.library_application.as_ref()
+    }
+
+    pub(crate) fn library_membership(&self) -> &LibraryMembershipModule {
+        self.library_membership.as_ref()
     }
 
     pub(crate) fn connection_probe(&self) -> &network_connection::RuntimeNetworkConnectionProbe {
@@ -505,11 +537,14 @@ fn build_payload_session_manager(
 
 #[cfg(test)]
 mod tests {
-    use super::RuntimeNetworkServices;
+    use super::{ConfigStore, RuntimeNetworkServices};
+    use std::sync::Arc;
 
     #[test]
     fn runtime_network_services_inject_one_shared_http_pool() {
-        let services = RuntimeNetworkServices::new(crate::models::NetworkProxySettings::default());
+        let services = RuntimeNetworkServices::new(Arc::new(ConfigStore::from_proxy_settings(
+            Default::default(),
+        )));
 
         let discovery_http = services.http_client();
         let source_http = services.http_client();

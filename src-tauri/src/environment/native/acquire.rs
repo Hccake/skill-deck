@@ -61,17 +61,23 @@ impl NativePayloadSessionStorage {
         let session_dir = self.session_dir(session_id);
         fs::create_dir_all(&session_dir)?;
         let marker_path = session_dir.join(MARKER_NAME);
-        if marker_path.exists() {
-            self.verify_marker(&session_dir, session_id)?;
-        } else {
-            write_new_file(
-                &marker_path,
-                &serde_json::to_vec(&SessionMarker {
-                    schema_version: STORAGE_SCHEMA_VERSION,
-                    session_id: session_id.to_string(),
-                })?,
-            )?;
+        if !marker_path.exists() {
+            use std::io::Write;
+
+            // 不同 Skill 并行准备时，通过原子发布共享完整的会话标记。
+            let mut marker = tempfile::NamedTempFile::new_in(&session_dir)?;
+            marker.write_all(&serde_json::to_vec(&SessionMarker {
+                schema_version: STORAGE_SCHEMA_VERSION,
+                session_id: session_id.to_string(),
+            })?)?;
+            marker.as_file().sync_all()?;
+            match marker.persist_noclobber(&marker_path) {
+                Ok(_) => {}
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.error.into()),
+            }
         }
+        self.verify_marker(&session_dir, session_id)?;
         Ok(session_dir)
     }
 

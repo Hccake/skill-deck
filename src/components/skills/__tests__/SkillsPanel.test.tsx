@@ -12,6 +12,7 @@ import type {
   InstalledSkill,
   ProjectInfo,
   ResolvedAgent,
+  SkillReadStatus,
 } from '@/bindings';
 import type { ReactNode } from 'react';
 
@@ -50,6 +51,7 @@ function snapshot(
   skills: InstalledSkill[] = [],
   loading = false,
   error: AppError | null = null,
+  readStatus?: SkillReadStatus,
 ): {
   skills: InstalledSkill[];
   agents: ResolvedAgent[];
@@ -57,6 +59,7 @@ function snapshot(
   loading: boolean;
   error: AppError | null;
   requestId: number;
+  readStatus?: SkillReadStatus;
 } {
   return {
     skills,
@@ -65,6 +68,7 @@ function snapshot(
     loading,
     error,
     requestId: 1,
+    readStatus,
   };
 }
 
@@ -81,11 +85,9 @@ const mocks = vi.hoisted(() => ({
   skillsDataState: {
     snapshots: {} as Record<string, ReturnType<typeof snapshot>>,
     isSyncing: false,
-    checkingUpdateScopes: new Set<string>(),
     automaticUpdateScopes: new Set<string>(),
     forceUpdateScopes: new Set<string>(),
     refreshWorkspace: vi.fn().mockResolvedValue(undefined),
-    syncUpdates: vi.fn().mockResolvedValue(undefined),
     activateAutomaticChecks: vi.fn().mockResolvedValue(undefined),
     forceCheckUpdates: vi.fn().mockResolvedValue(true),
     syncSkills: vi.fn().mockResolvedValue(undefined),
@@ -103,7 +105,6 @@ const mocks = vi.hoisted(() => ({
   skillDialogState: {
     openDelete: vi.fn(),
     openAdd: vi.fn(),
-    openRepairSource: vi.fn(),
     openManageAgents: vi.fn(),
   },
   updateWorkflowState: { phase: 'closed', context: null as SkillLocationRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
@@ -134,11 +135,6 @@ vi.mock('@/hooks/useProjectWorkspace', () => ({
 }));
 
 vi.mock('@/stores/skills-data', () => ({
-  sourceDiagnosticsForEnvironment: (snapshots: typeof mocks.skillsDataState.snapshots) => (
-    Object.values(snapshots).flatMap((item) => (
-      (item as typeof item & { updateCheck?: { sources: unknown[] } }).updateCheck?.sources ?? []
-    ))
-  ),
   useSkillsDataStore: (selector?: (state: typeof mocks.skillsDataState) => unknown) =>
     selector ? selector(mocks.skillsDataState) : mocks.skillsDataState,
 }));
@@ -239,7 +235,6 @@ vi.mock('../SkillsSection', () => ({
   SkillsSection: ({
     skills,
     updatingSkills,
-    onRepairSource,
     onManageAgents,
     onCheckUpdates,
     onPrepareUpdate,
@@ -249,7 +244,6 @@ vi.mock('../SkillsSection', () => ({
   }: {
     skills: Array<{ name: string; scope: 'global' | 'project' }>;
     updatingSkills: Map<string, string>;
-    onRepairSource?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onManageAgents?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onCheckUpdates?: () => Promise<boolean>;
     onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
@@ -267,13 +261,6 @@ vi.mock('../SkillsSection', () => ({
           <span data-testid={`duplicate-location:${skill.scope}:${skill.name}`}>
             {duplicateLocationSkillNames?.has(skill.name) ? 'duplicate' : 'single'}
           </span>
-          <button
-            type="button"
-            data-testid={`repair:${skill.scope}:${skill.name}`}
-            onClick={() => onRepairSource?.(skill)}
-          >
-            repair
-          </button>
           <button
             type="button"
             data-testid={`manage:${skill.scope}:${skill.name}`}
@@ -323,9 +310,7 @@ describe('SkillsPanel', () => {
       'native/global': snapshot(),
     };
     mocks.skillsDataState.isSyncing = false;
-    mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.refreshWorkspace.mockClear();
-    mocks.skillsDataState.syncUpdates.mockClear();
     mocks.skillsDataState.activateAutomaticChecks.mockClear();
     mocks.skillsDataState.forceCheckUpdates.mockClear();
     mocks.updateWorkflowState.open.mockClear();
@@ -344,7 +329,6 @@ describe('SkillsPanel', () => {
     };
     mocks.skillDialogState.openDelete.mockClear();
     mocks.skillDialogState.openAdd.mockClear();
-    mocks.skillDialogState.openRepairSource.mockClear();
     mocks.skillDialogState.openManageAgents.mockClear();
   });
 
@@ -372,26 +356,6 @@ describe('SkillsPanel', () => {
     expect(mocks.skillsDataState.fetchAuditForSkills).not.toHaveBeenCalled();
   });
 
-  it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {
-    mocks.skillsDataState.snapshots = {
-      'native/global': snapshot([makeSkill('toolkit')]),
-    };
-
-    render(<SkillsPanel compact={false} />);
-
-    await waitFor(() => {
-      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
-    });
-
-    document.querySelector<HTMLButtonElement>('[data-testid="repair:global:toolkit"]')?.click();
-
-    expect(mocks.skillDialogState.openRepairSource).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'toolkit', scope: 'global' }),
-      nativeGlobal,
-    );
-    expect(mocks.skillDialogState.openAdd).not.toHaveBeenCalled();
-  });
-
   it('opens Agent management with the selected operation context', async () => {
     mocks.skillsDataState.snapshots = {
       'native/global': snapshot([makeSkill('toolkit')]),
@@ -417,7 +381,7 @@ describe('SkillsPanel', () => {
 
     render(<SkillsPanel compact={false} />);
 
-    expect(screen.getByTestId('repair:global:cached')).toBeDefined();
+    expect(screen.getByTestId('phase:global:cached')).toBeDefined();
   });
 
   it('projects an executing update into the matching list row', () => {
@@ -490,6 +454,23 @@ describe('SkillsPanel', () => {
     await waitFor(() => {
       expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(ubuntuGlobal);
     });
+  });
+
+  it('keeps valid Skills visible when some locations are incomplete', () => {
+    mocks.workspaceContextState.selectedContext = nativeGlobal;
+    mocks.skillsDataState.snapshots = {
+      'native/global': snapshot([makeSkill('toolkit')], false, null, {
+        complete: false,
+        issues: [],
+        counts: [{ code: 'readFailed', count: 3 }],
+        omittedCount: 1,
+      }),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('phase:global:toolkit')).toBeDefined();
+    expect(screen.getByText('skills.readIncompleteWithOmitted')).toBeDefined();
   });
 
   it('refreshes and clears details when the committed context changes', async () => {
@@ -630,8 +611,8 @@ describe('SkillsPanel', () => {
     fireEvent.click(screen.getByTestId('filter-agent:cursor'));
 
     await waitFor(() => {
-      expect(screen.queryByTestId('repair:global:global-skill')).toBeNull();
-      expect(screen.getByTestId('repair:project:project-skill')).toBeDefined();
+      expect(screen.queryByTestId('phase:global:global-skill')).toBeNull();
+      expect(screen.getByTestId('phase:project:project-skill')).toBeDefined();
     });
   });
 
@@ -649,8 +630,8 @@ describe('SkillsPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('selected-agent').textContent).toBe('all');
-      expect(screen.getByTestId('repair:global:matched')).toBeDefined();
-      expect(screen.queryByTestId('repair:global:unrelated')).toBeNull();
+      expect(screen.getByTestId('phase:global:matched')).toBeDefined();
+      expect(screen.queryByTestId('phase:global:unrelated')).toBeNull();
     });
   });
 
@@ -787,7 +768,7 @@ describe('SkillsPanel', () => {
     render(<SkillsPanel compact={false} />);
     fireEvent.click(screen.getByTestId('filter-agent:codex'));
     await waitFor(() => {
-      expect(screen.queryByTestId('repair:global:cursor-skill')).toBeNull();
+      expect(screen.queryByTestId('phase:global:cursor-skill')).toBeNull();
     });
     fireEvent.click(screen.getByTestId('check:global'));
 
@@ -805,7 +786,7 @@ describe('SkillsPanel', () => {
     expect(mocks.skillsDataState.syncSkills).toHaveBeenCalledWith(nativeGlobal, { origin: 'passive' });
   });
 
-  it('does not recheck on focus, remount, or unmount timer activity', async () => {
+  it('asks the store to reconcile freshness on focus and removes listeners on unmount', async () => {
     const { unmount } = render(<SkillsPanel compact={false} />);
     await waitFor(() => {
       expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(nativeGlobal);
@@ -814,8 +795,10 @@ describe('SkillsPanel', () => {
 
     window.dispatchEvent(new Event('focus'));
     window.dispatchEvent(new Event('focus'));
-    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(1);
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(3);
     unmount();
+    window.dispatchEvent(new Event('focus'));
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(3);
   });
 
   it('waits for workspace refresh before activating the selected Context', async () => {

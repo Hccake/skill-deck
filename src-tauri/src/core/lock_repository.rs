@@ -8,6 +8,7 @@ use crate::core::lossless_lock::{
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::types::ResourceLocator;
 use crate::error::AppError;
+use crate::storage::atomic_document::{DocumentSnapshot, DocumentWriteFailure};
 
 pub struct LockTarget {
     pub primary: ResourceLocator,
@@ -30,6 +31,11 @@ pub struct LockTransaction<'a> {
     pending_roots: BTreeMap<String, Value>,
 }
 
+struct ParsedLockSnapshot {
+    document: LosslessLockDocument,
+    primary: DocumentSnapshot,
+}
+
 impl LockRepository {
     pub fn new(io: EnvironmentLockIo) -> Self {
         Self { io }
@@ -39,20 +45,40 @@ impl LockRepository {
         &self,
         target: &LockTarget,
     ) -> Result<LosslessLockDocument, AppError> {
-        if let Some(bytes) = self.io.read_optional(&target.primary).await? {
-            return LosslessLockDocument::parse(&bytes);
+        Ok(self.read_document_snapshot(target).await?.document)
+    }
+
+    async fn read_document_snapshot(
+        &self,
+        target: &LockTarget,
+    ) -> Result<ParsedLockSnapshot, AppError> {
+        let primary = self.io.observe(&target.primary).await?;
+        if let Some(bytes) = primary.bytes.as_deref() {
+            return Ok(ParsedLockSnapshot {
+                document: LosslessLockDocument::parse(bytes)?,
+                primary,
+            });
         }
         let Some(legacy) = target.legacy.as_ref() else {
-            return Ok(LosslessLockDocument::empty(target.schema));
+            return Ok(ParsedLockSnapshot {
+                document: LosslessLockDocument::empty(target.schema),
+                primary,
+            });
         };
         let Some(bytes) = self.io.read_optional(legacy).await? else {
-            return Ok(LosslessLockDocument::empty(target.schema));
+            return Ok(ParsedLockSnapshot {
+                document: LosslessLockDocument::empty(target.schema),
+                primary,
+            });
         };
         let document = LosslessLockDocument::parse(&bytes)?;
-        match target.schema {
-            LockSchema::Global => Ok(document),
-            LockSchema::Project => convert_legacy_project_document(document),
-        }
+        Ok(ParsedLockSnapshot {
+            document: match target.schema {
+                LockSchema::Global => document,
+                LockSchema::Project => convert_legacy_project_document(document)?,
+            },
+            primary,
+        })
     }
 
     pub async fn begin(
@@ -97,7 +123,8 @@ impl LockTransaction<'_> {
             root_snapshots,
             pending_roots,
         } = self;
-        let mut latest = repository.read_document(&target).await?;
+        let latest_snapshot = repository.read_document_snapshot(&target).await?;
+        let mut latest = latest_snapshot.document;
         for (field, replacement) in pending_roots {
             latest.replace_root(
                 &field,
@@ -109,8 +136,14 @@ impl LockTransaction<'_> {
         }
         repository
             .io
-            .write_atomic(&target.primary, latest.to_pretty_bytes()?)
+            .replace(
+                &target.primary,
+                latest_snapshot.primary,
+                latest.to_pretty_bytes()?,
+            )
             .await
+            .map(|_| ())
+            .map_err(DocumentWriteFailure::into_error)
     }
 
     fn require_root_snapshot(&self, field: &str) -> Result<&LockRootSnapshot, AppError> {

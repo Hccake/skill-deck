@@ -5,7 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
-use crate::application::mutation::coordinator::{BoxFuture, PreparedEntryExecutor};
+#[cfg(test)]
+use crate::application::mutation::coordinator::PreparedEntryTestDriver;
+use crate::application::mutation::coordinator::{
+    BoxFuture, PreparedLockCommitter, PreparedUnitExecutor, UnitTransactionReceipt,
+};
 use crate::application::mutation::plan::{
     ExecutionUnit, PreparedEntryAction, PreparedEntryMutation,
 };
@@ -14,9 +18,9 @@ use crate::application::payload_session::{PayloadLocalSource, PinnedPayloadLease
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{PayloadId, SkillPayload};
 use crate::environment::native::entry::{
-    cleanup_entry_set, planned_recovery_paths, recheck_entry_set, restore_entry_set,
-    stage_entry_set, swap_entry_set, verify_entry_set, NativeEntryAction, NativeEntryIntent,
-    NativeEntrySet,
+    cleanup_entry_set, planned_recovery_paths, preflight_entry_writes, recheck_entry_set,
+    restore_entry_set, stage_entry_set, swap_entry_set, verify_entry_set, NativeEntryAction,
+    NativeEntryIntent, NativeEntrySet,
 };
 use crate::environment::recovery::{
     RecoveryEntryPhase, RecoveryMarker, RecoveryMarkerEntry, RecoveryMarkerKind, RecoveryMarkerRef,
@@ -26,10 +30,15 @@ use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
 use crate::error::{AppError, RecoveryResourceId};
 use crate::models::InstallMode;
+use crate::storage::atomic_document::{DocumentWriteFailure, PublicationState};
+use crate::storage::lock_plan::PreparedLockMutation;
 
 pub struct NativePreparedEntrySet {
     entries: NativeEntrySet,
     recovery: Option<NativePreparedRecovery>,
+    // In-memory safety latch also protects evidence when persisting the
+    // RecoveryRequired marker itself fails.
+    retain_recovery: bool,
 }
 
 struct NativePreparedRecovery {
@@ -43,6 +52,215 @@ pub struct NativePreparedEntryExecutor {
     operation_id: String,
     operation_kind: crate::core::mutation::MutationKind,
     recovery_store: Arc<dyn RecoveryMarkerStore>,
+}
+
+pub struct NativePreparedUnitExecutor<L> {
+    entries: NativePreparedEntryExecutor,
+    locks: L,
+}
+
+pub struct PreparedNativeUnit {
+    unit: ExecutionUnit,
+    intents: Vec<NativeEntryIntent>,
+}
+
+impl<L> NativePreparedUnitExecutor<L> {
+    pub fn new(entries: NativePreparedEntryExecutor, locks: L) -> Self {
+        Self { entries, locks }
+    }
+}
+
+impl<L> PreparedUnitExecutor for NativePreparedUnitExecutor<L>
+where
+    L: PreparedLockCommitter,
+{
+    type Prepared = PreparedNativeUnit;
+
+    fn prepare<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Prepared, AppError>> {
+        Box::pin(async move {
+            let mut loaded = BTreeMap::new();
+            for entry in unit
+                .primary_entry
+                .iter()
+                .chain(unit.additional_entries.iter())
+            {
+                let PreparedEntryAction::Replace {
+                    payload_id,
+                    requested_mode: InstallMode::Copy,
+                } = &entry.action
+                else {
+                    continue;
+                };
+                if loaded.contains_key(payload_id) {
+                    continue;
+                }
+                if cancellation.is_cancelled() {
+                    return Err(AppError::MutationCancelled);
+                }
+                let lease = payloads.get(payload_id).ok_or(AppError::StalePayload)?;
+                match lease.local_source()? {
+                    PayloadLocalSource::InProcess | PayloadLocalSource::NativeManaged { .. } => {}
+                    PayloadLocalSource::WslManaged { .. } => {
+                        return Err(AppError::CapabilityUnavailable {
+                            capability: "backendLocalPayload".to_string(),
+                            path: None,
+                        });
+                    }
+                }
+                loaded.insert(payload_id.clone(), Arc::new(lease.load_payload().await?));
+            }
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            let intents = prepare_native_mutations(unit, &loaded, self.entries.backend.clone())?;
+            preflight_entry_writes(&intents)?;
+            Ok(PreparedNativeUnit {
+                unit: unit.clone(),
+                intents,
+            })
+        })
+    }
+
+    fn execute<'a>(
+        &'a self,
+        prepared: Self::Prepared,
+        lock: Option<&'a PreparedLockMutation>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<UnitTransactionReceipt, AppError>> {
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(AppError::MutationCancelled);
+            }
+            // Staging creates directories and temporary entries. Keep it in the
+            // transaction future so dropping the caller cannot detach writes
+            // after RuntimeAdmission has released its permit.
+            let entries = stage_entry_set(&prepared.intents)?;
+            let recovery = if planned_recovery_paths(&entries).is_empty() {
+                None
+            } else {
+                let marker = native_recovery_marker(
+                    &self.entries.operation_id,
+                    &prepared.unit.id,
+                    RecoverySubject {
+                        operation_kind: self.entries.operation_kind,
+                        skill_name: prepared.unit.skill_name.clone(),
+                        context: prepared.unit.target.clone(),
+                    },
+                    &entries,
+                    now_epoch_ms(),
+                )?;
+                let recovery_ref = match self.entries.recovery_store.create(&marker).await {
+                    Ok(marker_ref) => marker_ref,
+                    Err(error) => {
+                        let cleanup = cleanup_entry_set(entries)?;
+                        if cleanup.is_empty() {
+                            return Err(error);
+                        }
+                        return Err(AppError::ExecutionFailed {
+                            message: format!(
+                                "{error}; native staging cleanup failed: {}",
+                                cleanup.join("; ")
+                            ),
+                        });
+                    }
+                };
+                Some(NativePreparedRecovery {
+                    recovery_store: Arc::clone(&self.entries.recovery_store),
+                    recovery_marker: Mutex::new(marker),
+                    recovery_ref,
+                })
+            };
+            let mut staged = NativePreparedEntrySet {
+                entries,
+                recovery,
+                retain_recovery: false,
+            };
+            enum TransactionFailure {
+                Entry(AppError),
+                Lock(DocumentWriteFailure),
+            }
+
+            let transaction = async {
+                if cancellation.is_cancelled() {
+                    return Err(TransactionFailure::Entry(AppError::MutationCancelled));
+                }
+                self.entries
+                    .recheck_entries(&staged)
+                    .await
+                    .map_err(TransactionFailure::Entry)?;
+                self.entries
+                    .swap(&mut staged)
+                    .await
+                    .map_err(TransactionFailure::Entry)?;
+                self.entries
+                    .verify(&staged)
+                    .await
+                    .map_err(TransactionFailure::Entry)?;
+                match lock {
+                    Some(lock) => self
+                        .locks
+                        .commit(lock)
+                        .await
+                        .map(Some)
+                        .map_err(TransactionFailure::Lock),
+                    None => Ok(None),
+                }
+            }
+            .await;
+            match transaction {
+                Ok(lock) => match self.entries.cleanup(staged).await {
+                    Ok(warnings) => Ok(UnitTransactionReceipt { lock, warnings }),
+                    Err(error) => Ok(UnitTransactionReceipt {
+                        lock,
+                        warnings: vec![MutationWarning {
+                            code: MutationWarningCode::BackupCleanupFailed,
+                            parameters: BTreeMap::new(),
+                            technical_details: Some(error.to_string().chars().take(4096).collect()),
+                        }],
+                    }),
+                },
+                Err(TransactionFailure::Lock(
+                    failure @ DocumentWriteFailure {
+                        publication:
+                            PublicationState::PublishedUnconfirmed | PublicationState::OutcomeUnknown,
+                        ..
+                    },
+                )) => staged
+                    .recovery_required(format!(
+                        "lock publication is not confirmed: {}",
+                        failure.error
+                    ))
+                    .await
+                    .map(|()| unreachable!("recovery_required always returns an error")),
+                Err(TransactionFailure::Entry(primary @ AppError::RecoveryRequired { .. })) => {
+                    Err(primary)
+                }
+                Err(TransactionFailure::Entry(primary))
+                | Err(TransactionFailure::Lock(DocumentWriteFailure {
+                    error: primary,
+                    publication: PublicationState::NotPublished,
+                    ..
+                })) => {
+                    // swap may already have attempted and failed to restore.
+                    // Do not retry a destructive compensation after that
+                    // boundary, or turn retained evidence into cleanup work.
+                    if staged.retain_recovery {
+                        return Err(primary);
+                    }
+                    // A failed restore leaves the only recoverable copy in
+                    // backup. Cleanup must not relabel or delete that evidence.
+                    self.entries.restore(&mut staged).await?;
+                    let _ = self.entries.cleanup(staged).await;
+                    Err(primary)
+                }
+            }
+        })
+    }
 }
 
 impl NativePreparedEntryExecutor {
@@ -75,15 +293,14 @@ impl NativePreparedEntryExecutor {
     }
 }
 
-impl PreparedEntryExecutor for NativePreparedEntryExecutor {
-    type Staged = NativePreparedEntrySet;
-
+impl NativePreparedEntryExecutor {
+    #[cfg(test)]
     fn stage<'a>(
         &'a self,
         unit: &'a ExecutionUnit,
         payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
         cancellation: CancellationSignal,
-    ) -> BoxFuture<'a, Result<Self::Staged, AppError>> {
+    ) -> BoxFuture<'a, Result<NativePreparedEntrySet, AppError>> {
         Box::pin(async move {
             let mut loaded = BTreeMap::new();
             for entry in unit
@@ -120,9 +337,7 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
                 return Err(AppError::MutationCancelled);
             }
             let intents = prepare_native_mutations(unit, &loaded, self.backend.clone())?;
-            let entries = tokio::task::spawn_blocking(move || stage_entry_set(&intents))
-                .await
-                .map_err(native_task_error)??;
+            let entries = stage_entry_set(&intents)?;
             let recovery = if planned_recovery_paths(&entries).is_empty() {
                 None
             } else {
@@ -158,13 +373,17 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
                     recovery_ref,
                 })
             };
-            Ok(NativePreparedEntrySet { entries, recovery })
+            Ok(NativePreparedEntrySet {
+                entries,
+                recovery,
+                retain_recovery: false,
+            })
         })
     }
 
     fn recheck_entries<'a>(
         &'a self,
-        staged: &'a Self::Staged,
+        staged: &'a NativePreparedEntrySet,
     ) -> BoxFuture<'a, Result<(), AppError>> {
         let entries = staged.entries.clone();
         Box::pin(async move {
@@ -174,7 +393,10 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
         })
     }
 
-    fn swap<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+    fn swap<'a>(
+        &'a self,
+        staged: &'a mut NativePreparedEntrySet,
+    ) -> BoxFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
             match swap_entry_set(&mut staged.entries) {
                 Ok(()) => {
@@ -191,7 +413,10 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
         })
     }
 
-    fn verify<'a>(&'a self, staged: &'a Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+    fn verify<'a>(
+        &'a self,
+        staged: &'a NativePreparedEntrySet,
+    ) -> BoxFuture<'a, Result<(), AppError>> {
         let entries = staged.entries.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || verify_entry_set(&entries))
@@ -206,13 +431,18 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
         })
     }
 
-    fn restore<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+    fn restore<'a>(
+        &'a self,
+        staged: &'a mut NativePreparedEntrySet,
+    ) -> BoxFuture<'a, Result<(), AppError>> {
         Box::pin(async move {
             match restore_entry_set(&mut staged.entries) {
                 Ok(()) => {
                     staged
                         .update_recovery(RecoveryMarkerKind::CleanupOnly, None)
-                        .await
+                        .await?;
+                    staged.retain_recovery = false;
+                    Ok(())
                 }
                 Err(error) => staged.recovery_required(error.to_string()).await,
             }
@@ -221,9 +451,22 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
 
     fn cleanup<'a>(
         &'a self,
-        staged: Self::Staged,
+        staged: NativePreparedEntrySet,
     ) -> BoxFuture<'a, Result<Vec<MutationWarning>, AppError>> {
         Box::pin(async move {
+            if staged.retain_recovery {
+                return Err(match &staged.recovery {
+                    Some(recovery) => AppError::RecoveryRequired {
+                        recovery_resource_id: recovery.recovery_ref.resource_id.clone(),
+                        message:
+                            "native recovery evidence cannot be cleaned before a confirmed restore"
+                                .to_string(),
+                    },
+                    None => AppError::RestoreFailed {
+                        message: "native restore is not confirmed".to_string(),
+                    },
+                });
+            }
             staged
                 .update_recovery(RecoveryMarkerKind::CleanupOnly, None)
                 .await?;
@@ -254,6 +497,46 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
             }
             Ok(result)
         })
+    }
+}
+
+#[cfg(test)]
+impl PreparedEntryTestDriver for NativePreparedEntryExecutor {
+    type Staged = NativePreparedEntrySet;
+
+    fn stage<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Staged, AppError>> {
+        NativePreparedEntryExecutor::stage(self, unit, payloads, cancellation)
+    }
+
+    fn recheck_entries<'a>(
+        &'a self,
+        staged: &'a Self::Staged,
+    ) -> BoxFuture<'a, Result<(), AppError>> {
+        NativePreparedEntryExecutor::recheck_entries(self, staged)
+    }
+
+    fn swap<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        NativePreparedEntryExecutor::swap(self, staged)
+    }
+
+    fn verify<'a>(&'a self, staged: &'a Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        NativePreparedEntryExecutor::verify(self, staged)
+    }
+
+    fn restore<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        NativePreparedEntryExecutor::restore(self, staged)
+    }
+
+    fn cleanup<'a>(
+        &'a self,
+        staged: Self::Staged,
+    ) -> BoxFuture<'a, Result<Vec<MutationWarning>, AppError>> {
+        NativePreparedEntryExecutor::cleanup(self, staged)
     }
 }
 
@@ -295,7 +578,8 @@ impl NativePreparedEntrySet {
         Ok(())
     }
 
-    async fn recovery_required(&self, message: String) -> Result<(), AppError> {
+    async fn recovery_required(&mut self, message: String) -> Result<(), AppError> {
+        self.retain_recovery = true;
         let Some(recovery) = &self.recovery else {
             return Err(AppError::RestoreFailed { message });
         };
@@ -495,12 +779,12 @@ fn validate_native_entry(
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use tempfile::tempdir;
 
     use super::*;
-    use crate::application::mutation::coordinator::PreparedEntryExecutor;
     use crate::application::mutation::plan::{
         ExecutionUnit, ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation,
         RuntimeRevisions,
@@ -948,6 +1232,500 @@ mod tests {
             ExecutionBackend::NativeWindows
         } else {
             ExecutionBackend::NativeUnix
+        }
+    }
+
+    struct FailingLockCommitter {
+        destination: PathBuf,
+        block_restore: bool,
+    }
+
+    impl PreparedLockCommitter for FailingLockCommitter {
+        fn commit<'a>(
+            &'a self,
+            _mutation: &'a PreparedLockMutation,
+        ) -> BoxFuture<
+            'a,
+            Result<
+                crate::storage::lock_plan::LockCommitReceipt,
+                crate::storage::atomic_document::DocumentWriteFailure,
+            >,
+        > {
+            Box::pin(async move {
+                if self.block_restore {
+                    // The production entry set has already moved the original
+                    // directory into its backup. A nonempty replacement makes
+                    // the restore rename fail without deleting that backup.
+                    fs::create_dir(&self.destination)
+                        .map_err(AppError::from)
+                        .map_err(
+                            crate::storage::atomic_document::DocumentWriteFailure::not_published,
+                        )?;
+                    fs::write(self.destination.join("external.txt"), b"external")
+                        .map_err(AppError::from)
+                        .map_err(
+                            crate::storage::atomic_document::DocumentWriteFailure::not_published,
+                        )?;
+                }
+                Err(
+                    crate::storage::atomic_document::DocumentWriteFailure::not_published(
+                        AppError::ExecutionFailed {
+                            message: "injected lock failure".to_string(),
+                        },
+                    ),
+                )
+            })
+        }
+    }
+
+    struct PublishedUnconfirmedDocumentIo;
+
+    struct MarkerUpdateUnconfirmedDocumentIo {
+        writes: AtomicUsize,
+    }
+
+    impl crate::storage::atomic_document::AtomicDocumentIo for MarkerUpdateUnconfirmedDocumentIo {
+        fn observe<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            max_bytes: u64,
+        ) -> crate::storage::atomic_document::IoFuture<
+            'a,
+            Result<crate::storage::atomic_document::DocumentSnapshot, AppError>,
+        > {
+            crate::environment::native::atomic_file::NativeAtomicDocumentIo
+                .observe(target, max_bytes)
+        }
+
+        fn replace<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            expected: crate::storage::atomic_document::DocumentSnapshot,
+            bytes: Vec<u8>,
+        ) -> crate::storage::atomic_document::IoFuture<
+            'a,
+            Result<
+                crate::storage::atomic_document::DocumentCommitReceipt,
+                crate::storage::atomic_document::DocumentWriteFailure,
+            >,
+        > {
+            Box::pin(async move {
+                let receipt = crate::environment::native::atomic_file::NativeAtomicDocumentIo
+                    .replace(target, expected, bytes)
+                    .await?;
+                if self.writes.fetch_add(1, Ordering::SeqCst) > 0 {
+                    return Err(crate::storage::atomic_document::DocumentWriteFailure {
+                        error: AppError::Io {
+                            message: "injected marker sync failure".to_string(),
+                        },
+                        phase: crate::storage::atomic_document::WritePhase::Confirming,
+                        publication:
+                            crate::storage::atomic_document::PublicationState::PublishedUnconfirmed,
+                    });
+                }
+                Ok(receipt)
+            })
+        }
+
+        fn remove<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            expected: crate::storage::atomic_document::DocumentSnapshot,
+        ) -> crate::storage::atomic_document::IoFuture<
+            'a,
+            Result<(), crate::storage::atomic_document::DocumentWriteFailure>,
+        > {
+            crate::environment::native::atomic_file::NativeAtomicDocumentIo.remove(target, expected)
+        }
+    }
+
+    impl crate::storage::atomic_document::AtomicDocumentIo for PublishedUnconfirmedDocumentIo {
+        fn observe<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            max_bytes: u64,
+        ) -> crate::storage::atomic_document::IoFuture<
+            'a,
+            Result<crate::storage::atomic_document::DocumentSnapshot, AppError>,
+        > {
+            Box::pin(async move {
+                let max_bytes = usize::try_from(max_bytes).unwrap();
+                let bytes = environment_engine::atomic_document::read_optional_bounded(
+                    Path::new(&target.native_path),
+                    max_bytes,
+                )?;
+                Ok(crate::storage::atomic_document::DocumentSnapshot {
+                    bytes,
+                    generation: None,
+                })
+            })
+        }
+
+        fn replace<'a>(
+            &'a self,
+            target: &'a ResourceLocator,
+            expected: crate::storage::atomic_document::DocumentSnapshot,
+            bytes: Vec<u8>,
+        ) -> crate::storage::atomic_document::IoFuture<
+            'a,
+            Result<
+                crate::storage::atomic_document::DocumentCommitReceipt,
+                crate::storage::atomic_document::DocumentWriteFailure,
+            >,
+        > {
+            Box::pin(async move {
+                environment_engine::atomic_document::replace_if_unchanged(
+                    Path::new(&target.native_path),
+                    expected.bytes.as_deref(),
+                    &bytes,
+                )
+                .map_err(crate::storage::atomic_document::DocumentWriteFailure::from_engine)?;
+                Err(crate::storage::atomic_document::DocumentWriteFailure {
+                    error: AppError::Io {
+                        message: "injected parent sync failure".to_string(),
+                    },
+                    phase: crate::storage::atomic_document::WritePhase::Confirming,
+                    publication:
+                        crate::storage::atomic_document::PublicationState::PublishedUnconfirmed,
+                })
+            })
+        }
+
+        fn remove<'a>(
+            &'a self,
+            _target: &'a ResourceLocator,
+            _expected: crate::storage::atomic_document::DocumentSnapshot,
+        ) -> crate::storage::atomic_document::IoFuture<
+            'a,
+            Result<(), crate::storage::atomic_document::DocumentWriteFailure>,
+        > {
+            Box::pin(async { panic!("materialization test does not remove documents") })
+        }
+    }
+
+    #[tokio::test]
+    async fn native_unit_retains_backup_and_marker_when_restore_fails() {
+        exercise_native_restore_failure(true).await;
+    }
+
+    #[tokio::test]
+    async fn native_unit_cleans_after_confirmed_successful_restore() {
+        exercise_native_restore_failure(false).await;
+    }
+
+    #[tokio::test]
+    async fn native_unit_does_not_restore_entries_after_an_unconfirmed_lock_publish() {
+        use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
+        use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState};
+
+        let temp = tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let canonical = root.join("shared/demo");
+        let agent = root.join("agent/demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::create_dir_all(&agent).unwrap();
+        fs::write(canonical.join("SKILL.md"), b"old").unwrap();
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Remove),
+            mutation(&agent, PreparedEntryAction::Keep),
+        );
+        let recovery = Arc::new(NativeRecoveryMarkerStore::new(root.join("recovery")).unwrap());
+        let executor = NativePreparedUnitExecutor::new(
+            NativePreparedEntryExecutor::new(
+                native_backend(),
+                "unconfirmed-lock",
+                recovery.clone(),
+            ),
+            crate::runtime::plan_runner::RuntimeLockCommitter::with_io(Arc::new(
+                PublishedUnconfirmedDocumentIo,
+            )),
+        );
+        let lock_path = root.join("skills-lock.json");
+        let lock = PreparedLockMutation {
+            target: ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: lock_path.to_string_lossy().into_owned(),
+            },
+            legacy_target: None,
+            schema: LockSchema::Project,
+            entry: LockEntryMutation::Remove {
+                key: "demo".to_string(),
+            },
+            root_replacements: BTreeMap::new(),
+            expected: LockExpectedState::capture(
+                &LosslessLockDocument::empty(LockSchema::Project),
+                ["demo"],
+                std::iter::empty::<&str>(),
+            ),
+        };
+        let prepared = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await
+            .unwrap();
+
+        let error = executor
+            .execute(prepared, Some(&lock), CancellationSignal::default())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::RecoveryRequired { .. }));
+        assert!(!canonical.exists());
+        let lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(lock_path).unwrap()).unwrap();
+        assert_eq!(lock["version"], 1);
+        let markers = recovery.enumerate().await.unwrap();
+        let [RecoveryMarkerLoad::Valid { marker, .. }] = markers.as_slice() else {
+            panic!("unconfirmed lock publication must retain recovery evidence");
+        };
+        assert_eq!(marker.kind, RecoveryMarkerKind::RecoveryRequired);
+        let backup = marker
+            .entries
+            .iter()
+            .find(|entry| entry.destination.native_path == canonical.to_string_lossy())
+            .unwrap()
+            .backup
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            fs::read(Path::new(&backup.native_path).join("SKILL.md")).unwrap(),
+            b"old"
+        );
+    }
+
+    #[tokio::test]
+    async fn native_unit_does_not_restore_after_an_unconfirmed_marker_publish() {
+        let temp = tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let canonical = root.join("shared/demo");
+        let agent = root.join("agent/demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::create_dir_all(&agent).unwrap();
+        fs::write(canonical.join("SKILL.md"), b"old").unwrap();
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Remove),
+            mutation(&agent, PreparedEntryAction::Keep),
+        );
+        let recovery = Arc::new(
+            NativeRecoveryMarkerStore::with_io(
+                root.join("recovery"),
+                Arc::new(MarkerUpdateUnconfirmedDocumentIo {
+                    writes: AtomicUsize::new(0),
+                }),
+            )
+            .unwrap(),
+        );
+        let executor = NativePreparedUnitExecutor::new(
+            NativePreparedEntryExecutor::new(
+                native_backend(),
+                "unconfirmed-marker",
+                recovery.clone(),
+            ),
+            FailingLockCommitter {
+                destination: canonical.clone(),
+                block_restore: false,
+            },
+        );
+        let prepared = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await
+            .unwrap();
+
+        let error = executor
+            .execute(prepared, None, CancellationSignal::default())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, AppError::RecoveryRequired { .. }));
+        assert!(!canonical.exists());
+        assert_eq!(recovery.enumerate().await.unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_prepare_rejects_a_target_parent_that_is_already_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let canonical = root.join("shared/demo");
+        let agent = root.join("agent/demo");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::create_dir_all(agent.parent().unwrap()).unwrap();
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Keep),
+            mutation(
+                &agent,
+                PreparedEntryAction::Link {
+                    target: ResourceLocator {
+                        environment: EnvironmentRef::Native,
+                        native_path: canonical.to_string_lossy().into_owned(),
+                    },
+                },
+            ),
+        );
+        fs::set_permissions(agent.parent().unwrap(), fs::Permissions::from_mode(0o500)).unwrap();
+        let recovery = Arc::new(NativeRecoveryMarkerStore::new(root.join("recovery")).unwrap());
+        let executor = NativePreparedUnitExecutor::new(
+            NativePreparedEntryExecutor::new(native_backend(), "read-only-preflight", recovery),
+            FailingLockCommitter {
+                destination: canonical,
+                block_restore: false,
+            },
+        );
+
+        let result = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await;
+
+        fs::set_permissions(agent.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(result.is_err());
+        assert!(!agent.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn native_prepare_rejects_a_parent_that_denies_child_rename() {
+        use std::os::windows::ffi::OsStrExt;
+
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_READ, FILE_SHARE_READ,
+            OPEN_EXISTING,
+        };
+
+        let temp = tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let canonical = root.join("shared/demo");
+        let agent = root.join("agent/demo");
+        fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        fs::create_dir_all(agent.parent().unwrap()).unwrap();
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Keep),
+            mutation(
+                &agent,
+                PreparedEntryAction::Link {
+                    target: ResourceLocator {
+                        environment: EnvironmentRef::Native,
+                        native_path: canonical.to_string_lossy().into_owned(),
+                    },
+                },
+            ),
+        );
+        let wide = agent
+            .parent()
+            .unwrap()
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_GENERIC_READ,
+                FILE_SHARE_READ,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(handle, INVALID_HANDLE_VALUE);
+        let recovery = Arc::new(NativeRecoveryMarkerStore::new(root.join("recovery")).unwrap());
+        let executor = NativePreparedUnitExecutor::new(
+            NativePreparedEntryExecutor::new(native_backend(), "locked-parent-preflight", recovery),
+            FailingLockCommitter {
+                destination: canonical,
+                block_restore: false,
+            },
+        );
+
+        let result = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await;
+
+        unsafe { CloseHandle(handle) };
+        assert!(result.is_err());
+        assert!(!agent.exists());
+    }
+
+    async fn exercise_native_restore_failure(block_restore: bool) {
+        use crate::core::lossless_lock::LockSchema;
+        use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState};
+
+        let temp = tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let canonical = root.join("shared/demo");
+        let agent = root.join("agent/demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::create_dir_all(&agent).unwrap();
+        fs::write(canonical.join("SKILL.md"), b"old").unwrap();
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Remove),
+            mutation(&agent, PreparedEntryAction::Keep),
+        );
+        let recovery = Arc::new(NativeRecoveryMarkerStore::new(root.join("recovery")).unwrap());
+        let executor = NativePreparedUnitExecutor::new(
+            NativePreparedEntryExecutor::new(
+                native_backend(),
+                "restore-regression",
+                recovery.clone(),
+            ),
+            FailingLockCommitter {
+                destination: canonical.clone(),
+                block_restore,
+            },
+        );
+        let lock = PreparedLockMutation {
+            target: ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: root.join("skills-lock.json").to_string_lossy().into_owned(),
+            },
+            legacy_target: None,
+            schema: LockSchema::Project,
+            entry: LockEntryMutation::Remove {
+                key: "demo".to_string(),
+            },
+            root_replacements: BTreeMap::new(),
+            expected: LockExpectedState {
+                entry_snapshots: BTreeMap::new(),
+                root_snapshots: BTreeMap::new(),
+            },
+        };
+        let prepared = executor
+            .prepare(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let error = executor
+            .execute(prepared, Some(&lock), CancellationSignal::default())
+            .await
+            .unwrap_err();
+        let markers = recovery.enumerate().await.unwrap();
+        if block_restore {
+            assert!(matches!(error, AppError::RecoveryRequired { .. }));
+            let [RecoveryMarkerLoad::Valid { marker, .. }] = markers.as_slice() else {
+                panic!("restore failure must retain a valid recovery marker");
+            };
+            assert_eq!(marker.kind, RecoveryMarkerKind::RecoveryRequired);
+            let backup = marker
+                .entries
+                .iter()
+                .find(|entry| entry.destination.native_path == canonical.to_string_lossy())
+                .unwrap()
+                .backup
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                fs::read(Path::new(&backup.native_path).join("SKILL.md")).unwrap(),
+                b"old"
+            );
+            assert_eq!(
+                fs::read(canonical.join("external.txt")).unwrap(),
+                b"external"
+            );
+        } else {
+            assert!(matches!(error, AppError::ExecutionFailed { .. }));
+            assert!(markers.is_empty());
+            assert_eq!(fs::read(canonical.join("SKILL.md")).unwrap(), b"old");
         }
     }
 }

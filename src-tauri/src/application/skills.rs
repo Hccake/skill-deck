@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::application::agents::{AgentCommandError, ManagedAgentRegistry};
 use crate::application::installed_skill_resolver::InstalledSkillResolver;
 use crate::application::skill_read::{
-    build_skill_read_plan, discover_eve_skill_targets, project_skill_snapshot, ListSkillsResult,
+    build_skill_read_plan, discover_eve_skill_targets, project_direct_skill_snapshot,
+    ListSkillsResult,
 };
 use crate::core::local_lock::LocalSkillLockEntry;
 use crate::core::lossless_lock::LosslessLockDocument;
@@ -16,7 +17,6 @@ use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::native::inspection::NativeInspector;
 use crate::environment::read_service::ReadService;
 use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocationRef};
-use crate::environment::wsl::operations::inspection::WslInspector;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
@@ -51,6 +51,11 @@ fn enrich_environment_skills_from_lock_at(
     kind: LockKind,
     project_root: Option<&str>,
 ) -> Result<Vec<InstalledSkill>, AppError> {
+    for skill in &mut skills {
+        skill.can_run_update = Some(false);
+        skill.can_check_for_updates = Some(false);
+        skill.update_reason = Some("local-source".to_string());
+    }
     let Some(bytes) = bytes else {
         return Ok(skills);
     };
@@ -80,46 +85,49 @@ fn enrich_environment_skills_from_lock_at(
         let Some(value) = entries.get(&resolved.lock_key).cloned() else {
             continue;
         };
-        let enriched =
-            match kind {
-                LockKind::Global => serde_json::from_value::<SkillLockEntry>(value)
-                    .ok()
-                    .map(|entry| skill.clone().with_lock_entry(Some(&entry))),
-                LockKind::Project => serde_json::from_value::<LocalSkillLockEntry>(value)
-                    .ok()
-                    .map(|mut entry| {
-                        if entry.source_type == "local" {
-                            if let Some(project_root) = project_root {
-                                entry.source =
-                                    crate::core::portable_project_path::resolve_project_source(
-                                        project_root,
-                                        &entry.source,
-                                    );
-                            }
+        let enriched = match kind {
+            LockKind::Global => serde_json::from_value::<SkillLockEntry>(value)
+                .map(|entry| skill.clone().with_lock_entry(Some(&entry))),
+            LockKind::Project => {
+                serde_json::from_value::<LocalSkillLockEntry>(value).map(|mut entry| {
+                    if entry.source_type == "local" {
+                        if let Some(project_root) = project_root {
+                            entry.source =
+                                crate::core::portable_project_path::resolve_project_source(
+                                    project_root,
+                                    &entry.source,
+                                );
                         }
-                        skill.clone().with_local_lock_entry(Some(&entry))
-                    }),
-                LockKind::LegacyProject => serde_json::from_value::<SkillLockEntry>(value)
-                    .ok()
-                    .map(|entry| {
-                        let local = LocalSkillLockEntry {
-                            source: entry.source,
-                            ref_name: entry.ref_name,
-                            source_type: entry.source_type,
-                            source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
-                            well_known_digest: entry.well_known_digest,
-                            computed_hash: String::new(),
-                            remote_hash: (!entry.skill_folder_hash.is_empty())
-                                .then_some(entry.skill_folder_hash),
-                            skill_path: entry.skill_path,
-                            subagents: None,
-                            plugin_name: entry.plugin_name,
-                        };
-                        skill.clone().with_local_lock_entry(Some(&local))
-                    }),
-            };
-        if let Some(enriched) = enriched {
-            *skill = enriched;
+                    }
+                    skill.clone().with_local_lock_entry(Some(&entry))
+                })
+            }
+            LockKind::LegacyProject => {
+                serde_json::from_value::<SkillLockEntry>(value).map(|entry| {
+                    let local = LocalSkillLockEntry {
+                        source: entry.source,
+                        ref_name: entry.ref_name,
+                        source_type: entry.source_type,
+                        source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
+                        well_known_digest: entry.well_known_digest,
+                        computed_hash: String::new(),
+                        remote_hash: (!entry.skill_folder_hash.is_empty())
+                            .then_some(entry.skill_folder_hash),
+                        skill_path: entry.skill_path,
+                        subagents: None,
+                        plugin_name: entry.plugin_name,
+                    };
+                    skill.clone().with_local_lock_entry(Some(&local))
+                })
+            }
+        };
+        match enriched {
+            Ok(enriched) => *skill = enriched,
+            Err(_) => {
+                skill.can_run_update = Some(false);
+                skill.can_check_for_updates = Some(false);
+                skill.update_reason = Some("missingSource".to_string());
+            }
         }
     }
     Ok(skills)
@@ -151,6 +159,9 @@ mod environment_tests {
             canonical_path: canonical_path.to_string(),
             scope,
             associated_agents: agents.clone(),
+            library_versions: None,
+            maintenance_error: None,
+            comparison_fingerprint: None,
             default_available_agent_count: Some(agents.len() as u32),
             private_adapted_agent_count: Some(0),
             duplicate_copy_count: Some(0),
@@ -266,6 +277,42 @@ mod environment_tests {
     }
 
     #[test]
+    fn distinguishes_an_invalid_source_record_from_an_unregistered_skill() {
+        let invalid_record = br#"{
+          "version": 3,
+          "skills": {
+            "toolkit": {
+              "source": 42,
+              "sourceType": "github"
+            }
+          }
+        }"#;
+        let skill = || {
+            installed_skill(
+                "toolkit",
+                "Toolkit",
+                "/home/alice/.agents/skills/toolkit",
+                InstalledSkillLocation::Global,
+                Vec::new(),
+            )
+        };
+        let enrich = |bytes: Option<&[u8]>| {
+            enrich_environment_skills_from_lock(vec![skill()], bytes, LockKind::Global)
+                .unwrap()
+                .pop()
+                .unwrap()
+        };
+
+        let invalid = enrich(Some(invalid_record));
+        assert_eq!(invalid.can_check_for_updates, Some(false));
+        assert_eq!(invalid.update_reason.as_deref(), Some("missingSource"));
+        for local in [enrich(Some(br#"{"version":3,"skills":{}}"#)), enrich(None)] {
+            assert_eq!(local.can_check_for_updates, Some(false));
+            assert_eq!(local.update_reason.as_deref(), Some("local-source"));
+        }
+    }
+
+    #[test]
     fn enriches_raw_skill_name_from_a_unique_legacy_sanitized_lock_key() {
         let skill = installed_skill(
             "ce:review",
@@ -334,6 +381,8 @@ pub async fn list_skills(
     context: SkillLocationRef,
     environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
+    libraries: &dyn crate::application::skill_libraries::SkillLibraryRepository,
+    targets: &dyn crate::environment::planning::TargetFactResolver,
 ) -> Result<ListSkillsResult, AppError> {
     let runtime = crate::application::agents::list_agents(
         context.clone(),
@@ -346,47 +395,95 @@ pub async fn list_skills(
         EnvironmentRef::Native => {
             let resolved = ContextResolver::resolve_native(context)?;
             let eve_targets = discover_eve_skill_targets(&resolved, &runtime, None).await?;
-            let plan = build_skill_read_plan(&resolved, &runtime, &eve_targets)?;
-            let read_service =
-                ReadService::new(vec![Arc::new(NativeInspector::new(EnvironmentRef::Native))]);
+            let mut plan = build_skill_read_plan(&resolved, &runtime, &eve_targets)?;
+            let inspector = Arc::new(NativeInspector::new(EnvironmentRef::Native));
+            let read_service = ReadService::new(vec![inspector.clone()]);
             let snapshot = read_service.execute(&plan.read_plan).await?;
-            let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
-            enrich_from_context_lock(result, &resolved, EnvironmentLockIo::Native).await
+            let (lock_bytes, lock_kind) =
+                read_context_lock(&resolved, EnvironmentLockIo::Native).await?;
+            if lock_kind == LockKind::Project {
+                plan.set_project_lock(lock_bytes.as_deref());
+            }
+            let mut result = project_direct_skill_snapshot(
+                &plan,
+                snapshot,
+                &runtime,
+                libraries,
+                targets,
+                inspector.as_ref(),
+            )
+            .await?;
+            result.path_base = Some(resolved.path_base(targets).await);
+            enrich_from_lock_bytes(result, &resolved, lock_bytes, lock_kind)
         }
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
             let retry_context = context.clone();
-            environment_registry
-                .with_session_retry(&distro_name, move |session| {
+            let retry_runtime = runtime.clone();
+            let workspace = environment_registry.workspace(&distro_name)?;
+            let (resolved, mut plan) = environment_registry
+                .with_session_read_retry(&distro_name, move |session| {
                     let context = retry_context.clone();
-                    let runtime = runtime.clone();
+                    let runtime = retry_runtime.clone();
+                    let workspace = workspace.clone();
                     async move {
-                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        let resolved =
+                            ContextResolver::resolve_wsl(context, &session, &workspace).await?;
                         let eve_targets =
-                            discover_eve_skill_targets(&resolved, &runtime, Some(&session)).await?;
+                            discover_eve_skill_targets(&resolved, &runtime, Some(&workspace))
+                                .await?;
                         let plan = build_skill_read_plan(&resolved, &runtime, &eve_targets)?;
-                        let read_service =
-                            ReadService::new(vec![Arc::new(WslInspector::new(session.clone()))]);
-                        let snapshot = read_service.execute(&plan.read_plan).await?;
-                        let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
-                        enrich_from_context_lock(
-                            result,
+                        Ok((resolved, plan))
+                    }
+                })
+                .await?;
+            let workspace = environment_registry.workspace(&distro_name)?;
+            let inspector = Arc::new(
+                crate::environment::wsl::operations::inspection::WslInspector::new(
+                    workspace.clone(),
+                ),
+            );
+            let read_service = ReadService::new(vec![inspector.clone()]);
+            let snapshot = read_service.execute(&plan.read_plan).await?;
+            let retry_resolved = resolved.clone();
+            let (lock_bytes, lock_kind) = environment_registry
+                .with_session_read_retry(&distro_name, move |session| {
+                    let resolved = retry_resolved.clone();
+                    let workspace = workspace.clone();
+                    async move {
+                        read_context_lock(
                             &resolved,
-                            EnvironmentLockIo::ActiveWsl(session),
+                            EnvironmentLockIo::ActiveWsl {
+                                session: Box::new(session),
+                                workspace,
+                            },
                         )
                         .await
                     }
                 })
-                .await
+                .await?;
+            if lock_kind == LockKind::Project {
+                plan.set_project_lock(lock_bytes.as_deref());
+            }
+            let mut result = project_direct_skill_snapshot(
+                &plan,
+                snapshot,
+                &runtime,
+                libraries,
+                targets,
+                inspector.as_ref(),
+            )
+            .await?;
+            result.path_base = Some(resolved.path_base(targets).await);
+            enrich_from_lock_bytes(result, &resolved, lock_bytes, lock_kind)
         }
     }
 }
 
-async fn enrich_from_context_lock(
-    mut result: ListSkillsResult,
+async fn read_context_lock(
     context: &ResolvedContext,
     lock_io: EnvironmentLockIo,
-) -> Result<ListSkillsResult, AppError> {
+) -> Result<(Option<Vec<u8>>, LockKind), AppError> {
     let mut lock_bytes = lock_io.read_optional(&context.lock).await.ok().flatten();
     let mut lock_kind = if context.project.is_some() {
         LockKind::Project
@@ -408,6 +505,15 @@ async fn enrich_from_context_lock(
             }
         }
     }
+    Ok((lock_bytes, lock_kind))
+}
+
+fn enrich_from_lock_bytes(
+    mut result: ListSkillsResult,
+    context: &ResolvedContext,
+    lock_bytes: Option<Vec<u8>>,
+    lock_kind: LockKind,
+) -> Result<ListSkillsResult, AppError> {
     result.skills = enrich_environment_skills_from_lock_at(
         result.skills,
         lock_bytes.as_deref(),

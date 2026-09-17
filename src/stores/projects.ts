@@ -46,7 +46,6 @@ export const projectWorkspace = createProjectWorkspace({
     ),
   },
   environment: {
-    isAvailable: environmentIsAvailable,
     revision: environmentRevision,
     ensureAvailable: async (environment) => {
       if (environmentIsAvailable(environment)) return;

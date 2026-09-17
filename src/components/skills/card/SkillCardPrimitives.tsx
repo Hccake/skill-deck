@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface SkillCardShellProps {
   /** 分栏视图需要知道详情属于哪一行。 */
@@ -53,6 +54,7 @@ interface SkillSourceLinkProps {
   label: string;
   url?: string | null;
   className?: string;
+  hint?: string;
 }
 
 /**
@@ -62,19 +64,18 @@ export const SkillSourceLink = memo(function SkillSourceLink({
   label,
   url,
   className,
+  hint,
 }: SkillSourceLinkProps) {
   const { t } = useTranslation();
   const openable = isOpenableUrl(url) ? url : null;
 
-  if (!openable) {
-    return <span className={cn('max-w-48 truncate', className)} title={label}>{label}</span>;
-  }
-
-  return (
+  const source = !openable ? (
+    <span className={cn('max-w-48 truncate', className)} title={hint ? undefined : label} tabIndex={hint ? 0 : undefined}>{label}</span>
+  ) : (
     <button
       type="button"
       aria-label={label}
-      title={t('skills.externalLink')}
+      title={hint ? undefined : t('skills.externalLink')}
       className={cn(
         'inline-flex min-w-0 cursor-pointer items-center gap-1 font-medium text-primary outline-none',
         'transition-colors hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring/50',
@@ -92,12 +93,14 @@ export const SkillSourceLink = memo(function SkillSourceLink({
       <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
     </button>
   );
+  return hint ? <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
+    <TooltipContent className="max-w-80 text-wrap">{hint}</TooltipContent></Tooltip> : source;
 });
 
 /**
  * 标题行的更新状态标签。
  *
- * 只表达需要用户注意的状态。"已是最新"是默认背景，不占位；来源异常走注意行，不进标题。
+ * 展示已确认的更新机会；来源属性和需要处理的问题分别展示。
  */
 export const SkillCardStatusLabel = memo(function SkillCardStatusLabel({
   label,
@@ -119,21 +122,24 @@ export const SkillCardStatusLabel = memo(function SkillCardStatusLabel({
 });
 
 /**
- * 需要用户注意但不阻断使用的情况，例如来源已删除或更新检查未完成。
+ * 简短来源提醒及安装关系，必要的原因支持按需查看。
  */
 export const SkillCardAttentionRow = memo(function SkillCardAttentionRow({
   labels,
   testId,
+  description,
 }: {
   labels: readonly string[];
   testId?: string;
+  description?: string;
 }) {
   if (labels.length === 0) return null;
-  return (
+  const row = (
     <div
       data-testid={testId}
       role="note"
       aria-label={labels.join('，')}
+      tabIndex={description ? 0 : undefined}
       className="flex items-start gap-1.5 rounded-sm text-xs leading-5 text-warning/90 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
     >
       <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -147,6 +153,8 @@ export const SkillCardAttentionRow = memo(function SkillCardAttentionRow({
       </div>
     </div>
   );
+  return description ? <Tooltip><TooltipTrigger asChild>{row}</TooltipTrigger>
+    <TooltipContent className="max-w-80 whitespace-pre-line text-wrap">{description}</TooltipContent></Tooltip> : row;
 });
 
 /**

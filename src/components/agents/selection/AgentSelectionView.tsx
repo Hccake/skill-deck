@@ -54,6 +54,7 @@ interface AgentSelectionViewProps {
   onGroupExpandedChange: (groupId: string, expanded: boolean) => void;
   disabled?: boolean;
   emptyMessage?: string;
+  showRuntimeMetadata?: boolean;
 }
 
 export function AgentSelectionView({
@@ -68,17 +69,66 @@ export function AgentSelectionView({
   onGroupExpandedChange,
   disabled = false,
   emptyMessage,
+  showRuntimeMetadata = true,
 }: AgentSelectionViewProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const states = new Map(optionStates.map((state) => [state.optionId, state]));
   const { agentsById, directAgents, separateOptions, additionalOptions } = projectAgentSelectionView(snapshot);
-  const detected = separateOptions.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected'));
-  const other = separateOptions.filter((option) => !detected.includes(option));
+  const detected = showRuntimeMetadata
+    ? separateOptions.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected'))
+    : separateOptions;
+  const other = showRuntimeMetadata
+    ? separateOptions.filter((option) => !detected.includes(option))
+    : [];
+  const summarizedOptionIds = new Set([
+    ...separateOptions.map((option) => option.id),
+    ...snapshot.groups.flatMap((group) => group.optionIds),
+  ]);
+  const selectedOptions = session.selectedOptionIds.flatMap((id) => (
+    snapshot.installOptions
+      .filter((option) => option.id === id && summarizedOptionIds.has(option.id))
+      .map((option) => {
+        const group = option.groupId
+          ? snapshot.groups.find((candidate) => candidate.id === option.groupId)
+          : null;
+        const members = option.agentIds.flatMap((agentId) => (
+          snapshot.agents.filter((agent) => agent.id === agentId)
+        ));
+        return {
+          option,
+          displayName: group
+            ? [group.displayName, option.displayName].join(' · ')
+            : members.length > 1
+              ? mergedAgentNames(members, i18n?.resolvedLanguage ?? i18n?.language, t)
+              : option.displayName,
+          members,
+          grouped: group !== null,
+        };
+      })
+  ));
+  const viewRef = useRef<HTMLDivElement>(null);
+  const summaryRemoveRefs = useRef(new Map<AgentInstallOptionId, HTMLButtonElement>());
+  const removeSelectedOption = (optionId: AgentInstallOptionId) => {
+    const index = selectedOptions.findIndex(({ option }) => option.id === optionId);
+    const adjacent = selectedOptions[index + 1] ?? selectedOptions[index - 1];
+    if (adjacent) {
+      summaryRemoveRefs.current.get(adjacent.option.id)?.focus();
+    } else {
+      const candidate = [...(viewRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[data-agent-option-id]',
+      ) ?? [])].find((element) => element.dataset.agentOptionId === optionId);
+      const fallback = viewRef.current?.querySelector<HTMLButtonElement>(
+        '[data-agent-other-trigger]',
+      );
+      (candidate ?? fallback)?.focus();
+    }
+    onOptionChange(optionId, false);
+  };
   const hasSelectionContent = directAgents.length > 0 || snapshot.installOptions.length > 0;
   const commonRowProps = { snapshot, session, states, disabled, onOptionChange };
 
   return (
-    <div className="space-y-6">
+    <div ref={viewRef} className="space-y-6">
       {!hasSelectionContent && emptyMessage ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>
       ) : null}
@@ -89,6 +139,7 @@ export function AgentSelectionView({
         presentation={presentation}
         {...commonRowProps}
         onExpandedChange={onAdditionalExpandedChange}
+        showRuntimeMetadata={showRuntimeMetadata}
       />
 
       {(detected.length > 0 || other.length > 0 || snapshot.groups.length > 0) ? (
@@ -98,9 +149,53 @@ export function AgentSelectionView({
             title={presentation.selectable.title}
             help={presentation.selectable.help}
           />
+          {selectedOptions.length > 0 ? (
+            <section
+              aria-label={t('agentSelection.selectedTitle')}
+              className="sticky top-0 z-10 -mx-1 flex min-h-8 flex-wrap items-center gap-1.5 border-b bg-background px-1 py-1.5"
+            >
+              <span className="mr-0.5 text-xs font-medium text-muted-foreground">
+                {t('agentSelection.selectedTitle')}
+              </span>
+              {selectedOptions.map(({ option, displayName, members, grouped }) => {
+                const state = states.get(option.id);
+                const removable = option.selectable
+                  && (state === undefined || state.allowedResults === 'both');
+                return (
+                  <span
+                    key={option.id}
+                    className={cn(
+                      'inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-md border border-border/70 bg-muted/30 pl-2 text-xs font-medium',
+                      removable ? 'pr-0.5' : 'pr-2',
+                    )}
+                  >
+                    <span className="min-w-0 truncate">{displayName}</span>
+                    {members.length > 1 && !grouped ? (
+                      <MembersPopover members={members} showDetection={false} />
+                    ) : null}
+                    {removable ? (
+                      <button
+                        ref={(element) => {
+                          if (element) summaryRemoveRefs.current.set(option.id, element);
+                          else summaryRemoveRefs.current.delete(option.id);
+                        }}
+                        type="button"
+                        className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={t('agentSelection.removeSelected', { agent: displayName })}
+                        onClick={() => removeSelectedOption(option.id)}
+                        disabled={disabled}
+                      >
+                        <X className="size-3" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </span>
+                );
+              })}
+            </section>
+          ) : null}
           <div className="space-y-1">
             {detected.map((item) => (
-              <SelectionRow key={item.id} item={item} {...commonRowProps} />
+              <SelectionRow key={item.id} item={item} {...commonRowProps} showRuntimeMetadata={showRuntimeMetadata} />
             ))}
             {snapshot.groups.map((group) => (
               <SelectionGroup
@@ -109,11 +204,15 @@ export function AgentSelectionView({
                 {...commonRowProps}
                 onGroupChange={onGroupChange}
                 onGroupExpandedChange={onGroupExpandedChange}
+                showRuntimeMetadata={showRuntimeMetadata}
               />
             ))}
             {other.length > 0 ? (
               <Collapsible open={session.otherAgentsExpanded} onOpenChange={onOtherExpandedChange}>
-                <CollapsibleTrigger className="flex h-9 w-full items-center justify-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <CollapsibleTrigger
+                  data-agent-other-trigger
+                  className="flex h-9 w-full items-center justify-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
                   <span>{t('agentSelection.otherAgents', { count: other.length })}</span>
                   <ChevronDown className={cn('size-4 transition-transform', session.otherAgentsExpanded && 'rotate-180')} aria-hidden="true" />
                 </CollapsibleTrigger>
@@ -156,20 +255,24 @@ function DirectAgentsSummary({
   disabled,
   onOptionChange,
   onExpandedChange,
+  showRuntimeMetadata,
 }: CommonRowProps & {
   agents: AgentSelectionSnapshot['agents'];
   options: AgentInstallOption[];
   presentation: AgentSelectionPresentation;
   onExpandedChange: (expanded: boolean) => void;
+  showRuntimeMetadata: boolean;
 }) {
   if (agents.length === 0) return null;
   const detected = agents.filter((agent) => agent.detection === 'detected');
   const more = agents.filter((agent) => agent.detection !== 'detected');
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const orderedOptions = [
-    ...options.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
-    ...options.filter((option) => !option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
-  ];
+  const orderedOptions = showRuntimeMetadata
+    ? [
+        ...options.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
+        ...options.filter((option) => !option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
+      ]
+    : options;
   const selectedIds = new Set(session.selectedOptionIds);
   const selectedAgentCount = new Set(
     options
@@ -187,7 +290,9 @@ function DirectAgentsSummary({
         {detected.map((agent) => (
           <DirectAgentBadge key={agent.id} name={agent.displayName} />
         ))}
-        {more.length > 0 ? <DirectAgentsMorePopover agents={more} /> : null}
+        {more.length > 0 ? (
+          <DirectAgentsMorePopover agents={more} showDescription={showRuntimeMetadata} />
+        ) : null}
       </div>
       {orderedOptions.length > 0 ? (
         <Collapsible
@@ -213,10 +318,7 @@ function DirectAgentsSummary({
             ) : null}
           </CollapsibleTrigger>
           <CollapsibleContent className="pt-1">
-            <p className="px-1 pl-7 text-xs leading-5 text-muted-foreground">
-              {presentation.ownDirectory.description}
-            </p>
-            <div className="mt-2 space-y-1 pl-5">
+            <div className="space-y-1 pl-5">
               {orderedOptions.map((item) => (
                 <SelectionRow
                   key={item.id}
@@ -226,6 +328,7 @@ function DirectAgentsSummary({
                   states={states}
                   disabled={disabled}
                   onOptionChange={onOptionChange}
+                  showRuntimeMetadata={showRuntimeMetadata}
                 />
               ))}
             </div>
@@ -258,7 +361,13 @@ function SectionHeading({ id, title, help }: { id: string; title: string; help: 
   );
 }
 
-function DirectAgentsMorePopover({ agents }: { agents: AgentSelectionSnapshot['agents'] }) {
+function DirectAgentsMorePopover({
+  agents,
+  showDescription = true,
+}: {
+  agents: AgentSelectionSnapshot['agents'];
+  showDescription?: boolean;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -316,9 +425,11 @@ function DirectAgentsMorePopover({ agents }: { agents: AgentSelectionSnapshot['a
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
       >
-        <p className="whitespace-nowrap text-xs text-muted-foreground">
-          {t('agentSelection.moreAgentsDescription')}
-        </p>
+        {showDescription ? (
+          <p className="whitespace-nowrap text-xs text-muted-foreground">
+            {t('agentSelection.moreAgentsDescription')}
+          </p>
+        ) : null}
         <div className="flex max-w-96 flex-wrap gap-2">
           {agents.map((agent) => (
             <DirectAgentBadge key={agent.id} name={agent.displayName} />
@@ -344,6 +455,7 @@ interface CommonRowProps {
   states: Map<AgentInstallOptionId, ManageInstallOptionState>;
   disabled: boolean;
   onOptionChange: (optionId: AgentInstallOptionId, selected: boolean) => void;
+  showRuntimeMetadata?: boolean;
 }
 
 function SelectionGroup({
@@ -355,6 +467,7 @@ function SelectionGroup({
   onOptionChange,
   onGroupChange,
   onGroupExpandedChange,
+  showRuntimeMetadata = true,
 }: CommonRowProps & {
   group: AgentSelectionGroup;
   onGroupChange: (groupId: string, selected: boolean) => void;
@@ -404,7 +517,9 @@ function SelectionGroup({
           <Copy className="size-3.5" aria-hidden="true" />
           {t('agentSelection.copyOnly')}
         </span>
-        <DetectionText value={group.detection} className="justify-self-end text-right" />
+        {showRuntimeMetadata ? (
+          <DetectionText value={group.detection} className="justify-self-end text-right" />
+        ) : <span aria-hidden="true" />}
       </div>
       <CollapsibleContent className="space-y-1">
         {groupOptions.map((option) => (
@@ -416,6 +531,7 @@ function SelectionGroup({
             states={states}
             disabled={disabled}
             onOptionChange={onOptionChange}
+            showRuntimeMetadata={showRuntimeMetadata}
           />
         ))}
       </CollapsibleContent>
@@ -423,7 +539,7 @@ function SelectionGroup({
   );
 }
 
-function SelectionGroupChild({ option, session, states, disabled, onOptionChange }: CommonRowProps & { option: AgentInstallOption }) {
+function SelectionGroupChild({ option, session, states, disabled, onOptionChange, showRuntimeMetadata = true }: CommonRowProps & { option: AgentInstallOption }) {
   const checkboxId = useId();
   const selected = session.selectedOptionIds.includes(option.id);
   const state = states.get(option.id);
@@ -440,7 +556,7 @@ function SelectionGroupChild({ option, session, states, disabled, onOptionChange
           disabled={disabled}
           onOptionChange={onOptionChange}
         />
-        <PathLabel id={readOnly ? undefined : checkboxId} option={option} className="text-[13px]" />
+        <PathLabel id={readOnly ? undefined : checkboxId} option={option} className="text-[13px]" showPath={showRuntimeMetadata} />
       </span>
       <EntryState option={option} state={state} selected={selected} mode={session.mode} />
       <span aria-hidden="true" />
@@ -448,7 +564,7 @@ function SelectionGroupChild({ option, session, states, disabled, onOptionChange
   );
 }
 
-function SelectionRow({ item: option, snapshot, session, states, disabled, onOptionChange }: CommonRowProps & { item: AgentInstallOption }) {
+function SelectionRow({ item: option, snapshot, session, states, disabled, onOptionChange, showRuntimeMetadata = true }: CommonRowProps & { item: AgentInstallOption }) {
   const { t, i18n } = useTranslation();
   const checkboxId = useId();
   const state = states.get(option.id);
@@ -478,14 +594,17 @@ function SelectionRow({ item: option, snapshot, session, states, disabled, onOpt
           showGlyph
           glyph={members.length > 1 ? UsersRound : undefined}
           glyphSlot={members.length > 1 ? 'agent-group-glyph' : undefined}
+          showPath={showRuntimeMetadata}
         />
-        {members.length > 1 ? <MembersPopover members={members} /> : null}
+        {members.length > 1 ? <MembersPopover members={members} showDetection={showRuntimeMetadata} /> : null}
       </span>
       <EntryState option={option} state={state} selected={selected} mode={session.mode} />
       <span className="justify-self-end text-right text-xs text-muted-foreground">
-        {members.length > 1
-          ? <DetectedCount members={members} detected={detected} />
-          : <DetectionText value={members[0]?.detection ?? 'indeterminate'} />}
+        {showRuntimeMetadata
+          ? members.length > 1
+            ? <DetectedCount members={members} detected={detected} />
+            : <DetectionText value={members[0]?.detection ?? 'indeterminate'} />
+          : null}
       </span>
     </div>
   );
@@ -503,7 +622,7 @@ function SelectionCheckbox({ id, option, state, selected, disabled, label, onOpt
   const accessibleLabel = label ?? option.displayName;
   const lockedSelected = state?.allowedResults === 'selected';
   const readOnly = !option.selectable || (state !== undefined && state.allowedResults !== 'both');
-  if (lockedSelected) return <Checkbox id={id} checked disabled aria-label={accessibleLabel} />;
+  if (lockedSelected) return <Checkbox id={id} checked disabled aria-label={accessibleLabel} data-agent-option-id={option.id} />;
   if (readOnly) return <TriangleAlert className="size-4 text-warning" aria-hidden="true" />;
   return (
     <Checkbox
@@ -512,11 +631,12 @@ function SelectionCheckbox({ id, option, state, selected, disabled, label, onOpt
       onCheckedChange={(value) => onOptionChange(option.id, value === true)}
       disabled={disabled}
       aria-label={accessibleLabel}
+      data-agent-option-id={option.id}
     />
   );
 }
 
-function PathLabel({ id, option, label, className, showGlyph = false, glyph, glyphSlot }: {
+function PathLabel({ id, option, label, className, showGlyph = false, glyph, glyphSlot, showPath = true }: {
   id?: string;
   option: AgentInstallOption;
   label?: string;
@@ -524,6 +644,7 @@ function PathLabel({ id, option, label, className, showGlyph = false, glyph, gly
   showGlyph?: boolean;
   glyph?: typeof Bot;
   glyphSlot?: string;
+  showPath?: boolean;
 }) {
   const content = (
     <>
@@ -531,25 +652,31 @@ function PathLabel({ id, option, label, className, showGlyph = false, glyph, gly
       <span className="min-w-0 truncate">{label ?? option.displayName}</span>
     </>
   );
+  const trigger = id ? (
+    <label htmlFor={id} tabIndex={showPath ? 0 : undefined} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', 'cursor-pointer', className)}>
+      {content}
+    </label>
+  ) : (
+    <span tabIndex={showPath ? 0 : undefined} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
+      {content}
+    </span>
+  );
+  if (!showPath) return trigger;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        {id ? (
-          <label htmlFor={id} tabIndex={0} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', 'cursor-pointer', className)}>
-            {content}
-          </label>
-        ) : (
-          <span tabIndex={0} className={cn('flex min-w-0 flex-1 items-center gap-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
-            {content}
-          </span>
-        )}
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent sideOffset={6}><code translate="no">{option.path}</code></TooltipContent>
     </Tooltip>
   );
 }
 
-function MembersPopover({ members }: { members: AgentSelectionSnapshot['agents'] }) {
+function MembersPopover({
+  members,
+  showDetection = true,
+}: {
+  members: AgentSelectionSnapshot['agents'];
+  showDetection?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <span className="flex shrink-0 items-center">
@@ -569,7 +696,7 @@ function MembersPopover({ members }: { members: AgentSelectionSnapshot['agents']
           {members.map((member) => (
             <span key={member.id} className="flex items-center justify-between gap-4">
               <span>{member.displayName}</span>
-              <DetectionText value={member.detection} />
+              {showDetection ? <DetectionText value={member.detection} /> : null}
             </span>
           ))}
         </PopoverContent>

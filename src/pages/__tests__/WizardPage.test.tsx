@@ -14,7 +14,6 @@ import { WizardPage } from '../WizardPage';
 const mocks = vi.hoisted(() => ({
   requestAction: vi.fn().mockResolvedValue(undefined),
   emit: vi.fn().mockResolvedValue(undefined),
-  refreshProjects: vi.fn().mockResolvedValue([]),
   confirmSelection: vi.fn(),
   getSelection: vi.fn(),
 }));
@@ -50,12 +49,6 @@ vi.mock('@/hooks/useAgentSelectionSession', () => ({
 
 vi.mock('@/lifecycle/useWindowLifecycle', () => ({
   useWindowLifecycle: () => ({ requestAction: mocks.requestAction }),
-}));
-
-vi.mock('@/hooks/useProjectWorkspace', () => ({
-  useProjectWorkspace: (environment: unknown) => ({
-    refresh: () => mocks.refreshProjects(environment),
-  }),
 }));
 
 vi.mock('@/components/skills/add-skill/StepIndicator', () => ({
@@ -225,23 +218,6 @@ describe('WizardPage mutation guard', () => {
       loading: false,
       cancelling: false,
     });
-  });
-
-  it('does not start a project refresh from the wizard page', () => {
-    const context = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'global' },
-    };
-
-    render(
-      <MemoryRouter initialEntries={[
-        `/wizard?entryPoint=discovery&context=${encodeURIComponent(JSON.stringify(context))}`,
-      ]}>
-        <WizardPage />
-      </MemoryRouter>,
-    );
-
-    expect(mocks.refreshProjects).not.toHaveBeenCalled();
   });
 
   it('disables starting installation while another mutation is active', async () => {

@@ -35,7 +35,7 @@ function selectionSnapshot(): InstallAgentSelectionSnapshot {
         { id: 'claude', kind: 'standardDirectory', agentIds: ['claude-code'], displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
         { id: 'cursor', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
       ],
-      initialSelectedOptionIds: ['claude'],
+      baselineSelectedOptionIds: ['claude'],
       unavailableExplicitAgents: [{ agentId: 'old-agent', reason: 'definitionMissing' }],
       userModeOptionIds: ['claude', 'cursor'],
     }),
@@ -148,7 +148,7 @@ describe('OptionsStep', () => {
   it('allows choosing an installation mode before selecting an applicable Agent', async () => {
     const user = userEvent.setup();
     const snapshot = selectionSnapshot();
-    snapshot.selection.initialSelectedOptionIds = [];
+    snapshot.selection.baselineSelectedOptionIds = [];
     await renderStep(snapshot);
     const copyMode = screen.getByRole('radio', { name: 'agentSelection.copy' });
     await user.click(copyMode);
@@ -168,7 +168,7 @@ describe('OptionsStep', () => {
     snapshot.selection.agents = [];
     snapshot.selection.installOptions = [];
     snapshot.selection.groups = [];
-    snapshot.selection.initialSelectedOptionIds = [];
+    snapshot.selection.baselineSelectedOptionIds = [];
     snapshot.selection.userModeOptionIds = [];
     await renderStep(snapshot);
     expect(screen.getByText('agentSelection.installEmpty')).toBeDefined();
@@ -190,6 +190,101 @@ describe('OptionsStep', () => {
     expect(screen.getByText('Cursor')).toBeDefined();
   });
 
+  it('summarizes selected Agents while keeping their candidate rows in place', async () => {
+    const user = userEvent.setup();
+    await renderStep();
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    const selectableSection = screen.getByText('agentSelection.selectable.title').closest('section');
+    expect(selectableSection?.contains(summary)).toBe(true);
+    expect(within(summary).getByText('Claude Code')).toBeDefined();
+    await user.click(screen.getByRole('button', { name: /agentSelection\.otherAgents/ }));
+    const cursor = screen.getByRole('checkbox', { name: 'Cursor' });
+    const claude = screen.getByRole('checkbox', { name: 'Claude Code' });
+    await user.click(cursor);
+    expect(cursor.getAttribute('data-state')).toBe('checked');
+    expect(claude.compareDocumentPosition(cursor) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(within(summary).getByText('Cursor')).toBeDefined();
+  });
+
+  it('removes a selection from the summary without removing its candidate row', async () => {
+    const user = userEvent.setup();
+    await renderStep();
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    await user.click(within(summary).getByRole('button', {
+      name: 'agentSelection.removeSelected:{"agent":"Claude Code"}',
+    }));
+
+    expect(screen.getByRole('checkbox', { name: 'Claude Code' }).getAttribute('data-state'))
+      .toBe('unchecked');
+    expect(screen.queryByRole('region', { name: 'agentSelection.selectedTitle' })).toBeNull();
+  });
+
+  it('keeps focus in the selection workflow when summary items are removed', async () => {
+    const user = userEvent.setup();
+    await renderStep();
+    await user.click(screen.getByRole('button', { name: /agentSelection\.otherAgents/ }));
+    await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    await user.click(within(summary).getByRole('button', {
+      name: 'agentSelection.removeSelected:{"agent":"Claude Code"}',
+    }));
+    const removeCursor = within(summary).getByRole('button', {
+      name: 'agentSelection.removeSelected:{"agent":"Cursor"}',
+    });
+    expect(document.activeElement).toBe(removeCursor);
+
+    await user.click(removeCursor);
+    expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: 'Cursor' }));
+    expect(screen.queryByRole('region', { name: 'agentSelection.selectedTitle' })).toBeNull();
+  });
+
+  it('keeps an initially selected undetected Agent in the Other Agents section', async () => {
+    const user = userEvent.setup();
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents = snapshot.selection.agents.filter((agent) => (
+      agent.directoryAccess !== 'privateOnly' || agent.id === 'cursor'
+    ));
+    snapshot.selection.installOptions = snapshot.selection.installOptions.filter((option) => (
+      option.id === 'cursor'
+    ));
+    snapshot.selection.baselineSelectedOptionIds = ['cursor'];
+    snapshot.selection.userModeOptionIds = ['cursor'];
+    await renderStep(snapshot);
+
+    expect(within(screen.getByRole('region', { name: 'agentSelection.selectedTitle' }))
+      .getByText('Cursor')).toBeDefined();
+    expect(screen.queryByRole('checkbox', { name: 'Cursor' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /agentSelection\.otherAgents/ }));
+    expect(screen.getByRole('checkbox', { name: 'Cursor' }).getAttribute('data-state'))
+      .toBe('checked');
+  });
+
+  it('returns focus to the Other Agents control when the last hidden selection is removed', async () => {
+    const user = userEvent.setup();
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents = snapshot.selection.agents.filter((agent) => (
+      agent.directoryAccess !== 'privateOnly' || agent.id === 'cursor'
+    ));
+    snapshot.selection.installOptions = snapshot.selection.installOptions.filter((option) => (
+      option.id === 'cursor'
+    ));
+    snapshot.selection.baselineSelectedOptionIds = ['cursor'];
+    snapshot.selection.userModeOptionIds = ['cursor'];
+    await renderStep(snapshot);
+
+    const otherAgents = screen.getByRole('button', { name: /agentSelection\.otherAgents/ });
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    await user.click(within(summary).getByRole('button', {
+      name: 'agentSelection.removeSelected:{"agent":"Cursor"}',
+    }));
+
+    expect(document.activeElement).toBe(otherAgents);
+  });
+
   it('keeps optional own-directory writes inside the direct-use section', async () => {
     const user = userEvent.setup();
     const snapshot = selectionSnapshot();
@@ -200,6 +295,33 @@ describe('OptionsStep', () => {
     const directSection = screen.getByText('agentSelection.automatic.install.title').closest('section');
     await user.click(within(directSection as HTMLElement).getByRole('button', { name: /agentSelection\.ownDirectory\.title/ }));
     expect(screen.getByRole('checkbox', { name: 'Zed' })).toBeDefined();
+  });
+
+  it('keeps own-directory candidates stable when their selection changes', async () => {
+    const user = userEvent.setup();
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents.push(
+      { kind: 'standard', id: 'zed', displayName: 'Zed', detection: 'detected', directoryAccess: 'both', installOptionId: 'zed', groupId: null },
+      { kind: 'standard', id: 'trae', displayName: 'Trae', detection: 'notDetected', directoryAccess: 'both', installOptionId: 'trae', groupId: null },
+    );
+    snapshot.selection.installOptions.push(
+      { id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+      { id: 'trae', kind: 'standardDirectory', agentIds: ['trae'], displayName: 'Trae', path: '~/.trae/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+    );
+    snapshot.selection.baselineSelectedOptionIds.push('trae');
+    snapshot.selection.userModeOptionIds.push('zed', 'trae');
+    await renderStep(snapshot);
+
+    const trae = screen.getByRole('checkbox', { name: 'Trae' });
+    const zed = screen.getByRole('checkbox', { name: 'Zed' });
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    expect(within(summary).getByText('Claude Code')).toBeDefined();
+    expect(within(summary).queryByText('Trae')).toBeNull();
+    expect(zed.compareDocumentPosition(trae) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    await user.click(trae);
+    expect(trae.getAttribute('data-state')).toBe('unchecked');
+    expect(zed.compareDocumentPosition(trae) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
   it('shows Posit Assistant as direct use with an optional own directory', async () => {
@@ -226,6 +348,50 @@ describe('OptionsStep', () => {
     await renderStep(snapshot);
     await user.click(screen.getByRole('button', { name: /agentSelection.toggleGroup/ }));
     expect(within(screen.getByRole('group', { name: 'Eve' })).getByText('agentSelection.copyOnly')).toBeDefined();
+  });
+
+  it('summarizes each selected Eve target with its parent Agent name', async () => {
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents.push({ kind: 'grouped', id: 'eve', displayName: 'Eve', detection: 'detected', directoryAccess: null, installOptionId: null, groupId: 'eve-group' });
+    snapshot.selection.installOptions.push({ id: 'eve-root', kind: 'groupLocation', agentIds: ['eve'], displayName: 'Main', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null });
+    snapshot.selection.groups.push({ id: 'eve-group', agentId: 'eve', displayName: 'Eve', optionIds: ['eve-root'], detection: 'detected' });
+    snapshot.selection.baselineSelectedOptionIds.push('eve-root');
+    await renderStep(snapshot);
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    expect(within(summary).getByText('Eve · Main')).toBeDefined();
+  });
+
+  it('summarizes a shared directory once and exposes all of its Agent members', async () => {
+    const user = userEvent.setup();
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents.push(
+      { kind: 'standard', id: 'amp', displayName: 'Amp', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'shared', groupId: null },
+      { kind: 'standard', id: 'dexto', displayName: 'Dexto', detection: 'notDetected', directoryAccess: 'privateOnly', installOptionId: 'shared', groupId: null },
+      { kind: 'standard', id: 'replit', displayName: 'Replit', detection: 'notDetected', directoryAccess: 'privateOnly', installOptionId: 'shared', groupId: null },
+    );
+    snapshot.selection.installOptions.push({
+      id: 'shared',
+      kind: 'standardDirectory',
+      agentIds: ['amp', 'dexto', 'replit'],
+      displayName: 'Amp',
+      path: '~/.agents/shared',
+      groupId: null,
+      selectable: true,
+      modeConstraint: 'userSelectable',
+      disabledReason: null,
+    });
+    snapshot.selection.baselineSelectedOptionIds = ['shared'];
+    snapshot.selection.userModeOptionIds.push('shared');
+    await renderStep(snapshot);
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    expect(within(summary).getByText(/agentSelection\.mergedAgentNamesMore/)).toBeDefined();
+    await user.click(within(summary).getByRole('button', { name: 'agentSelection.viewMembers' }));
+    const members = await screen.findByRole('dialog', { name: 'agentSelection.viewMembers' });
+    for (const name of ['Amp', 'Dexto', 'Replit']) {
+      expect(within(members).getByText(name)).toBeDefined();
+    }
   });
 
   it('allows an initially selected placement conflict to be canceled', async () => {

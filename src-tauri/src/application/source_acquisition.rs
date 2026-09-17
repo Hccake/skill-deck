@@ -13,7 +13,7 @@ use crate::application::git_transport::GitSourceTransport;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, DiscoverySkillSnapshot,
     DiscoverySourceDescriptor, DiscoverySourceLocation, PayloadPlanningMetadata,
-    PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey, RetainedDiscoverySource,
+    PayloadSessionManager, PayloadSessionStorage, RetainedDiscoverySource, StoredPayload,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
 use crate::application::wellknown_access::{
@@ -123,8 +123,10 @@ impl InternalSkillVisibility {
 
 #[derive(Clone)]
 pub(crate) struct SourceDiscoveryPolicy {
+    pub(crate) allow_empty_catalog: bool,
     pub(crate) full_depth: bool,
     pub(crate) internal_skill_visibility: InternalSkillVisibility,
+    pub(crate) selected_skill_names: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -199,6 +201,7 @@ impl GitSourceDiscovery {
                     root,
                     cloned,
                     RetainedSourceOptions {
+                        allow_empty_catalog: policy.allow_empty_catalog,
                         full_depth: policy.full_depth,
                         internal_skill_visibility: policy.internal_skill_visibility,
                         ..Default::default()
@@ -232,7 +235,9 @@ where
     let well_known_error = well_known_failure.into_error();
     if matches!(
         well_known_error,
-        AppError::MutationCancelled | AppError::WellKnownScopeNotFound { .. }
+        AppError::MutationCancelled
+            | AppError::WellKnownScopeNotFound { .. }
+            | AppError::InvalidProxySettings { .. }
     ) || !allows_direct_download
     {
         return Err(well_known_error);
@@ -240,7 +245,9 @@ where
     let well_known_reason = source_acquisition_failure_reason(&well_known_error);
     match download().await {
         Ok(result) => Ok(result),
-        Err(AppError::MutationCancelled) => Err(AppError::MutationCancelled),
+        Err(error @ (AppError::MutationCancelled | AppError::InvalidProxySettings { .. })) => {
+            Err(error)
+        }
         Err(download_error) => {
             log::warn!(
                 "{environment_label} Well-known and direct download acquisition failed: well-known={well_known_error}; download={download_error}"
@@ -303,9 +310,12 @@ pub(crate) fn source_acquisition_failure_reason(
 
 #[derive(Default)]
 pub(crate) struct RetainedSourceOptions {
+    pub(crate) allow_empty_catalog: bool,
     pub(crate) storage: Option<Arc<dyn PayloadSessionStorage>>,
     pub(crate) trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
     pub(crate) redirected_download_host: Option<String>,
+    pub(crate) redirected_download_hosts: Vec<String>,
+    pub(crate) member_failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
     pub(crate) full_depth: bool,
     pub(crate) internal_skill_visibility: InternalSkillVisibility,
 }
@@ -325,27 +335,38 @@ where
     O: Send + Sync + 'static,
 {
     let RetainedSourceOptions {
+        allow_empty_catalog,
         storage,
         trust_metadata,
         redirected_download_host,
+        redirected_download_hosts,
+        member_failures,
         full_depth,
         internal_skill_visibility,
     } = options;
     let scan_root = native_root.clone();
     let scan_subpath = parsed.subpath.clone();
-    let (discovered, catalog) = tokio::task::spawn_blocking(move || {
-        build_discovery_catalog(
+    let managed_source = parsed.source_type != SourceType::Local;
+    let cleanup_root = native_root.clone();
+    let (discovered, catalog, managed_bytes) = tokio::task::spawn_blocking(move || {
+        let (discovered, catalog) = build_discovery_catalog(
             &scan_root,
             scan_subpath.as_deref(),
             &internal_skill_visibility,
             full_depth,
-        )
+        )?;
+        let bytes = if managed_source {
+            environment_engine::directory::size_no_follow(&scan_root)?
+        } else {
+            0
+        };
+        Ok::<_, AppError>((discovered, catalog, bytes))
     })
     .await
     .map_err(|error| AppError::ExecutionFailed {
         message: format!("native source discovery task failed: {error}"),
     })??;
-    if discovered.is_empty() {
+    if discovered.is_empty() && !allow_empty_catalog {
         return Err(AppError::NoSkillsFound);
     }
     let descriptor = DiscoverySourceDescriptor {
@@ -356,8 +377,13 @@ where
         redirected_download_host: redirected_download_host.clone(),
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
-    let retained = RetainedDiscoverySource::new(location, descriptor, catalog, owner)
-        .with_well_known_metadata(trust_metadata.clone().unwrap_or_default());
+    let mut retained = RetainedDiscoverySource::new(location, descriptor, catalog, owner)
+        .with_well_known_metadata(trust_metadata.clone().unwrap_or_default())
+        .with_source_outcomes(member_failures, redirected_download_hosts);
+    if managed_source {
+        retained = retained
+            .with_managed_storage(managed_bytes, Arc::new(NativeSourceCleanup(cleanup_root)));
+    }
     let discovery_session = match storage {
         Some(storage) => {
             sessions
@@ -516,6 +542,27 @@ impl ManagedDownloadedDirectory {
 
 struct ManagedDownloadedDirectoryOwner(PathBuf);
 
+struct NativeSourceCleanup(PathBuf);
+
+impl crate::application::payload_session::RetainedSourceCleanup for NativeSourceCleanup {
+    fn remove(
+        &self,
+    ) -> crate::application::payload_session::PayloadStorageFuture<'_, Result<(), AppError>> {
+        let root = self.0.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || match fs::remove_dir_all(root) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.into()),
+            })
+            .await
+            .map_err(|error| AppError::ExecutionFailed {
+                message: error.to_string(),
+            })?
+        })
+    }
+}
+
 impl Drop for ManagedDownloadedDirectoryOwner {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -526,13 +573,7 @@ pub struct SelectedPayloadAcquisitionService {
     sessions: Arc<PayloadSessionManager>,
 }
 
-enum PreparedNativeSelection {
-    Existing(AcquiredPayloadHandle),
-    Acquired(Box<PreparedNativePayload>),
-}
-
 struct PreparedNativePayload {
-    relative_path: String,
     payload: crate::core::skill_payload::SkillPayload,
     metadata: PayloadPlanningMetadata,
 }
@@ -540,6 +581,126 @@ struct PreparedNativePayload {
 impl SelectedPayloadAcquisitionService {
     pub fn new(sessions: Arc<PayloadSessionManager>) -> Self {
         Self { sessions }
+    }
+
+    pub(crate) async fn ensure_saved_path(
+        &self,
+        discovery: &DiscoverySessionHandle,
+        path: &str,
+        cancellation: CancellationSignal,
+    ) -> Result<(), AppError> {
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        let source = self.sessions.source_snapshot(discovery)?;
+        let folder = normalize_skill_folder_path(path);
+        let already_catalogued = source
+            .skills()
+            .any(|skill| normalize_skill_folder_path(&skill.relative_path) == folder);
+        let relative_path = if folder.is_empty() {
+            "SKILL.md".to_string()
+        } else {
+            format!("{folder}/SKILL.md")
+        };
+        validate_selected_paths(std::slice::from_ref(&relative_path))?;
+        let metadata = match source.location() {
+            DiscoverySourceLocation::Native { root, .. } => {
+                let root = root.clone();
+                let path = relative_path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let root = fs::canonicalize(root)?;
+                    let relative = normalize_skill_folder_path(&path);
+                    let directory = environment_engine::directory::plain_descendant_directory(
+                        &root,
+                        Path::new(&relative),
+                    )
+                    .map_err(|error| match error.kind() {
+                        std::io::ErrorKind::Unsupported => AppError::CapabilityUnavailable {
+                            capability: "sourceDirectoryLinks".into(),
+                            path: Some(root.join(&relative).to_string_lossy().into_owned()),
+                        },
+                        std::io::ErrorKind::NotFound => AppError::PathNotFound {
+                            path: root.join(&relative).to_string_lossy().into_owned(),
+                        },
+                        _ => error.into(),
+                    })?;
+                    if already_catalogued {
+                        return Ok(None);
+                    }
+                    let mut entries = fs::read_dir(&directory)?.collect::<Result<Vec<_>, _>>()?;
+                    entries
+                        .sort_by_key(|entry| (entry.file_name() != "SKILL.md", entry.file_name()));
+                    let file = entries
+                        .into_iter()
+                        .find(|entry| {
+                            entry
+                                .file_name()
+                                .to_str()
+                                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                        })
+                        .ok_or_else(|| AppError::PathNotFound {
+                            path: directory.join("SKILL.md").to_string_lossy().into_owned(),
+                        })?;
+                    let physical = fs::canonicalize(file.path())?;
+                    if !physical.starts_with(&directory)
+                        || fs::metadata(&physical)?.len() > 256 * 1024
+                    {
+                        return Err(AppError::StalePayload);
+                    }
+                    Ok::<_, AppError>(Some((
+                        fs::read(&physical)?,
+                        compute_source_metadata_fingerprint(&directory)?,
+                    )))
+                })
+                .await
+                .map_err(|error| AppError::ExecutionFailed {
+                    message: error.to_string(),
+                })??
+            }
+            DiscoverySourceLocation::WslNative { linux_root, .. } => {
+                let directory = if folder.is_empty() {
+                    linux_root.clone()
+                } else {
+                    format!("{}/{folder}", linux_root.trim_end_matches('/'))
+                };
+                let storage = self.sessions.storage_for_discovery(discovery)?;
+                let content = storage
+                    .read_source_skill_md(&directory, cancellation.clone())
+                    .await?;
+                if already_catalogued {
+                    None
+                } else {
+                    Some((
+                        content,
+                        storage.source_metadata_fingerprint(&directory).await?,
+                    ))
+                }
+            }
+        };
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        let Some((content, fingerprint)) = metadata else {
+            return Ok(());
+        };
+        let content = std::str::from_utf8(&content).map_err(|error| AppError::InvalidSkillMd {
+            message: error.to_string(),
+        })?;
+        let frontmatter = crate::core::skill::parse_skill_md_content(content)?;
+        let install_dir_name =
+            crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                &frontmatter.name,
+            )?;
+        self.sessions.register_saved_source_skill(
+            discovery,
+            DiscoverySkillSnapshot {
+                skill_name: frontmatter.name,
+                install_dir_name,
+                relative_path,
+                plugin_name: None,
+                source_metadata_fingerprint: fingerprint,
+            },
+        )
     }
 
     pub async fn acquire(
@@ -552,52 +713,57 @@ impl SelectedPayloadAcquisitionService {
 
         match source.location() {
             DiscoverySourceLocation::Native { root, .. } => {
-                let mut existing = BTreeMap::new();
                 for skill_path in &request.skill_paths {
-                    let skill = source.skill(skill_path).ok_or(AppError::StalePayload)?;
-                    if let Some(handle) = self
+                    let skill = source
+                        .skill(skill_path)
+                        .ok_or(AppError::StalePayload)?
+                        .clone();
+                    let root = root.clone();
+                    if let Some(existing) = self
                         .sessions
                         .existing_payload_handle(&request.discovery_session, &skill.relative_path)?
                     {
-                        existing.insert(skill.relative_path.clone(), handle);
+                        let source_owner = source.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let _source = source_owner;
+                            verified_native_skill_root(&root, &skill).map(|_| ())
+                        })
+                        .await
+                        .map_err(|error| {
+                            AppError::ExecutionFailed {
+                                message: format!("native source verification task failed: {error}"),
+                            }
+                        })??;
+                        handles.push(existing);
+                        continue;
                     }
-                }
-                let selected_paths = request.skill_paths.clone();
-                let source_for_task = source.clone();
-                let root_for_task = root.clone();
-                let prepared = tokio::task::spawn_blocking(move || {
-                    prepare_native_selections(
-                        &source_for_task,
-                        &root_for_task,
-                        &selected_paths,
-                        &existing,
-                    )
-                })
-                .await
-                .map_err(|error| AppError::ExecutionFailed {
-                    message: format!("native selected payload task failed: {error}"),
-                })??;
-                for prepared in prepared {
-                    match prepared {
-                        PreparedNativeSelection::Existing(handle) => handles.push(handle),
-                        PreparedNativeSelection::Acquired(prepared) => {
-                            let PreparedNativePayload {
-                                relative_path,
-                                payload,
-                                metadata,
-                            } = *prepared;
-                            handles.push(
-                                self.sessions
-                                    .acquire_payload_with_metadata(
-                                        &request.discovery_session,
-                                        relative_path,
-                                        payload,
-                                        metadata,
-                                    )
-                                    .await?,
+                    let source = source.clone();
+                    handles.push(
+                        self.sessions
+                            .prepare_payload(
+                                &request.discovery_session,
+                                skill.relative_path.clone(),
+                                move |storage, key| async move {
+                                    let prepared = tokio::task::spawn_blocking(move || {
+                                        prepare_native_payload(&source, &root, &skill)
+                                    })
+                                    .await
+                                    .map_err(|error| AppError::ExecutionFailed {
+                                        message: format!(
+                                            "native selected payload task failed: {error}"
+                                        ),
+                                    })??;
+                                    let manifest = prepared.payload.manifest();
+                                    let total_bytes = storage.store(&key, prepared.payload).await?;
+                                    Ok(StoredPayload {
+                                        manifest,
+                                        total_bytes,
+                                        planning_metadata: prepared.metadata,
+                                    })
+                                },
                             )
-                        }
-                    }
+                            .await?,
+                    );
                 }
             }
             DiscoverySourceLocation::WslNative {
@@ -616,120 +782,128 @@ impl SelectedPayloadAcquisitionService {
                 {
                     return Err(AppError::StaleEnvironment);
                 }
-                let storage = self
-                    .sessions
-                    .storage_for_discovery(&request.discovery_session)?;
                 for skill_path in &request.skill_paths {
-                    let skill = source.skill(skill_path).ok_or(AppError::StalePayload)?;
-                    let key = PayloadStorageKey::new(
-                        &request.discovery_session.session_id,
-                        &skill.relative_path,
-                    );
+                    let skill = source
+                        .skill(skill_path)
+                        .ok_or(AppError::StalePayload)?
+                        .clone();
                     let linux_skill_root = format!(
                         "{}/{}",
                         linux_root.trim_end_matches('/'),
-                        normalize_skill_folder_path(&skill.relative_path)
+                        normalize_skill_folder_path(&skill.relative_path),
                     );
-                    if storage
-                        .source_metadata_fingerprint(&linux_skill_root)
-                        .await?
-                        != skill.source_metadata_fingerprint
-                    {
-                        return Err(AppError::StalePayload);
-                    }
                     if let Some(existing) = self
                         .sessions
                         .existing_payload_handle(&request.discovery_session, &skill.relative_path)?
                     {
+                        let storage = self
+                            .sessions
+                            .storage_for_discovery(&request.discovery_session)?;
+                        if storage
+                            .source_metadata_fingerprint(&linux_skill_root)
+                            .await?
+                            != skill.source_metadata_fingerprint
+                        {
+                            return Err(AppError::StalePayload);
+                        }
                         handles.push(existing);
                         continue;
                     }
-                    let upstream_revision =
-                        if requires_git_tree_revision(&source.descriptor().source_type) {
-                            storage
-                                .source_upstream_revision(linux_root, &skill.relative_path)
-                                .await?
-                        } else {
-                            None
-                        };
-                    let acquired = storage
-                        .acquire_from_source_path(
-                            &key,
-                            &linux_skill_root,
-                            Some(CancellationSignal::default()),
-                        )
-                        .await?;
-                    if storage
-                        .source_metadata_fingerprint(&linux_skill_root)
-                        .await?
-                        != skill.source_metadata_fingerprint
-                    {
-                        let _ = storage.remove(&key).await;
-                        return Err(AppError::StalePayload);
-                    }
-                    let metadata = planning_metadata(
-                        source.descriptor(),
-                        skill,
-                        acquired.computed_hash,
-                        upstream_revision,
-                        source.well_known_metadata(&skill.skill_name),
-                    );
+                    let source = source.clone();
+                    let linux_root = linux_root.clone();
                     handles.push(
                         self.sessions
-                            .register_existing_payload_with_metadata(
+                            .prepare_payload(
                                 &request.discovery_session,
                                 skill.relative_path.clone(),
-                                acquired.manifest,
-                                acquired.total_bytes,
-                                metadata,
+                                move |storage, key| async move {
+                                    if storage
+                                        .source_metadata_fingerprint(&linux_skill_root)
+                                        .await?
+                                        != skill.source_metadata_fingerprint
+                                    {
+                                        return Err(AppError::StalePayload);
+                                    }
+                                    let upstream_revision = if requires_git_tree_revision(
+                                        &source.descriptor().source_type,
+                                    ) {
+                                        storage
+                                            .source_upstream_revision(
+                                                &linux_root,
+                                                &skill.relative_path,
+                                            )
+                                            .await?
+                                    } else {
+                                        None
+                                    };
+                                    let acquired = storage
+                                        .acquire_from_source_path(
+                                            &key,
+                                            &linux_skill_root,
+                                            Some(CancellationSignal::default()),
+                                        )
+                                        .await?;
+                                    if storage
+                                        .source_metadata_fingerprint(&linux_skill_root)
+                                        .await?
+                                        != skill.source_metadata_fingerprint
+                                    {
+                                        return Err(AppError::StalePayload);
+                                    }
+                                    let metadata = planning_metadata(
+                                        source.descriptor(),
+                                        &skill,
+                                        acquired.computed_hash,
+                                        upstream_revision,
+                                        source.well_known_metadata(&skill.skill_name),
+                                    );
+                                    metadata.validate()?;
+                                    Ok(StoredPayload {
+                                        manifest: acquired.manifest,
+                                        total_bytes: acquired.total_bytes,
+                                        planning_metadata: metadata,
+                                    })
+                                },
                             )
                             .await?,
                     );
                 }
             }
         }
-
         Ok(handles)
     }
 }
 
-fn prepare_native_selections(
+fn verified_native_skill_root(
+    root: &Path,
+    skill: &DiscoverySkillSnapshot,
+) -> Result<(PathBuf, PathBuf), AppError> {
+    let physical_root = fs::canonicalize(root)?;
+    let source_root = resolve_skill_root(&physical_root, &skill.relative_path)?;
+    verify_source_fingerprint(&source_root, skill)?;
+    Ok((physical_root, source_root))
+}
+
+fn prepare_native_payload(
     source: &RetainedDiscoverySource,
     root: &Path,
-    selected_paths: &[String],
-    existing: &BTreeMap<String, AcquiredPayloadHandle>,
-) -> Result<Vec<PreparedNativeSelection>, AppError> {
-    let physical_root = fs::canonicalize(root)?;
-    let mut prepared = Vec::with_capacity(selected_paths.len());
-    for skill_path in selected_paths {
-        let skill = source.skill(skill_path).ok_or(AppError::StalePayload)?;
-        let source_root = resolve_skill_root(&physical_root, &skill.relative_path)?;
-        verify_source_fingerprint(&source_root, skill)?;
-        if let Some(handle) = existing.get(&skill.relative_path) {
-            prepared.push(PreparedNativeSelection::Existing(handle.clone()));
-            continue;
-        }
-        let payload = build_skill_payload(&source_root)?;
-        verify_source_fingerprint(&source_root, skill)?;
-        let upstream_revision = requires_git_tree_revision(&source.descriptor().source_type)
-            .then(|| compute_local_tree_sha(&physical_root, &skill.relative_path))
-            .flatten();
-        let metadata = planning_metadata(
-            source.descriptor(),
-            skill,
-            compute_cli_project_hash_from_payload(&payload)?,
-            upstream_revision,
-            source.well_known_metadata(&skill.skill_name),
-        );
-        prepared.push(PreparedNativeSelection::Acquired(Box::new(
-            PreparedNativePayload {
-                relative_path: skill.relative_path.clone(),
-                payload,
-                metadata,
-            },
-        )));
-    }
-    Ok(prepared)
+    skill: &DiscoverySkillSnapshot,
+) -> Result<PreparedNativePayload, AppError> {
+    let (physical_root, source_root) = verified_native_skill_root(root, skill)?;
+    let payload = build_skill_payload(&source_root)?;
+    verify_source_fingerprint(&source_root, skill)?;
+    let upstream_revision = requires_git_tree_revision(&source.descriptor().source_type)
+        .then(|| compute_local_tree_sha(&physical_root, &skill.relative_path))
+        .flatten();
+    let metadata = planning_metadata(
+        source.descriptor(),
+        skill,
+        compute_cli_project_hash_from_payload(&payload)?,
+        upstream_revision,
+        source.well_known_metadata(&skill.skill_name),
+    );
+    metadata.validate()?;
+    Ok(PreparedNativePayload { payload, metadata })
 }
 
 fn planning_metadata(
@@ -918,6 +1092,33 @@ fn executable_mode(_metadata: &fs::Metadata) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn proxy_configuration_failure_does_not_attempt_a_download_fallback() {
+        let attempted = std::cell::Cell::new(false);
+        let result = super::attempt_wellknown_then_download(
+            async {
+                Err::<(), _>(
+                    crate::application::wellknown_access::WellKnownFetchError::unproven(
+                        crate::error::AppError::InvalidProxySettings {
+                            code: "configurationUnavailable".into(),
+                        },
+                    ),
+                )
+            },
+            || async {
+                attempted.set(true);
+                Ok(())
+            },
+            "Native",
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidProxySettings { .. })
+        ));
+        assert!(!attempted.get());
+    }
+
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -942,6 +1143,164 @@ mod tests {
     use crate::environment::wsl::operations::source_acquisition::WslAcquisitionSource;
     use crate::models::SourceType;
     use crate::runtime::source_acquisition::SourceDiscoveryService;
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn saved_paths_reject_directory_links_even_when_already_catalogued() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("source");
+        let outside = temp.path().join("outside");
+        for parent in [&root, &outside] {
+            fs::create_dir_all(parent.join("real/demo")).unwrap();
+            fs::write(
+                parent.join("real/demo/SKILL.md"),
+                b"---\nname: demo\ndescription: Demo\n---\n",
+            )
+            .unwrap();
+        }
+        for (name, destination) in [
+            ("alias", root.join("real")),
+            ("escape", outside.join("real")),
+            ("leaf", root.join("real/demo")),
+        ] {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&destination, root.join(name)).unwrap();
+            #[cfg(windows)]
+            junction::create(&destination, root.join(name)).unwrap();
+        }
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            || 1_000,
+        ));
+        let discovery = manager
+            .discover_with_retained_source(
+                EnvironmentRef::Native,
+                "source",
+                RetainedDiscoverySource::new(
+                    DiscoverySourceLocation::Native {
+                        root,
+                        ref_revision: None,
+                    },
+                    DiscoverySourceDescriptor {
+                        source: "repo".into(),
+                        source_type: "git".into(),
+                        source_url: None,
+                        ref_name: None,
+                        redirected_download_host: None,
+                    },
+                    BTreeMap::from([(
+                        "alias/demo/SKILL.md".into(),
+                        DiscoverySkillSnapshot {
+                            skill_name: "demo".into(),
+                            install_dir_name: "demo".into(),
+                            relative_path: "alias/demo/SKILL.md".into(),
+                            plugin_name: None,
+                            source_metadata_fingerprint: "observed".into(),
+                        },
+                    )]),
+                    (),
+                ),
+            )
+            .await
+            .unwrap();
+        let selected = SelectedPayloadAcquisitionService::new(manager);
+        for path in ["alias/demo", "escape/demo", "leaf"] {
+            let result = selected
+                .ensure_saved_path(&discovery, path, CancellationSignal::default())
+                .await;
+            assert!(
+                matches!(result, Err(AppError::CapabilityUnavailable { ref capability, .. }) if capability == "sourceDirectoryLinks"),
+                "{path}: {result:?}"
+            );
+        }
+        selected
+            .ensure_saved_path(&discovery, "real/demo", CancellationSignal::default())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn saved_path_is_acquired_beyond_default_discovery_depth() {
+        let source = tempdir().unwrap();
+        let folder = "one/two/three/four/five/six/seven/deep";
+        fs::create_dir_all(source.path().join(folder)).unwrap();
+        fs::write(
+            source.path().join(folder).join("skill.md"),
+            b"---\nname: deep\ndescription: Deep Skill\n---\ncontent",
+        )
+        .unwrap();
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            || 1_000,
+        ));
+        let discovery = manager
+            .discover_with_retained_source(
+                EnvironmentRef::Native,
+                "immutable-source",
+                RetainedDiscoverySource::new(
+                    DiscoverySourceLocation::Native {
+                        root: source.path().to_path_buf(),
+                        ref_revision: Some("commit".into()),
+                    },
+                    DiscoverySourceDescriptor {
+                        source: "https://example.com/tools.git".into(),
+                        source_type: "git".into(),
+                        source_url: Some("https://example.com/tools.git".into()),
+                        ref_name: None,
+                        redirected_download_host: None,
+                    },
+                    BTreeMap::new(),
+                    (),
+                ),
+            )
+            .await
+            .unwrap();
+        let acquisition = SelectedPayloadAcquisitionService::new(manager.clone());
+        acquisition
+            .ensure_saved_path(&discovery, folder, CancellationSignal::default())
+            .await
+            .unwrap();
+        let handles = acquisition
+            .acquire(AcquireSelectedPayloadsRequest {
+                discovery_session: discovery.clone(),
+                skill_paths: vec![format!("{folder}/SKILL.md")],
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            manager
+                .pin_verified(&handles[0])
+                .await
+                .unwrap()
+                .planning_metadata()
+                .skill_name,
+            "deep"
+        );
+        assert!(matches!(
+            acquisition
+                .ensure_saved_path(&discovery, "absent", CancellationSignal::default())
+                .await,
+            Err(AppError::PathNotFound { .. })
+        ));
+        fs::write(source.path().join(folder).join("skill.md"), b"malformed").unwrap();
+        assert!(matches!(
+            acquisition
+                .acquire(AcquireSelectedPayloadsRequest {
+                    discovery_session: discovery,
+                    skill_paths: vec![format!("{folder}/SKILL.md")]
+                })
+                .await,
+            Err(AppError::StalePayload)
+        ));
+    }
     use crate::runtime::wsl_source::{build_wsl_discovery_catalog, wsl_acquisition_source};
 
     fn valid_skill(name: &str) -> Vec<u8> {
@@ -1192,6 +1551,17 @@ mod tests {
         acquisitions: AtomicUsize,
         stores: AtomicUsize,
         upstream_revision: Option<String>,
+        acquisition_pause: Option<Arc<crate::payload_storage_test_support::PayloadIoPause>>,
+        source_paths: HashMap<String, PathBuf>,
+    }
+
+    impl SourceAcquiringStorage {
+        fn native_source_path<'a>(&'a self, source_root: &'a str) -> &'a Path {
+            self.source_paths
+                .get(source_root)
+                .map(PathBuf::as_path)
+                .unwrap_or_else(|| Path::new(source_root))
+        }
     }
 
     impl PayloadSessionStorage for SourceAcquiringStorage {
@@ -1203,7 +1573,10 @@ mod tests {
         ) -> PayloadStorageFuture<'a, Result<BackendAcquiredPayload, AppError>> {
             Box::pin(async move {
                 self.acquisitions.fetch_add(1, Ordering::SeqCst);
-                let payload = build_skill_payload(Path::new(source_root))?;
+                if let Some(pause) = &self.acquisition_pause {
+                    pause.pause().await;
+                }
+                let payload = build_skill_payload(self.native_source_path(source_root))?;
                 let acquired = BackendAcquiredPayload {
                     manifest: payload.manifest(),
                     total_bytes: payload.blobs.values().map(|blob| blob.len() as u64).sum(),
@@ -1237,7 +1610,9 @@ mod tests {
             &'a self,
             source_root: &'a str,
         ) -> PayloadStorageFuture<'a, Result<String, AppError>> {
-            Box::pin(async move { compute_source_metadata_fingerprint(Path::new(source_root)) })
+            Box::pin(async move {
+                compute_source_metadata_fingerprint(self.native_source_path(source_root))
+            })
         }
 
         fn source_upstream_revision<'a>(
@@ -1961,6 +2336,110 @@ mod tests {
             service.acquire(request).await,
             Err(AppError::StalePayload)
         ));
+    }
+
+    #[tokio::test]
+    async fn wsl_selected_preparation_is_shared_and_survives_an_abandoned_caller() {
+        use crate::payload_storage_test_support::PayloadIoPause;
+        use std::sync::atomic::AtomicU64;
+
+        let source = tempdir().unwrap();
+        let skill_root = source.path().join("skills").join("demo");
+        fs::create_dir_all(&skill_root).unwrap();
+        fs::write(skill_root.join("SKILL.md"), b"skill").unwrap();
+        let fingerprint = compute_source_metadata_fingerprint(&skill_root).unwrap();
+        let pause = Arc::new(PayloadIoPause::default());
+        let storage = Arc::new(SourceAcquiringStorage {
+            acquisition_pause: Some(pause.clone()),
+            source_paths: HashMap::from([("/source/skills/demo".to_string(), skill_root.clone())]),
+            ..Default::default()
+        });
+        let now = Arc::new(AtomicU64::new(1_000));
+        let manager = Arc::new(PayloadSessionManager::new(
+            Arc::new(InMemoryPayloadSessionStorage::default()),
+            PayloadSessionLimits {
+                ttl_ms: 100,
+                max_sessions: 1,
+                max_bytes: 1024 * 1024,
+            },
+            {
+                let now = now.clone();
+                move || now.load(Ordering::SeqCst)
+            },
+        ));
+        let discovery = manager
+            .discover_with_source(
+                EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".to_string(),
+                },
+                "source-v1",
+                storage.clone(),
+                RetainedDiscoverySource::new(
+                    DiscoverySourceLocation::WslNative {
+                        distro_name: "Ubuntu".to_string(),
+                        linux_root: "/source".to_string(),
+                        ref_revision: None,
+                    },
+                    DiscoverySourceDescriptor {
+                        source: "owner/repo".to_string(),
+                        source_type: "git".to_string(),
+                        source_url: None,
+                        ref_name: None,
+                        redirected_download_host: None,
+                    },
+                    BTreeMap::from([(
+                        "skills/demo".to_string(),
+                        DiscoverySkillSnapshot {
+                            skill_name: "demo".to_string(),
+                            install_dir_name: "demo".to_string(),
+                            relative_path: "skills/demo".to_string(),
+                            plugin_name: None,
+                            source_metadata_fingerprint: fingerprint,
+                        },
+                    )]),
+                    source,
+                ),
+            )
+            .await
+            .unwrap();
+        let request = AcquireSelectedPayloadsRequest {
+            discovery_session: discovery,
+            skill_paths: vec!["skills/demo".to_string()],
+        };
+        let first = tokio::spawn({
+            let service = SelectedPayloadAcquisitionService::new(manager.clone());
+            let request = request.clone();
+            async move { service.acquire(request).await }
+        });
+        pause.wait_until_started().await;
+        let service = SelectedPayloadAcquisitionService::new(manager.clone());
+        let second = service.acquire(request);
+        tokio::pin!(second);
+        assert!(futures_util::poll!(&mut second).is_pending());
+        assert_eq!(storage.acquisitions.load(Ordering::SeqCst), 1);
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        pause.resume();
+
+        let handles = tokio::time::timeout(std::time::Duration::from_secs(5), second)
+            .await
+            .unwrap()
+            .unwrap();
+        let lease = manager.pin_verified(&handles[0]).await.unwrap();
+        assert!(lease
+            .load_payload()
+            .await
+            .unwrap()
+            .blobs
+            .values()
+            .any(|bytes| bytes == b"skill"));
+        drop(lease);
+        now.store(1_101, Ordering::SeqCst);
+        assert_eq!(manager.cleanup().await.unwrap(), 1);
+        assert!(
+            !skill_root.exists(),
+            "source owner is released after completed I/O"
+        );
     }
 
     #[tokio::test]

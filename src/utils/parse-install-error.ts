@@ -39,9 +39,6 @@ export function parseInstallError(
     case 'directDownloadFailed':
       return { message: t(`addSkill.source.error.downloadFailure.${error.data.reason}`) };
 
-    case 'directDownloadUnsupportedOperation':
-      return { message: t('addSkill.source.error.downloadUnsupportedOperation') };
-
     case 'directDownloadConflict':
       return {
         message: t('addSkill.source.error.downloadConflict', { target: error.data.target }),
@@ -287,6 +284,9 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.retryOrContact')],
       };
 
+    case 'projectMatchesEnvironmentHome':
+      return { message: t('settings.projectHomeConflict') };
+
     case 'configurationReadOnly':
       return {
         message: t('addSkill.error.configurationReadOnly'),
@@ -340,6 +340,9 @@ export function parseInstallError(
 
     case 'selfCopy':
       return { message: t('addSkill.error.selfCopy') };
+
+    case 'configurationWriteUnconfirmed':
+      return { message: t('mutation.result.errors.configurationWriteUnconfirmed') };
 
     case 'executionFailed':
     case 'restoreFailed':

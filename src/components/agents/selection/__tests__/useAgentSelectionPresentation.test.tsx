@@ -30,9 +30,6 @@ describe('useAgentSelectionPresentation', () => {
       help: 'agentSelection.selectable.help',
     });
     expect(result.current.ownDirectory.title).toBe('agentSelection.ownDirectory.title');
-    expect(result.current.ownDirectory.description).toBe(
-      `agentSelection.ownDirectory.${suffix}.description`,
-    );
     expect(result.current.ownDirectory.selectedCount(2)).toBe(
       'agentSelection.ownDirectory.selectedCount:{"count":2}',
     );

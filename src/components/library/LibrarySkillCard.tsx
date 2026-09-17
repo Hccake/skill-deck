@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatAppError } from '@/utils/format-app-error';
+import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 import { ArrowUpCircle, Package, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,15 +23,17 @@ import {
   resolveSkillUpdatePhaseI18nKey,
   type SkillUpdateDisplayStatus,
 } from '@/stores/skills-utils';
-import type { LibrarySkillSummary, SkillUpdateInfo } from '@/bindings';
+import type { LibrarySkillSummary, SkillUpdateInfo, LibraryUpdateSkillResult } from '@/bindings';
+import { canRetryLibraryUpdate } from '@/lib/libraries/update-progress';
+import { formatMutationError } from '@/lib/mutation-results';
 
 interface LibrarySkillCardProps {
   skill: LibrarySkillSummary;
   check?: SkillUpdateInfo;
+  result?: LibraryUpdateSkillResult;
   /** 本次整库更新批次中该成员的阶段或结果。 */
   updateStatus?: SkillUpdateDisplayStatus;
   busy?: boolean;
-  libraryInUse?: boolean;
   onClick?: (skillName: string) => void;
   onUpdate?: (skillName: string) => void;
   onRemove?: (skillName: string) => void;
@@ -45,9 +49,9 @@ interface LibrarySkillCardProps {
 export const LibrarySkillCard = memo(function LibrarySkillCard({
   skill,
   check,
+  result,
   updateStatus,
   busy = false,
-  libraryInUse = false,
   onClick,
   onUpdate,
   onRemove,
@@ -55,18 +59,22 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
   const { t, i18n } = useTranslation();
   const activation = useCardActivation(onClick ? () => onClick(skill.name) : undefined);
 
-  const sourceLabel = skill.source?.trim() || skill.sourceUrl?.trim() || null;
+  const presentation = skillStatusPresentation(skill, check);
+  const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.sourceLabel;
   const updatedAt = skill.updatedAt ? formatSkillCardDate(skill.updatedAt, i18n.language) : null;
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
 
   // 只有"新版本可用"进标题标签。已是最新是默认状态不占位，来源异常走注意行。
-  const canShowUpdateAction = check?.status === 'updateAvailable'
-    && !updateStatus
+  const capability = check?.capability ?? skill.updateCapability;
+  const canShowUpdateAction = (check?.status === 'updateAvailable' || canRetryLibraryUpdate(result))
+    && capability?.canRunUpdate !== false && !activeUpdatePhase
     && Boolean(onUpdate);
   const attentionLabels = [
-    check?.status === 'deletedUpstream' ? t('skills.card.sourceMissingUpstream') : null,
-    check?.status === 'cannotCheck' ? t('skills.card.updateCheckIncomplete') : null,
+    result?.error ? formatMutationError(result.error, t) : null,
+    presentation.notice && !result?.error ? t(presentation.notice.labelKey) : null,
   ].filter((label): label is string => Boolean(label));
+  const noticeDescription = presentation.notice?.error ? formatAppError(presentation.notice.error, t)
+    : presentation.notice?.hintKey ? t(presentation.notice.hintKey) : undefined;
 
   const statusTransitionKey = activeUpdatePhase
     ? resolveSkillUpdatePhaseI18nKey(activeUpdatePhase)
@@ -74,7 +82,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
       ? 'skills.updateDone'
       : updateStatus === 'failed'
         ? 'skills.updateFailed'
-        : check?.status === 'updateAvailable'
+        : presentation.available
           ? 'skills.updateStatusLabel.available'
           : 'none';
 
@@ -87,12 +95,12 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
         <SkillCardMarker icon={Package} testId="library-skill-marker" />
 
         <div className="min-w-0 space-y-2">
-          <div data-testid="library-skill-title" className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <div data-testid="library-skill-title" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden">
             {onClick ? (
               <button
                 type="button"
                 title={skill.name}
-                className="min-w-16 shrink cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="min-w-0 shrink cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 onClick={(event) => {
                   event.stopPropagation();
                   onClick(skill.name);
@@ -126,7 +134,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                 <Badge variant="outline" className="shrink-0 text-xs text-success">{t('skills.updateDone')}</Badge>
               ) : updateStatus === 'failed' ? (
                 <Badge variant="outline" className="shrink-0 text-xs text-destructive">{t('skills.updateFailed')}</Badge>
-              ) : check?.status === 'updateAvailable' ? (
+              ) : presentation.available ? (
                 <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} />
               ) : null}
             </CrossfadeSwap>
@@ -142,7 +150,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
             <SkillCardMetaRow>
               {sourceLabel ? (
                 <span className="inline-flex min-w-0 items-center">
-                  <SkillSourceLink label={sourceLabel} url={skill.sourceUrl ?? skill.source} />
+                  {presentation.local ? <span>{sourceLabel}</span> : <SkillSourceLink label={sourceLabel} url={skill.sourceUrl ?? skill.source} hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />}
                 </span>
               ) : null}
               {skill.refName ? (
@@ -167,7 +175,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
             </SkillCardMetaRow>
           ) : null}
 
-          <SkillCardAttentionRow labels={attentionLabels} testId="library-skill-attention" />
+          <SkillCardAttentionRow labels={attentionLabels} description={noticeDescription} testId="library-skill-attention" />
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5 pl-1">
@@ -196,12 +204,10 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                   size="icon"
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   aria-label={t('libraries.removeSkill', { name: skill.name })}
-                  // 成员锁定是库特有的约束，用户需要读到原因；
-                  // aria-disabled 保留指针事件，禁用状态下 Tooltip 才能触发。
-                  aria-disabled={busy || libraryInUse}
+                  aria-disabled={busy}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (!busy && !libraryInUse) onRemove(skill.name);
+                    if (!busy) onRemove(skill.name);
                   }}
                 >
                   <Trash2 className="size-3.5" aria-hidden="true" />
@@ -209,9 +215,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
               </TooltipTrigger>
               <TooltipContent>
                 <p>
-                  {libraryInUse
-                    ? t('libraries.lockedMembership')
-                    : t('libraries.removeSkillTitle', { name: skill.name })}
+                  {t('libraries.removeSkillTitle', { name: skill.name })}
                 </p>
               </TooltipContent>
             </Tooltip>

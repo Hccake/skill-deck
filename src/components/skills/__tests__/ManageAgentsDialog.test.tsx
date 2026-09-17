@@ -60,7 +60,7 @@ function snapshot(): ManageAgentSelectionSnapshot {
         { id: 'eve-root', kind: 'groupLocation', agentIds: ['eve'], displayName: '主目录', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
       ],
       groups: [{ id: 'eve-group', agentId: 'eve', displayName: 'Eve', optionIds: ['eve-root'], detection: 'detected' }],
-      initialSelectedOptionIds: ['claude'],
+      baselineSelectedOptionIds: ['claude'],
       unavailableExplicitAgents: [{ agentId: 'removed-agent', reason: 'definitionMissing' }],
       userModeOptionIds: ['cursor', 'unknown'],
     }),
@@ -175,7 +175,7 @@ describe('ManageAgentsDialog', () => {
     empty.selection.agents = [];
     empty.selection.installOptions = [];
     empty.selection.groups = [];
-    empty.selection.initialSelectedOptionIds = [];
+    empty.selection.baselineSelectedOptionIds = [];
     empty.selection.userModeOptionIds = [];
     empty.optionStates = [];
     await renderDialog({ loadedSnapshot: empty });
@@ -250,7 +250,7 @@ describe('ManageAgentsDialog', () => {
     const zed = screen.getByRole('checkbox', { name: 'Zed' });
     const trae = screen.getByRole('checkbox', { name: 'Trae' });
     expect(zed.compareDocumentPosition(trae) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(within(directSection as HTMLElement).getByText('agentSelection.ownDirectory.manage.description')).toBeDefined();
+    expect(within(directSection as HTMLElement).queryByText('agentSelection.ownDirectory.manage.description')).toBeNull();
     expect(within(directSection as HTMLElement).queryByRole('button', { name: /agentSelection\.otherAgents/ })).toBeNull();
   });
 
@@ -258,7 +258,7 @@ describe('ManageAgentsDialog', () => {
     const current = snapshot();
     current.selection.agents.push({ kind: 'standard', id: 'zed', displayName: 'Zed', detection: 'notDetected', directoryAccess: 'both', installOptionId: 'zed', groupId: null });
     current.selection.installOptions.push({ id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
-    current.selection.initialSelectedOptionIds.push('zed');
+    current.selection.baselineSelectedOptionIds.push('zed');
     current.selection.userModeOptionIds.push('zed');
     current.optionStates.push({ optionId: 'zed', currentEntry: 'link', currentVersion: 'direct', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null });
     await renderDialog({ loadedSnapshot: current });
@@ -269,7 +269,7 @@ describe('ManageAgentsDialog', () => {
 
   it('keeps current installation states visible alongside each Agent', async () => {
     const current = snapshot();
-    current.selection.initialSelectedOptionIds = ['claude', 'cursor'];
+    current.selection.baselineSelectedOptionIds = ['claude', 'cursor'];
     current.optionStates[1] = {
       ...current.optionStates[1],
       currentEntry: 'copy',
@@ -284,6 +284,21 @@ describe('ManageAgentsDialog', () => {
     const claudeRow = screen.getByRole('checkbox', { name: 'Claude Code' }).closest('[data-slot="agent-selection-row"]');
     expect(within(claudeRow as HTMLElement).getByText('agentSelection.detection.detected'))
       .toBeDefined();
+  });
+
+  it('shows a retained selection in the summary without an unavailable remove action', async () => {
+    const current = snapshot();
+    current.optionStates[0] = {
+      ...current.optionStates[0],
+      allowedResults: 'selected',
+    };
+    await renderDialog({ loadedSnapshot: current });
+
+    const summary = screen.getByRole('region', { name: 'agentSelection.selectedTitle' });
+    expect(within(summary).getByText('Claude Code')).toBeDefined();
+    expect(within(summary).queryByRole('button', {
+      name: 'agentSelection.removeSelected:{"agent":"Claude Code"}',
+    })).toBeNull();
   });
 
   it('shows Library availability without selecting a direct Agent association', async () => {
@@ -430,7 +445,7 @@ describe('ManageAgentsDialog', () => {
     const user = userEvent.setup();
     const latest = snapshot();
     latest.selection.revision = 'selection-revision-2';
-    latest.selection.initialSelectedOptionIds = [];
+    latest.selection.baselineSelectedOptionIds = [];
     const onSave = vi.fn().mockResolvedValue({ status: 'stale', snapshot: latest });
     render(
       <TooltipProvider>

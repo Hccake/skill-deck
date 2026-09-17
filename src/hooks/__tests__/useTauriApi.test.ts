@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { UpdateExecutionRequest } from '@/bindings';
 
 const { mockCommands } = vi.hoisted(() => ({
   mockCommands: {
     listAgents: vi.fn(),
     discoverSkillSource: vi.fn(),
-    updateSkill: vi.fn(),
     openInstallWizard: vi.fn(),
   },
 }));
@@ -18,7 +16,6 @@ import {
   discoverSkillSource,
   listAgents,
   openInstallWizard,
-  updateSkill,
 } from '../useTauriApi';
 
 const context = {
@@ -26,12 +23,6 @@ const context = {
   scope: { scope: 'project', project_id: 'project-1' },
 } as const;
 
-const previewToken = {
-  generation: 'preview-1',
-  registryRevision: 'registry-1',
-  environmentRevision: 'environment-1',
-  contextRevision: 'context-1',
-};
 
 describe('useTauriApi transport adapters', () => {
   beforeEach(() => {
@@ -87,18 +78,6 @@ describe('useTauriApi transport adapters', () => {
       'operation-1',
       { wildcardRequested: false, explicitSkillNames: [] },
     );
-  });
-
-  it('uses an unconfirmed redirect by default for update execution', async () => {
-    const execution: UpdateExecutionRequest = {
-      request: { context, skillNames: ['test-skill'] },
-      overwritePrivateEntries: [],
-    };
-    const response = { sources: [], skills: [], outcome: 'succeeded' };
-    mockCommands.updateSkill.mockResolvedValue({ status: 'ok', data: response });
-
-    await expect(updateSkill(execution, previewToken)).resolves.toEqual(response);
-    expect(mockCommands.updateSkill).toHaveBeenCalledWith(execution, previewToken, false);
   });
 
   it('maps optional wizard input to the generated positional contract', async () => {

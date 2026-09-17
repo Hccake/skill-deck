@@ -137,7 +137,7 @@ export function makeAgentSelectionSnapshot(
     agents: [],
     installOptions: [],
     groups: [],
-    initialSelectedOptionIds: [],
+    baselineSelectedOptionIds: [],
     unavailableExplicitAgents: [],
     userModeOptionIds: [],
     revision: 'selection-revision-1',

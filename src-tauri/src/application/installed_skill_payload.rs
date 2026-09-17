@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -5,12 +6,11 @@ use crate::application::installed_skill_resolver::InstalledSkillResolver;
 use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySourceDescriptor, DiscoverySourceLocation,
-    PayloadPlanningMetadata, PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey,
-    RetainedDiscoverySource,
+    PayloadPlanningMetadata, PayloadSessionManager, PayloadStorageKey, RetainedDiscoverySource,
+    StoredPayload,
 };
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
-use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
@@ -27,6 +27,32 @@ impl InstalledSkillPayloadAcquirer {
         }
     }
 
+    pub(crate) async fn select_source(
+        &self,
+        context: &SkillLocationRef,
+        skill_name: &str,
+        candidates: &[ResolvedTargetFact],
+    ) -> Result<(ResolvedTargetFact, String), AppError> {
+        let source = candidates.first().ok_or(AppError::StaleTarget)?;
+        let hash = self
+            .current_manifest_hash(context, skill_name, source)
+            .await?;
+        for candidate in &candidates[1..] {
+            if self
+                .current_manifest_hash(context, skill_name, candidate)
+                .await?
+                != hash
+            {
+                return Err(
+                    crate::application::scope_skill_placements::ambiguous_installed_source(
+                        skill_name,
+                    ),
+                );
+            }
+        }
+        Ok((source.clone(), hash))
+    }
+
     pub async fn acquire(
         &self,
         context: &SkillLocationRef,
@@ -40,6 +66,11 @@ impl InstalledSkillPayloadAcquirer {
                 let payload = crate::core::skill_payload::build_skill_payload(Path::new(
                     &standard.destination.native_path,
                 ))?;
+                validate_format(
+                    skill_name,
+                    crate::application::skill_changes::payload_frontmatter(&payload),
+                    &standard.destination.native_path,
+                )?;
                 let computed_hash =
                     crate::core::skill_payload::compute_cli_project_hash_from_payload(&payload)?;
                 let discovery = self
@@ -59,7 +90,7 @@ impl InstalledSkillPayloadAcquirer {
                 let workspace = self.environments.workspace(distro_name)?;
                 let standard_path = standard.destination.native_path.clone();
                 let skill_name = skill_name.to_string();
-                let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                let storage = workspace.payload_storage();
                 let retained = RetainedDiscoverySource::new(
                     DiscoverySourceLocation::WslNative {
                         distro_name: distro_name.clone(),
@@ -85,17 +116,46 @@ impl InstalledSkillPayloadAcquirer {
                         retained,
                     )
                     .await?;
-                let key = PayloadStorageKey::new(&discovery.session_id, skill_name.clone());
-                let acquired = storage
-                    .acquire_from_path(&key, &standard_path, None)
-                    .await?;
                 self.payloads
-                    .register_existing_payload_with_metadata(
+                    .prepare_payload(
                         &discovery,
                         skill_name.clone(),
-                        acquired.manifest,
-                        acquired.total_bytes,
-                        installed_metadata(&skill_name, acquired.computed_hash)?,
+                        move |storage, key| async move {
+                            let acquired = storage
+                                .acquire_from_path(&key, &standard_path, None)
+                                .await?;
+                            let entry = acquired
+                                .manifest
+                                .entries
+                                .iter()
+                                .find(|entry| {
+                                    entry.kind == crate::core::skill_payload::PayloadEntryKind::File
+                                        && entry.relative_path.eq_ignore_ascii_case("SKILL.md")
+                                })
+                                .ok_or_else(|| format_unavailable(&standard_path))?;
+                            let blob_id = entry.blob_id.as_deref().ok_or(AppError::StalePayload)?;
+                            let bytes = storage
+                                .read_blob(&key, blob_id)
+                                .await?
+                                .ok_or(AppError::StalePayload)?;
+                            if format!("{:x}", Sha256::digest(&bytes)) != blob_id {
+                                return Err(AppError::StalePayload);
+                            }
+                            let frontmatter = std::str::from_utf8(&bytes)
+                                .map_err(|error| AppError::InvalidSkillMd {
+                                    message: error.to_string(),
+                                })
+                                .and_then(crate::core::skill::parse_skill_md_content);
+                            validate_format(&skill_name, frontmatter, &standard_path)?;
+                            let planning_metadata =
+                                installed_metadata(&skill_name, acquired.computed_hash)?;
+                            planning_metadata.validate()?;
+                            Ok(StoredPayload {
+                                manifest: acquired.manifest,
+                                total_bytes: acquired.total_bytes,
+                                planning_metadata,
+                            })
+                        },
                     )
                     .await
             }
@@ -117,7 +177,7 @@ impl InstalledSkillPayloadAcquirer {
             .payload_root_hash),
             EnvironmentRef::Wsl { distro_name } => {
                 let workspace = self.environments.workspace(distro_name)?;
-                let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                let storage = workspace.payload_storage();
                 let session_id = format!("copy-source-check-{}", uuid::Uuid::new_v4().simple());
                 let key = PayloadStorageKey::new(&session_id, skill_name);
                 let acquired = storage
@@ -130,6 +190,25 @@ impl InstalledSkillPayloadAcquirer {
                 }
             }
         }
+    }
+}
+
+fn format_unavailable(path: &str) -> AppError {
+    AppError::CapabilityUnavailable {
+        capability: "installedSkillFormat".into(),
+        path: Some(path.into()),
+    }
+}
+
+fn validate_format(
+    name: &str,
+    frontmatter: Result<crate::core::skill::SkillFrontmatter, AppError>,
+    path: &str,
+) -> Result<(), AppError> {
+    if frontmatter.is_ok_and(|metadata| metadata.name == name) {
+        Ok(())
+    } else {
+        Err(format_unavailable(path))
     }
 }
 
@@ -167,6 +246,48 @@ fn installed_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn installed_payload_rejects_eve_content_without_ordinary_metadata() {
+        use crate::environment::planning::{RuntimeTargetFactResolver, TargetFactResolver};
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("SKILL.md"),
+            b"---\ndescription: Eve content\n---\nbody",
+        )
+        .unwrap();
+        let environments = Arc::new(WslRuntime::default());
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: crate::environment::types::SkillLocation::Global,
+        };
+        let fact = RuntimeTargetFactResolver::new(environments.clone())
+            .resolve(
+                &context,
+                &[crate::environment::types::ResourceLocator {
+                    environment: EnvironmentRef::Native,
+                    native_path: root.path().to_string_lossy().into_owned(),
+                }],
+                None,
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            crate::application::payload_session::PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            || 1_000,
+        ));
+        let acquirer = InstalledSkillPayloadAcquirer::new(manager, environments);
+        assert!(acquirer.acquire(&context, "demo", &fact).await.is_err());
+        assert_eq!(
+            std::fs::read(root.path().join("SKILL.md")).unwrap(),
+            b"---\ndescription: Eve content\n---\nbody"
+        );
+    }
 
     #[test]
     fn installed_payload_metadata_uses_the_resolved_install_directory() {

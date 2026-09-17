@@ -83,32 +83,15 @@ pub struct InstallResponse {
 
 pub type InstallFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallOperation {
-    Install,
-    Repair,
-}
-
-impl InstallOperation {
-    pub fn mutation_kind(self) -> crate::core::mutation::MutationKind {
-        match self {
-            Self::Install => crate::core::mutation::MutationKind::Install,
-            Self::Repair => crate::core::mutation::MutationKind::Repair,
-        }
-    }
-}
-
 pub trait InstallPlanner: Send + Sync {
     fn preview<'a>(
         &'a self,
-        operation: InstallOperation,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>>;
 
     fn rebuild<'a>(
         &'a self,
-        operation: InstallOperation,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<(PreviewToken, MutationPlan), AppError>>;
@@ -148,17 +131,15 @@ where
 
     pub async fn preview(
         &self,
-        operation: InstallOperation,
         request: &InstallRequest,
     ) -> Result<InstallPreviewOutcome, AppError> {
         validate_install_request(request)?;
         let payloads = self.pin_request_payloads(request, None).await?;
-        self.planner.preview(operation, request, payloads).await
+        self.planner.preview(request, payloads).await
     }
 
     pub async fn execute(
         &self,
-        operation: InstallOperation,
         request: &InstallRequest,
         expected_token: PreviewToken,
         cancellation: CancellationSignal,
@@ -167,7 +148,7 @@ where
         let payloads = self
             .pin_request_payloads(request, Some(cancellation.clone()))
             .await?;
-        let (actual_token, plan) = self.planner.rebuild(operation, request, payloads).await?;
+        let (actual_token, plan) = self.planner.rebuild(request, payloads).await?;
         validate_exact_preview(&expected_token, &actual_token)?;
         let mut response = InstallResponse {
             units: self.executor.execute(plan, cancellation).await,
@@ -379,7 +360,6 @@ mod tests {
     impl InstallPlanner for Planner {
         fn preview<'a>(
             &'a self,
-            _operation: InstallOperation,
             _request: &'a InstallRequest,
             _payloads: Vec<PinnedPayloadLease>,
         ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>> {
@@ -392,7 +372,6 @@ mod tests {
 
         fn rebuild<'a>(
             &'a self,
-            operation: InstallOperation,
             _request: &'a InstallRequest,
             payloads: Vec<PinnedPayloadLease>,
         ) -> InstallFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
@@ -401,7 +380,7 @@ mod tests {
                 Ok((
                     self.preview.token.clone(),
                     MutationPlan {
-                        kind: operation.mutation_kind(),
+                        kind: crate::core::mutation::MutationKind::Install,
                         operation_id: "operation-1".to_string(),
                         payloads: payloads
                             .into_iter()
@@ -533,21 +512,13 @@ mod tests {
             })
         }));
 
-        let InstallPreviewOutcome::Ready { preview } = service
-            .preview(InstallOperation::Install, &request)
-            .await
-            .unwrap()
+        let InstallPreviewOutcome::Ready { preview } = service.preview(&request).await.unwrap()
         else {
             panic!("expected ready preview");
         };
         assert_eq!(preview.token, token);
         let response = service
-            .execute(
-                InstallOperation::Install,
-                &request,
-                token,
-                CancellationSignal::default(),
-            )
+            .execute(&request, token, CancellationSignal::default())
             .await
             .unwrap();
 

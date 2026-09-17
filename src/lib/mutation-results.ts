@@ -13,6 +13,7 @@ type Translate = (
 
 const ERROR_CODES = new Set<OperationErrorCode>([
   'validation',
+  'noUpdateTargets',
   'skillPlacementTargetConflict',
   'wellKnownScopeNotFound',
   'environmentUnavailable',
@@ -38,6 +39,14 @@ const ERROR_CODES = new Set<OperationErrorCode>([
 ]);
 
 export function formatMutationError(error: ErrorReport, t: Translate): string {
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'libraryContentTarget') return t('mutation.result.errors.libraryContentTarget', error.parameters);
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'installedSkillFormat') return t('mutation.result.errors.installedSkillFormat', error.parameters);
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'sharedSkillLinkSource') return t('mutation.result.errors.sharedSkillLinkSource', error.parameters);
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'eveSingleFile') return t('mutation.result.errors.eveSingleFile', error.parameters);
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'installedSkillSourceAmbiguous') return t('mutation.result.errors.installedSkillSourceAmbiguous', error.parameters);
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'sourceDirectoryLinks') return t('addSkill.source.error.acquisitionReason.directoryLinksUnsupported');
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'sourceSessionCapacity') return t('mutation.result.errors.sourceContentCapacity');
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'payloadSessionCapacity') return t('mutation.result.errors.preparedContentCapacity');
   const code = ERROR_CODES.has(error.code) ? error.code : 'unknown';
   const parameters = code !== 'unknown' && Object.keys(error.parameters).length > 0
     ? error.parameters

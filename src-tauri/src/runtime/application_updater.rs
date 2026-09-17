@@ -26,7 +26,7 @@ impl<R: Runtime> TauriApplicationUpdater<R> {
         &self,
         timeout: Duration,
     ) -> Result<(tauri_plugin_updater::Updater, &'static str), AppError> {
-        let proxy_url = self.settings.proxy_url().map_err(updater_error)?;
+        let proxy_url = self.settings.proxy_url()?;
         let builder = self.app.updater_builder().timeout(timeout);
         let builder = match &proxy_url {
             None => builder.no_proxy(),
@@ -177,6 +177,21 @@ fn updater_error(error: impl std::fmt::Display) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn invalid_proxy_configuration_stops_the_updater_before_connecting() {
+        let app = test_app(&[url::Url::parse("http://127.0.0.1:9/latest.json").unwrap()]);
+        let updater = adapter_with_settings(
+            &app,
+            NetworkProxySettings {
+                mode: ProxyMode::Custom,
+                custom_proxy_url: None,
+                ..Default::default()
+            },
+        );
+        let result = updater.check(test_limits()).await;
+        assert!(matches!(result, Err(AppError::InvalidProxySettings { .. })));
+    }
+
     use std::sync::Mutex;
     use std::thread;
 

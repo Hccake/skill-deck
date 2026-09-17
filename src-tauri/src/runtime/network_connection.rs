@@ -138,9 +138,15 @@ async fn test_wsl_git(
 ) -> ProxyConnectionProbe {
     let started_at = Instant::now();
     let deadline = started_at + TEST_TIMEOUT;
-    let probe = wsl.with_session(&distro, |session| {
+    let workspace = match wsl.workspace(&distro) {
+        Ok(workspace) => workspace,
+        Err(error) => return git_probe(started_at, Err(error)),
+    };
+    let probe = wsl.with_session(&distro, |_session| {
         let proxy = settings.wsl_git_proxy(&distro, TEST_GIT_URL);
+        let workspace = workspace.clone();
         async move {
+            let proxy = proxy?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(AppError::GitTimeout {
@@ -148,7 +154,7 @@ async fn test_wsl_git(
                 });
             }
             probe_wsl_git_connection(
-                &session,
+                &workspace,
                 TEST_GIT_URL,
                 proxy,
                 remaining,

@@ -1,17 +1,30 @@
 use tauri::State;
 
-use crate::application::network_settings;
 use crate::core::mutation::MutationKind;
 use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::AppError;
-use crate::models::NetworkProxySettings;
+use crate::models::{NetworkProxySettings, ProxySettingsSnapshot};
 use crate::runtime::network_connection::ProxyConnectionTestResult;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_proxy_settings() -> Result<NetworkProxySettings, AppError> {
-    network_settings::get_proxy_settings()
+pub fn get_proxy_settings(
+    reload: Option<bool>,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<ProxySettingsSnapshot, AppError> {
+    if reload.unwrap_or(false) {
+        let _permit = runtime.admission().begin_mutation(
+            MutationKind::UpdateSettings,
+            SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
+            },
+        )?;
+        Ok(runtime.config().reload())
+    } else {
+        Ok(runtime.config().proxy_snapshot())
+    }
 }
 
 #[tauri::command]
@@ -27,9 +40,7 @@ pub fn save_proxy_settings(
             scope: SkillLocation::Global,
         },
     )?;
-    network_settings::save_proxy_settings(settings, |settings| {
-        runtime.activate_network_settings(settings)
-    })
+    runtime.config().save_proxy(settings)
 }
 
 #[tauri::command]

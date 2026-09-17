@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import {
   AlertCircle,
-  ArrowLeft,
+  ChevronDown,
   CheckCircle2,
   LoaderCircle,
 } from 'lucide-react';
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Tooltip,
@@ -29,6 +30,10 @@ import { SourceSkillSelectionPanel } from '@/components/source-discovery/SourceS
 import { RedirectHostConfirmation } from '@/components/source-discovery/RedirectHostConfirmation';
 import { formatAppError } from '@/utils/format-app-error';
 import { cn } from '@/lib/utils';
+import { contextKey, sameContext } from '@/lib/context';
+import { displayPath } from '@/lib/display-path';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
+import type { EnvironmentRef, LibraryMembershipPreview } from '@/bindings';
 import {
   useLibraryAddFlow,
   type ExecuteLibraryCommand,
@@ -36,6 +41,9 @@ import {
   type LibraryAddPhase,
   type LibraryAddTarget,
 } from './useLibraryAddFlow';
+import { MembershipImpactSummary } from './MembershipImpactSummary';
+import { MembershipOutcomeSummary } from './MembershipOutcomeSummary';
+import { LibraryUsageIdentity } from './LibraryUsageIdentity';
 
 interface LibraryAddDialogProps {
   open: boolean;
@@ -94,7 +102,7 @@ export function LibraryAddDialog({
             tabIndex={-1}
             className="min-h-0 overflow-hidden px-5 py-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 sm:px-6"
           >
-            <LibraryAddBody flow={flow} />
+            <LibraryAddBody flow={flow} environment={target.environment} />
           </div>
           <LibraryAddFooter flow={flow} />
         </DialogContent>
@@ -159,7 +167,7 @@ function LibraryAddHeader({
   );
 }
 
-function LibraryAddBody({ flow }: { flow: LibraryAddFlow }) {
+function LibraryAddBody({ flow, environment }: { flow: LibraryAddFlow; environment: EnvironmentRef }) {
   if (flow.phase === 'source') return <LibrarySourceStep flow={flow} />;
   if (flow.phase === 'selection') return <LibrarySkillSelectionStep flow={flow} />;
   if (flow.phase === 'preparing') {
@@ -169,7 +177,7 @@ function LibraryAddBody({ flow }: { flow: LibraryAddFlow }) {
     return <LibraryAddProgress labelKey="libraries.addFlow.executing" />;
   }
   if (flow.phase === 'result') return <LibraryAddResultStep flow={flow} />;
-  return <LibraryAddReviewStep flow={flow} />;
+  return <LibraryAddReviewStep flow={flow} environment={environment} />;
 }
 
 function LibrarySourceStep({ flow }: { flow: LibraryAddFlow }) {
@@ -317,33 +325,58 @@ function LibrarySkillSelectionStep({ flow }: { flow: LibraryAddFlow }) {
   );
 }
 
-function LibraryAddReviewStep({ flow }: { flow: LibraryAddFlow }) {
+function LibraryAddReviewStep({ flow, environment }: { flow: LibraryAddFlow; environment: EnvironmentRef }) {
   const { t } = useTranslation();
   const preview = flow.prepared?.preview;
+  const unverifiedCount = preview?.membership.impacts.reduce(
+    (count, impact) => count + impact.skills.filter((skill) => skill.kind === 'unverified').length,
+    0,
+  ) ?? 0;
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <p className="shrink-0 text-sm font-medium">
-        {t('libraries.addFlow.review.summary', { count: preview?.skills.length ?? 0 })}
-      </p>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="text-sm font-medium">
+          {t('libraries.addFlow.review.summary', { count: preview?.skills.length ?? 0 })}
+        </p>
+        {preview && preview.membership.scopes.length > 0 ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+                {t('libraries.addFlow.review.syncCount', { count: preview.membership.scopes.length })}
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="max-h-[min(320px,50vh)] w-80 max-w-[calc(100vw-48px)] overflow-y-auto overscroll-contain">
+              <LibraryAddSyncDetails membership={preview.membership} />
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+      {preview && !preview.membership.inventoryComplete ? (
+        <p role="alert" className="shrink-0 text-xs text-warning">
+          {t('libraries.membership.inventoryIncomplete', { count: preview.membership.scopes.length })}
+        </p>
+      ) : null}
+      {unverifiedCount > 0 ? (
+        <p role="alert" className="shrink-0 text-xs text-warning">
+          {t('libraries.membership.impact.unverified', { count: unverifiedCount })}
+        </p>
+      ) : null}
+      <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border">
         {preview?.skills.map((skill) => (
-          <div key={skill.skillName} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b px-3 py-2.5 text-sm last:border-b-0">
-            <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]" translate="no">
-              {skill.skillName}
-            </span>
+          <li key={skill.skillName} className="flex min-w-0 items-baseline gap-3 border-b px-3 py-2.5 text-sm last:border-b-0">
             <Tooltip>
               <TooltipTrigger asChild>
-                <code className="min-w-0 truncate text-right text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50" tabIndex={0} translate="no">
-                  {skill.targetPath}
-                </code>
+                <span className="min-w-0 max-w-[40%] shrink-0 truncate rounded-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50" tabIndex={0} translate="no">
+                  {skill.skillName}
+                </span>
               </TooltipTrigger>
-              <TooltipContent className="max-w-[min(560px,calc(100vw-32px))] break-all font-mono text-xs">
-                {skill.targetPath}
-              </TooltipContent>
+              <TooltipContent className="max-w-[min(560px,calc(100vw-32px))] break-all" translate="no">{skill.skillName}</TooltipContent>
             </Tooltip>
-          </div>
+            <LibraryAddPath path={skill.targetPath} environment={environment} />
+          </li>
         ))}
-      </div>
+      </ul>
       {preview?.redirectedDownloadHost ? (
         <RedirectHostConfirmation
           host={preview.redirectedDownloadHost}
@@ -362,6 +395,48 @@ function LibraryAddReviewStep({ flow }: { flow: LibraryAddFlow }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function LibraryAddPath({ path, environment }: { path: string; environment: EnvironmentRef }) {
+  const fullPath = displayPath(path, environment);
+  const separator = environment.kind === 'wsl' || fullPath.startsWith('/') ? '/' : '\\';
+  const split = fullPath.lastIndexOf(separator) + 1;
+  return (
+    <div className="min-w-0 flex-1">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <code tabIndex={0} translate="no" className="flex w-fit min-w-0 max-w-full rounded-sm text-left text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+            <span className="min-w-0 truncate">{fullPath.slice(0, split)}</span>
+            <span className="max-w-[65%] shrink-0 truncate">{fullPath.slice(split)}</span>
+          </code>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[min(560px,calc(100vw-32px))] break-all font-mono text-xs" translate="no">
+          {fullPath}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+function LibraryAddSyncDetails({ membership }: { membership: LibraryMembershipPreview }) {
+  const { projects } = useProjectWorkspace(membership.environment);
+  return (
+    <ul className="divide-y divide-border/60">
+      {membership.scopes.map((context) => {
+        const scope = context.scope;
+        const project = scope.scope === 'project'
+          ? projects.find((item) => item.binding.id === scope.project_id)?.binding ?? null
+          : null;
+        const impact = membership.impacts.find((item) => sameContext(item.context, context));
+        return (
+          <li key={contextKey(context)} className="space-y-1.5 py-2 first:pt-0 last:pb-0">
+            <LibraryUsageIdentity usage={{ context, project, state: 'confirmed' }} showPath={false} />
+            {impact ? <MembershipImpactSummary preview={{ ...membership, impacts: [impact] }} /> : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -413,6 +488,9 @@ function LibraryAddResultStep({ flow }: { flow: LibraryAddFlow }) {
           </div>
         ))}
       </div>
+      {flow.membershipOutcome ? (
+        <MembershipOutcomeSummary outcome={flow.membershipOutcome} />
+      ) : null}
       {flow.flowError ? (
         <p role="alert" className="shrink-0 text-sm text-destructive">
           {formatAppError(flow.flowError, t)}
@@ -432,23 +510,25 @@ function LibraryAddFooter({ flow }: { flow: LibraryAddFlow }) {
   const canBack = flow.phase === 'selection' || flow.phase === 'review';
   const locked = flow.phase === 'preparing' || flow.phase === 'executing';
   const hasRetry = flow.phase === 'result' && flow.prepared !== null;
+  const completed = flow.phase === 'result' && !hasRetry
+    && flow.results.every((result) => result.status === 'succeeded');
 
   return (
-    <DialogFooter className="flex-row items-center justify-end border-t px-5 py-3 sm:justify-end sm:px-6">
+    <DialogFooter className="min-h-16 flex-row items-center justify-end border-t px-5 py-3 sm:justify-end sm:px-6">
       {!locked ? (
-        <Button type="button" variant="outline" onClick={() => void flow.close()}>
-          {flow.phase === 'result' ? t('common.close') : t('common.cancel')}
+        <Button type="button" variant={completed ? 'default' : 'ghost'} onClick={() => void flow.close()}>
+          {completed ? t('libraries.addFlow.result.done') : flow.phase === 'result' ? t('common.close') : t('common.cancel')}
         </Button>
       ) : null}
       {canBack ? (
-        <Button type="button" variant="ghost" onClick={() => void flow.back()}>
-          <ArrowLeft className="size-4" aria-hidden="true" />
+        <Button type="button" variant="outline" onClick={() => void flow.back()}>
           {t('addSkill.actions.back')}
         </Button>
       ) : null}
       {flow.phase === 'selection' ? (
         <Button
           type="button"
+          className="min-w-28"
           onClick={() => void flow.prepare()}
           disabled={flow.selectedCandidateIds.length === 0}
         >
@@ -458,6 +538,7 @@ function LibraryAddFooter({ flow }: { flow: LibraryAddFlow }) {
       {flow.phase === 'review' ? (
         <Button
           type="button"
+          className="min-w-28"
           onClick={() => void flow.executePrepared()}
           disabled={Boolean(
             flow.prepared?.preview.redirectedDownloadHost
@@ -465,6 +546,12 @@ function LibraryAddFooter({ flow }: { flow: LibraryAddFlow }) {
           )}
         >
           {t('libraries.addFlow.review.confirm')}
+        </Button>
+      ) : null}
+      {locked ? (
+        <Button type="button" disabled className="min-w-28">
+          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+          {t(flow.phase === 'executing' ? 'libraries.addFlow.review.adding' : 'libraries.addFlow.preparing')}
         </Button>
       ) : null}
       {hasRetry ? (

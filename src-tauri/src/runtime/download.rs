@@ -68,6 +68,7 @@ pub(crate) struct DownloadFetchResult {
 
 fn map_network_error(error: HttpTransportError) -> AppError {
     match error {
+        HttpTransportError::Settings(error) => error.into(),
         HttpTransportError::Request {
             reason: "cancelled",
             ..
@@ -91,6 +92,29 @@ fn map_network_error(error: HttpTransportError) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn proxy_configuration_failure_is_reported_without_a_network_error() {
+        let http = crate::runtime::http_transport::HttpTransport::new(std::sync::Arc::new(
+            crate::runtime::proxy_settings::ProxySettingsStore::new(
+                crate::models::NetworkProxySettings {
+                    mode: crate::models::ProxyMode::Custom,
+                    custom_proxy_url: None,
+                    ..Default::default()
+                },
+            ),
+        ));
+        let result = super::RuntimeDownloadAccess::new(http)
+            .fetch(
+                "http://127.0.0.1:9/skill.zip",
+                &crate::core::mutation::CancellationSignal::default(),
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidProxySettings { .. })
+        ));
+    }
+
     use std::io::Write;
     use std::sync::Arc;
     use std::thread;

@@ -29,7 +29,12 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
     const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
-    return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
+    return {
+      projects: mocks.projectState.projectsByEnvironment[key] ?? [],
+      hasCompleteSnapshot: true,
+      error: null,
+      refresh: vi.fn(),
+    };
   },
 }));
 

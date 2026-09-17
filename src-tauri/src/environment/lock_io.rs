@@ -1,13 +1,16 @@
 use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
 use crate::environment::types::ResourceLocator;
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::WslSession;
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
-use crate::storage::atomic_document::AtomicDocumentIo;
+use crate::storage::atomic_document::{AtomicDocumentIo, DocumentSnapshot, DocumentWriteFailure};
 
 pub enum EnvironmentLockIo {
     Native,
-    ActiveWsl(WslSession),
+    ActiveWsl {
+        session: Box<WslSession>,
+        workspace: WslWorkspace,
+    },
 }
 
 impl EnvironmentLockIo {
@@ -15,11 +18,42 @@ impl EnvironmentLockIo {
         &self,
         locator: &ResourceLocator,
     ) -> Result<Option<Vec<u8>>, AppError> {
+        Ok(self.observe(locator).await?.bytes)
+    }
+
+    pub async fn observe(&self, locator: &ResourceLocator) -> Result<DocumentSnapshot, AppError> {
         match self {
-            Self::Native => NativeAtomicDocumentIo.read_optional(locator).await,
-            Self::ActiveWsl(session) => {
-                WslAtomicDocumentIo::from_active_session(session.clone())
-                    .read_optional(locator)
+            Self::Native => {
+                NativeAtomicDocumentIo
+                    .observe(locator, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                    .await
+            }
+            Self::ActiveWsl { session, workspace } => {
+                require_active_wsl_target(session, locator)?;
+                WslAtomicDocumentIo::from_active_session((**session).clone(), workspace.clone())
+                    .observe(locator, u64::from(environment_protocol::MAX_DOCUMENT_BYTES))
+                    .await
+            }
+        }
+    }
+
+    pub async fn replace(
+        &self,
+        locator: &ResourceLocator,
+        expected: DocumentSnapshot,
+        bytes: Vec<u8>,
+    ) -> Result<DocumentSnapshot, DocumentWriteFailure> {
+        match self {
+            Self::Native => {
+                NativeAtomicDocumentIo
+                    .replace(locator, expected, bytes)
+                    .await
+            }
+            Self::ActiveWsl { session, workspace } => {
+                require_active_wsl_target(session, locator)
+                    .map_err(DocumentWriteFailure::not_published)?;
+                WslAtomicDocumentIo::from_active_session((**session).clone(), workspace.clone())
+                    .replace(locator, expected, bytes)
                     .await
             }
         }
@@ -34,19 +68,34 @@ impl EnvironmentLockIo {
             })
     }
 
+    #[cfg(test)]
     pub async fn write_atomic(
         &self,
         locator: &ResourceLocator,
         bytes: Vec<u8>,
     ) -> Result<(), AppError> {
-        match self {
-            Self::Native => NativeAtomicDocumentIo.write_atomic(locator, bytes).await,
-            Self::ActiveWsl(session) => {
-                WslAtomicDocumentIo::from_active_session(session.clone())
-                    .write_atomic(locator, bytes)
-                    .await
-            }
+        let snapshot = self.observe(locator).await?;
+        self.replace(locator, snapshot, bytes)
+            .await
+            .map(|_| ())
+            .map_err(DocumentWriteFailure::into_error)
+    }
+}
+
+fn require_active_wsl_target(
+    session: &WslSession,
+    locator: &ResourceLocator,
+) -> Result<(), AppError> {
+    match &locator.environment {
+        crate::environment::types::EnvironmentRef::Wsl { distro_name }
+            if distro_name.eq_ignore_ascii_case(&session.distro_name)
+                && locator.native_path.starts_with('/') =>
+        {
+            Ok(())
         }
+        _ => Err(AppError::StorageUnsupported {
+            path: locator.native_path.clone(),
+        }),
     }
 }
 

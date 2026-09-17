@@ -87,6 +87,7 @@ const removePreview = {
   context,
   skillName: skill.name,
   standard: 'directory',
+  standardPath: { environment: context.environment, nativePath: skill.canonicalPath },
   physicalEntries: [],
   restoresLibrary: false,
 } as RemovePreview;
@@ -177,6 +178,11 @@ describe('skill workflows', () => {
       intent: { kind: 'fullSkill' },
     });
     expect(useSkillDialogStore.getState().deleteTarget).toBeNull();
+    expect(mocks.syncSkills).toHaveBeenCalledWith(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: [skill.name],
+      invalidateUpdates: true,
+    });
   });
 
   it('returns notRun without local failure feedback when installation wins removal admission', async () => {

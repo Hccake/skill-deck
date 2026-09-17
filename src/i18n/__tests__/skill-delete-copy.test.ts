@@ -3,13 +3,8 @@ import en from '../locales/en.json';
 import zhCN from '../locales/zh-CN.json';
 
 const requiredKeys = [
-  'description',
+  'title',
   'scopeLabel',
-  'scopeCount',
-  'pathDisplayMode',
-  'relativePaths',
-  'fullPaths',
-  'mainDirectory',
   'linkMode',
   'copyMode',
   'copyWarning',
@@ -40,19 +35,17 @@ describe('Skill deletion copy', () => {
     expect(en.skills.deleteConfirm.copyMode).toBe('Copy');
   });
 
-  it('states exactly what deletion removes', () => {
-    expect(zhCN.skills.deleteConfirm.description)
-      .toBe('将删除通用 Skill 目录中的“{{name}}”，以及各 Agent 目录中对应的链接或副本。');
-    expect(zhCN.skills.deleteConfirm.description).not.toContain('Agent 接入');
-    expect(en.skills.deleteConfirm.description)
-      .toBe('This deletes “{{name}}” from the common Skill directory and removes its corresponding links or copies from Agent directories.');
+  it('identifies the Skill in the title and states library restoration briefly', () => {
+    expect(zhCN.skills.deleteConfirm.title).toBe('删除「{{name}}」');
+    expect(en.skills.deleteConfirm.title).toBe('Delete {{name}}');
+    expect(zhCN.skills.deleteConfirm.restoresLibrary).toBe('移除后，适用位置将恢复使用库版本。');
   });
 
   it('briefly explains that independent copies are also deleted', () => {
     expect(zhCN.skills.deleteConfirm.copyWarning)
-      .toBe('部分 Agent 的 Skill 目录中保留了独立副本，本次操作会将其一并删除。');
+      .toBe('独立副本也会一并删除。');
     expect(en.skills.deleteConfirm.copyWarning)
-      .toBe('Some Agent directories contain independent copies of this Skill. This operation will delete them as well.');
+      .toBe('Independent copies will also be deleted.');
   });
 
   it('explains removal recovery as an incomplete operation that needs file review', () => {

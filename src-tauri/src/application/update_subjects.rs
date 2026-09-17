@@ -1,13 +1,11 @@
-use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::collection_records::{
     CollectionRecordReader, CollectionRecordSnapshot, DocumentRevision, LibraryCatalogRecordReader,
-    LockCollectionRecordReader, RecordProjection, SkillSelection, SourceRecordRevision,
+    RecordProjection, SkillSelection, SourceRecordRevision,
 };
-use crate::application::planning_facts::ScopePlanningSnapshotSource;
 use crate::application::skill_libraries::{LibraryId, SkillLibraryRepository};
 use crate::application::skill_paths::{
     ContentRevision, ResolvedSkillRoot, ResolvedSkillTarget, RootResolutionRevision,
@@ -15,7 +13,7 @@ use crate::application::skill_paths::{
 };
 use crate::environment::content_manifest::ContentManifestReader;
 use crate::environment::planning::TargetFactResolver;
-use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocationRef};
+use crate::environment::types::EnvironmentRef;
 use crate::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -38,14 +36,6 @@ pub struct UpdateSubjectSnapshot {
 pub type UpdateSubjectFuture<'a> =
     Pin<Box<dyn Future<Output = Result<UpdateSubjectSnapshot, AppError>> + Send + 'a>>;
 
-pub trait InstalledUpdateSubjectSnapshots: Send + Sync {
-    fn snapshot_installed<'a>(
-        &'a self,
-        context: &'a SkillLocationRef,
-        names: SkillSelection,
-    ) -> UpdateSubjectFuture<'a>;
-}
-
 pub trait LibraryUpdateSubjectSnapshots: Send + Sync {
     fn snapshot_library<'a>(
         &'a self,
@@ -53,71 +43,6 @@ pub trait LibraryUpdateSubjectSnapshots: Send + Sync {
         library_id: &'a LibraryId,
         names: SkillSelection,
     ) -> UpdateSubjectFuture<'a>;
-}
-
-pub trait UpdateSubjectSource: Send + Sync {
-    fn environment(&self) -> &crate::environment::types::EnvironmentRef;
-
-    fn snapshot<'a>(&'a self, names: BTreeSet<String>) -> UpdateSubjectFuture<'a>;
-}
-
-pub struct BoundInstalledUpdateSubjectSource<'a, P> {
-    provider: &'a P,
-    context: SkillLocationRef,
-}
-
-impl<'a, P> BoundInstalledUpdateSubjectSource<'a, P> {
-    pub fn new(provider: &'a P, context: SkillLocationRef) -> Self {
-        Self { provider, context }
-    }
-}
-
-impl<P> UpdateSubjectSource for BoundInstalledUpdateSubjectSource<'_, P>
-where
-    P: InstalledUpdateSubjectSnapshots,
-{
-    fn environment(&self) -> &EnvironmentRef {
-        &self.context.environment
-    }
-
-    fn snapshot<'a>(&'a self, names: BTreeSet<String>) -> UpdateSubjectFuture<'a> {
-        self.provider.snapshot_installed(&self.context, names)
-    }
-}
-
-pub struct BoundLibraryUpdateSubjectSource<'a, P> {
-    provider: &'a P,
-    environment: EnvironmentRef,
-    library_id: LibraryId,
-}
-
-impl<'a, P> BoundLibraryUpdateSubjectSource<'a, P> {
-    pub fn new(provider: &'a P, environment: EnvironmentRef, library_id: LibraryId) -> Self {
-        Self {
-            provider,
-            environment,
-            library_id,
-        }
-    }
-}
-
-impl<P> UpdateSubjectSource for BoundLibraryUpdateSubjectSource<'_, P>
-where
-    P: LibraryUpdateSubjectSnapshots,
-{
-    fn environment(&self) -> &EnvironmentRef {
-        &self.environment
-    }
-
-    fn snapshot<'a>(&'a self, names: BTreeSet<String>) -> UpdateSubjectFuture<'a> {
-        self.provider
-            .snapshot_library(&self.environment, &self.library_id, names)
-    }
-}
-
-pub struct InstalledUpdateSubjectProvider<F, T> {
-    facts: F,
-    targets: T,
 }
 
 pub struct LibraryUpdateSubjectProvider<T> {
@@ -131,52 +56,6 @@ impl<T> LibraryUpdateSubjectProvider<T> {
             repository,
             targets,
         }
-    }
-}
-
-impl<F, T> InstalledUpdateSubjectProvider<F, T> {
-    pub fn new(facts: F, targets: T) -> Self {
-        Self { facts, targets }
-    }
-}
-
-impl<F, T> InstalledUpdateSubjectSnapshots for InstalledUpdateSubjectProvider<F, T>
-where
-    F: ScopePlanningSnapshotSource,
-    T: TargetFactResolver + ContentManifestReader,
-{
-    fn snapshot_installed<'a>(
-        &'a self,
-        context: &'a SkillLocationRef,
-        names: SkillSelection,
-    ) -> UpdateSubjectFuture<'a> {
-        Box::pin(async move {
-            let facts = self.facts.snapshot(context).await?;
-            let root = SkillPathObserver::resolve_installed_collection(
-                &facts.resolved_context,
-                &facts.revisions.environment,
-            )?;
-            if root.environment != context.environment {
-                return Err(AppError::StaleContext);
-            }
-            let project_root =
-                facts
-                    .resolved_context
-                    .project
-                    .as_ref()
-                    .map(|project| ResourceLocator {
-                        environment: root.environment.clone(),
-                        native_path: project.native_path.clone(),
-                    });
-            let records = LockCollectionRecordReader::new(
-                &root.environment,
-                facts.lock_schema,
-                &facts.lock_document,
-                project_root.as_ref(),
-            )
-            .load_snapshot(names)?;
-            build_update_subject_snapshot(&self.targets, root, records).await
-        })
     }
 }
 
@@ -268,119 +147,20 @@ pub fn build_update_subject_snapshot_from_targets(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::collections::BTreeSet;
     use std::fs;
     use std::sync::Arc;
 
-    use crate::application::install::InstallFuture;
-    use crate::application::mutation::plan::RuntimeRevisions;
-    use crate::application::planning_facts::{ScopePlanningSnapshot, ScopePlanningSnapshotSource};
     use crate::application::skill_libraries::{
         LibraryCatalog, LibraryId, LibrarySkillRecord, LibrarySkillSourceRecord,
         SkillLibraryRecord, SkillLibraryRepository, LIBRARY_SCHEMA_VERSION,
     };
-    use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
     use crate::core::projects::{ProjectMigrationRegistry, ProjectMigrationState};
-    use crate::environment::agent_environment::AgentRuntimeSnapshot;
-    use crate::environment::context_resolver::ResolvedContext;
     use crate::environment::planning::RuntimeTargetFactResolver;
-    use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{
-        EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
-    };
+    use crate::environment::types::EnvironmentRef;
     use crate::environment::wsl::WslRuntime;
-    use crate::error::AppError;
 
-    use super::{
-        InstalledUpdateSubjectProvider, InstalledUpdateSubjectSnapshots,
-        LibraryUpdateSubjectProvider, LibraryUpdateSubjectSnapshots,
-    };
-
-    struct Facts(ScopePlanningSnapshot);
-
-    impl ScopePlanningSnapshotSource for Facts {
-        fn snapshot<'a>(
-            &'a self,
-            _context: &'a SkillLocationRef,
-        ) -> InstallFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
-            Box::pin(async { Ok(self.0.clone()) })
-        }
-    }
-
-    #[tokio::test]
-    async fn installed_provider_combines_lock_target_and_content_revisions() {
-        let root = tempfile::tempdir().unwrap();
-        let skill_root = root.path().join("skills");
-        let skill_dir = skill_root.join("demo");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: demo\ndescription: Demo\n---\nbody",
-        )
-        .unwrap();
-        let context = SkillLocationRef {
-            environment: EnvironmentRef::Native,
-            scope: SkillLocation::Global,
-        };
-        let facts = ScopePlanningSnapshot {
-            resolved_context: ResolvedContext {
-                context: context.clone(),
-                project: None,
-                home: ResourceLocator {
-                    environment: EnvironmentRef::Native,
-                    native_path: root.path().to_string_lossy().into_owned(),
-                },
-                skill_root: ResourceLocator {
-                    environment: EnvironmentRef::Native,
-                    native_path: skill_root.to_string_lossy().into_owned(),
-                },
-                lock: ResourceLocator {
-                    environment: EnvironmentRef::Native,
-                    native_path: root.path().join("skills-lock.json").to_string_lossy().into_owned(),
-                },
-            },
-            agent_runtime: AgentRuntimeSnapshot {
-                registry_revision: "registry-v1".to_string(),
-                environment_revision: "environment-v1".to_string(),
-                environment: EnvironmentRef::Native,
-                availability: EnvironmentStatus::Available,
-                project_path: None,
-                agents: BTreeMap::new(),
-            },
-            revisions: RuntimeRevisions {
-                registry: "registry-v1".to_string(),
-                environment: "environment-v1".to_string(),
-                context: ContextSnapshotRevision::parse("context-v1").unwrap(),
-            },
-            lock_schema: LockSchema::Global,
-            lock_document: LosslessLockDocument::parse(
-                br#"{"version":3,"skills":{"demo":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/demo","skillFolderHash":"tree-old"}}}"#,
-            )
-            .unwrap(),
-            eve_targets: Vec::new(),
-        };
-        let provider = InstalledUpdateSubjectProvider::new(
-            Facts(facts),
-            RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
-        );
-
-        let snapshot = provider
-            .snapshot_installed(&context, BTreeSet::from(["demo".to_string()]))
-            .await
-            .unwrap();
-
-        assert_eq!(snapshot.subjects.len(), 1);
-        assert_eq!(snapshot.subjects[0].skill_name, "demo");
-        assert_eq!(
-            snapshot.subjects[0].projection.metadata().unwrap().source,
-            "owner/repo"
-        );
-        assert!(snapshot.subjects[0]
-            .content_revision
-            .manifest_hash()
-            .is_some());
-    }
+    use super::{LibraryUpdateSubjectProvider, LibraryUpdateSubjectSnapshots};
 
     #[tokio::test]
     async fn library_provider_combines_catalog_target_and_content_revisions() {
@@ -437,6 +217,7 @@ mod tests {
                             updated_at: None,
                             extra: serde_json::Map::new(),
                         }],
+                        retired_skills: Vec::new(),
                         extra: serde_json::Map::new(),
                     }],
                     extra: serde_json::Map::new(),

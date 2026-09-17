@@ -218,7 +218,7 @@ impl CollectionRecordReader for LibraryCatalogRecordReader<'_> {
     }
 }
 
-fn library_update_metadata(
+pub(crate) fn library_update_metadata(
     record: &LibrarySkillRecord,
 ) -> Result<NormalizedUpdateMetadata, AppError> {
     let source: crate::application::skill_libraries::LibrarySkillSourceRecord =
@@ -621,7 +621,8 @@ mod tests {
                     "description": "Broken",
                     "sourceRecord": { "sourceType": 42 },
                     "contentManifestHash": "manifest-broken"
-                }]
+                }],
+                "retiredSkills": []
             }]
         }))
         .expect("catalog envelope remains readable");
@@ -650,6 +651,7 @@ mod tests {
                 id: library_id.clone(),
                 name: "Library".to_string(),
                 skills,
+                retired_skills: Vec::new(),
                 extra: serde_json::Map::new(),
             }],
             extra: serde_json::Map::new(),

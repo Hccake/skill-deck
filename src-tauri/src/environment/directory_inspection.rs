@@ -2,8 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::environment::wsl::operations::directory_count;
-use crate::environment::wsl::WslSession;
+use crate::environment::wsl::WslWorkspace;
 use crate::error::AppError;
 
 pub const MAX_OBSERVED_SKILL_ENTRIES: u32 = 10_000;
@@ -25,28 +24,27 @@ pub async fn inspect_native(paths: &[String]) -> BTreeMap<String, DirectoryInspe
 }
 
 pub async fn inspect_wsl(
-    session: &WslSession,
+    workspace: &WslWorkspace,
     paths: &[String],
 ) -> Result<BTreeMap<String, DirectoryInspection>, AppError> {
     let paths = unique_paths(paths);
     if paths.is_empty() {
         return Ok(BTreeMap::new());
     }
-    Ok(
-        directory_count::inspect(session, &paths, MAX_OBSERVED_SKILL_ENTRIES)
-            .await?
-            .into_iter()
-            .map(|fact| {
-                (
-                    fact.path,
-                    DirectoryInspection {
-                        observed_skill_count: fact.observed_count,
-                        observed_skill_count_truncated: fact.truncated,
-                    },
-                )
-            })
-            .collect(),
-    )
+    Ok(workspace
+        .count_directory_entries(paths.clone(), MAX_OBSERVED_SKILL_ENTRIES)
+        .await?
+        .into_iter()
+        .map(|fact| {
+            (
+                fact.path,
+                DirectoryInspection {
+                    observed_skill_count: fact.observed_count,
+                    observed_skill_count_truncated: fact.truncated,
+                },
+            )
+        })
+        .collect())
 }
 
 fn unique_paths(paths: &[String]) -> Vec<String> {

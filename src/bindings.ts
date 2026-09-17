@@ -126,9 +126,17 @@ async previewAddLibrarySkills(request: PreviewAddLibrarySkillsRequest) : Promise
     else return { status: "error", error: e  as any };
 }
 },
-async previewLibrarySkillUpdates(request: UpdateLibrarySkillsRequest) : Promise<Result<LibraryUpdatePreview, AppError>> {
+async previewRemoveLibrarySkill(request: RemoveLibrarySkillRequest) : Promise<Result<LibraryRetirePreview, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("preview_library_skill_updates", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("preview_remove_library_skill", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLibrarySkillUpdates(operationId: string, request: UpdateLibrarySkillsRequest) : Promise<Result<PreparedLibraryUpdatePreview, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("prepare_library_skill_updates", { operationId, request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -150,9 +158,17 @@ async renameSkillLibrary(environment: EnvironmentRef, libraryId: LibraryId, name
     else return { status: "error", error: e  as any };
 }
 },
-async removeLibrarySkill(request: RemoveLibrarySkillRequest) : Promise<Result<SkillLibraryDetail, AppError>> {
+async removeLibrarySkill(request: ExecuteRetireLibrarySkillRequest) : Promise<Result<LibraryRetireResponse, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remove_library_skill", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resumeLibraryMembership(environment: EnvironmentRef, libraryId: LibraryId | null) : Promise<Result<LibraryMembershipOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_library_membership", { environment, libraryId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -166,9 +182,9 @@ async retryLibraryApplication(context: SkillLocationRef) : Promise<Result<Librar
     else return { status: "error", error: e  as any };
 }
 },
-async updateLibrarySkills(request: ExecuteLibraryUpdateRequest) : Promise<Result<LibraryUpdateExecutionOutcome, AppError>> {
+async updateLibrarySkills(operationId: string) : Promise<Result<LibraryUpdateResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_library_skills", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("update_library_skills", { operationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -297,9 +313,9 @@ async searchDiscoverSkills(query: string) : Promise<Result<DiscoverSearchPayload
     else return { status: "error", error: e  as any };
 }
 },
-async getProxySettings() : Promise<Result<NetworkProxySettings, AppError>> {
+async getProxySettings(reload: boolean | null) : Promise<Result<ProxySettingsSnapshot, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_proxy_settings") };
+    return { status: "ok", data: await TAURI_INVOKE("get_proxy_settings", { reload }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -441,25 +457,25 @@ async checkUpdates(request: UpdateCheckRequest) : Promise<Result<UpdateCheckResp
     else return { status: "error", error: e  as any };
 }
 },
-async previewUpdate(request: UpdateRequest) : Promise<Result<UpdatePreview, AppError>> {
+async prepareUpdate(operationId: string, request: UpdateRequest) : Promise<Result<PreparedUpdatePreview, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("preview_update", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("prepare_update", { operationId, request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async updateSkill(execution: UpdateExecutionRequest, expectedToken: PreviewToken, acknowledgeRedirect: boolean) : Promise<Result<UpdateResponse, AppError>> {
+async executeUpdate(operationId: string, selectedCopyEntries: ObservedEntryId[]) : Promise<Result<UpdateResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skill", { execution, expectedToken, acknowledgeRedirect }) };
+    return { status: "ok", data: await TAURI_INVOKE("execute_update", { operationId, selectedCopyEntries }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async updateSkillsBatch(execution: UpdateExecutionRequest, expectedToken: PreviewToken, acknowledgeRedirect: boolean) : Promise<Result<UpdateResponse, AppError>> {
+async cancelUpdatePreparation(operationId: string) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skills_batch", { execution, expectedToken, acknowledgeRedirect }) };
+    return { status: "ok", data: await TAURI_INVOKE("cancel_update_preparation", { operationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -688,7 +704,7 @@ export type AgentSelectionIntent = { wildcardRequested: boolean; explicitAgentId
 export type AgentSelectionInvalidReason = "duplicateOption" | "optionUnavailable" | "placementConflict" | "optionMissing" | "resultNotAllowed"
 export type AgentSelectionModeConstraint = "userSelectable" | "copyOnly"
 export type AgentSelectionRevision = string
-export type AgentSelectionSnapshot = { agents: AgentSelectionAgent[]; installOptions: AgentInstallOption[]; groups: AgentSelectionGroup[]; initialSelectedOptionIds: AgentInstallOptionId[]; unavailableExplicitAgents: UnavailableAgentSelection[]; userModeOptionIds: AgentInstallOptionId[]; revision: AgentSelectionRevision }
+export type AgentSelectionSnapshot = { agents: AgentSelectionAgent[]; installOptions: AgentInstallOption[]; groups: AgentSelectionGroup[]; baselineSelectedOptionIds: AgentInstallOptionId[]; unavailableExplicitAgents: UnavailableAgentSelection[]; userModeOptionIds: AgentInstallOptionId[]; revision: AgentSelectionRevision }
 export type AgentSelectionSubmission = { revision: AgentSelectionRevision; selectedOptionIds: AgentInstallOptionId[]; requestedMode: InstallMode }
 export type AgentSettingsSnapshot = { registryRevision: string; activeBuiltin: AgentDefinition[]; activeCustom: ActiveCustomAgent[]; disabledConflicts: DisabledAgentConflict[]; invalidCustomRecords: InvalidCustomAgentRecord[]; currentEnvironment: EnvironmentRef; customStorageIssue: AgentStorageIssue | null }
 export type AgentSource = "builtin" | "custom"
@@ -696,12 +712,12 @@ export type AgentStorageIssue = { code: string; message: string; readOnly: boole
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
-export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "upstreamSkillNameChanged"; data: { expectedName: string; actualName: string } } | { kind: "upstreamSkillDeleted"; data: { skillName: string } } | { kind: "sourceAcquisitionFailed"; data: { wellKnownReason: SourceAcquisitionFailureReason; downloadReason: SourceAcquisitionFailureReason } } | { kind: "wellKnownSourceFailed"; data: { reason: SourceAcquisitionFailureReason } } | { kind: "wellKnownScopeNotFound"; data: { scopePath: string; rootUrl: string } } | { kind: "directDownloadFailed"; data: { reason: DirectDownloadFailureReason } } | { kind: "directDownloadUnsupportedOperation" } | { kind: "directDownloadConflict"; data: { target: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "upstreamSkillNameChanged"; data: { expectedName: string; actualName: string } } | { kind: "upstreamSkillDeleted"; data: { skillName: string } } | { kind: "sourceAcquisitionFailed"; data: { wellKnownReason: SourceAcquisitionFailureReason; downloadReason: SourceAcquisitionFailureReason } } | { kind: "wellKnownSourceFailed"; data: { reason: SourceAcquisitionFailureReason } } | { kind: "wellKnownScopeNotFound"; data: { scopePath: string; rootUrl: string } } | { kind: "directDownloadFailed"; data: { reason: DirectDownloadFailureReason } } | { kind: "directDownloadConflict"; data: { target: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
  */
-{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "directDownloadRedirectConfirmationRequired"; data: { host: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "agentSelectionInvalid"; data: { reason: AgentSelectionInvalidReason } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "libraryReferenceConflict"; data: { usages: SkillLocationRef[] } } | { kind: "skillPlacementTargetConflict"; data: { skillName: string; agentIds: AgentId[]; targetPath: string; targetKind: SkillPlacementTargetKind } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "libraryRecoveryIncomplete"; data: { environment: EnvironmentRef; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
+{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "directDownloadRedirectConfirmationRequired"; data: { host: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "projectMatchesEnvironmentHome" } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "agentSelectionInvalid"; data: { reason: AgentSelectionInvalidReason } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "libraryReferenceConflict"; data: { usages: SkillLocationRef[] } } | { kind: "skillPlacementTargetConflict"; data: { skillName: string; agentIds: AgentId[]; targetPath: string; targetKind: SkillPlacementTargetKind } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "libraryRecoveryIncomplete"; data: { environment: EnvironmentRef; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "configurationWriteUnconfirmed" } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
 export type ApplicationUpdateInfo = { version: string; body: string | null }
 export type ApplicationUpdateProgress = { event: "started"; data: { content_length: number | null } } | { event: "progress"; data: { chunk_length: number } } | { event: "downloaded" } | { event: "installing" } | { event: "finished" }
 export type ApplicationUpdateResult = { version: string; installed: boolean }
@@ -777,6 +793,7 @@ export type DiscoverLeaderboardPayload = { leaderboardHtml: string; officialCrea
 export type DiscoverLeaderboardTab = "popular" | "trending" | "hot"
 export type DiscoverSearchPayload = { searchJson: string; officialCreators: string[] | null }
 export type DiscoverySessionHandle = { sessionId: string; environment: EnvironmentRef; sourceFingerprint: string; expiresAtEpochMs: number }
+export type DisplayPathStyle = "posix" | "windows"
 export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null; wslIntegrationSupported: boolean; wslIntegrationEnabled: boolean; wslCapabilityRevision: number }
 export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus; revision: number; error: AppError | null }
 export type EnvironmentRef = { kind: "native" } | { kind: "wsl"; distro_name: string }
@@ -788,8 +805,8 @@ export type EvidenceAttempt = { checkedAtEpochMs: number; failure: EvidenceDetec
 export type EvidenceDetectionFailure = { reason: EvidenceFailureReason; message: string; retryAtEpochMs: number | null; providerCooldown: boolean }
 export type EvidenceFailureReason = "rateLimited" | "authenticationRequired" | "refNotFound" | "repositoryNotFound" | "notFoundOrUnauthorized" | "network" | "incompleteEvidence" | "sourceUnavailable"
 export type EvidenceFreshness = "fresh" | "cached" | "stale" | "coolingDown" | "backingOff" | "unavailable"
-export type ExecuteAddLibrarySkillsRequest = { request: PreviewAddLibrarySkillsRequest; expectedToken: LibraryAddPreviewToken; acknowledgeRedirect: boolean }
-export type ExecuteLibraryUpdateRequest = { request: UpdateLibrarySkillsRequest; expectedToken: LibraryUpdatePreviewToken; continuation: LibraryUpdateContinuation | null; riskConfirmation: LibraryUpdateRiskConfirmation | null }
+export type ExecuteAddLibrarySkillsRequest = { request: PreviewAddLibrarySkillsRequest; expectedToken: LibraryAddPreviewToken; membership: LibraryMembershipPreview; acknowledgeRedirect: boolean }
+export type ExecuteRetireLibrarySkillRequest = { request: RemoveLibrarySkillRequest; expectedToken: string; membership: LibraryMembershipPreview }
 export type FallbackReasonCode = "symlinkUnavailable" | "crossStorageCopyRequired" | "targetCapabilityFallback"
 /**
  * 来源发现结果
@@ -842,15 +859,22 @@ export type InstallResponse = { units: MutationUnitResult[]; warnings: SourceSup
 export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadHandle; overwriteTargets: string[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[]; overridesLibrary: boolean }
 export type InstallWizardSessionSnapshot = { revision: number; active: boolean }
 /**
- * 已安装的 Skill 信息
- * 对应 CLI: InstalledSkill (installer.ts:783-790)
+ * 当前 Scope 引用的库版本，用于定位到对应库成员。
+ */
+export type InstalledLibraryVersion = { libraryId: string; libraryName: string; skillName: string }
+/**
+ * 已安装的直接 Skill 信息。
  */
 export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: InstalledSkillLocation; agents: AgentId[];
 /**
  * 每次读取 Skill 时根据当前 runtime 和文件系统重新组装，不写入 skill-lock。
  * 只包含当前已检测到并且实际能够读取该 Skill 的关联 Agent。
  */
-associatedAgents: AgentId[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+associatedAgents: AgentId[];
+/**
+ * 当前 Scope 中实际被引用的同名库版本。
+ */
+libraryVersions?: InstalledLibraryVersion[] | null; maintenanceError?: AppError | null; comparisonFingerprint?: string | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
 /**
  * 是否可直接执行更新
  */
@@ -916,9 +940,9 @@ export type LegacyMigrationTarget = "currentPrivate" | "standardCanonical"
 export type LegacyPath = { scope: LegacyPathScope; path: PathSpec; behavior: LegacyPathBehavior; migrationTarget: LegacyMigrationTarget }
 export type LegacyPathBehavior = "detectOnly" | "offerMigration"
 export type LegacyPathScope = "global" | "project"
-export type LibraryAddPreview = { token: LibraryAddPreviewToken; skills: LibraryAddSkillPreview[]; redirectedDownloadHost: string | null }
+export type LibraryAddPreview = { token: LibraryAddPreviewToken; skills: LibraryAddSkillPreview[]; redirectedDownloadHost: string | null; membership: LibraryMembershipPreview }
 export type LibraryAddPreviewToken = { generation: string; contextRevision: string; skillRevisions: LibraryAddSkillRevision[]; redirectedDownloadHost: string | null }
-export type LibraryAddResponse = { results: LibraryAddSkillResult[]; library: SkillLibraryDetail }
+export type LibraryAddResponse = { results: LibraryAddSkillResult[]; library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
 export type LibraryAddSkillPreview = { skillName: string; targetPath: string }
 export type LibraryAddSkillResult = { skillName: string; status: LibraryAddSkillStatus; error: AppError | null }
 export type LibraryAddSkillRevision = { skillName: string; targetRevision: string; sourceRecordRevision: string }
@@ -929,9 +953,14 @@ export type LibraryApplicationDraft = { context: SkillLocationRef; orderedLibrar
 export type LibraryApplicationPreview = { token: PreviewToken; current: LibraryApplicationState; target: LibraryApplicationState; addedSkillNames: string[]; removedSkillNames: string[]; switchedSkillNames: string[]; changedDirectorySkillNames: string[]; overriddenByDirectSkillNames: string[] }
 export type LibraryApplicationResponse = { application: LibraryApplicationSummary; units: MutationUnitResult[] }
 export type LibraryApplicationState = { orderedLibraryIds: LibraryId[]; selectedAgentIds: AgentId[] }
-export type LibraryApplicationSummary = { orderedLibraries: SkillLibrarySummary[]; selectedAgentIds: AgentId[]; pending: boolean }
+export type LibraryApplicationSummary = { orderedLibraries: SkillLibrarySummary[]; selectedAgentIds: AgentId[]; pending: boolean; syncState: LibraryApplicationSyncState }
+export type LibraryApplicationSyncState = "synced" | "pending" | "unverified" | "recoveryRequired"
 export type LibraryCommitStatus = "succeeded" | "failed" | "notRun"
 export type LibraryId = string
+export type LibraryMembershipOutcome = { scopes: MembershipScopeResult[]; cleanup: RetiredCleanupResult[]; snapshotError: AppError | null }
+export type LibraryMembershipPreview = { environment: EnvironmentRef; libraryId: LibraryId; scopes: SkillLocationRef[]; impacts: MembershipScopeImpact[]; inventoryComplete: boolean; inventoryToken: string; token: string }
+export type LibraryRetirePreview = { skillName: string; token: string; membership: LibraryMembershipPreview }
+export type LibraryRetireResponse = { library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
 export type LibrarySkillSummary = { name: string; description: string; source: string; sourceType: string; sourceUrl: string | null; skillPath: string; contentHash: string;
 /**
  * 内容所属插件。属于 Skill 自身的元数据，与 Agent 无关。
@@ -945,17 +974,8 @@ refName: string | null;
  * Skill Deck 最近一次成功提交该成员本地内容的时间，不表示上游发布时间。
  * 旧成员在下一次成功写入前为 `None`。
  */
-updatedAt: string | null }
-export type LibraryUpdateContinuation = { sources: LibraryUpdatePreparedSource[] }
-export type LibraryUpdateExecutionOutcome = { status: "completed"; response: LibraryUpdateResponse } | { status: "confirmationRequired"; token: LibraryUpdatePreviewToken; redirectedDownloadHosts: string[]; continuation: LibraryUpdateContinuation }
-export type LibraryUpdatePreparedPayload = { skillName: string; payload: AcquiredPayloadHandle }
-export type LibraryUpdatePreparedSkillError = { skillName: string; error: ErrorReport }
-export type LibraryUpdatePreparedSource = { sourceResultId: string; source: string; skillNames: string[]; result: LibraryUpdatePreparedSourceResult }
-export type LibraryUpdatePreparedSourceResult = { status: "acquired"; discoverySession: DiscoverySessionHandle; payloads: LibraryUpdatePreparedPayload[]; skillErrors: LibraryUpdatePreparedSkillError[]; redirectedDownloadHost: string | null } | { status: "failed"; error: ErrorReport }
-export type LibraryUpdatePreview = { token: LibraryUpdatePreviewToken; skillNames: string[] }
-export type LibraryUpdatePreviewToken = { generation: string }
-export type LibraryUpdateResponse = { sources: UpdateSourceResult[]; results: LibraryUpdateSkillResult[]; outcome: UpdateOutcome; library: SkillLibraryDetail }
-export type LibraryUpdateRiskConfirmation = { redirectedDownloadHosts: string[] }
+updatedAt: string | null; comparisonFingerprint?: string | null; updateCapability?: CheckUpdateCapability | null }
+export type LibraryUpdateResponse = { sources: UpdateSourceResult[]; results: LibraryUpdateSkillResult[]; outcome: UpdateOutcome; library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
 export type LibraryUpdateSkillResult = { skillName: string; status: LibraryUpdateSkillStatus; sourceResultId: string; contentCommit: LibraryCommitStatus; catalogCommit: LibraryCommitStatus; error: ErrorReport | null }
 export type LibraryUpdateSkillStatus = "succeeded" | "failed" | "nameChanged" | "deletedUpstream" | "cancelled" | "notRun"
 export type LibraryUsage = { context: SkillLocationRef; project: RegisteredProject | null; state: LibraryUsageState }
@@ -969,15 +989,15 @@ export type LibraryUsageProjection = { libraryId: LibraryId; confirmedCount: num
 /**
  * 某个 Skill 位置引用当前对象的方式。
  *
- * 生效与锁定是两件事：`Confirmed` 表示配置已经起作用，`PendingAdjustment` 表示只有
- * 未完成的应用操作引用它、尚未确认生效。两者的并集才是成员锁定的判定依据。
+ * `Confirmed` 表示配置已经起作用，`PendingAdjustment` 表示只有未完成的应用操作
+ * 引用它、尚未确认生效。两者的并集用于整库删除保护和使用状态展示。
  */
 export type LibraryUsageState = "confirmed" | "pendingAdjustment"
 export type LibraryWorkspaceSnapshot = { environment: EnvironmentRef; libraries: SkillLibrarySummary[];
 /**
  * catalog 内容的摘要。应用关系不参与该摘要，页面重新进入时自行拉取最新投影。
  */
-revision: string; usageProjection: LibraryUsageProjection[] }
+revision: string; usageProjection: LibraryUsageProjection[]; usageInventoryComplete: boolean; usageInventoryProblemCount: number }
 export type LifecycleAction = "closeCurrentWindow" | "quitApplication" | "restartApplication"
 export type LifecycleActionOutcome = { status: "performed" } | { status: "delegated" } | { status: "blocked"; snapshot: BackendActivitySnapshot }
 export type LifecycleActionRequestedEvent = { action: LifecycleAction }
@@ -986,11 +1006,11 @@ export type LifecycleLeaseKind = "applicationUpdate" | "runtimeMaintenance"
  * `list_skills` 的运行时读取结果。
  * Skill 与 scope Agents 来自同一次 Agent runtime snapshot，避免 Frontend 拼接不同 revision。
  */
-export type ListSkillsResult = { skills: InstalledSkill[]; agents: ResolvedAgent[];
+export type ListSkillsResult = { pathBase?: ScopePathBase | null; skills: InstalledSkill[]; agents: ResolvedAgent[];
 /**
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */
-pathExists: boolean; libraryApplication: LibraryApplicationSummary }
+pathExists: boolean; readStatus?: SkillReadStatus | null; libraryApplication: LibraryApplicationSummary }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
 export type ManageAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; optionStates: ManageInstallOptionState[] }
 export type ManageAgentsConfirmation = { removesEntityDirectories: boolean }
@@ -1006,6 +1026,11 @@ export type ManageInstallOptionState = { optionId: AgentInstallOptionId; current
 export type ManageSelectedEffect = "retain" | "add" | "repair"
 export type ManageSelectionDisabledReason = "unrecognizedEntry"
 export type ManageUnselectedEffect = "keepAbsent" | "remove" | "restoreLibrary"
+export type MembershipScopeImpact = { context: SkillLocationRef; skills: MembershipSkillImpact[] }
+export type MembershipScopeImpactKind = "added" | "switched" | "fallback" | "removed" | "unchanged" | "unverified"
+export type MembershipScopeResult = { context: SkillLocationRef; state: MembershipScopeState; error: AppError | null }
+export type MembershipScopeState = "synced" | "pending" | "unverified" | "recoveryRequired" | "cancelled"
+export type MembershipSkillImpact = { skillName: string; kind: MembershipScopeImpactKind }
 export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "manageAgentDefinitions" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference" | "updateSettings" | "manageGithubCredential" | "manageLibraries" | "resolveRecovery"
 export type MutationPhase = "preparing" | "acquiring" | "validating" | "committing" | "finishing"
 export type MutationProgress = { subject: string | null; current: number | null; total: number | null }
@@ -1021,13 +1046,15 @@ export type ObservedEntryId = string
 export type ObservedEntryKind = "missing" | "directory" | "symlink" | "junction" | "brokenLink" | "other"
 export type ObservedEntryReader = { agentId: AgentId; displayName: string; logicalTargetId: string }
 export type ObservedPhysicalEntry = { entryId: ObservedEntryId; displayPath: ResourceLocator; kind: ObservedEntryKind; physicalTargetKey: string; readers: ObservedEntryReader[]; willBreakIfStandardRemoved: boolean }
-export type OperationErrorCode = "validation" | "skillPlacementTargetConflict" | "wellKnownScopeNotFound" | "environmentUnavailable" | "storageUnsupported" | "capabilityUnavailable" | "unsafePath" | "unsafeSourceLink" | "selfCopy" | "payloadSessionExpired" | "staleContext" | "staleRegistry" | "staleEnvironment" | "stalePayload" | "staleTarget" | "externalLockChanged" | "upstreamSkillNameChanged" | "upstreamSkillDeleted" | "mutationCancelled" | "executionFailed" | "restoreFailed" | "recoveryRequired" | "libraryRecoveryIncomplete" | "configurationReadOnly" | "configurationCorrupted"
+export type OperationErrorCode = "validation" | "noUpdateTargets" | "skillPlacementTargetConflict" | "wellKnownScopeNotFound" | "environmentUnavailable" | "storageUnsupported" | "capabilityUnavailable" | "unsafePath" | "unsafeSourceLink" | "selfCopy" | "payloadSessionExpired" | "staleContext" | "staleRegistry" | "staleEnvironment" | "stalePayload" | "staleTarget" | "externalLockChanged" | "upstreamSkillNameChanged" | "upstreamSkillDeleted" | "mutationCancelled" | "executionFailed" | "restoreFailed" | "recoveryRequired" | "libraryRecoveryIncomplete" | "configurationReadOnly" | "configurationCorrupted" | "configurationWriteUnconfirmed"
 export type PathSpec = { kind: "home"; relativePath: string } | { kind: "configHome"; relativePath: string } | { kind: "project"; relativePath: string } | { kind: "environmentVariable"; name: string; relativePath: string; fallback: PathSpec } | { kind: "firstExisting"; candidates: PathSpec[]; fallback: PathSpec } |
 /**
  * Absolute paths are reserved for built-in system detection candidates.
  */
 { kind: "absolute"; path: string }
 export type PhysicalIdentityComparison = "same" | "different" | "unknown"
+export type PreparedLibraryUpdatePreview = { skillNames: string[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
+export type PreparedUpdatePreview = { sources: UpdateSourcePreview[]; pathBase?: ScopePathBase | null; skills: UpdateSkillPreview[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
 export type PreviewAddLibrarySkillItem = { skillName: string; payload: AcquiredPayloadHandle }
 export type PreviewAddLibrarySkillsRequest = { environment: EnvironmentRef; libraryId: LibraryId; discoverySession: DiscoverySessionHandle; skills: PreviewAddLibrarySkillItem[] }
 export type PreviewToken = { generation: string; registryRevision: string; environmentRevision: string; contextRevision: ContextSnapshotRevision }
@@ -1037,6 +1064,10 @@ export type ProxyConnectionProbe = { status: ProxyConnectionStatus; elapsedMs: n
 export type ProxyConnectionStatus = "succeeded" | "failed"
 export type ProxyConnectionTestResult = { onlineServices: ProxyConnectionProbe; nativeGit: ProxyConnectionProbe; wslGitByDistro: Partial<{ [key in string]: ProxyConnectionProbe }> }
 export type ProxyMode = "custom" | "direct"
+export type ProxySettingsIssue = { target: ProxySettingsTarget; code: ProxySettingsIssueCode; usingPrevious: boolean }
+export type ProxySettingsIssueCode = "invalidFormat" | "unsupportedFormat" | "invalidProxyUrl" | "unreadableDocument" | "invalidDocument" | "writeUnconfirmed"
+export type ProxySettingsSnapshot = { settings: NetworkProxySettings; issues: ProxySettingsIssue[]; configPath: string | null; repairable: boolean }
+export type ProxySettingsTarget = { kind: "all" } | { kind: "http" } | { kind: "nativeGit" } | { kind: "wslGit"; distro: string | null }
 export type RecoveryAction = { resourceId: RecoveryResourceId; suggestedActionCode: SuggestedActionCode }
 export type RecoveryResourceId = string
 export type RecoveryResourcePath = { kind: RecoveryResourcePathKind; location: ResourceLocator }
@@ -1047,19 +1078,25 @@ export type RecoverySubject = { operationKind: MutationKind; skillName: string; 
 export type RegisteredProject = { id: string; nativePath: string; displayName: string | null; order: number | null; suppressCrossStorageWarning?: boolean }
 export type RemoveIntent = { kind: "fullSkill" } | { kind: "agentEntries"; entryIds: ObservedEntryId[] }
 export type RemoveLibrarySkillRequest = { environment: EnvironmentRef; libraryId: LibraryId; skillName: string }
-export type RemovePreview = { token: PreviewToken; context: SkillLocationRef; skillName: string; standard: ObservedEntryKind; physicalEntries: ObservedPhysicalEntry[]; restoresLibrary: boolean }
+export type RemovePreview = { pathBase?: ScopePathBase | null; token: PreviewToken; context: SkillLocationRef; skillName: string; standard: ObservedEntryKind; standardPath: ResourceLocator | null; physicalEntries: ObservedPhysicalEntry[]; restoresLibrary: boolean }
 export type RemoveRequest = { token: PreviewToken; context: SkillLocationRef; skillName: string; intent: RemoveIntent }
 export type RemoveResponse = { units: MutationUnitResult[] }
 export type ResolvedAgent = { definition: AgentDefinition; detection: DetectionState; detectionReason: DetectionReason | null; global: ResolvedAgentScope; project: ResolvedAgentScope }
 export type ResolvedAgentScope = { enabled: boolean; readsStandard: boolean; standardPath: string | null; privatePath: string | null; readPaths: string[]; standardPresence: DirectoryPresenceState | null; privatePresence: DirectoryPresenceState | null; legacyPaths: ResolvedPathPresence[] }
 export type ResolvedPathPresence = { path: string | null; presence: DirectoryPresenceState }
 export type ResourceLocator = { environment: EnvironmentRef; nativePath: string }
+export type RetiredCleanupResult = { libraryId: LibraryId; memberName: string; retirementId: string; state: RetiredCleanupState; error: AppError | null }
+export type RetiredCleanupState = "purged" | "retained" | "failed"
 /**
  * 安装范围
  */
 export type Scope = "global" | "project"
 export type ScopeDefinition = { enabled: boolean; readsStandard: boolean; privatePath: PathSpec | null }
 export type ScopeLocation = "standard" | "private" | "both"
+/**
+ * 仅供界面缩短安装路径；执行仍使用原有目标标识与物理身份。
+ */
+export type ScopePathBase = { logicalRoot: ResourceLocator; physicalRoot: ResourceLocator | null; pathStyle: DisplayPathStyle }
 /**
  * Skill Deck 应用配置
  * 持久化到 ~/.skill-deck/config.json
@@ -1084,16 +1121,20 @@ export type SkillLibrarySummary = { id: LibraryId; name: string; skillCount: num
 export type SkillLocation = { scope: "global" } | { scope: "project"; project_id: string }
 export type SkillLocationRef = { environment: EnvironmentRef; scope: SkillLocation }
 export type SkillPlacementTargetKind = "file" | "other"
+export type SkillReadIssue = { code: string; path: ResourceLocator; agentIds: AgentId[] }
+export type SkillReadIssueCount = { code: string; count: number }
+export type SkillReadStatus = { complete: boolean; issues: SkillReadIssue[]; counts: SkillReadIssueCount[]; omittedCount: number }
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
-export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness }
-export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "unavailable"
+export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness; comparisonFingerprint?: string | null; sourceKey?: string | null; error?: AppError | null }
+export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "directoryLinksUnsupported" | "unavailable"
+export type SourceProvider = "github" | "gitlab" | "git" | "wellKnown"
 export type SourceSelectionIntent = { wildcardRequested: boolean; explicitSkillNames: string[] }
 export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
-export type SourceUpdateCheckInfo = { source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null }
+export type SourceUpdateCheckInfo = { provider?: SourceProvider | null; source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null; sourceKey?: string | null; error?: AppError | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"
 export type SuggestedActionCode = "reviewChanges" | "refresh" | "openRecoveryResource" | "saveDefaultsLater"
 export type UnavailableAgentSelection = { agentId: string; reason: UnavailableAgentSelectionReason }
-export type UnavailableAgentSelectionReason = "definitionMissing"
+export type UnavailableAgentSelectionReason = "definitionMissing" | "optionUnavailable"
 export type UpdateCapabilityReasonCode = "missingRemoteHash" | "missingSource" | "unsupportedSource"
 export type UpdateCheckMode = "automatic" | "force"
 export type UpdateCheckOutcome = "completed" | "partial" | "notCompleted"
@@ -1101,19 +1142,21 @@ export type UpdateCheckReasonCode = "missingRemoteHash" | "missingSource" | "uns
 export type UpdateCheckRequest = { context: SkillLocationRef; mode: UpdateCheckMode; selection: UpdateCheckSelection }
 export type UpdateCheckResponse = { outcome: UpdateCheckOutcome; sources: SourceUpdateCheckInfo[]; skills: SkillUpdateInfo[] }
 export type UpdateCheckSelection = { kind: "skills"; skills: SkillIdentity[] }
-export type UpdateConflictCopyPreview = { entryId: ObservedEntryId; readers: ObservedEntryReader[] }
-export type UpdateCoverage = { kind: "updated" } | { kind: "preservedConflicts" } | { kind: "notUpdated"; error: ErrorReport }
-export type UpdateExecutionRequest = { request: UpdateRequest; overwritePrivateEntries: ObservedEntryId[] }
+export type UpdateConflictCopyPreview = { isStandard?: boolean | null; entryId: ObservedEntryId; readers: ObservedEntryReader[]; displayPath: ResourceLocator }
+export type UpdateCoverage = { kind: "updated" } | { kind: "updatedWithSkippedCopies" } | { kind: "notUpdated"; error: ErrorReport }
 export type UpdateLibrarySkillsRequest = { environment: EnvironmentRef; libraryId: LibraryId; skillNames: string[] }
+export type UpdateLinkedTargetPreview = { displayPath: ResourceLocator; readers: ObservedEntryReader[]; isStandard: boolean; targetPath: ResourceLocator; targetCopyEntryId: ObservedEntryId | null }
 export type UpdateOutcome = "succeeded" | "partial" | "failed" | "cancelled"
-export type UpdatePreview = { token: PreviewToken; skills: UpdateSkillPreview[] }
+export type UpdatePreparationIssue = { skillName: string; error: AppError }
 export type UpdateRequest = { context: SkillLocationRef; skillNames: string[] }
 export type UpdateResponse = { sources: UpdateSourceResult[]; skills: UpdateSkillResult[]; outcome: UpdateOutcome }
-export type UpdateSkillPreview = { skillName: string; sourceDisplay: string; refDisplay: string; adapterTargets: ObservedEntryReader[]; capability: CheckUpdateCapability; cleanCopyCount: number; overwritePrivateEntries: UpdateConflictCopyPreview[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
-export type UpdateSkillResult = { skillIdentity: SkillIdentity; sourceResultId: string; mutation: MutationUnitResult | null; coverage: UpdateCoverage; warnings: UpdateWarningCode[]; retryable: boolean }
+export type UpdateSkillPreview = { linkedTargets: UpdateLinkedTargetPreview[]; sourceKey?: string | null; skillName: string; sourceDisplay: string; refDisplay: string; adapterTargets: ObservedEntryReader[]; capability: CheckUpdateCapability; cleanCopyCount: number; targets: UpdateTargetPreview[]; preservedTargets?: UpdateTargetPreview[] | null; overwritePrivateEntries: UpdateConflictCopyPreview[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
+export type UpdateSkillResult = { skippedCopyPaths?: ResourceLocator[] | null; skillIdentity: SkillIdentity; sourceResultId: string; mutation: MutationUnitResult | null; coverage: UpdateCoverage; warnings: UpdateWarningCode[]; retryable: boolean }
+export type UpdateSourcePreview = { sourceKey: string; sourceDisplay: string; refDisplay: string; skillNames: string[]; error: AppError | null }
 export type UpdateSourceResult = { id: string; source: string; status: UpdateSourceStatus; error: ErrorReport | null }
 export type UpdateSourceStatus = "acquired" | "failed"
-export type UpdateWarningCode = "preservedConflictingCopy"
+export type UpdateTargetPreview = { selectableEntryId?: ObservedEntryId | null; isStandard?: boolean | null; kind?: ObservedEntryKind | null; linkTarget?: ResourceLocator | null; displayPath: ResourceLocator; readers: ObservedEntryReader[]; restoring: boolean }
+export type UpdateWarningCode = "skippedCopy"
 export type WslGitProxySettings = { behavior: "followNativeGit" } | { behavior: "useExistingGitConfig" } | { behavior: "useProxy"; proxyUrl: string; scope: GitProxyScope }
 export type WslIntegrationBusyReason = "mutation" | "lifecycle" | "installWizard" | "wslOperation"
 

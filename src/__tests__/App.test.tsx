@@ -130,7 +130,7 @@ describe('App', () => {
     window.history.replaceState({}, '', '/');
   });
 
-  it('refreshes the committed Native Global workspace after the wizard completes', async () => {
+  it('refreshes the installed workspace and invalidates its previous update results', async () => {
     mocks.refreshWorkspace.mockResolvedValue(undefined);
 
     render(<App />);
@@ -152,7 +152,7 @@ describe('App', () => {
       () => expect(mocks.refreshWorkspace).toHaveBeenCalledWith({
         environment: { kind: 'wsl', distro_name: 'Ubuntu' },
         scope: { scope: 'project', project_id: 'project-a' },
-      }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] }),
+      }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'], invalidateUpdates: true }),
       { timeout: 5000 },
     );
   });

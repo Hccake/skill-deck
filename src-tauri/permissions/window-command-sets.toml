@@ -7,9 +7,7 @@ permissions = [
   "allow-execute-lifecycle-action",
   "allow-get-active-mutation",
   "allow-get-install-agent-selection",
-  "allow-install-skills",
   "allow-list-environment-projects",
-  "allow-preview-install",
   "allow-request-cancel-active-mutation",
   "allow-search-discover-skills"
 ]
@@ -62,17 +60,20 @@ permissions = [
   "allow-open-recovery-resource",
   "allow-open-skill-resource",
   "allow-preview-add-library-skills",
+  "allow-preview-remove-library-skill",
   "allow-preview-copy-skill-to-projects",
   "allow-preview-custom-agent-delete",
   "allow-preview-library-application",
-  "allow-preview-library-skill-updates",
+  "allow-prepare-library-skill-updates",
   "allow-preview-manage-skill-agents",
   "allow-preview-remove",
-  "allow-preview-update",
+  "allow-prepare-update",
+  "allow-cancel-update-preparation",
   "allow-read-library-skill-content",
   "allow-read-skill-content",
   "allow-remove-environment-project",
   "allow-remove-library-skill",
+  "allow-resume-library-membership",
   "allow-remove-skill",
   "allow-rename-skill-library",
   "allow-retry-library-application",
@@ -85,8 +86,7 @@ permissions = [
   "allow-set-wsl-integration-enabled",
   "allow-test-proxy-connection",
   "allow-update-library-skills",
-  "allow-update-skill",
-  "allow-update-skills-batch",
+  "allow-execute-update",
   "allow-validate-custom-agent-draft"
 ]
 
@@ -95,5 +95,7 @@ identifier = "install-wizard-commands"
 description = "Application commands available to the install wizard"
 permissions = [
   "shared-business-commands",
-  "allow-confirm-install-agent-selection"
+  "allow-confirm-install-agent-selection",
+  "allow-install-skills",
+  "allow-preview-install"
 ]

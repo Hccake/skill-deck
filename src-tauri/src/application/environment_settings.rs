@@ -1,6 +1,6 @@
 use crate::application::payload_session::PayloadSessionManager;
 use crate::application::runtime_admission::{AdmissionDenied, RuntimeAdmissionCoordinator};
-use crate::core::update_config;
+use crate::core::app_config::ConfigStore;
 use crate::environment::project_service::{self, EnvironmentDiscoverySnapshot};
 use crate::environment::wsl::WslRuntime;
 use crate::error::{AppError, WslIntegrationBusyReason};
@@ -83,7 +83,6 @@ where
             });
         }
         persist(false)?;
-        transition.flush_deferred_source_cleanups().await;
         transition.commit_disabled();
     } else {
         apply_wsl_integration_setting_with(enabled, environments, quiescence_timeout, persist)
@@ -113,17 +112,16 @@ fn map_admission_error(error: AdmissionDenied) -> AppError {
     }
 }
 
-fn merge_config_preserving_wsl_setting(
-    mut config: SkillDeckConfig,
-    persisted: &mut SkillDeckConfig,
-) {
-    config.wsl_integration_enabled = persisted.wsl_integration_enabled;
-    config.network_proxy = persisted.network_proxy.clone();
-    *persisted = config;
+fn merge_config_preserving_wsl_setting(config: SkillDeckConfig, persisted: &mut SkillDeckConfig) {
+    // 通用配置表单只编辑 Git 超时，其余字段由各自的设置入口维护。
+    persisted.git_clone_timeout_secs = config.git_clone_timeout_secs;
 }
 
-pub fn save_config_preserving_wsl_setting(config: SkillDeckConfig) -> Result<(), AppError> {
-    update_config(move |persisted| merge_config_preserving_wsl_setting(config, persisted))?;
+pub(crate) fn save_config_preserving_wsl_setting(
+    config: SkillDeckConfig,
+    store: &ConfigStore,
+) -> Result<(), AppError> {
+    store.update(move |persisted| merge_config_preserving_wsl_setting(config, persisted))?;
     Ok(())
 }
 
@@ -131,18 +129,21 @@ pub struct WslIntegrationSettings<'a> {
     runtime: &'a WslRuntime,
     admission: &'a RuntimeAdmissionCoordinator,
     payloads: &'a PayloadSessionManager,
+    config: &'a ConfigStore,
 }
 
 impl<'a> WslIntegrationSettings<'a> {
-    pub fn new(
+    pub(crate) fn new(
         runtime: &'a WslRuntime,
         admission: &'a RuntimeAdmissionCoordinator,
         payloads: &'a PayloadSessionManager,
+        config: &'a ConfigStore,
     ) -> Self {
         Self {
             runtime,
             admission,
             payloads,
+            config,
         }
     }
 
@@ -162,7 +163,8 @@ impl<'a> WslIntegrationSettings<'a> {
             self.admission,
             WSL_QUIESCENCE_TIMEOUT,
             |enabled| {
-                update_config(|config| config.wsl_integration_enabled = enabled)?;
+                self.config
+                    .update(|config| config.wsl_integration_enabled = enabled)?;
                 Ok(())
             },
             || {
@@ -283,6 +285,28 @@ mod tests {
         merge_config_preserving_wsl_setting(incoming, &mut persisted);
 
         assert_eq!(persisted.network_proxy, expected);
+    }
+
+    #[test]
+    fn saving_git_timeout_preserves_other_fields_from_an_older_form_snapshot() {
+        let incoming = SkillDeckConfig {
+            git_clone_timeout_secs: 60,
+            ..Default::default()
+        };
+        let mut persisted = SkillDeckConfig {
+            projects: vec!["/saved-project".into()],
+            hidden_wsl_distros: vec!["Ubuntu".into()],
+            ..Default::default()
+        };
+        let mut expected = persisted.clone();
+        expected.git_clone_timeout_secs = 60;
+
+        merge_config_preserving_wsl_setting(incoming, &mut persisted);
+
+        assert_eq!(
+            serde_json::to_value(persisted).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
     }
 
     #[test]

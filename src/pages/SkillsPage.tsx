@@ -6,7 +6,6 @@ import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { contextKey, globalContext } from '@/lib/context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
-  sourceDiagnosticsForEnvironment,
   useSkillsDataStore,
   type ContextSkillSnapshot,
 } from '@/stores/skills-data';
@@ -32,7 +31,6 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   requestId: 0,
 };
 const EMPTY_SKILL_NAMES: string[] = [];
-const EMPTY_SCOPE_KEYS = new Set<string>();
 
 const SPLIT_VIEW_LAYOUT = {
   'skills-list-panel': 22,
@@ -63,10 +61,6 @@ export function SkillsPage() {
   const projectSnapshot = projectContextKey
     ? snapshots[projectContextKey] ?? EMPTY_SNAPSHOT
     : EMPTY_SNAPSHOT;
-  const environmentSourceDiagnostics = useMemo(
-    () => sourceDiagnosticsForEnvironment(snapshots, selectedContext.environment),
-    [selectedContext.environment, snapshots],
-  );
   const globalSkills = globalSnapshot.skills;
   const projectSkills = projectSnapshot.skills;
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
@@ -74,9 +68,7 @@ export function SkillsPage() {
   const loadingContent = useSkillDetailStore((s) => s.loadingContent);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const reloadContent = useSkillDetailStore((s) => s.reloadContent);
-  const forceUpdateScopes = useSkillsDataStore((s) => (
-    s.forceUpdateScopes ?? s.checkingUpdateScopes ?? EMPTY_SCOPE_KEYS
-  ));
+  const forceUpdateScopes = useSkillsDataStore((s) => s.forceUpdateScopes);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const updatingContext = useSkillUpdateWorkflow((s) => (
     s.phase === 'executing' ? s.context : null
@@ -85,7 +77,6 @@ export function SkillsPage() {
     s.phase === 'executing' ? s.skillNames : EMPTY_SKILL_NAMES
   ));
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
-  const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const allAgents = selectedContext.scope.scope === 'project'
     ? projectSnapshot.agents
@@ -163,14 +154,6 @@ export function SkillsPage() {
     openCopyToProject(skill, selectedContext);
   }, [openCopyToProject, selectedContext]);
 
-  const handleRepairSource = useCallback((skill: InstalledSkill) => {
-    openRepairSource(
-      skill,
-      skill.scope === 'project' ? selectedContext : selectedGlobalContext,
-      skill.scope === 'project' ? selectedProjectPath : undefined
-    );
-  }, [openRepairSource, selectedContext, selectedGlobalContext, selectedProjectPath]);
-
   useLayoutEffect(() => {
     const hasDetail = Boolean(selectedSkill);
     const hadDetail = previousSplitViewRef.current;
@@ -242,13 +225,13 @@ export function SkillsPage() {
                 <SkillDetailPanel
                   key={selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : `${selectedSkill.scope}:${selectedSkill.name}`}
                   skill={selectedSkill}
-                  sourceDiagnostics={environmentSourceDiagnostics}
                   content={skillContent}
                   loading={loadingContent}
                   agentDisplayNames={agentDisplayNames}
                   updateStatus={selectedSkillUpdateStatus}
                   isCheckingUpdates={isCheckingSelectedSkillUpdates}
-                  projectPath={selectedSkill.scope === 'project' ? selectedProjectPath : undefined}
+                  context={selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext}
+                  pathBase={(selectedSkill.scope === 'project' ? projectSnapshot : globalSnapshot).pathBase}
                   onClose={deselectSkill}
                   onCheckUpdates={handleDetailCheckUpdates}
                   onUpdate={handleDetailUpdate}
@@ -256,8 +239,8 @@ export function SkillsPage() {
                   onRetry={reloadContent}
                   onManageAgents={handleManageAgents}
                   onCopyToProject={selectedSkill.scope === 'project' ? handleCopyToProject : undefined}
-                  onRepairSource={handleRepairSource}
                   onConfigureGitCredentials={() => navigate('/settings?section=git')}
+                  onOpenLibraryVersion={(version) => navigate(`/libraries?${new URLSearchParams({ library: version.libraryId, skill: version.skillName })}`)}
                 />
               </ResizablePanel>
             </>

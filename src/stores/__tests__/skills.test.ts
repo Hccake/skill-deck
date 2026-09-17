@@ -9,8 +9,8 @@ import type {
   UpdateResponse,
 } from '@/bindings';
 import { contextKey } from '@/lib/context';
-import { sourceDiagnosticsForEnvironment, useSkillsDataStore } from '../skills-data';
-import { mergeUpdateInfo, updateInfoCache, type SkillListItem } from '../skills-utils';
+import { useSkillsDataStore } from '../skills-data';
+import { mergeUpdateInfo, type SkillListItem } from '../skills-utils';
 
 const mocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
@@ -47,7 +47,7 @@ function skill(overrides: Partial<SkillListItem> = {}): SkillListItem {
     name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit',
     scope: 'global', agents: ['codex'], associatedAgents: ['codex'], source: 'owner/repo', hasUpdate: true,
     canRunUpdate: true, canCheckForUpdates: true, updateStatus: 'updateAvailable',
-    updateReason: null, ...overrides,
+    comparisonFingerprint: 'baseline-1', updateReason: null, ...overrides,
   };
 }
 
@@ -77,8 +77,9 @@ function setSkills(skills: SkillListItem[]) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function updateInfo(
@@ -96,6 +97,7 @@ function updateInfo(
     sourceUrl: null,
     skillPath: `skills/${name}`,
     freshness: 'fresh',
+    comparisonFingerprint: 'baseline-1', sourceKey: 'source-1',
     ...overrides,
   };
 }
@@ -109,8 +111,8 @@ function sourceInfo(
     requestedRef: 'HEAD',
     resolvedRef: 'main',
     refRevision: 'revision-1',
-    checkedAtEpochMs: 100,
-    expiresAtEpochMs: 200,
+    sourceKey: 'source-1', checkedAtEpochMs: Date.now(),
+    expiresAtEpochMs: Date.now() + 3_600_000,
     freshness: 'fresh',
     lastAttempt: null,
     ...overrides,
@@ -120,1247 +122,290 @@ function sourceInfo(
 describe('skills data store', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    updateInfoCache.clear();
     useSkillsDataStore.setState({
-      snapshots: {},
-      updateCheckSessions: {},
-      isSyncing: false,
-      checkingUpdateScopes: new Set(),
-      automaticUpdateScopes: new Set(),
-      forceUpdateScopes: new Set(),
+      snapshots: {}, updateCheckSessions: {}, isSyncing: false,
+      automaticUpdateScopes: new Set(), forceUpdateScopes: new Set(),
     });
     mocks.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
-    mocks.listAgents.mockResolvedValue({ agents: [] });
-    mocks.checkUpdates.mockResolvedValue({ sources: [], skills: [] });
+    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [sourceInfo('source')], skills: [updateInfo('toolkit')] });
   });
 
-  it('merges typed update information into matching Skills', () => {
-    const info: SkillUpdateInfo = {
-      name: 'toolkit', source: 'owner/repo', hasUpdate: false, status: 'cannotCheck',
-      capability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' },
-      reason: 'missingRemoteHash', gitRef: null, sourceUrl: null, skillPath: null, freshness: 'fresh',
-    };
-    expect(mergeUpdateInfo([skill()], [info])[0]).toMatchObject({
-      updateStatus: 'cannotCheck', updateReason: 'missingRemoteHash',
-    });
-  });
+  const force = (names = ['toolkit']) => useSkillsDataStore.getState().forceCheckUpdates(context, selected(context, names));
 
-  it('binds a default-ref Skill only to HEAD source evidence', () => {
-    const headEvidence = sourceInfo('github.com/owner/repo');
-    const releaseEvidence = sourceInfo('github.com/owner/repo', {
-      requestedRef: 'release',
-      freshness: 'coolingDown',
-    });
-    const [merged] = mergeUpdateInfo(
-      [skill({ gitRef: null, skillPath: 'skills/toolkit' })],
-      [updateInfo('toolkit', {
-        source: 'owner/repo',
-        gitRef: null,
-        skillPath: 'skills/toolkit',
-        status: 'cannotCheck',
-        reason: 'upstreamUnavailable',
-      })],
-      { sources: [releaseEvidence, headEvidence] },
-    );
-
-    expect(merged.updateEvidence?.requestedRef).toBe('HEAD');
-  });
-
-  it('delegates automatic freshness decisions to the Backend', async () => {
+  it('reports an unsuccessful manual check without changing the known update', async () => {
     setSkills([skill()]);
-    await useSkillsDataStore.getState().syncUpdates(context);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({ context, mode: 'automatic', selection: selected(context) });
+    mocks.checkUpdates.mockResolvedValue({ ...response([updateInfo('toolkit', {
+      status: 'cannotCheck', reason: 'upstreamUnavailable', freshness: 'unavailable',
+      error: { kind: 'gitNetworkError', data: { message: 'offline' } },
+    })]), outcome: 'notCompleted' });
+    await force();
+    expect(mocks.toastError).toHaveBeenCalledOnce();
+    expect(snapshot().skills[0].hasUpdate).toBe(true);
+  });
+  const snapshot = () => useSkillsDataStore.getState().snapshots[contextKey(context)]!;
+  const response = (skills: SkillUpdateInfo[], sourceOverrides: Partial<SourceUpdateCheckInfo> = {}): UpdateCheckResponse => ({
+    outcome: 'completed', skills, sources: [sourceInfo('source', sourceOverrides)],
   });
 
-  it('admits an automatic check only after an eligible snapshot and only once per session', async () => {
-    const eligible = skill({ skillPath: 'skills/toolkit' });
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(context)]: {
-          skills: [eligible], agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-      },
-    });
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context,
-      mode: 'automatic',
-      selection: selected(context),
-    });
+  it('matches backend fingerprints and source keys without interpreting URLs', () => {
+    const info = updateInfo('toolkit', { source: 'same display', sourceKey: 'query-a', hasUpdate: true, status: 'updateAvailable' });
+    const merged = mergeUpdateInfo([skill({ hasUpdate: false })], [info], { sources: [
+      sourceInfo('same display', { sourceKey: 'query-b', refRevision: 'wrong' }),
+      sourceInfo('different display', { sourceKey: 'query-a', refRevision: 'correct' }),
+    ] });
+    expect(merged[0]?.updateEvidence?.refRevision).toBe('correct');
+    expect(mergeUpdateInfo([skill({ comparisonFingerprint: 'new-baseline', hasUpdate: false, updateStatus: null })], [info])[0]?.hasUpdate).toBe(false);
   });
 
-  it('waits for the first eligible Skill before marking the initial attempt', async () => {
-    setSkills([]);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    expect(mocks.checkUpdates).not.toHaveBeenCalled();
-    expect(useSkillsDataStore.getState().updateCheckSessions[contextKey(context)]?.initialAttempted)
-      .toBe(false);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [skill({ skillPath: 'skills/toolkit' })],
-      agents: [],
-      pathExists: true,
-    });
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context,
-      mode: 'automatic',
-      selection: selected(context),
-    });
-  });
-
-  it('waits when every Skill is ineligible and checks when one becomes eligible', async () => {
-    setSkills([skill({
-      canCheckForUpdates: false,
-      updateStatus: 'cannotCheck',
-      updateReason: 'missingRemoteHash',
-      skillPath: null,
-    })]);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    expect(mocks.checkUpdates).not.toHaveBeenCalled();
-    expect(useSkillsDataStore.getState().updateCheckSessions[contextKey(context)]?.initialAttempted)
-      .toBe(false);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [skill({ skillPath: 'skills/toolkit' })],
-      agents: [],
-      pathExists: true,
-    });
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context,
-      mode: 'automatic',
-      selection: selected(context),
-    });
-  });
-
-  it('checks each Context once and does not repeat when revisiting either Context', async () => {
-    const ubuntuContext: SkillLocationRef = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'global' },
-    };
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(context)]: {
-          skills: [skill({ skillPath: 'skills/toolkit' })],
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-        [contextKey(ubuntuContext)]: {
-          skills: [skill({
-            name: 'reviewer',
-            path: '/skills/reviewer',
-            canonicalPath: '/canonical/reviewer',
-            skillPath: 'skills/reviewer',
-          })],
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-      },
-    });
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(ubuntuContext);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(ubuntuContext);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
-    expect(mocks.checkUpdates).toHaveBeenNthCalledWith(1, {
-      context,
-      mode: 'automatic',
-      selection: selected(context),
-    });
-    expect(mocks.checkUpdates).toHaveBeenNthCalledWith(2, {
-      context: ubuntuContext,
-      mode: 'automatic',
-      selection: selected(ubuntuContext, ['reviewer']),
-    });
-  });
-
-  it('checks Global and each Project once across Context round trips', async () => {
-    const projectA: SkillLocationRef = {
-      environment: context.environment,
-      scope: { scope: 'project', project_id: 'project-a' },
-    };
-    const projectB: SkillLocationRef = {
-      environment: context.environment,
-      scope: { scope: 'project', project_id: 'project-b' },
-    };
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(context)]: {
-          skills: [skill({ skillPath: 'skills/toolkit' })],
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-        [contextKey(projectA)]: {
-          skills: [skill({ scope: 'project', skillPath: 'skills/toolkit' })],
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-        [contextKey(projectB)]: {
-          skills: [skill({ scope: 'project', skillPath: 'skills/toolkit' })],
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-      },
-    });
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(projectA);
-    await useSkillsDataStore.getState().activateAutomaticChecks(projectB);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(projectB);
-    await useSkillsDataStore.getState().activateAutomaticChecks(projectA);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(3);
-    expect(mocks.checkUpdates).toHaveBeenNthCalledWith(1, {
-      context,
-      mode: 'automatic',
-      selection: selected(context),
-    });
-    expect(mocks.checkUpdates).toHaveBeenNthCalledWith(2, {
-      context: projectA,
-      mode: 'automatic',
-      selection: selected(projectA),
-    });
-    expect(mocks.checkUpdates).toHaveBeenNthCalledWith(3, {
-      context: projectB,
-      mode: 'automatic',
-      selection: selected(projectB),
-    });
-  });
-
-  it('keeps the session gate when the same Environment reconnects and reloads its snapshot', async () => {
-    const installed = skill({ skillPath: 'skills/toolkit' });
-    setSkills([installed]);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    useSkillsDataStore.getState().invalidateContexts([context]);
-    mocks.listSkills.mockResolvedValue({ skills: [installed], agents: [], pathExists: true });
-    await useSkillsDataStore.getState().refreshContext(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(useSkillsDataStore.getState().updateCheckSessions[contextKey(context)]).toMatchObject({
-      active: true,
-      initialAttempted: true,
-    });
-  });
-
-  it('checks only a newly observed or changed skill with a targeted automatic selection', async () => {
-    const first = skill({ skillPath: 'skills/toolkit' });
-    setSkills([first]);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [
-        first,
-        skill({ name: 'reviewer', path: '/skills/reviewer', canonicalPath: '/canonical/reviewer', skillPath: 'skills/reviewer' }),
-      ],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
-    expect(mocks.checkUpdates).toHaveBeenLastCalledWith({
-      context,
-      mode: 'automatic',
-      selection: {
-        kind: 'skills',
-        skills: [{ context, skillName: 'reviewer' }],
-      },
-    });
-  });
-
-  it('checks a skill again when it disappears and later reappears', async () => {
-    const first = skill({ skillPath: 'skills/toolkit' });
-    setSkills([first]);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    mocks.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [first],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
-    expect(mocks.checkUpdates).toHaveBeenLastCalledWith({
-      context,
-      mode: 'automatic',
-      selection: {
-        kind: 'skills',
-        skills: [{ context, skillName: 'toolkit' }],
-      },
-    });
-  });
-
-  it('targets a Skill whose source identity changes during a passive refresh', async () => {
-    const first = skill({ gitRef: 'main', skillPath: 'skills/toolkit' });
-    setSkills([first]);
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'completed',
-      sources: [sourceInfo('github.com/owner/repo')],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/repo',
-        gitRef: 'main',
-        skillPath: 'skills/toolkit',
-      })],
-    });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [skill({ source: 'owner/next-repo', gitRef: 'release', skillPath: 'packages/toolkit' })],
-      agents: [],
-      pathExists: true,
-    });
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'completed',
-      sources: [sourceInfo('github.com/owner/next-repo', { requestedRef: 'release' })],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/next-repo',
-        gitRef: 'release',
-        skillPath: 'packages/toolkit',
-      })],
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
-    expect(mocks.checkUpdates).toHaveBeenLastCalledWith({
-      context,
-      mode: 'automatic',
-      selection: {
-        kind: 'skills',
-        skills: [{ context, skillName: 'toolkit' }],
-      },
-    });
-    expect(updateInfoCache.get(contextKey(context))?.sources).toEqual([
-      expect.objectContaining({ source: 'github.com/owner/next-repo', requestedRef: 'release' }),
-    ]);
-  });
-
-  it('preserves unselected results when a targeted Automatic response is partial', async () => {
-    const toolkit = skill({ name: 'toolkit', source: 'toolkit/repo', gitRef: 'main', skillPath: 'skills/toolkit' });
-    const reviewer = skill({
-      name: 'reviewer',
-      path: '/skills/reviewer',
-      canonicalPath: '/canonical/reviewer',
-      skillPath: 'skills/reviewer',
-      hasUpdate: false,
-      updateStatus: 'upToDate',
-    });
-    setSkills([toolkit, reviewer]);
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'completed',
-      sources: [sourceInfo('github.com/toolkit/repo'), sourceInfo('github.com/reviewer/repo')],
-      skills: [
-        updateInfo('toolkit', { source: 'toolkit/repo', hasUpdate: false }),
-        updateInfo('reviewer', { source: 'reviewer/repo', hasUpdate: false }),
-      ],
-    });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [
-        skill({ name: 'toolkit', source: 'toolkit/repo', gitRef: 'release', skillPath: 'skills/toolkit' }),
-        reviewer,
-      ],
-      agents: [],
-      pathExists: true,
-    });
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'completed',
-      sources: [sourceInfo('github.com/toolkit/repo', { refRevision: 'revision-2' })],
-      skills: [updateInfo('toolkit', {
-        source: 'toolkit/repo',
-        hasUpdate: true,
-        status: 'updateAvailable',
-        gitRef: 'release',
-      })],
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenLastCalledWith({
-      context,
-      mode: 'automatic',
-      selection: { kind: 'skills', skills: [{ context, skillName: 'toolkit' }] },
-    });
-    expect(updateInfoCache.get(contextKey(context))?.results.map((item) => item.name))
-      .toEqual(['reviewer', 'toolkit']);
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: 'toolkit', updateStatus: 'updateAvailable', hasUpdate: true }),
-        expect.objectContaining({ name: 'reviewer', updateStatus: 'upToDate', hasUpdate: false }),
-      ]),
-    );
-  });
-
-  it('records a self-mutation identity without scheduling a targeted Automatic check', async () => {
-    setSkills([skill({ gitRef: 'main', skillPath: 'skills/toolkit' })]);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [skill({ source: 'owner/repaired', gitRef: 'release', skillPath: 'packages/toolkit' })],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context, {
-      origin: 'selfMutation',
-      mutatedSkillNames: ['toolkit'],
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-  });
-
-  it('targets an unrelated external change observed during a self-mutation refresh', async () => {
-    const toolkit = skill({ name: 'toolkit', gitRef: 'main', skillPath: 'skills/toolkit' });
-    const reviewer = skill({
-      name: 'reviewer',
-      path: '/skills/reviewer',
-      canonicalPath: '/canonical/reviewer',
-      source: 'reviewer/repo',
-      gitRef: 'main',
-      skillPath: 'skills/reviewer',
-    });
-    setSkills([toolkit, reviewer]);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    mocks.checkUpdates.mockClear();
-
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [
-        skill({ name: 'toolkit', source: 'toolkit/repaired', gitRef: 'release', skillPath: 'packages/toolkit' }),
-        skill({
-          name: 'reviewer',
-          path: '/skills/reviewer',
-          canonicalPath: '/canonical/reviewer',
-          source: 'reviewer/external',
-          gitRef: 'release',
-          skillPath: 'packages/reviewer',
-        }),
-      ],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context, {
-      origin: 'selfMutation',
-      mutatedSkillNames: ['toolkit'],
-    });
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context,
-      mode: 'automatic',
-      selection: { kind: 'skills', skills: [{ context, skillName: 'reviewer' }] },
-    });
-  });
-
-  it('records a self-mutation before the Context is first activated', async () => {
-    const installed = skill({ gitRef: 'main', skillPath: 'skills/toolkit' });
-    const existing = skill({
-      name: 'reviewer',
-      path: '/skills/reviewer',
-      canonicalPath: '/canonical/reviewer',
-      source: 'reviewer/repo',
-      gitRef: 'main',
-      skillPath: 'skills/reviewer',
-    });
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [installed, existing],
-      agents: [],
-      pathExists: true,
-    });
-    mocks.checkUpdates.mockResolvedValueOnce({ outcome: 'completed', sources: [], skills: [] });
-
-    await useSkillsDataStore.getState().refreshContext(context, {
-      origin: 'selfMutation',
-      mutatedSkillNames: ['toolkit'],
-    });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context,
-      mode: 'automatic',
-      selection: { kind: 'skills', skills: [{ context, skillName: 'reviewer' }] },
-    });
-    expect(useSkillsDataStore.getState().updateCheckSessions[contextKey(context)]).toMatchObject({
-      active: true,
-      initialAttempted: true,
-    });
-  });
-
-  it('prunes only the changed ref diagnostic when one repository has multiple refs', async () => {
-    const head = skill({
-      name: 'head-skill',
-      path: '/skills/head-skill',
-      canonicalPath: '/canonical/head-skill',
-      source: 'owner/repo',
-      gitRef: null,
-      skillPath: 'skills/head',
-    });
-    const release = skill({
-      name: 'release-skill',
-      path: '/skills/release-skill',
-      canonicalPath: '/canonical/release-skill',
-      source: 'owner/repo',
-      gitRef: 'release',
-      skillPath: 'skills/release',
-    });
-    setSkills([head, release]);
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'completed',
-      sources: [
-        sourceInfo('github.com/owner/repo'),
-        sourceInfo('github.com/owner/repo', { requestedRef: 'release' }),
-      ],
-      skills: [
-        updateInfo('head-skill', { source: 'owner/repo', gitRef: null, skillPath: 'skills/head' }),
-        updateInfo('release-skill', { source: 'owner/repo', gitRef: 'release', skillPath: 'skills/release' }),
-      ],
-    });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [
-        head,
-        { ...release, source: 'owner/next-repo' },
-      ],
-      agents: [],
-      pathExists: true,
-    });
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'completed',
-      sources: [sourceInfo('github.com/owner/next-repo', { requestedRef: 'release' })],
-      skills: [updateInfo('release-skill', {
-        source: 'owner/next-repo',
-        gitRef: 'release',
-        skillPath: 'skills/release',
-      })],
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(updateInfoCache.get(contextKey(context))?.sources).toEqual([
-      expect.objectContaining({ source: 'github.com/owner/repo', requestedRef: 'HEAD' }),
-      expect.objectContaining({ source: 'github.com/owner/next-repo', requestedRef: 'release' }),
-    ]);
-  });
-
-  it('clears only Native GitHub provider cooldown after credential maintenance succeeds', async () => {
-    const nativeCooldown = sourceInfo('github.com/owner/repo', {
-      freshness: 'coolingDown',
-      lastAttempt: {
-        checkedAtEpochMs: 100,
-        failure: {
-          reason: 'rateLimited',
-          message: 'rate limited',
-          retryAtEpochMs: 500,
-          providerCooldown: true,
-        },
-      },
-    });
-    const wslContext: SkillLocationRef = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'global' },
-    };
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(context)]: {
-          skills: [skill({ skillPath: 'skills/toolkit', updateEvidence: nativeCooldown })],
-          updateCheck: { outcome: 'notCompleted', sources: [nativeCooldown], skillFreshness: {}, checkedAt: 100 },
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-        [contextKey(wslContext)]: {
-          skills: [skill({ updateEvidence: nativeCooldown })],
-          updateCheck: { outcome: 'notCompleted', sources: [nativeCooldown], skillFreshness: {}, checkedAt: 100 },
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-      },
-    });
-    updateInfoCache.set(contextKey(context), {
-      results: [updateInfo('toolkit', {
-        source: 'owner/repo',
-        freshness: 'coolingDown',
-      })],
-      sources: [nativeCooldown],
-      checkedAt: 100,
-      completeness: 'complete',
-      outcome: 'notCompleted',
-    });
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [skill({ skillPath: 'skills/toolkit' })],
-      agents: [],
-      pathExists: true,
-    });
-
-    useSkillsDataStore.getState().clearNativeGithubProviderCooldown();
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]
-      .skills[0].updateEvidence?.lastAttempt?.failure).toMatchObject({
-      providerCooldown: false,
-      retryAtEpochMs: null,
-    });
-    expect(useSkillsDataStore.getState().snapshots[contextKey(wslContext)]
-      .skills[0].updateEvidence?.lastAttempt?.failure?.providerCooldown).toBe(true);
-  });
-
-  it('collects source diagnostics across Contexts in only the selected Environment', () => {
-    const nativeProject: SkillLocationRef = {
-      environment: { kind: 'native' },
-      scope: { scope: 'project', project_id: 'project-a' },
-    };
-    const wslContext: SkillLocationRef = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'global' },
-    };
-    const snapshot = (source: string) => ({
-      skills: [],
-      updateCheck: {
-        outcome: 'completed' as const,
-        sources: [sourceInfo(source)],
-        skillFreshness: {},
-        checkedAt: 100,
-      },
-      agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-    });
-    const snapshots = {
-      [contextKey(context)]: snapshot('github.com/owner/global'),
-      [contextKey(nativeProject)]: snapshot('github.com/owner/project'),
-      [contextKey(wslContext)]: snapshot('github.com/owner/wsl'),
-    };
-
-    expect(sourceDiagnosticsForEnvironment(snapshots, { kind: 'native' }).map((item) => item.source))
-      .toEqual(['github.com/owner/global', 'github.com/owner/project']);
-  });
-
-  it('does not turn a self-mutation into a delayed initial Automatic check', async () => {
-    setSkills([]);
+  it('waits for eligible canonical installations before making an automatic request', async () => {
     await useSkillsDataStore.getState().activateAutomaticChecks(context);
     expect(mocks.checkUpdates).not.toHaveBeenCalled();
-
-    const installed = skill({ gitRef: 'main', skillPath: 'skills/toolkit' });
-    mocks.listSkills.mockResolvedValue({
-      skills: [installed],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context, {
-      origin: 'selfMutation',
-      mutatedSkillNames: ['toolkit'],
-    });
-    await useSkillsDataStore.getState().refreshContext(context, { origin: 'initial' });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
+    setSkills([skill({ canCheckForUpdates: false })]);
+    await useSkillsDataStore.getState().reconcileAutomaticChecks(context);
     expect(mocks.checkUpdates).not.toHaveBeenCalled();
-    expect(useSkillsDataStore.getState().updateCheckSessions[contextKey(context)]).toMatchObject({
-      active: true,
-      initialAttempted: true,
-    });
-  });
-
-  it('ignores an out-of-order self-mutation fingerprint after a newer refresh commits', async () => {
-    const original = skill({ source: 'owner/original', gitRef: 'main', skillPath: 'skills/toolkit' });
-    const repaired = skill({ source: 'owner/repaired', gitRef: 'release', skillPath: 'packages/toolkit' });
-    setSkills([original]);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    mocks.checkUpdates.mockClear();
-
-    const olderRefresh = deferred<Awaited<ReturnType<typeof mocks.listSkills>>>();
-    const newerRefresh = deferred<Awaited<ReturnType<typeof mocks.listSkills>>>();
-    mocks.listSkills
-      .mockReturnValueOnce(olderRefresh.promise)
-      .mockReturnValueOnce(newerRefresh.promise);
-
-    const olderRequest = useSkillsDataStore.getState().refreshContext(
-      context,
-      { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] },
-    );
-    const newerRequest = useSkillsDataStore.getState().refreshContext(
-      context,
-      { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] },
-    );
-
-    newerRefresh.resolve({ skills: [repaired], agents: [], pathExists: true });
-    await newerRequest;
-    olderRefresh.resolve({ skills: [original], agents: [], pathExists: true });
-    await olderRequest;
-
-    mocks.listSkills.mockResolvedValueOnce({ skills: [repaired], agents: [], pathExists: true });
-    await useSkillsDataStore.getState().refreshContext(context, { origin: 'passive' });
-
-    expect(mocks.checkUpdates).not.toHaveBeenCalled();
-  });
-
-  it('allows a passive toolbar sync to target a newly discovered Skill', async () => {
-    setSkills([skill({ gitRef: 'main', skillPath: 'skills/toolkit' })]);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    mocks.checkUpdates.mockClear();
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [
-        skill({ gitRef: 'main', skillPath: 'skills/toolkit' }),
-        skill({
-          name: 'reviewer',
-          path: '/skills/reviewer',
-          canonicalPath: '/canonical/reviewer',
-          source: 'owner/repo',
-          gitRef: 'main',
-          skillPath: 'skills/reviewer',
-        }),
-      ],
-      agents: [],
-      pathExists: true,
-    });
-
-    await (useSkillsDataStore.getState() as unknown as {
-      syncSkills: (context: SkillLocationRef, options: { origin: 'passive' }) => Promise<void>;
-    }).syncSkills(context, { origin: 'passive' });
-
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context,
-      mode: 'automatic',
-      selection: {
-        kind: 'skills',
-        skills: [{ context, skillName: 'reviewer' }],
-      },
-    });
-  });
-
-  it('reconciles a Skill discovered while Automatic is pending after that request settles', async () => {
-    const first = skill({ skillPath: 'skills/toolkit' });
-    setSkills([first]);
-    const automatic = deferred<UpdateCheckResponse>();
-    mocks.checkUpdates
-      .mockReturnValueOnce(automatic.promise)
-      .mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-
-    const automaticRequest = useSkillsDataStore.getState().activateAutomaticChecks(context);
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [
-        first,
-        skill({
-          name: 'reviewer',
-          path: '/skills/reviewer',
-          canonicalPath: '/canonical/reviewer',
-          skillPath: 'skills/reviewer',
-        }),
-      ],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context, { origin: 'passive' });
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-
-    automatic.resolve({ outcome: 'completed', sources: [], skills: [] });
-    await automaticRequest;
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
-    expect(mocks.checkUpdates).toHaveBeenLastCalledWith({
-      context,
-      mode: 'automatic',
-      selection: {
-        kind: 'skills',
-        skills: [{ context, skillName: 'reviewer' }],
-      },
-    });
-  });
-
-  it('records an automatic attempt even when the IPC rejects and does not retry passively', async () => {
-    setSkills([skill({ skillPath: 'skills/toolkit' })]);
-    mocks.checkUpdates.mockRejectedValue(new Error('disconnected'));
-
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-    await useSkillsDataStore.getState().activateAutomaticChecks(context);
-
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.toastError).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects a duplicate Force request before sending a second IPC call', async () => {
     setSkills([skill()]);
-    const pending = deferred<UpdateCheckResponse>();
-    mocks.checkUpdates.mockReturnValue(pending.promise);
+    await useSkillsDataStore.getState().reconcileAutomaticChecks(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledOnce();
+  });
 
-    const first = useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
-    const second = useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
+  it('reuses fresh comparisons across activation and passive refresh', async () => {
+    setSkills([skill()]);
+    mocks.listSkills.mockResolvedValue({ skills: [skill({ hasUpdate: false, updateStatus: null })], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await useSkillsDataStore.getState().refreshContext(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledOnce();
+  });
 
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(await second).toBeNull();
-    pending.resolve({ outcome: 'completed', sources: [], skills: [] });
+  it('checks an expired visible location again', async () => {
+    setSkills([skill()]);
+    mocks.checkUpdates.mockResolvedValue(response([updateInfo('toolkit')], { expiresAtEpochMs: Date.now() - 1 }));
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await useSkillsDataStore.getState().reconcileAutomaticChecks(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts a new request when an installation baseline changes during a pending check', async () => {
+    setSkills([skill()]);
+    const old = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValueOnce(old.promise).mockResolvedValueOnce(response([updateInfo('toolkit', { comparisonFingerprint: 'baseline-2' })]));
+    const first = useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await Promise.resolve();
+    mocks.listSkills.mockResolvedValue({ skills: [skill({ comparisonFingerprint: 'baseline-2', hasUpdate: false, updateStatus: null })], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshContext(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
+    old.resolve(response([updateInfo('toolkit', { hasUpdate: true, status: 'updateAvailable' })]));
     await first;
+    expect(snapshot().skills[0]?.hasUpdate).toBe(false);
+    expect(snapshot().skills[0]?.comparisonFingerprint).toBe('baseline-2');
   });
 
-  it('defers a passive Automatic check until the pending Force settles', async () => {
-    const first = skill({ skillPath: 'skills/toolkit' });
-    setSkills([first]);
-    mocks.checkUpdates.mockResolvedValueOnce({ outcome: 'completed', sources: [], skills: [] });
+  it('only automatically checks the active location', async () => {
+    const project: SkillLocationRef = { ...context, scope: { scope: 'project', project_id: 'p' } };
+    setSkills([skill()]);
+    useSkillsDataStore.setState((state) => ({ snapshots: { ...state.snapshots, [contextKey(project)]: { ...snapshot(), skills: [skill({ scope: 'project' })] } } }));
+    await useSkillsDataStore.getState().activateAutomaticChecks(project);
+    await useSkillsDataStore.getState().reconcileAutomaticChecks(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledOnce();
+    expect(mocks.checkUpdates).toHaveBeenCalledWith(expect.objectContaining({ context: project }));
+  });
+
+  it('deduplicates only an identical pending request', async () => {
+    setSkills([skill()]);
+    const remote = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValue(remote.promise);
+    const first = force();
+    const second = force();
+    await Promise.resolve();
+    expect(mocks.checkUpdates).toHaveBeenCalledOnce();
+    remote.resolve(response([updateInfo('toolkit')]));
+    await Promise.all([first, second]);
+  });
+
+  it('submits a manual request while automatic checking is pending', async () => {
+    setSkills([skill()]);
+    const automatic = deferred<UpdateCheckResponse>();
+    const manual = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValueOnce(automatic.promise).mockReturnValueOnce(manual.promise);
+    const first = useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await Promise.resolve();
+    const second = force();
+    await Promise.resolve();
+    expect(mocks.checkUpdates.mock.calls.map(([request]) => request.mode)).toEqual(['automatic', 'force']);
+    manual.resolve(response([updateInfo('toolkit', { hasUpdate: true, status: 'updateAvailable' })], { checkedAtEpochMs: 200 }));
+    await second;
+    expect(useSkillsDataStore.getState().automaticUpdateScopes.has(contextKey(context))).toBe(true);
+    expect(useSkillsDataStore.getState().forceUpdateScopes.has(contextKey(context))).toBe(false);
+    automatic.resolve(response([updateInfo('toolkit')], { checkedAtEpochMs: 100 }));
+    await first;
+    expect(snapshot().skills[0]?.hasUpdate).toBe(true);
+    expect(useSkillsDataStore.getState().automaticUpdateScopes.size).toBe(0);
+    expect(useSkillsDataStore.getState().forceUpdateScopes.size).toBe(0);
+  });
+
+  it('lets independent manual selections complete without waiting for the slow member', async () => {
+    setSkills([skill({ name: 'alpha' }), skill({ name: 'beta' })]);
+    const slow = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(response([updateInfo('beta', { hasUpdate: true, status: 'updateAvailable', sourceKey: 'beta-source' })], { sourceKey: 'beta-source' }));
+    const first = force(['alpha']);
+    await Promise.resolve();
+    await force(['beta']);
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
+    expect(snapshot().skills.find((skill) => skill.name === 'beta')?.hasUpdate).toBe(true);
+    expect(useSkillsDataStore.getState().forceUpdateScopes.has(contextKey(context))).toBe(true);
+    slow.resolve(response([updateInfo('alpha')]));
+    await first;
+    expect(snapshot().skills.find((skill) => skill.name === 'alpha')?.hasUpdate).toBe(false);
+    expect(snapshot().skills.find((skill) => skill.name === 'beta')?.hasUpdate).toBe(true);
+  });
+
+  it('retains unselected members when an older batch finishes last', async () => {
+    setSkills([skill({ name: 'alpha' }), skill({ name: 'beta' })]);
+    const batch = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValueOnce(batch.promise).mockResolvedValueOnce(response([updateInfo('alpha', { hasUpdate: true, status: 'updateAvailable' })], { checkedAtEpochMs: 200 }));
+    const first = force(['alpha', 'beta']);
+    await Promise.resolve();
+    await force(['alpha']);
+    batch.resolve(response([updateInfo('alpha'), updateInfo('beta')], { checkedAtEpochMs: 100 }));
+    await first;
+    expect(snapshot().skills.map((skill) => [skill.name, skill.hasUpdate])).toEqual([['alpha', true], ['beta', false]]);
+  });
+
+  it('keeps a confirmed comparison with the current structured failure', async () => {
+    setSkills([skill()]);
+    await force();
+    const error = { kind: 'io' as const, data: { message: 'permission denied' } };
+    mocks.checkUpdates.mockResolvedValue({ ...response([updateInfo('toolkit', { status: 'cannotCheck', freshness: 'unavailable', reason: 'upstreamUnavailable', error })]), outcome: 'notCompleted' });
+    await force();
+    expect(snapshot().skills[0]).toMatchObject({ hasUpdate: false, updateStatus: 'upToDate', updateError: error, updateAttempt: { outcome: 'notCompleted' } });
+    mocks.listSkills.mockResolvedValue({ skills: [skill({ hasUpdate: false, updateStatus: null })], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshContext(context);
+    expect(snapshot().skills[0]?.updateError).toEqual(error);
+    expect(snapshot().skills[0]?.updateStatus).toBe('upToDate');
+  });
+
+  it('invalidates the old response even when reinstalling the same version', async () => {
+    setSkills([skill()]);
+    const old = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValue(old.promise);
+    const checking = force();
+    await Promise.resolve();
+    mocks.listSkills.mockResolvedValue({ skills: [skill({ hasUpdate: false, updateStatus: null })], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshContext(context, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'], invalidateUpdates: true });
+    old.resolve(response([updateInfo('toolkit', { hasUpdate: true, status: 'updateAvailable' })]));
+    await checking;
+    expect(snapshot().skills[0]?.hasUpdate).toBe(false);
+  });
+
+  it('does not restore an invalidated location from a late response', async () => {
+    setSkills([skill()]);
+    const old = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValue(old.promise);
+    const checking = force();
+    await Promise.resolve();
+    useSkillsDataStore.getState().invalidateContexts([context]);
+    old.resolve(response([updateInfo('toolkit')]));
+    await checking;
+    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]).toBeUndefined();
+  });
+
+  it('keeps newer evidence when a later request returns an older cached observation', async () => {
+    setSkills([skill()]);
+    mocks.checkUpdates.mockResolvedValueOnce(response([updateInfo('toolkit', { hasUpdate: true, status: 'updateAvailable' })], { checkedAtEpochMs: 200 }))
+      .mockResolvedValueOnce(response([updateInfo('toolkit', { freshness: 'cached' })], { checkedAtEpochMs: 100 }));
+    await force();
+    await force();
+    expect(snapshot().skills[0]?.hasUpdate).toBe(true);
+  });
+
+  it('does not extend one member freshness when another member of the source is checked', async () => {
+    const rows = [skill({ name: 'alpha' }), skill({ name: 'beta' })];
+    setSkills(rows);
+    mocks.checkUpdates.mockResolvedValueOnce(response([updateInfo('alpha')], { checkedAtEpochMs: 100, expiresAtEpochMs: 1000 }))
+      .mockResolvedValueOnce(response([updateInfo('beta')], { checkedAtEpochMs: 200, expiresAtEpochMs: 2000 }));
+    await force(['alpha']);
+    await force(['beta']);
+    mocks.listSkills.mockResolvedValue({ skills: rows, agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshContext(context);
+    expect(snapshot().skills.find((skill) => skill.name === 'alpha')?.updateEvidence?.expiresAtEpochMs).toBe(1000);
+    expect(snapshot().skills.find((skill) => skill.name === 'beta')?.updateEvidence?.expiresAtEpochMs).toBe(2000);
+  });
+
+  it('ignores an old IPC rejection after the selected member succeeds in a newer request', async () => {
+    setSkills([skill()]);
+    const old = deferred<UpdateCheckResponse>();
+    mocks.checkUpdates.mockReturnValueOnce(old.promise).mockResolvedValueOnce(response([updateInfo('toolkit')]));
+    const first = useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await Promise.resolve();
+    await force();
+    old.reject({ kind: 'io', data: { message: 'old failure' } });
+    await first;
+    expect(snapshot().updateCheck?.error).toBeFalsy();
+  });
+
+  it('restores checking after Agent projections invalidate a snapshot', async () => {
+    setSkills([skill()]);
     await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    useSkillsDataStore.getState().invalidateAgentProjections();
+    mocks.listSkills.mockResolvedValue({ skills: [skill()], agents: [], pathExists: true });
+    await useSkillsDataStore.getState().refreshContext(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
+    expect(snapshot().updateCheck?.results).toHaveLength(1);
+  });
 
-    const force = deferred<UpdateCheckResponse>();
-    mocks.checkUpdates.mockImplementationOnce(() => force.promise);
-    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [] });
-    const forceRequest = useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
+  it('clears successful results before a post-update refresh failure', async () => {
+    setSkills([skill({ updateReason: 'missingRemoteHash' })]);
+    mocks.listSkills.mockRejectedValue({ kind: 'io', data: { message: 'busy' } });
+    await useSkillsDataStore.getState().applyUpdateResult(context, updateResponse('succeeded'));
+    expect(snapshot().skills[0]).toMatchObject({ hasUpdate: false, updateReason: null });
+    expect(snapshot().error?.kind).toBe('io');
+  });
 
+  it('keeps failed update comparisons during refresh', async () => {
+    setSkills([skill()]);
     mocks.listSkills.mockResolvedValue({
-      skills: [
-        first,
-        skill({ name: 'reviewer', path: '/skills/reviewer', canonicalPath: '/canonical/reviewer', skillPath: 'skills/reviewer' }),
-      ],
+      skills: [skill({ hasUpdate: false, updateStatus: null })],
       agents: [],
       pathExists: true,
     });
-    await useSkillsDataStore.getState().refreshContext(context);
 
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
-    force.resolve({ outcome: 'completed', sources: [], skills: [] });
-    await forceRequest;
+    await useSkillsDataStore.getState().applyUpdateResult(context, updateResponse('failed'));
 
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(3);
-    expect(mocks.checkUpdates).toHaveBeenLastCalledWith({
-      context,
-      mode: 'automatic',
-      selection: {
-        kind: 'skills',
-        skills: [{ context, skillName: 'reviewer' }],
-      },
+    expect(mocks.listSkills).toHaveBeenCalledExactlyOnceWith(context);
+    expect(snapshot().skills[0]).toMatchObject({
+      hasUpdate: true,
+      updateStatus: 'updateAvailable',
     });
   });
 
-  it('checks only the selected project Context automatically', async () => {
-    const projectContext: SkillLocationRef = {
-      environment: context.environment,
-      scope: { scope: 'project', project_id: 'project-a' },
-    };
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(projectContext)]: {
-          skills: [skill({ scope: 'project', skillPath: 'skills/toolkit' })],
-          agents: [], pathExists: true, loading: false, error: null, requestId: 1,
-        },
-      },
-    });
-    await useSkillsDataStore.getState().syncUpdates(projectContext);
-    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({
-      context: projectContext, mode: 'automatic', selection: selected(projectContext),
-    });
-  });
-
-  it('forwards the typed force-check selection unchanged', async () => {
-    const selection: UpdateCheckSelection = {
-      kind: 'skills', skills: [{ context, skillName: 'toolkit' }],
-    };
-    await useSkillsDataStore.getState().forceCheckUpdates(context, selection);
-    expect(mocks.checkUpdates).toHaveBeenCalledWith({ context, mode: 'force', selection });
-  });
-
-  it('keeps a newer Force(single) result when an older Automatic(all) finishes last', async () => {
-    setSkills([skill({
-      hasUpdate: false,
-      updateStatus: 'upToDate',
-      skillPath: 'skills/toolkit',
-    })]);
-    const automatic = deferred<UpdateCheckResponse>();
-    const force = deferred<UpdateCheckResponse>();
-    mocks.checkUpdates
-      .mockImplementationOnce(() => automatic.promise)
-      .mockImplementationOnce(() => force.promise);
-
-    const automaticRequest = useSkillsDataStore.getState().syncUpdates(context);
-    const forceRequest = useSkillsDataStore.getState().forceCheckUpdates(context, {
-      kind: 'skills',
-      skills: [{ context, skillName: 'toolkit' }],
-    });
-
-    force.resolve({
-      outcome: 'completed',
-      sources: [sourceInfo('github.com/force/repo')],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/repo',
-        hasUpdate: true,
-        status: 'updateAvailable',
-        freshness: 'fresh',
-      })],
-    });
-    await forceRequest;
-    automatic.resolve({
-      outcome: 'notCompleted',
-      sources: [sourceInfo('github.com/automatic/repo', { freshness: 'stale' })],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/repo',
-        hasUpdate: false,
-        status: 'upToDate',
-        freshness: 'stale',
-      })],
-    });
-    await automaticRequest;
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]).toMatchObject({
-      skills: [{ name: 'toolkit', hasUpdate: true, updateFreshness: 'fresh' }],
-      updateCheck: {
-        sources: [{ source: 'github.com/force/repo' }],
-        skillFreshness: { toolkit: 'fresh' },
-      },
-    });
-  });
-
-  it('keeps a Context marked checking until every request for it settles', async () => {
-    setSkills([skill({ skillPath: 'skills/toolkit' })]);
-    const automatic = deferred<UpdateCheckResponse>();
-    const force = deferred<UpdateCheckResponse>();
-    mocks.checkUpdates
-      .mockImplementationOnce(() => automatic.promise)
-      .mockImplementationOnce(() => force.promise);
-
-    const automaticRequest = useSkillsDataStore.getState().syncUpdates(context);
-    const forceRequest = useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
-    expect(useSkillsDataStore.getState().checkingUpdateScopes.has(contextKey(context))).toBe(true);
-
-    automatic.resolve({ outcome: 'completed', sources: [], skills: [] });
-    await automaticRequest;
-    expect(useSkillsDataStore.getState().checkingUpdateScopes.has(contextKey(context))).toBe(true);
-
-    force.resolve({ outcome: 'completed', sources: [], skills: [] });
-    await forceRequest;
-    expect(useSkillsDataStore.getState().checkingUpdateScopes.has(contextKey(context))).toBe(false);
-  });
-
-  it('preserves unselected source diagnostics and freshness after a partial Force check', async () => {
-    setSkills([
-      skill({ name: 'toolkit', source: 'toolkit/repo' }),
-      skill({ name: 'reviewer', source: 'reviewer/repo', path: '/skills/reviewer', canonicalPath: '/canonical/reviewer' }),
-    ]);
-    mocks.checkUpdates.mockResolvedValueOnce({
-      sources: [
-        sourceInfo('github.com/toolkit/repo', { freshness: 'cached' }),
-        sourceInfo('github.com/reviewer/repo', { freshness: 'stale' }),
-      ],
-      skills: [
-        updateInfo('toolkit', { freshness: 'cached' }),
-        updateInfo('reviewer', { freshness: 'stale' }),
-      ],
-    });
-    await useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
-
-    mocks.checkUpdates.mockResolvedValueOnce({
-      sources: [sourceInfo('github.com/toolkit/repo', {
-        freshness: 'coolingDown',
-        lastAttempt: {
-          checkedAtEpochMs: 300,
-          failure: {
-            reason: 'rateLimited',
-            message: 'rate limited',
-            retryAtEpochMs: 500,
-            providerCooldown: true,
-          },
-        },
-      })],
-      skills: [updateInfo('toolkit', { freshness: 'coolingDown' })],
-    });
-    await useSkillsDataStore.getState().forceCheckUpdates(context, {
-      kind: 'skills',
-      skills: [{ context, skillName: 'toolkit' }],
-    });
-
-    const snapshot = useSkillsDataStore.getState().snapshots[contextKey(context)];
-    expect(snapshot).toMatchObject({
-      skills: [
-        { name: 'reviewer', updateFreshness: 'stale' },
-        { name: 'toolkit', updateFreshness: 'coolingDown' },
-      ],
-      updateCheck: {
-        skillFreshness: { reviewer: 'stale', toolkit: 'coolingDown' },
-      },
-    });
-    expect(snapshot?.updateCheck?.sources).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'github.com/reviewer/repo', freshness: 'stale' }),
-      expect.objectContaining({
-        source: 'github.com/toolkit/repo',
-        freshness: 'coolingDown',
-        lastAttempt: expect.objectContaining({
-          failure: expect.objectContaining({ retryAtEpochMs: 500, providerCooldown: true }),
-        }),
-      }),
-    ]));
-  });
-
-  it('keeps the last available update when a later check does not complete', async () => {
-    setSkills([skill({ hasUpdate: true, updateStatus: 'updateAvailable' })]);
-    updateInfoCache.set(contextKey(context), {
-      results: [updateInfo('toolkit', { source: 'owner/repo', hasUpdate: true, status: 'updateAvailable' })],
-      sources: [sourceInfo('github.com/owner/repo')],
-      checkedAt: 100,
-      completeness: 'complete',
-      outcome: 'completed',
-    });
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'notCompleted',
-      sources: [sourceInfo('github.com/owner/repo', {
-        freshness: 'backingOff',
-        lastAttempt: {
-          checkedAtEpochMs: 300,
-          failure: {
-            reason: 'network',
-            message: 'must not be shown',
-            retryAtEpochMs: 500,
-            providerCooldown: false,
-          },
-        },
-      })],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/repo',
-        hasUpdate: false,
-        status: 'cannotCheck',
-        reason: 'upstreamUnavailable',
-        freshness: 'backingOff',
-      })],
-    } satisfies UpdateCheckResponse);
-
-    const outcome = await useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
-
-    expect(outcome).toBe('notCompleted');
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]).toMatchObject({
-      skills: [{
-        name: 'toolkit',
-        hasUpdate: true,
-        updateStatus: 'updateAvailable',
-        updateReason: null,
-        updateFreshness: 'backingOff',
-        updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
-        updateEvidence: {
-          source: 'github.com/owner/repo',
-          lastAttempt: {
-            failure: { reason: 'network', retryAtEpochMs: 500 },
-          },
-        },
-      }],
-      updateCheck: { outcome: 'notCompleted' },
-    });
-  });
-
-  it('keeps a confirmed up-to-date result while a later check is incomplete', async () => {
-    setSkills([skill({ hasUpdate: false, updateStatus: 'upToDate' })]);
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'notCompleted',
-      sources: [sourceInfo('github.com/owner/repo', {
-        freshness: 'backingOff',
-        lastAttempt: {
-          checkedAtEpochMs: 300,
-          failure: {
-            reason: 'network',
-            message: 'temporary failure',
-            retryAtEpochMs: 500,
-            providerCooldown: false,
-          },
-        },
-      })],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/repo',
-        hasUpdate: false,
-        status: 'cannotCheck',
-        reason: 'upstreamUnavailable',
-        freshness: 'backingOff',
-      })],
-    } satisfies UpdateCheckResponse);
-
-    await useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
-      hasUpdate: false,
-      updateStatus: 'upToDate',
-      updateReason: null,
-      updateAttempt: { outcome: 'notCompleted' },
-    });
+  it('does not automatically retry failed IPC in a settling loop', async () => {
+    setSkills([skill()]);
+    mocks.checkUpdates.mockRejectedValue({ kind: 'io', data: { message: 'offline' } });
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await useSkillsDataStore.getState().reconcileAutomaticChecks(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledOnce();
+    expect(snapshot().updateCheck?.error?.kind).toBe('io');
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
-  it('does not preserve a committed comparison after the source identity changes', async () => {
-    setSkills([skill({
-      source: 'owner/old-repo',
-      gitRef: 'main',
-      skillPath: 'skills/toolkit',
-      hasUpdate: false,
-      updateStatus: 'upToDate',
-    })]);
-    updateInfoCache.set(contextKey(context), {
-      results: [updateInfo('toolkit', {
-        source: 'owner/old-repo',
-        gitRef: 'main',
-        skillPath: 'skills/toolkit',
-        hasUpdate: false,
-        status: 'upToDate',
-      })],
-      sources: [],
-      checkedAt: 100,
-      completeness: 'complete',
-      outcome: 'completed',
-    });
-    mocks.listSkills.mockResolvedValueOnce({
-      skills: [skill({
-        source: 'owner/new-repo',
-        gitRef: 'release',
-        skillPath: 'packages/toolkit',
-        hasUpdate: false,
-        updateStatus: null,
-        updateReason: null,
-      })],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-    mocks.checkUpdates.mockResolvedValueOnce({
-      outcome: 'notCompleted',
-      sources: [sourceInfo('github.com/owner/new-repo', {
-        requestedRef: 'release',
-        resolvedRef: null,
-        refRevision: null,
-        checkedAtEpochMs: null,
-        expiresAtEpochMs: null,
-        freshness: 'backingOff',
-        lastAttempt: {
-          checkedAtEpochMs: 300,
-          failure: {
-            reason: 'network',
-            message: 'temporary failure',
-            retryAtEpochMs: 500,
-            providerCooldown: false,
-          },
-        },
-      })],
-      skills: [updateInfo('toolkit', {
-        source: 'owner/new-repo',
-        gitRef: 'release',
-        skillPath: 'packages/toolkit',
-        hasUpdate: false,
-        status: 'cannotCheck',
-        reason: 'upstreamUnavailable',
-        freshness: 'backingOff',
-      })],
-    } satisfies UpdateCheckResponse);
-
-    await useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
-      source: 'owner/new-repo',
-      gitRef: 'release',
-      skillPath: 'packages/toolkit',
-      hasUpdate: false,
-      updateStatus: 'cannotCheck',
-      updateReason: 'upstreamUnavailable',
-      updateAttempt: { outcome: 'notCompleted' },
-    });
-  });
-
-  it('preserves unselected update state when applying and replaying a partial force check', async () => {
-    const toolkit = skill({ name: 'toolkit', hasUpdate: false, updateStatus: 'upToDate' });
-    const reviewer = skill({
-      name: 'reviewer',
-      path: '/skills/reviewer',
-      canonicalPath: '/canonical/reviewer',
-      hasUpdate: true,
-      updateStatus: 'cannotCheck',
-      updateReason: 'rate-limited',
-    });
-    setSkills([toolkit, reviewer]);
-    mocks.checkUpdates.mockResolvedValue({
-      sources: [],
-      skills: [{
-        name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'updateAvailable',
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
-        reason: null, gitRef: null, sourceUrl: null, skillPath: null, freshness: 'fresh',
-      } satisfies SkillUpdateInfo],
-    });
-
-    await useSkillsDataStore.getState().forceCheckUpdates(context, {
-      kind: 'skills',
-      skills: [{ context, skillName: 'toolkit' }],
-    });
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills.find((item) => item.name === 'reviewer')).toMatchObject({
-      hasUpdate: true,
-      updateStatus: 'cannotCheck',
-      updateReason: 'rate-limited',
-    });
-
-    mocks.listSkills.mockResolvedValue({
-      skills: [
-        skill({ name: 'toolkit', hasUpdate: false, updateStatus: null, updateReason: null }),
-        skill({ name: 'reviewer', path: '/skills/reviewer', canonicalPath: '/canonical/reviewer', hasUpdate: false, updateStatus: null, updateReason: null }),
-      ],
-      agents: [],
-      pathExists: true,
-    });
-    await useSkillsDataStore.getState().refreshContext(context);
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills.find((item) => item.name === 'reviewer')).toMatchObject({
-      hasUpdate: true,
-      updateStatus: 'cannotCheck',
-      updateReason: 'rate-limited',
-    });
-  });
-
-  it('applies succeeded workflow results to the matching Context snapshot', () => {
+  it.each(['sourceSessionCapacity', 'sourceDirectoryLinks'])('waits for manual retry after %s', async (capability) => {
     setSkills([skill()]);
-    (useSkillsDataStore.getState() as unknown as { applyUpdateResult: (context: SkillLocationRef, result: UpdateResponse) => void })
-      .applyUpdateResult(context, updateResponse('succeeded'));
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
-      hasUpdate: false, updateStatus: 'upToDate', updateReason: null,
-    });
+    mocks.checkUpdates.mockResolvedValue(response([updateInfo('toolkit', {
+      status: 'cannotCheck', hasUpdate: false, error: { kind: 'capabilityUnavailable', data: { capability, path: null } },
+    })]));
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    await useSkillsDataStore.getState().reconcileAutomaticChecks(context);
+    expect(mocks.checkUpdates).toHaveBeenCalledOnce();
+    await force();
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the update display when the workflow reports a failed unit', () => {
+  it('formats a manual IPC error without object stringification', async () => {
     setSkills([skill()]);
-    (useSkillsDataStore.getState() as unknown as { applyUpdateResult: (context: SkillLocationRef, result: UpdateResponse) => void })
-      .applyUpdateResult(context, updateResponse('failed'));
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]?.hasUpdate).toBe(true);
+    mocks.checkUpdates.mockRejectedValue({ kind: 'io', data: { message: 'offline' } });
+    await force();
+    expect(mocks.toastError).toHaveBeenCalledOnce();
+    expect(mocks.toastError.mock.calls[0]?.[0]).not.toContain('[object Object]');
   });
 
-  it('clears a legacy missing-remote-hash result before a failed post-update refresh', async () => {
-    setSkills([skill({
-      hasUpdate: false,
-      canCheckForUpdates: false,
-      updateStatus: 'cannotCheck',
-      updateReason: 'missing-remote-hash',
-    })]);
-    mocks.listSkills.mockRejectedValueOnce(new Error('snapshot unavailable'));
-
-    await useSkillsDataStore.getState().applyUpdateResult(context, updateResponse('succeeded'));
-
-    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
-      hasUpdate: false,
-      updateStatus: 'upToDate',
-      updateReason: null,
-    });
-  });
-
-  it('does not retain update preview, execution, result, or conflict authority', () => {
-    const state = useSkillsDataStore.getState();
-    for (const key of [
-      'prepareUpdate', 'executePreparedUpdate', 'prepareRetryUpdate', 'closeUpdateDialog',
-      'lastUpdatePreview', 'lastUpdateResponse', 'lastUpdateResults', 'preparedUpdateContext',
-      'updateDialogOpen', 'updatingSkills',
-    ]) expect(state).not.toHaveProperty(key);
-  });
 });

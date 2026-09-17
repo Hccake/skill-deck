@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { useEffect, useState } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstallAgentSelectionSnapshot, InstallMode, InstallPreviewOutcome } from '@/bindings';
@@ -60,7 +60,7 @@ function agentSnapshot(): InstallAgentSelectionSnapshot {
         { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor-item', groupId: null },
       ],
       installOptions: [{ id: 'cursor-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
-      initialSelectedOptionIds: ['cursor-item'],
+      baselineSelectedOptionIds: ['cursor-item'],
       userModeOptionIds: ['cursor-item'],
     }),
     selectionHistoryWarning: null,
@@ -202,7 +202,7 @@ describe('ConfirmStep', () => {
     const latest = agentSnapshot();
     latest.selection.revision = 'selection-revision-2';
     latest.selection.installOptions.push({ id: 'new-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor extra', path: '~/.cursor/extra', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
-    latest.selection.initialSelectedOptionIds = ['new-item'];
+    latest.selection.baselineSelectedOptionIds = ['new-item'];
     preview.mockResolvedValue({ status: 'selectionStale', snapshot: latest });
     getSelection.mockResolvedValue(latest);
     const updateState = vi.fn();
@@ -271,7 +271,7 @@ describe('ConfirmStep', () => {
       path: './agent/skills', groupId: null, selectable: true,
       modeConstraint: 'copyOnly', disabledReason: null,
     });
-    selection.selection.initialSelectedOptionIds = ['cursor-item', 'eve-item'];
+    selection.selection.baselineSelectedOptionIds = ['cursor-item', 'eve-item'];
 
     renderConfirm(current, vi.fn(), selection, 'symlink');
 
@@ -304,5 +304,42 @@ describe('ConfirmStep', () => {
       preparation: expect.objectContaining({ status: 'failed', stage: 'payload' }),
     })));
     expect(preview).not.toHaveBeenCalled();
+  });
+
+  it('does not start a preview after leaving the confirmation step', async () => {
+    let finishAcquisition!: () => void;
+    acquirePayloads.mockReturnValue(new Promise((resolve) => {
+      finishAcquisition = () => resolve([]);
+    }));
+    const updateState = vi.fn();
+    const { unmount } = render(<ConfirmHarness current={state()} updateState={updateState} />);
+    await waitFor(() => expect(acquirePayloads).toHaveBeenCalled());
+    unmount();
+    updateState.mockClear();
+
+    await act(async () => { finishAcquisition(); });
+
+    expect(preview).not.toHaveBeenCalled();
+    expect(updateState).not.toHaveBeenCalled();
+  });
+
+  it.each(['payload', 'preview'] as const)('retries a recoverable %s failure in the confirmation step', async (stage) => {
+    const user = userEvent.setup();
+    if (stage === 'payload') {
+      acquirePayloads.mockRejectedValueOnce({ kind: 'io', data: { message: 'temporarily unavailable' } });
+    } else {
+      preview.mockRejectedValueOnce({ kind: 'staleTarget' });
+    }
+    render(<StatefulConfirmHarness />);
+    const retry = await screen.findByRole('button', { name: 'addSkill.confirm.retryPreparation' });
+    expect(screen.queryByRole('button', { name: 'addSkill.confirm.rediscoverSource' })).toBeNull();
+
+    await user.click(retry);
+
+    await waitFor(() => expect(screen.queryByText('addSkill.confirm.preparationFailed')).toBeNull());
+    expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({
+      discoverySession: state().discoverySession,
+      skills: ['demo'],
+    }));
   });
 });

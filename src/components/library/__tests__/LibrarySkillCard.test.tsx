@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LibrarySkillCard } from '../LibrarySkillCard';
@@ -48,6 +48,13 @@ const removeButton = () => screen.getByRole('button', {
 const updateButton = () => screen.getByRole('button', { name: 'libraries.update' });
 
 describe('LibrarySkillCard', () => {
+  it('keeps an unfinished update retryable after its progress has ended', () => {
+    const update = vi.fn();
+    render(<TooltipProvider><LibrarySkillCard skill={sampleSkill} updateStatus="failed" result={{ skillName: sampleSkill.name, status: 'cancelled', sourceResultId: 'source', contentCommit: 'notRun', catalogCommit: 'notRun', error: null }} onUpdate={update} /></TooltipProvider>);
+    fireEvent.click(updateButton());
+    expect(update).toHaveBeenCalledWith(sampleSkill.name);
+  });
+
   it('shows the description and source but not the internal library path', () => {
     render(
       <TooltipProvider>
@@ -90,26 +97,32 @@ describe('LibrarySkillCard', () => {
     expect(screen.getByText('skills.refBadge:{"ref":"main"}')).toBeTruthy();
   });
 
-  it('explains why removal is blocked while the library is in use', () => {
+  it('allows an applied Library member to enter the retirement flow', () => {
+    const onRemove = vi.fn();
     render(
       <TooltipProvider>
-        <LibrarySkillCard skill={sampleSkill} libraryInUse onRemove={vi.fn()} />
+        <LibrarySkillCard skill={sampleSkill} onRemove={onRemove} />
       </TooltipProvider>
     );
 
-    expect(removeButton().getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(removeButton());
+    expect(onRemove).toHaveBeenCalledWith('backend-utils');
   });
 
   it('offers the update action only when an update is actually available', () => {
     const onUpdate = vi.fn();
     const { rerender } = render(
       <TooltipProvider>
-        <LibrarySkillCard skill={sampleSkill} onUpdate={onUpdate} onRemove={vi.fn()} />
+        <LibrarySkillCard
+          skill={{ ...sampleSkill, updateCapability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' } }}
+          onUpdate={onUpdate}
+          onRemove={vi.fn()}
+        />
       </TooltipProvider>
     );
 
     // 库页面只有整库检查，没有单成员检查入口，所以检查前不摆一个指向不存在操作的按钮。
-    expect(screen.queryByRole('button', { name: 'libraries.update' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(libraries\.update|skills\.actions\.)/ })).toBeNull();
 
     rerender(
       <TooltipProvider>

@@ -7,6 +7,36 @@ function serialized(value: unknown): string {
 }
 
 describe('product language boundary', () => {
+  it('quotes embedded Skill names consistently in Chinese operation copy', () => {
+    const messages = [
+      zhCN.skills.deleteConfirm.title,
+      zhCN.skills.copyToProject.title,
+      zhCN.skills.copyToProject.description,
+      zhCN.skills.manageAgents.title,
+      zhCN.skills.manageAgents.description,
+      zhCN.skills.updatePlan.singleTitle,
+      zhCN.skills.updatePlan.executingTitle,
+      zhCN.skills.updatePlan.currentSkill,
+      zhCN.libraries.skillContent,
+      zhCN.libraries.removeSkill,
+      zhCN.libraries.removeSkillTitle,
+      zhCN.addSkill.installing.installingSkill,
+      ...Object.values(zhCN.recovery.itemTitle),
+    ];
+    for (const message of messages) {
+      expect(message).toMatch(/「\{\{(?:name|skillName|skill)\}\}」/);
+    }
+    expect(zhCN.skills.updatePlan.projectTitle).toBe('更新「{{project}}」的 Skill');
+    expect(zhCN.skills.updatePlan.globalTitle).toBe('更新全局 Skill');
+  });
+
+  it('explains the project and Global Scope path conflict in Settings', () => {
+    expect(zhCN.settings.projectHomeConflict)
+      .toBe('用户主目录已用于全局 Skill，请选择具体项目目录。');
+    expect(en.settings.projectHomeConflict)
+      .toBe('Your home directory is already used for global Skills. Choose a specific project directory.');
+  });
+
   it('keeps internal Agent installation nouns out of user-facing copy', () => {
     const zhProductCopy = serialized({
       agentSelection: zhCN.agentSelection,
@@ -62,10 +92,11 @@ describe('product language boundary', () => {
       createCopies: '将创建副本',
     });
     expect(zhCN.skills.updatePlan).toMatchObject({
-      standardSkillAction: '更新通用 Skill 目录中的 Skill',
-      cleanCopiesAction: '同步 {{count}} 个未修改副本',
-      adapterTargetsAction: '同步 {{agents}} 使用的项目内 Skill',
-      conflictingCopies: '发现已修改的副本',
+      updateLocations: '将更新的位置',
+      conflictingCopies: '内容不同的副本',
+      contentDifferent: '需确认覆盖',
+      preserveConflictDefault: '副本勾选后覆盖更新，未勾选不更新。',
+      confirm: '确认更新',
     });
     expect(zhCN.skills.card).toMatchObject({
       sourceIncomplete: '来源信息不完整',

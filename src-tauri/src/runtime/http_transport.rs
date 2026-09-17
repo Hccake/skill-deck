@@ -140,7 +140,7 @@ impl HttpTransport {
 
         let proxy_url = match self.settings.proxy_url() {
             Ok(proxy_url) => proxy_url,
-            Err(error) => return self.fail_before_request(&request.operation_id, error.into()),
+            Err(error) => return Err(error.into()),
         };
         log::debug!(
             "Network settings read: operation_id={}, proxy={}",

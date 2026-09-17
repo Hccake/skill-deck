@@ -247,6 +247,9 @@ impl SourceDiscoveryService {
                             ManagedDownloadedDirectory::new(root),
                             RetainedSourceOptions {
                                 trust_metadata: Some(fetched.trust_metadata),
+                                redirected_download_host: fetched.redirected_download_host,
+                                redirected_download_hosts: fetched.redirected_download_hosts,
+                                member_failures: fetched.member_failures,
                                 internal_skill_visibility: well_known_visibility,
                                 ..Default::default()
                             },
@@ -284,6 +287,8 @@ impl SourceDiscoveryService {
                         parsed,
                         requested_source,
                         SourceDiscoveryPolicy {
+                            allow_empty_catalog: false,
+                            selected_skill_names: None,
                             full_depth: false,
                             internal_skill_visibility,
                         },
@@ -299,6 +304,8 @@ impl SourceDiscoveryService {
                         parsed,
                         requested_source,
                         SourceDiscoveryPolicy {
+                            allow_empty_catalog: false,
+                            selected_skill_names: None,
                             full_depth: false,
                             internal_skill_visibility,
                         },
@@ -436,6 +443,8 @@ mod tests {
                         .expect("well-known root"),
                     trust_metadata: HashMap::<String, WellKnownTrustMetadata>::new(),
                     redirected_download_host: None,
+                    redirected_download_hosts: Vec::new(),
+                    member_failures: std::collections::BTreeMap::new(),
                 })
             })
         }

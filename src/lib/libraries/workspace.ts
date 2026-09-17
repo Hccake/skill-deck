@@ -4,7 +4,9 @@ import type {
   FetchResult,
   LibraryAddPreview,
   LibraryAddSkillResult,
+  LibraryMembershipOutcome,
   LibraryId,
+  LibraryRetirePreview,
   LibraryWorkspaceSnapshot,
   PreviewAddLibrarySkillsRequest,
   SkillLibraryDetail,
@@ -17,11 +19,15 @@ import {
   getSkillLibrary,
   listSkillLibraries,
   previewAddLibrarySkills,
+  previewRemoveLibrarySkill,
   renameSkillLibrary,
+  removeLibrarySkill,
+  resumeLibraryMembership,
 } from '@/hooks/useTauriApi';
 import { environmentKey } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
 import { runBusinessWrite } from '@/workflows/install-session-feedback';
+import { membershipNeedsAttention } from './membership';
 
 export type LibraryWorkspacePhase = 'idle' | 'loading' | 'ready' | 'writing' | 'error';
 export type LibraryDetailPhase = 'idle' | 'loading' | 'ready' | 'error';
@@ -37,7 +43,13 @@ export interface LibraryWorkspaceState {
   catalogError: AppError | null;
   pendingAdd: { request: PreviewAddLibrarySkillsRequest; preview: LibraryAddPreview } | null;
   retryAdd: { request: PreviewAddLibrarySkillsRequest; error: AppError } | null;
+  pendingRetire: {
+    libraryId: LibraryId;
+    skillName: string;
+    preview: LibraryRetirePreview;
+  } | null;
   lastAddResults: LibraryAddSkillResult[];
+  membershipOutcomes: Partial<Record<LibraryId, LibraryMembershipOutcome>>;
   version: number;
 }
 
@@ -66,6 +78,10 @@ export type LibraryWorkspaceCommand =
   }
   | { kind: 'confirmAddSkills'; environment: EnvironmentRef; acknowledgeRedirect: boolean }
   | { kind: 'retryAddPreview'; environment: EnvironmentRef }
+  | { kind: 'prepareRetire'; environment: EnvironmentRef; libraryId: LibraryId; skillName: string }
+  | { kind: 'confirmRetire'; environment: EnvironmentRef }
+  | { kind: 'discardRetire'; environment: EnvironmentRef }
+  | { kind: 'resumeMembership'; environment: EnvironmentRef; libraryId: LibraryId }
   | { kind: 'discardAddSkills'; environment: EnvironmentRef };
 
 export type LibraryWorkspaceInput = LibraryWorkspaceCommand extends infer Command
@@ -92,7 +108,9 @@ function emptyState(environment: EnvironmentRef): LibraryWorkspaceState {
     catalogError: null,
     pendingAdd: null,
     retryAdd: null,
+    pendingRetire: null,
     lastAddResults: [],
+    membershipOutcomes: {},
     version: 0,
   };
 }
@@ -166,6 +184,13 @@ export function createLibraryWorkspace(): LibraryWorkspace {
       detailPhase,
       detailError,
       catalogError: null,
+      membershipOutcomes: Object.fromEntries(Object.entries(current.membershipOutcomes).filter(
+        ([libraryId, outcome]) => membershipNeedsAttention(outcome)
+          && catalog.libraries.some((library) => library.id === libraryId),
+      )),
+      pendingRetire: current.pendingRetire?.libraryId === selected
+        ? current.pendingRetire
+        : null,
     }));
   };
 
@@ -263,6 +288,9 @@ export function createLibraryWorkspace(): LibraryWorkspace {
             detailPhase: detailError ? 'error' : 'ready',
             detailError,
             catalogError: null,
+            pendingRetire: current.pendingRetire?.libraryId === command.libraryId
+              ? current.pendingRetire
+              : null,
           }));
           return { status: 'succeeded', snapshot };
         }
@@ -307,10 +335,16 @@ export function createLibraryWorkspace(): LibraryWorkspace {
             phase: 'ready',
             catalog,
             selectedLibraryId,
+            membershipOutcomes: Object.fromEntries(Object.entries(current.membershipOutcomes).filter(
+              ([libraryId]) => catalog.libraries.some((library) => library.id === libraryId),
+            )),
             detail,
             detailPhase,
             detailError,
             catalogError: null,
+            pendingRetire: current.pendingRetire?.libraryId === selectedLibraryId
+              ? current.pendingRetire
+              : null,
           }));
           return { status: 'succeeded', snapshot };
         }
@@ -346,18 +380,121 @@ export function createLibraryWorkspace(): LibraryWorkspace {
           return { status: 'succeeded', snapshot };
         }
         if (command.kind === 'retryAddPreview') {
-          const retry = getSnapshot(environment).retryAdd;
-          if (!retry) throw new Error('Library add retry request is missing');
-          const preview = await previewAddLibrarySkills(retry.request);
+          const current = getSnapshot(environment);
+          const request = current.retryAdd?.request ?? current.pendingAdd?.request;
+          if (!request) throw new Error('Library add retry request is missing');
+          const preview = await previewAddLibrarySkills(request);
           if (!currentGeneration(environment, generation)) {
             return { status: 'succeeded', snapshot: getSnapshot(environment) };
           }
           const snapshot = commit(environment, (current) => ({
             ...current,
             phase: 'ready',
-            pendingAdd: { request: retry.request, preview },
+            pendingAdd: { request, preview },
             retryAdd: null,
             lastAddResults: [],
+            catalogError: null,
+          }));
+          return { status: 'succeeded', snapshot };
+        }
+        if (command.kind === 'prepareRetire') {
+          const preview = await previewRemoveLibrarySkill({
+            environment,
+            libraryId: command.libraryId,
+            skillName: command.skillName,
+          });
+          if (!currentGeneration(environment, generation)) {
+            return { status: 'succeeded', snapshot: getSnapshot(environment) };
+          }
+          const snapshot = commit(environment, (current) => ({
+            ...current,
+            phase: 'ready',
+            selectedLibraryId: command.libraryId,
+            pendingRetire: {
+              libraryId: command.libraryId,
+              skillName: command.skillName,
+              preview,
+            },
+            catalogError: null,
+          }));
+          return { status: 'succeeded', snapshot };
+        }
+        if (command.kind === 'discardRetire') {
+          const snapshot = commit(environment, (current) => ({
+            ...current,
+            phase: 'ready',
+            pendingRetire: null,
+          }));
+          return { status: 'succeeded', snapshot };
+        }
+        if (command.kind === 'confirmRetire') {
+          const pending = getSnapshot(environment).pendingRetire;
+          if (!pending) throw new Error('Library retirement preview is missing');
+          const response = await removeLibrarySkill({
+            request: {
+              environment,
+              libraryId: pending.libraryId,
+              skillName: pending.skillName,
+            },
+            expectedToken: pending.preview.token,
+            membership: pending.preview.membership,
+          });
+          let catalog: LibraryWorkspaceSnapshot | null = null;
+          let refreshError: AppError | null = null;
+          try {
+            catalog = await listSkillLibraries(environment);
+          } catch (error) {
+            refreshError = toAppError(error);
+          }
+          if (!currentGeneration(environment, generation)) {
+            return { status: 'succeeded', snapshot: getSnapshot(environment) };
+          }
+          const snapshot = commit(environment, (current) => ({
+            ...current,
+            phase: 'ready',
+            catalog: catalog ?? current.catalog,
+            selectedLibraryId: pending.libraryId,
+            detail: response.library ?? current.detail,
+            detailPhase: response.library ? 'ready' : current.detailPhase,
+            detailError: response.membership.snapshotError ?? current.detailError,
+            pendingRetire: null,
+            membershipOutcomes: { ...current.membershipOutcomes, [pending.libraryId]: response.membership },
+            catalogError: refreshError,
+          }));
+          return { status: 'succeeded', snapshot };
+        }
+        if (command.kind === 'resumeMembership') {
+          let membershipOutcome = await resumeLibraryMembership(
+            environment,
+            command.libraryId,
+          );
+          let detail = before.detail;
+          let detailPhase = before.detailPhase;
+          let detailError = before.detailError;
+          if (before.selectedLibraryId === command.libraryId) {
+            try {
+              detail = await getSkillLibrary(environment, command.libraryId);
+              detailPhase = 'ready';
+              detailError = null;
+            } catch (error) {
+              detailError = toAppError(error);
+              detailPhase = detail ? 'ready' : 'error';
+              membershipOutcome = {
+                ...membershipOutcome,
+                snapshotError: membershipOutcome.snapshotError ?? detailError,
+              };
+            }
+          }
+          if (!currentGeneration(environment, generation)) {
+            return { status: 'succeeded', snapshot: getSnapshot(environment) };
+          }
+          const snapshot = commit(environment, (current) => ({
+            ...current,
+            phase: 'ready',
+            membershipOutcomes: { ...current.membershipOutcomes, [command.libraryId]: membershipOutcome },
+            detail,
+            detailPhase,
+            detailError,
             catalogError: null,
           }));
           return { status: 'succeeded', snapshot };
@@ -368,6 +505,7 @@ export function createLibraryWorkspace(): LibraryWorkspace {
           const response = await addSkillsToLibrary({
             request: pending.request,
             expectedToken: pending.preview.token,
+            membership: pending.preview.membership,
             acknowledgeRedirect: command.acknowledgeRedirect,
           });
           const retryableNames = new Set(
@@ -390,16 +528,24 @@ export function createLibraryWorkspace(): LibraryWorkspace {
               retryError = toAppError(error);
             }
           }
-          const catalog = await listSkillLibraries(environment);
+          let catalog: LibraryWorkspaceSnapshot | null = null;
+          let refreshError: AppError | null = null;
+          try {
+            catalog = await listSkillLibraries(environment);
+          } catch (error) {
+            refreshError = toAppError(error);
+          }
           if (!currentGeneration(environment, generation)) {
             return { status: 'succeeded', snapshot: getSnapshot(environment) };
           }
           const snapshot = commit(environment, (current) => ({
             ...current,
             phase: 'ready',
-            catalog,
+            catalog: catalog ?? current.catalog,
             selectedLibraryId: pending.request.libraryId,
-            detail: response.library,
+            detail: response.library ?? current.detail,
+            detailPhase: response.library ? 'ready' : current.detailPhase,
+            detailError: response.membership.snapshotError ?? current.detailError,
             pendingAdd: retryRequest && retryPreview
               ? { request: retryRequest, preview: retryPreview }
               : null,
@@ -407,7 +553,8 @@ export function createLibraryWorkspace(): LibraryWorkspace {
               ? { request: retryRequest, error: retryError }
               : null,
             lastAddResults: response.results,
-            catalogError: null,
+            membershipOutcomes: { ...current.membershipOutcomes, [pending.request.libraryId]: response.membership },
+            catalogError: refreshError,
           }));
           return { status: 'succeeded', snapshot };
         }
@@ -448,6 +595,15 @@ export function createLibraryWorkspace(): LibraryWorkspace {
       } catch (error) {
         if (!currentGeneration(environment, generation)) {
           return { status: 'succeeded', snapshot: getSnapshot(environment) };
+        }
+        if (command.kind === 'prepareRetire') {
+          const appError = toAppError(error);
+          const snapshot = commit(environment, () => ({
+            ...before,
+            phase: before.catalog ? 'ready' : 'idle',
+            pendingRetire: null,
+          }));
+          return { status: 'failed', failureSource: 'command', error: appError, snapshot };
         }
         return command.kind === 'load' || command.kind === 'select'
           ? catalogFailed(environment, error)

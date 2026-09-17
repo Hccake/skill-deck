@@ -1,6 +1,5 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
-use std::collections::VecDeque;
 use std::future::pending;
 #[cfg(target_os = "windows")]
 use std::process::Stdio;
@@ -11,8 +10,6 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, Instant};
 
-#[cfg(target_os = "windows")]
-use crate::background_process::tokio_command;
 use crate::core::mutation::CancellationSignal;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslSession;
@@ -24,67 +21,9 @@ const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const WSL_BOOTSTRAP_SCRIPT: &str = r#"printf 'skill-deck-wsl-shell-started-v1\n' >&2; script=$1; shift; exec /bin/sh -c "$script" -- "$@""#;
 const WSL_SHELL_STARTED_MARKER: &[u8] = b"skill-deck-wsl-shell-started-v1\n";
 
-#[derive(Clone, Copy)]
-pub(super) enum OutputOverflowBehavior {
-    Fail,
-    PreservePrefixAndTail { prefix_bytes: usize },
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct OutputCapturePolicy {
-    pub(super) stdout: OutputOverflowBehavior,
-    pub(super) stderr: OutputOverflowBehavior,
-}
-
-const STRICT_OUTPUT_CAPTURE: OutputCapturePolicy = OutputCapturePolicy {
-    stdout: OutputOverflowBehavior::Fail,
-    stderr: OutputOverflowBehavior::Fail,
-};
-
-pub(super) const GIT_OUTPUT_CAPTURE: OutputCapturePolicy = OutputCapturePolicy {
-    stdout: OutputOverflowBehavior::Fail,
-    stderr: OutputOverflowBehavior::PreservePrefixAndTail {
-        prefix_bytes: WSL_SHELL_STARTED_MARKER.len(),
-    },
-};
-
-struct WslCommandRequest {
-    pub session: WslSession,
-    pub script: &'static str,
-    pub args: Vec<String>,
-    pub stdin: Vec<u8>,
-    pub timeout: Duration,
-    pub stdout_limit: usize,
-    pub stderr_limit: usize,
-    pub cancellation: Option<CancellationSignal>,
-}
-
-pub(super) type WslExitMapper = fn(Option<i32>, &str) -> Option<AppError>;
-
-pub(super) fn no_wsl_exit_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
-    None
-}
-
-pub(super) struct WslOperationDescriptor {
-    pub(super) subcommand: &'static str,
-    pub(super) script: &'static str,
-    pub(super) map_exit: WslExitMapper,
-}
-
-pub(super) const fn wsl_operation(
-    _name: &'static str,
-    subcommand: &'static str,
-    script: &'static str,
-) -> WslOperationDescriptor {
-    WslOperationDescriptor {
-        subcommand,
-        script,
-        map_exit: no_wsl_exit_mapping,
-    }
-}
-
-pub(super) struct WslOperationRequest {
+pub(super) struct WslCommandRequest {
     pub(super) session: WslSession,
+    pub(super) script: &'static str,
     pub(super) args: Vec<String>,
     pub(super) stdin: Vec<u8>,
     pub(super) timeout: Duration,
@@ -100,9 +39,7 @@ pub(super) struct WslCommandOutput {
     pub(super) exit_code: Option<i32>,
 }
 
-struct WslCommandRunner;
-
-pub(super) struct WslOperationExecutor;
+pub(super) struct WslCommandRunner;
 
 pub(crate) fn build_wsl_exec_args(
     distro_name: &str,
@@ -125,14 +62,6 @@ pub(crate) fn build_wsl_exec_args(
     args
 }
 
-pub(super) fn decode_nul_records(bytes: &[u8]) -> Vec<String> {
-    bytes
-        .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-        .map(|record| String::from_utf8_lossy(record).into_owned())
-        .collect()
-}
-
 fn build_wsl_runner_exec_args(request: &WslCommandRequest) -> Vec<String> {
     let mut args = Vec::with_capacity(request.args.len() + 1);
     args.push(request.script.to_string());
@@ -145,89 +74,31 @@ fn build_wsl_runner_exec_args(request: &WslCommandRequest) -> Vec<String> {
     )
 }
 
-fn operation_command_request(
-    descriptor: &WslOperationDescriptor,
-    request: WslOperationRequest,
-) -> WslCommandRequest {
-    let mut args =
-        Vec::with_capacity(request.args.len() + usize::from(!descriptor.subcommand.is_empty()));
-    if !descriptor.subcommand.is_empty() {
-        args.push(descriptor.subcommand.to_string());
-    }
-    args.extend(request.args);
-    WslCommandRequest {
-        session: request.session,
-        script: descriptor.script,
-        args,
-        stdin: request.stdin,
-        timeout: request.timeout,
-        stdout_limit: request.stdout_limit,
-        stderr_limit: request.stderr_limit,
-        cancellation: request.cancellation,
-    }
-}
-
 async fn read_output<R>(
     mut reader: R,
     stream: &'static str,
     limit: usize,
-    overflow_behavior: OutputOverflowBehavior,
     limit_tx: mpsc::Sender<AppError>,
 ) -> Result<Vec<u8>, AppError>
 where
     R: AsyncRead + Unpin,
 {
-    let prefix_capacity = match overflow_behavior {
-        OutputOverflowBehavior::Fail => limit,
-        OutputOverflowBehavior::PreservePrefixAndTail { prefix_bytes } => prefix_bytes.min(limit),
-    };
-    let tail_capacity = limit.saturating_sub(prefix_capacity);
-    let mut output = Vec::with_capacity(prefix_capacity.min(8 * 1024));
-    let mut tail = VecDeque::with_capacity(tail_capacity.min(8 * 1024));
-    let mut tail_truncated = false;
+    let mut output = Vec::with_capacity(limit.min(8 * 1024));
     let mut chunk = [0u8; 8 * 1024];
     loop {
         let read = reader.read(&mut chunk).await?;
         if read == 0 {
-            if tail_truncated {
-                while let Some(byte) = tail.pop_front() {
-                    if byte == b'\n' {
-                        break;
-                    }
-                }
-            }
-            output.extend(tail);
             return Ok(output);
         }
-
-        match overflow_behavior {
-            OutputOverflowBehavior::Fail => {
-                if output.len().saturating_add(read) > limit {
-                    let error = AppError::WslOutputLimitExceeded {
-                        stream: stream.to_string(),
-                        limit: u32::try_from(limit).unwrap_or(u32::MAX),
-                    };
-                    let _ = limit_tx.send(error.clone()).await;
-                    return Err(error);
-                }
-                output.extend_from_slice(&chunk[..read]);
-            }
-            OutputOverflowBehavior::PreservePrefixAndTail { .. } => {
-                let prefix_remaining = prefix_capacity.saturating_sub(output.len());
-                let prefix_bytes = prefix_remaining.min(read);
-                output.extend_from_slice(&chunk[..prefix_bytes]);
-                if tail_capacity == 0 {
-                    continue;
-                }
-                for byte in &chunk[prefix_bytes..read] {
-                    if tail.len() == tail_capacity {
-                        tail.pop_front();
-                        tail_truncated = true;
-                    }
-                    tail.push_back(*byte);
-                }
-            }
+        if output.len().saturating_add(read) > limit {
+            let error = AppError::WslOutputLimitExceeded {
+                stream: stream.to_string(),
+                limit: u32::try_from(limit).unwrap_or(u32::MAX),
+            };
+            let _ = limit_tx.send(error.clone()).await;
+            return Err(error);
         }
+        output.extend_from_slice(&chunk[..read]);
     }
 }
 
@@ -263,7 +134,6 @@ async fn supervise_child(
     timeout_duration: Duration,
     stdout_limit: usize,
     stderr_limit: usize,
-    output_capture: OutputCapturePolicy,
     cancellation: Option<CancellationSignal>,
 ) -> Result<WslCommandOutput, AppError> {
     let mut stdin = child.stdin.take().ok_or_else(|| AppError::Custom {
@@ -284,16 +154,9 @@ async fn supervise_child(
         stdout,
         "stdout",
         stdout_limit,
-        output_capture.stdout,
         limit_tx.clone(),
     ));
-    let mut stderr_reader = tokio::spawn(read_output(
-        stderr,
-        "stderr",
-        stderr_limit,
-        output_capture.stderr,
-        limit_tx,
-    ));
+    let mut stderr_reader = tokio::spawn(read_output(stderr, "stderr", stderr_limit, limit_tx));
     let deadline = Instant::now() + timeout_duration;
     let deadline_sleep = tokio::time::sleep_until(deadline);
     tokio::pin!(deadline_sleep);
@@ -410,48 +273,11 @@ fn interpret_wsl_transport_output(
     Ok(output)
 }
 
-fn interpret_wsl_operation_output<F>(
-    output: WslCommandOutput,
-    map_exit: F,
-) -> Result<WslCommandOutput, AppError>
-where
-    F: Fn(Option<i32>, &str) -> Option<AppError>,
-{
-    if output.exit_code != Some(0) {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if let Some(error) = map_exit(output.exit_code, &stderr) {
-            return Err(error);
-        }
-        return Err(AppError::WslCommandFailed {
-            exit_code: output.exit_code,
-            stderr,
-        });
-    }
-    Ok(output)
-}
-
-#[cfg(test)]
-fn interpret_wsl_command_output(
-    session: &WslSession,
-    output: WslCommandOutput,
-) -> Result<WslCommandOutput, AppError> {
-    let output = interpret_wsl_transport_output(session, output)?;
-    interpret_wsl_operation_output(output, |_, _| None)
-}
-
 impl WslCommandRunner {
     #[cfg(target_os = "windows")]
     pub async fn run(request: WslCommandRequest) -> Result<WslCommandOutput, AppError> {
-        Self::run_with_output_capture(request, STRICT_OUTPUT_CAPTURE).await
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn run_with_output_capture(
-        request: WslCommandRequest,
-        output_capture: OutputCapturePolicy,
-    ) -> Result<WslCommandOutput, AppError> {
         let args = build_wsl_runner_exec_args(&request);
-        let mut command = tokio_command("wsl.exe");
+        let mut command = super::wsl_command();
         command
             .args(args)
             .stdin(Stdio::piped())
@@ -473,7 +299,6 @@ impl WslCommandRunner {
             request.timeout,
             request.stdout_limit,
             request.stderr_limit,
-            output_capture,
             request.cancellation,
         )
         .await?;
@@ -482,43 +307,12 @@ impl WslCommandRunner {
 
     #[cfg(not(target_os = "windows"))]
     pub async fn run(request: WslCommandRequest) -> Result<WslCommandOutput, AppError> {
-        Self::run_with_output_capture(request, STRICT_OUTPUT_CAPTURE).await
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    async fn run_with_output_capture(
-        request: WslCommandRequest,
-        _output_capture: OutputCapturePolicy,
-    ) -> Result<WslCommandOutput, AppError> {
         Err(AppError::EnvironmentUnavailable {
             environment: EnvironmentRef::Wsl {
                 distro_name: request.session.distro_name,
             },
             message: "WSL is only available on Windows".to_string(),
         })
-    }
-}
-
-impl WslOperationExecutor {
-    pub(super) async fn execute(
-        descriptor: &WslOperationDescriptor,
-        request: WslOperationRequest,
-    ) -> Result<WslCommandOutput, AppError> {
-        let output = WslCommandRunner::run(operation_command_request(descriptor, request)).await?;
-        interpret_wsl_operation_output(output, descriptor.map_exit)
-    }
-
-    pub(super) async fn execute_with_output_capture(
-        descriptor: &WslOperationDescriptor,
-        request: WslOperationRequest,
-        output_capture: OutputCapturePolicy,
-    ) -> Result<WslCommandOutput, AppError> {
-        let output = WslCommandRunner::run_with_output_capture(
-            operation_command_request(descriptor, request),
-            output_capture,
-        )
-        .await?;
-        interpret_wsl_operation_output(output, descriptor.map_exit)
     }
 }
 
@@ -533,10 +327,8 @@ mod tests {
     use tokio::time::Duration;
 
     use super::{
-        build_wsl_exec_args, decode_nul_records, interpret_wsl_command_output,
-        interpret_wsl_operation_output, interpret_wsl_transport_output, operation_command_request,
-        WslCommandOutput, WslCommandRequest, WslCommandRunner, WslOperationDescriptor,
-        WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
+        build_wsl_exec_args, interpret_wsl_transport_output, WslCommandOutput, WslCommandRequest,
+        WslCommandRunner, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
         WSL_SHELL_STARTED_MARKER,
     };
     use crate::core::mutation::CancellationSignal;
@@ -551,7 +343,7 @@ mod tests {
         use tokio::process::{Child, Command};
         use tokio::time::timeout;
 
-        use super::super::{supervise_child, OutputCapturePolicy, OutputOverflowBehavior};
+        use super::super::supervise_child;
         use super::*;
 
         fn spawn_shell(script: &str) -> (Child, u32) {
@@ -580,17 +372,10 @@ mod tests {
         #[tokio::test]
         async fn supervisor_collects_stdout_stderr_and_exit_code() {
             let (child, _) = spawn_shell("printf stdout; printf stderr >&2; exit 7");
-            let output = supervise_child(
-                child,
-                Vec::new(),
-                Duration::from_secs(1),
-                1024,
-                1024,
-                super::super::STRICT_OUTPUT_CAPTURE,
-                None,
-            )
-            .await
-            .expect("supervise child");
+            let output =
+                supervise_child(child, Vec::new(), Duration::from_secs(1), 1024, 1024, None)
+                    .await
+                    .expect("supervise child");
 
             assert_eq!(output.stdout, b"stdout");
             assert_eq!(output.stderr, b"stderr");
@@ -603,17 +388,9 @@ mod tests {
                 [("printf 12345", "stdout"), ("printf 12345 >&2", "stderr")]
             {
                 let (child, _) = spawn_shell(script);
-                let error = supervise_child(
-                    child,
-                    Vec::new(),
-                    Duration::from_secs(1),
-                    4,
-                    4,
-                    super::super::STRICT_OUTPUT_CAPTURE,
-                    None,
-                )
-                .await
-                .expect_err("output must be bounded");
+                let error = supervise_child(child, Vec::new(), Duration::from_secs(1), 4, 4, None)
+                    .await
+                    .expect_err("output must be bounded");
 
                 assert!(matches!(
                     error,
@@ -621,67 +398,6 @@ mod tests {
                         if stream == expected_stream && limit == 4
                 ));
             }
-        }
-
-        #[tokio::test]
-        async fn supervisor_preserves_marker_and_stderr_tail_for_git_output() {
-            let script = format!(
-                "printf '{}\\n' >&2; printf 'discard-me-1234567890\\n' >&2; printf 'useful-tail\\n' >&2",
-                String::from_utf8_lossy(WSL_SHELL_STARTED_MARKER).trim_end()
-            );
-            let (child, _) = spawn_shell(&script);
-
-            let output = supervise_child(
-                child,
-                Vec::new(),
-                Duration::from_secs(1),
-                64,
-                48,
-                OutputCapturePolicy {
-                    stdout: OutputOverflowBehavior::Fail,
-                    stderr: OutputOverflowBehavior::PreservePrefixAndTail {
-                        prefix_bytes: WSL_SHELL_STARTED_MARKER.len(),
-                    },
-                },
-                None,
-            )
-            .await
-            .expect("Git stderr should retain a bounded tail");
-
-            assert!(output.stderr.starts_with(WSL_SHELL_STARTED_MARKER));
-            assert!(output.stderr.ends_with(b"useful-tail\n"));
-            assert!(output.stderr.len() <= 48);
-        }
-
-        #[tokio::test]
-        async fn supervisor_discards_a_truncated_sensitive_stderr_line() {
-            let script = format!(
-                "printf '{}\\nAuthorization: Bearer ' >&2; printf '%080d' 0 >&2; printf '\\nvisible diagnostic\\n' >&2",
-                String::from_utf8_lossy(WSL_SHELL_STARTED_MARKER).trim_end()
-            );
-            let (child, _) = spawn_shell(&script);
-
-            let output = supervise_child(
-                child,
-                Vec::new(),
-                Duration::from_secs(1),
-                64,
-                64,
-                OutputCapturePolicy {
-                    stdout: OutputOverflowBehavior::Fail,
-                    stderr: OutputOverflowBehavior::PreservePrefixAndTail {
-                        prefix_bytes: WSL_SHELL_STARTED_MARKER.len(),
-                    },
-                },
-                None,
-            )
-            .await
-            .expect("Git stderr should retain complete diagnostic lines");
-
-            assert_eq!(
-                &output.stderr[WSL_SHELL_STARTED_MARKER.len()..],
-                b"visible diagnostic\n"
-            );
         }
 
         #[tokio::test]
@@ -693,7 +409,6 @@ mod tests {
                 Duration::from_millis(25),
                 1024,
                 1024,
-                super::super::STRICT_OUTPUT_CAPTURE,
                 None,
             )
             .await
@@ -719,7 +434,6 @@ mod tests {
                 Duration::from_secs(1),
                 1024,
                 1024,
-                super::super::STRICT_OUTPUT_CAPTURE,
                 Some(cancellation),
             )
             .await
@@ -740,7 +454,6 @@ mod tests {
                     Duration::from_secs(1),
                     1024,
                     1024,
-                    super::super::STRICT_OUTPUT_CAPTURE,
                     None,
                 ),
             )
@@ -759,7 +472,6 @@ mod tests {
                 Duration::from_millis(25),
                 1024,
                 1024,
-                super::super::STRICT_OUTPUT_CAPTURE,
                 None,
             )
             .await
@@ -809,14 +521,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_nul_delimited_versioned_records() {
-        assert_eq!(
-            decode_nul_records(b"1\0first\0second\0"),
-            vec!["1", "first", "second"]
-        );
-    }
-
-    #[test]
     fn command_request_carries_bounded_defaults_and_cancellation() {
         let cancellation = CancellationSignal::default();
         let request = WslCommandRequest {
@@ -836,12 +540,12 @@ mod tests {
     }
 
     #[test]
-    fn shell_start_marker_distinguishes_session_and_business_failures() {
+    fn shell_start_marker_distinguishes_launcher_and_bootstrap_failures() {
         let session = test_session();
         let environment = EnvironmentRef::Wsl {
             distro_name: "Ubuntu".to_string(),
         };
-        let unavailable = interpret_wsl_command_output(
+        let unavailable = interpret_wsl_transport_output(
             &session,
             WslCommandOutput {
                 stdout: Vec::new(),
@@ -860,7 +564,7 @@ mod tests {
 
         let mut marked_stderr = WSL_SHELL_STARTED_MARKER.to_vec();
         marked_stderr.extend_from_slice(b"permission denied");
-        let business_failure = interpret_wsl_command_output(
+        let bootstrap_failure = interpret_wsl_transport_output(
             &session,
             WslCommandOutput {
                 stdout: Vec::new(),
@@ -868,14 +572,9 @@ mod tests {
                 exit_code: Some(13),
             },
         )
-        .expect_err("business failure");
-        assert!(matches!(
-            business_failure,
-            AppError::WslCommandFailed {
-                exit_code: Some(13),
-                stderr,
-            } if stderr == "permission denied"
-        ));
+        .expect("the bootstrap shell started");
+        assert_eq!(bootstrap_failure.exit_code, Some(13));
+        assert_eq!(bootstrap_failure.stderr, b"permission denied");
     }
 
     #[test]
@@ -899,77 +598,11 @@ mod tests {
     }
 
     #[test]
-    fn operation_exit_mapping_is_local_and_unknown_codes_fall_back() {
-        let map_exit = |exit_code, _stderr: &str| match exit_code {
-            Some(44) => Some(AppError::PathNotFound {
-                path: "/tmp/SKILL.md".to_string(),
-            }),
-            _ => None,
-        };
-
-        let known = interpret_wsl_operation_output(
-            WslCommandOutput {
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-                exit_code: Some(44),
-            },
-            map_exit,
-        )
-        .expect_err("known operation error");
-        assert!(matches!(known, AppError::PathNotFound { .. }));
-
-        let unknown = interpret_wsl_operation_output(
-            WslCommandOutput {
-                stdout: Vec::new(),
-                stderr: b"unexpected".to_vec(),
-                exit_code: Some(99),
-            },
-            map_exit,
-        )
-        .expect_err("unknown operation error");
-        assert!(matches!(
-            unknown,
-            AppError::WslCommandFailed {
-                exit_code: Some(99),
-                stderr,
-            } if stderr == "unexpected"
-        ));
-    }
-
-    #[test]
-    fn operation_descriptor_prepends_its_fixed_subcommand() {
-        fn no_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
-            None
-        }
-
-        static DESCRIPTOR: WslOperationDescriptor = WslOperationDescriptor {
-            subcommand: "stage",
-            script: "printf ok",
-            map_exit: no_mapping,
-        };
-        let operation = WslOperationRequest {
-            session: test_session(),
-            args: vec!["root".to_string()],
-            stdin: b"request".to_vec(),
-            timeout: Duration::from_secs(5),
-            stdout_limit: 32,
-            stderr_limit: 64,
-            cancellation: None,
-        };
-
-        let command = operation_command_request(&DESCRIPTOR, operation);
-
-        assert_eq!(command.script, "printf ok");
-        assert_eq!(command.args, vec!["stage", "root"]);
-        assert_eq!(command.stdin, b"request");
-    }
-
-    #[test]
     fn shell_start_marker_is_removed_from_successful_stderr() {
         let mut stderr = WSL_SHELL_STARTED_MARKER.to_vec();
         stderr.extend_from_slice(b"warning");
 
-        let output = interpret_wsl_command_output(
+        let output = interpret_wsl_transport_output(
             &test_session(),
             WslCommandOutput {
                 stdout: b"ok".to_vec(),
