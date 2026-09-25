@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Header } from '../Header';
 
 vi.mock('react-i18next', () => ({
@@ -25,11 +25,16 @@ vi.mock('@/lifecycle/unsaved-changes-context', () => ({
 
 vi.mock('../GlobalEnvironmentSwitcher', () => ({ GlobalEnvironmentSwitcher: () => null }));
 vi.mock('../InstallWizardStatusControl', () => ({ InstallWizardStatusControl: () => null }));
+vi.mock('../WindowControls', () => ({ WindowControls: () => <div data-testid="window-controls" /> }));
 vi.mock('@/components/recovery/RecoveryCenter', () => ({ RecoveryCenter: () => null }));
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }));
 
 describe('Header', () => {
-  it('exposes the four primary destinations', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('exposes the four primary destinations and application title', () => {
     render(<MemoryRouter><Header /></MemoryRouter>);
 
     const destinations = [
@@ -42,6 +47,30 @@ describe('Header', () => {
       const link = screen.getByRole('link', { name });
       expect(link.getAttribute('href')).toBe(href);
       expect(link.getAttribute('aria-label')).toBe(name);
+    }
+
+    expect(screen.getByText('app.name')).toBeTruthy();
+  });
+
+  it.each([
+    ['Windows', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', true],
+    ['macOS', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', false],
+    ['Linux', 'Mozilla/5.0 (X11; Linux x86_64)', false],
+  ])('uses the expected window controls on %s', (_platform, userAgent, customControls) => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+
+    render(<MemoryRouter><Header /></MemoryRouter>);
+
+    expect(screen.queryByTestId('window-controls') !== null).toBe(customControls);
+  });
+
+  it('uses the Tauri drag-region contract and excludes the navigation from dragging', () => {
+    const { container } = render(<MemoryRouter><Header /></MemoryRouter>);
+
+    expect(screen.getByRole('banner').hasAttribute('data-tauri-drag-region')).toBe(true);
+    expect(screen.getByRole('navigation').getAttribute('data-tauri-drag-region')).toBe('false');
+    for (const region of container.querySelectorAll('[data-tauri-drag-region]')) {
+      expect(['', 'true', 'false']).toContain(region.getAttribute('data-tauri-drag-region'));
     }
   });
 });

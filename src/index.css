@@ -440,6 +440,19 @@
   contain-intrinsic-size: 52px;
 }
 
+/* 侧边栏列表项文本在 Hover 时的动态平滑羽化遮罩 */
+.sidebar-item-content {
+  -webkit-mask-image: linear-gradient(to right, #000 100%, #000 100%);
+  mask-image: linear-gradient(to right, #000 100%, #000 100%);
+  transition: -webkit-mask-image 150ms ease, mask-image 150ms ease;
+}
+
+.group:hover .sidebar-item-content,
+.group:focus-within .sidebar-item-content {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 76px), transparent calc(100% - 48px));
+  mask-image: linear-gradient(to right, #000 calc(100% - 76px), transparent calc(100% - 48px));
+}
+
 /* Modern App Scrollbar Overlay */
 ::-webkit-scrollbar {
   width: 14px;

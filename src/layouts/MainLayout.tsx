@@ -3,10 +3,13 @@ import { listen } from '@tauri-apps/api/event';
 import { Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Header } from '@/components/layout/Header';
+import { WindowResizeBorders } from '@/components/layout/WindowResizeBorders';
 import { InstallWizardSessionGate } from '@/components/layout/InstallWizardSessionGate';
 import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
 import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 import { useInstallWizardSessionMonitor } from '@/hooks/useInstallWizardSessionMonitor';
+import { useWindowMaximized } from '@/hooks/useWindowMaximized';
+import { isWindows } from '@/lib/platform';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import type { SkillLocationRef } from '@/bindings';
 import { useEnvironmentStore } from '@/stores/environment';
@@ -27,6 +30,8 @@ function ContentFallback() {
 }
 
 export default function MainLayout() {
+  const isMaximized = useWindowMaximized();
+  const windows = isWindows();
   const refreshWorkspace = useSkillsDataStore((state) => state.refreshWorkspace);
   const environment = useWorkspaceContextStore((state) => state.selectedContext.environment);
   const transitionActive = useWorkspaceContextStore(selectWorkspaceTransitionActive);
@@ -64,7 +69,15 @@ export default function MainLayout() {
   }, [refreshWorkspace]);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      {windows && !isMaximized && (
+        <div
+          data-testid="window-border"
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-0 z-40 border border-black/15 dark:border-white/12"
+        />
+      )}
+      {windows && <WindowResizeBorders />}
       <Header />
       <InstallWizardSessionGate>
         <main className="flex flex-1 flex-col overflow-hidden">

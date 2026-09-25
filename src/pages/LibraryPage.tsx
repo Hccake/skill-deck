@@ -582,8 +582,8 @@ export function LibraryPage() {
           </div>
         ) : workspace.detail ? (
           <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-            {/* 库 header 由主工作区宽度控制。最窄档使用固定双行，避免自由换行导致跳动。 */}
-            <header className="library-workspace-header library-workspace-gutter shrink-0 pb-4 pt-3">
+            {/* 库工作区工具条由主工作区宽度控制。最窄档使用固定双行，避免自由换行导致跳动。 */}
+            <div role="region" aria-label={workspace.detail.name} className="library-workspace-header library-workspace-gutter shrink-0 py-2 border-b border-border/40">
               <div className="library-header-identity">
                 <h2 className="min-w-0 shrink truncate text-sm font-bold tracking-normal text-foreground/90">
                   <span className="truncate">{workspace.detail.name}</span>
@@ -653,7 +653,7 @@ export function LibraryPage() {
                   <span>{t('libraries.addSkill')}</span>
                 </Button>
               </div>
-            </header>
+            </div>
 
             {updateAppError && !pendingUpdate ? <p className="px-4 py-2 text-sm text-destructive" role="alert">{formatAppError(updateAppError, t)}</p> : null}
             {/* 主内容区域：双栏 Split View 或 单栏 */}
@@ -785,7 +785,7 @@ export function LibraryPage() {
                           ))}
                         </div>
                       ) : (
-                        <div className="space-y-3">
+                        <div className="space-y-2.5">
                           {visibleSkills.map((skill) => (
                             <LibrarySkillCard
                               key={skill.name}

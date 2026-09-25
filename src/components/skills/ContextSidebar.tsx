@@ -110,10 +110,10 @@ function ProjectContextItem({
         ref={selectionRef}
         type="button"
         onClick={() => selectProject(project.binding.id)}
-        className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 pr-16 text-left cursor-pointer"
+        className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 pr-3 text-left cursor-pointer appearance-none"
       >
         <Folder className={cn('h-4 w-4 flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
-        <span className="min-w-0 flex-1">
+        <span className="sidebar-item-content block min-w-0 flex-1">
           <ProjectIdentity
             project={project}
             nameClassName={cn('text-sm', isSelected ? 'font-bold' : 'font-medium')}
@@ -121,11 +121,11 @@ function ProjectContextItem({
           />
         </span>
       </button>
-      <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto">
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 hover:bg-background/80 cursor-pointer"
+          className="h-6 w-6 text-muted-foreground hover:bg-foreground/10 hover:text-foreground cursor-pointer"
           onClick={openProject}
           aria-label={t('context.openInExplorer')}
           title={t('context.openInExplorer')}
@@ -135,7 +135,7 @@ function ProjectContextItem({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+          className="h-6 w-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive cursor-pointer"
           onClick={() => onRequestRemove(project)}
           aria-label={t('context.remove')}
           title={t('context.remove')}
@@ -229,7 +229,7 @@ export function ContextSidebar() {
 
   return (
     <aside className="skills-context-sidebar flex flex-col h-full bg-canvas flex-shrink-0 border-r border-border/50">
-      <div className="flex-shrink-0 pt-5">
+      <div className="flex-shrink-0 pt-3">
         <div>
           <h3 className="px-4 mb-2 text-xs font-semibold text-muted-foreground/80">
             {t('context.sectionGlobal')}

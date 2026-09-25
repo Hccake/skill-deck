@@ -73,10 +73,12 @@ export function GlobalEnvironmentSwitcher() {
   };
 
   return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
+    <div className="flex min-w-0 items-center gap-2" data-tauri-drag-region="false">
+      <div className="h-3.5 w-px bg-border/60 hidden sm:block shrink-0" />
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
             <Button
               type="button"
               variant="ghost"
@@ -84,7 +86,7 @@ export function GlobalEnvironmentSwitcher() {
               disabled={disabled}
               aria-busy={pending}
               aria-label={t('context.environmentMenuLabel', { environment: selectedLabel })}
-              className="h-8 max-w-40 cursor-pointer gap-1.5 px-2 text-muted-foreground hover:text-foreground sm:h-9 sm:px-2.5"
+              className="h-7 min-w-0 max-w-40 shrink cursor-pointer gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground sm:h-7.5 sm:px-2"
             >
               <EnvironmentPlatformIcon
                 environment={selectedEnvironment}
@@ -185,5 +187,6 @@ export function GlobalEnvironmentSwitcher() {
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+    </div>
   );
 }

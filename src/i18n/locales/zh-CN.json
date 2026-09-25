@@ -80,7 +80,7 @@
     "renameNamed": "重命名 {{name}}",
     "name": "库名称",
     "nameDialogDescription": "设置当前 Environment 中的 Skill 库名称。",
-    "skillCount": "{{count}} 个 Skill",
+    "skillCount": "{{count}} 项",
     "addSkill": "添加 Skill",
     "addSkillDescription": "从来源中选择 Skill 并写入当前库。",
     "addFlow": {

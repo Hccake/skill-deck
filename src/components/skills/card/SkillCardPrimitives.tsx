@@ -221,7 +221,7 @@ export const SkillCardMetaRow = memo(function SkillCardMetaRow({
     <div
       data-testid="skill-card-meta"
       className={cn(
-        'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground',
+        'flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground/80',
         "[&>span:not(:last-child)]:after:ml-2 [&>span:not(:last-child)]:after:text-border [&>span:not(:last-child)]:after:content-['·']",
         className,
       )}

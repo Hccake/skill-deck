@@ -73,7 +73,7 @@ export function InstallWizardStatusControl() {
           ) : (
             <StatusIcon aria-hidden="true" />
           )}
-          <span className="hidden max-w-36 truncate text-xs min-[800px]:inline">
+          <span className="hidden max-w-36 truncate text-xs xl:inline">
             {t(labelKey)}
           </span>
         </Button>

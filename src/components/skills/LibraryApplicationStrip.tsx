@@ -19,8 +19,8 @@ function LibrarySummaryItem({
     <div
       data-testid="library-summary-item"
       className={cn(
-        'grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-1.5 rounded-md border border-primary/15 bg-primary/[0.04] px-2.5 text-left',
-        compact ? 'h-10 w-full' : 'h-10 min-w-40 max-w-64 shrink-0',
+        'inline-flex min-w-0 items-center gap-1.5 rounded-lg border border-border/50 bg-muted/50 px-2.5 text-left transition-colors hover:bg-muted/80 hover:border-border/80',
+        compact ? 'h-7.5 w-full' : 'h-7.5 max-w-64 shrink-0',
       )}
       title={library.name}
     >
@@ -37,7 +37,7 @@ export function LibraryApplicationStrip({ application, compact = false }: Librar
     <div
       className={cn(
         'flex min-w-0 gap-2',
-        compact ? 'mb-2 flex-col px-1.5' : 'mb-3 flex-wrap items-center',
+        compact ? 'mb-2 flex-col px-1.5' : 'mb-2.5 flex-wrap items-center',
       )}
       data-testid="applied-libraries-summary"
     >

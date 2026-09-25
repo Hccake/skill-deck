@@ -61,7 +61,7 @@ export function SkillsToolbar({
   return (
     <div className={cn(
       'flex flex-wrap items-center gap-2',
-      compact ? 'mb-0' : 'mb-4 gap-3',
+      compact ? 'gap-2' : 'gap-2.5',
     )}>
       {/* Search Input */}
       <div className="relative min-w-40 flex-1">

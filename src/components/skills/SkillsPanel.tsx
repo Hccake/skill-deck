@@ -439,7 +439,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-panel">
       {/* Toolbar — compact 模式也保留搜索与 Agent 筛选 */}
-      <div className={compact ? 'px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex-shrink-0' : 'px-4 sm:px-6 pt-4 sm:pt-5'}>
+      <div className={compact ? 'px-3 sm:px-4 py-2 shrink-0' : 'px-4 sm:px-6 py-2 shrink-0'}>
         <SkillsToolbar
           compact={compact}
           searchQuery={searchQuery}
@@ -508,7 +508,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
         />
       ) : (
         /* 卡片列表 — 未选中时 */
-        <div ref={listScrollRef} className="flex-1 overflow-auto px-4 sm:px-6 pb-4 sm:pb-5">
+        <div ref={listScrollRef} className="flex-1 overflow-auto px-4 sm:px-6 pt-1 pb-4 sm:pb-5">
           {/* Project Skills Section (only when project is selected) */}
           {isProjectSelected && (
             <SkillsSection

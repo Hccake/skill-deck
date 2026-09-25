@@ -91,10 +91,10 @@ function LibrarySidebarItem({
       <button
         type="button"
         onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 pr-16 text-left cursor-pointer"
+        className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 pr-3 text-left cursor-pointer appearance-none"
       >
         <LibraryBig className={cn('h-4 w-4 flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
-        <span className="min-w-0 flex-1">
+        <span className="sidebar-item-content block min-w-0 flex-1">
           <span className={cn('block truncate text-sm', isSelected ? 'font-bold' : 'font-medium')}>
             {library.name}
           </span>
@@ -103,11 +103,11 @@ function LibrarySidebarItem({
           </span>
         </span>
       </button>
-      <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto">
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 hover:bg-background/80 cursor-pointer"
+          className="h-6 w-6 text-muted-foreground hover:bg-foreground/10 hover:text-foreground cursor-pointer"
           onClick={onRename}
           aria-label={t('libraries.renameNamed', { name: library.name })}
           title={t('libraries.rename')}
@@ -124,7 +124,7 @@ function LibrarySidebarItem({
                 'h-6 w-6',
                 locked
                   ? 'cursor-not-allowed text-muted-foreground/40 hover:bg-transparent hover:text-muted-foreground/40'
-                  : 'cursor-pointer hover:bg-destructive/10 hover:text-destructive',
+                  : 'cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive',
               )}
               onClick={handleDelete}
               aria-label={t('libraries.deleteNamed', { name: library.name })}
@@ -157,7 +157,7 @@ export const LibrarySidebar = memo(function LibrarySidebar({
 
   return (
     <aside className="libraries-sidebar flex h-full min-h-0 flex-col flex-shrink-0 border-r border-border/50 bg-canvas">
-      <div className="flex min-h-0 flex-1 flex-col pt-5">
+      <div className="flex min-h-0 flex-1 flex-col pt-3">
         <h3 className="flex-shrink-0 px-4 mb-2 text-xs font-semibold text-muted-foreground/80">
           {t('libraries.title')}
         </h3>

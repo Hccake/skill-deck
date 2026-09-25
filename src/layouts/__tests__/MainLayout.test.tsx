@@ -41,6 +41,10 @@ vi.mock('@/components/layout/InstallWizardSessionGate', () => ({
 vi.mock('@/components/layout/MutationStatusBar', () => ({ MutationStatusBar: () => null }));
 vi.mock('@/hooks/useEnvironmentRuntimeMonitor', () => ({ useEnvironmentRuntimeMonitor: vi.fn() }));
 vi.mock('@/hooks/useInstallWizardSessionMonitor', () => ({ useInstallWizardSessionMonitor: vi.fn() }));
+let mockIsMaximized = false;
+vi.mock('@/hooks/useWindowMaximized', () => ({
+  useWindowMaximized: () => mockIsMaximized,
+}));
 vi.mock('@/stores/projects', () => ({
   get projectWorkspace() {
     return mocks.workspace;
@@ -116,5 +120,72 @@ describe('MainLayout project catalog lifecycle', () => {
     mocks.now += 5 * 60 * 1_000 + 1;
     window.dispatchEvent(new Event('focus'));
     await vi.waitFor(() => expect(mocks.backendList).toHaveBeenCalledTimes(2));
+  });
+
+  describe('window border presentation and zero layout shift', () => {
+    it('renders overlay window-border and keeps root container free of border class on Windows', () => {
+      const originalUserAgent = navigator.userAgent;
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      );
+      mockIsMaximized = false;
+
+      const { container, getByTestId } = render(<MainLayout />);
+      const rootDiv = container.firstElementChild as HTMLElement;
+
+      // Zero-layout-shift: root container does not have border classes
+      expect(rootDiv.className).not.toContain('border-border');
+      expect(rootDiv.className).not.toContain('border ');
+
+      // Visual border overlay is rendered
+      const border = getByTestId('window-border');
+      expect(border).toBeTruthy();
+      expect(border.className).toContain('pointer-events-none');
+      expect(border.className).toContain('fixed');
+      expect(border.className).toContain('inset-0');
+      expect(border.className).toContain('border-black/15');
+      expect(border.className).toContain('dark:border-white/12');
+
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(originalUserAgent);
+    });
+
+    it('does not render window-border on macOS', () => {
+      const originalUserAgent = navigator.userAgent;
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      );
+      mockIsMaximized = false;
+
+      const { queryByTestId } = render(<MainLayout />);
+      expect(queryByTestId('window-border')).toBeNull();
+
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(originalUserAgent);
+    });
+
+    it('does not render window-border on Linux (native decorations and borders)', () => {
+      const originalUserAgent = navigator.userAgent;
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)',
+      );
+      mockIsMaximized = false;
+
+      const { queryByTestId } = render(<MainLayout />);
+      expect(queryByTestId('window-border')).toBeNull();
+
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(originalUserAgent);
+    });
+
+    it('does not render window-border when maximized', () => {
+      const originalUserAgent = navigator.userAgent;
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      );
+      mockIsMaximized = true;
+
+      const { queryByTestId } = render(<MainLayout />);
+      expect(queryByTestId('window-border')).toBeNull();
+
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(originalUserAgent);
+    });
   });
 });

@@ -116,8 +116,8 @@ export function SettingsPage() {
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-muted/10">
       <aside className="flex w-[64px] shrink-0 border-r border-border/60 bg-background/90 backdrop-blur lg:w-56">
-        <div className="flex h-full w-full flex-col px-2.5 lg:px-3 py-5">
-          <div className="hidden items-center px-2 pb-5 lg:flex">
+        <div className="flex h-full w-full flex-col px-2.5 lg:px-3 py-3">
+          <div className="hidden items-center px-2 pb-3 lg:flex">
             <h1 className="text-lg font-semibold tracking-normal text-foreground">
               {t('settings.title')}
             </h1>

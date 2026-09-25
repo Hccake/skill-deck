@@ -246,7 +246,7 @@ export const SkillsSection = memo(function SkillsSection({
     <>
     <section className="mb-6">
       {/* Section Header */}
-      <div className="mb-3 flex flex-row items-center justify-between gap-2">
+      <div className="mb-2 flex flex-row items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <h2 className="flex shrink-0 items-center gap-1 text-sm font-bold tracking-normal text-foreground/90">
             {title}
@@ -255,7 +255,7 @@ export const SkillsSection = memo(function SkillsSection({
           {pathExists ? (
             <span
               data-testid="update-summary-slot"
-              className="inline-flex h-10 min-w-0 flex-1 items-center overflow-hidden text-xs"
+              className="inline-flex h-7 min-w-0 flex-1 items-center overflow-hidden text-xs"
               aria-live="polite"
               aria-atomic="true"
               title={visibleSummaryItems.length > 0 ? visibleSummaryItems.join(' · ') : undefined}
@@ -409,7 +409,7 @@ export const SkillsSection = memo(function SkillsSection({
           {skills.length === 0 ? (
             emptyState
           ) : (
-            <div className="grid gap-3">
+            <div className="grid gap-2.5">
               {skills.map((skill) => {
                 const identityKey = getSkillIdentityKey({
                   name: skill.name,

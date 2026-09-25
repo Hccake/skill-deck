@@ -80,7 +80,7 @@
     "renameNamed": "Rename {{name}}",
     "name": "Library name",
     "nameDialogDescription": "Set the Skill Library name in the current Environment.",
-    "skillCount": "{{count}} Skills",
+    "skillCount": "{{count}} items",
     "addSkill": "Add Skill",
     "addSkillDescription": "Select Skills from a source and add them to this Library.",
     "addFlow": {
