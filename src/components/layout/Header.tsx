@@ -11,11 +11,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useSettingsStore } from '@/stores/settings';
 import { cn } from '@/lib/utils';
+import { isWindows } from '@/lib/platform';
 import type { Locale } from '@/stores/settings';
 import logoUrl from '@/assets/logo.png';
 import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
 import { GlobalEnvironmentSwitcher } from './GlobalEnvironmentSwitcher';
 import { InstallWizardStatusControl } from './InstallWizardStatusControl';
+import { WindowControls } from './WindowControls';
 
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -44,6 +46,7 @@ export function Header() {
     event.preventDefault();
     void unsavedChanges.guard(() => navigate(target));
   };
+  const windows = isWindows();
 
   return (
     <header className="flex h-14 items-center justify-between px-3 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0 gap-2 sm:gap-4 overflow-hidden">
@@ -125,6 +128,9 @@ export function Header() {
             <Moon className="h-4 w-4 sm:h-5 sm:w-5" />
           )}
         </Button>
+
+        {/* Window Controls (Windows only: macOS uses native traffic lights, Linux uses native window frame) */}
+        {windows && <WindowControls className="ml-1" />}
       </div>
     </header>
   );

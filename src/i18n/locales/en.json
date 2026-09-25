@@ -15,6 +15,12 @@
     "deselectAll": "Deselect All",
     "confirm": "Confirm"
   },
+  "window": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
+  },
   "libraries": {
     "title": "Skill Libraries",
     "usage": {

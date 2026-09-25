@@ -1,4 +1,20 @@
 {
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Skill Deck",
+        "width": 800,
+        "height": 600,
+        "minWidth": 720,
+        "minHeight": 520,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  },
   "bundle": {
     "resources": {
       "target/wsl-worker/current/worker": "wsl-worker/current/worker",

@@ -14,3 +14,7 @@ export function useWindowLifecycle(): WindowLifecycleContextValue {
   }
   return context;
 }
+
+export function useOptionalWindowLifecycle(): WindowLifecycleContextValue | null {
+  return useContext(WindowLifecycleContext);
+}

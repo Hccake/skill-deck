@@ -15,6 +15,12 @@
     "deselectAll": "取消全选",
     "confirm": "确认"
   },
+  "window": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭"
+  },
   "libraries": {
     "title": "Skill 库",
     "usage": {
