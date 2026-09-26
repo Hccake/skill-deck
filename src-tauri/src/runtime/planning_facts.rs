@@ -212,7 +212,7 @@ struct SystemNativeRuntimeSource;
 
 impl NativeRuntimeSource for SystemNativeRuntimeSource {
     fn snapshot(&self) -> Result<NativeRuntimeSnapshot, AppError> {
-        let home = dirs::home_dir().ok_or_else(|| AppError::Path {
+        let home = crate::core::paths::home_dir().ok_or_else(|| AppError::Path {
             message: "cannot resolve home directory".to_string(),
         })?;
         Ok(NativeRuntimeSnapshot {

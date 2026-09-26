@@ -8,6 +8,17 @@ use std::sync::LazyLock;
 /// 使用 LazyLock 单例，只初始化一次
 pub static PATHS: LazyLock<PathContext> = LazyLock::new(PathContext::new);
 
+pub fn home_dir() -> Option<PathBuf> {
+    #[cfg(feature = "desktop-e2e")]
+    {
+        std::env::var_os("SKILL_DECK_E2E_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute() && path.is_dir())
+    }
+    #[cfg(not(feature = "desktop-e2e"))]
+    dirs::home_dir()
+}
+
 /// 路径上下文
 /// 对应 CLI: agents.ts 第 7-11 行
 pub struct PathContext {
@@ -22,7 +33,7 @@ pub struct PathContext {
 
 impl PathContext {
     fn new() -> Self {
-        let home = dirs::home_dir().expect("Failed to get home directory");
+        let home = home_dir().expect("Failed to get home directory");
         // 对齐 CLI: xdgConfig ?? join(home, '.config')
         // xdg-basedir 在 Windows/macOS 上返回 None，fallback 到 ~/.config
         // dirs::config_dir() 在 Windows 上返回 AppData\Roaming，与 CLI 不一致

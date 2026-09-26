@@ -79,6 +79,19 @@ fn export_typescript_bindings(builder: &Builder<tauri::Wry>, path: &std::path::P
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(feature = "desktop-e2e")]
+    let test_home =
+        core::paths::home_dir().expect("desktop-e2e requires an isolated SKILL_DECK_E2E_HOME");
+    let context = tauri::generate_context!();
+    #[cfg(feature = "desktop-e2e")]
+    let context = {
+        let mut context = context;
+        assert_eq!(context.config().identifier, "com.skill-deck.desktop-e2e");
+        for window in &mut context.config_mut().app.windows {
+            window.data_directory = Some(test_home.join("webview"));
+        }
+        context
+    };
     let builder = specta_builder();
     let agent_registry = ManagedAgentRegistry::for_current_user();
 
@@ -92,7 +105,15 @@ pub fn run() {
         export_typescript_bindings(&builder, &path);
     }
 
-    tauri::Builder::default()
+    #[cfg(feature = "desktop-e2e")]
+    let log_directory = TargetKind::Folder {
+        path: test_home.join("logs"),
+        file_name: None,
+    };
+    #[cfg(not(feature = "desktop-e2e"))]
+    let log_directory = TargetKind::LogDir { file_name: None };
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -106,13 +127,15 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
-                .targets([
-                    Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::LogDir { file_name: None }),
-                ])
+                .targets([Target::new(TargetKind::Stdout), Target::new(log_directory)])
                 .build(),
-        )
-        .invoke_handler(builder.invoke_handler())
+        );
+    #[cfg(feature = "desktop-e2e")]
+    let app = app
+        .plugin(tauri_plugin_wdio_webdriver::init())
+        .plugin(tauri_plugin_wdio::init());
+
+    app.invoke_handler(builder.invoke_handler())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(runtime) = window.try_state::<RuntimeServiceGraph>() {
@@ -121,8 +144,15 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            #[cfg(not(feature = "desktop-e2e"))]
             let payload_cache_root = app.path().app_cache_dir()?.join("payload-sessions");
+            #[cfg(not(feature = "desktop-e2e"))]
             let recovery_root = app.path().app_local_data_dir()?.join("recovery");
+            #[cfg(feature = "desktop-e2e")]
+            let (payload_cache_root, recovery_root) = (
+                test_home.join("payload-sessions"),
+                test_home.join("recovery"),
+            );
             let library_root = crate::core::get_skill_library_root()?;
             #[cfg(target_os = "windows")]
             let worker_artifact_directory =
@@ -198,7 +228,7 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 

@@ -18,6 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 embed-resource = "3"
 tauri-build = { version = "2.5.4", features = [] }
 
+[features]
+desktop-e2e = ["dep:tauri-plugin-wdio-webdriver", "dep:tauri-plugin-wdio"]
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -27,6 +30,8 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "=2.10.0"
 tauri-plugin-os = "2"
+tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }
+tauri-plugin-wdio = { version = "=1.4.0", optional = true }
 
 # 类型安全绑定生成
 specta = "2.0.0-rc.22"

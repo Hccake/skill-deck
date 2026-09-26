@@ -127,7 +127,7 @@ impl ResolvedContext {
 
 impl ContextResolver {
     pub fn resolve_native(context: SkillLocationRef) -> Result<ResolvedContext, AppError> {
-        let home = dirs::home_dir().ok_or_else(|| AppError::Path {
+        let home = crate::core::paths::home_dir().ok_or_else(|| AppError::Path {
             message: "cannot resolve home directory".to_string(),
         })?;
         let projects = if matches!(context.scope, SkillLocation::Project { .. }) {

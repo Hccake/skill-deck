@@ -338,7 +338,7 @@ pub async fn add_environment_project(
     match environment {
         EnvironmentRef::Native => {
             let store = ensure_native_projects_ready(migration)?;
-            let home = dirs::home_dir().ok_or_else(|| AppError::Path {
+            let home = crate::core::paths::home_dir().ok_or_else(|| AppError::Path {
                 message: "cannot resolve home directory".to_string(),
             })?;
             add_native_environment_project(&store, &home, native_path)

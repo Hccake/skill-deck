@@ -582,7 +582,7 @@ pub fn build_runtime_source_evidence_coordinator(
         wsl_source,
         wellknown,
     ));
-    let home = dirs::home_dir().ok_or_else(|| AppError::Path {
+    let home = crate::core::paths::home_dir().ok_or_else(|| AppError::Path {
         message: "无法确定用户主目录，不能初始化更新检查状态".to_string(),
     })?;
     SourceEvidenceCoordinator::with_state_path(

@@ -13,7 +13,7 @@ mod network;
 const MAX_CONFIG_BYTES: usize = environment_protocol::MAX_DOCUMENT_BYTES as usize;
 
 fn get_skill_deck_home() -> Result<PathBuf, AppError> {
-    let home = dirs::home_dir().ok_or(AppError::Path {
+    let home = crate::core::paths::home_dir().ok_or(AppError::Path {
         message: "无法获取用户主目录".to_string(),
     })?;
     Ok(home.join(".skill-deck"))
