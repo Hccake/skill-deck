@@ -41,6 +41,7 @@
 - **Browse and maintain** — Read installed Skill content and check or apply updates; keep Skills whose sources are unavailable, or remove them before installing from another source; private GitHub sources can reuse local Git credentials for update checks
 - **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects; use built-in agent definitions or add your own
 - **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions
+- **Window preferences**: Restore the main window's size, position, and maximized state when reopening the app
 
 ---
 

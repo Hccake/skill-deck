@@ -2,6 +2,7 @@
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri::{Emitter, Manager};
 use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_window_state::StateFlags;
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
 use application::install_wizard_session::InstallWizardSessionSnapshot;
@@ -113,6 +114,17 @@ pub fn run() {
     #[cfg(not(feature = "desktop-e2e"))]
     let log_directory = TargetKind::LogDir { file_name: None };
 
+    let window_state = tauri_plugin_window_state::Builder::default()
+        .with_filter(|label| label == "main")
+        .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED);
+    #[cfg(feature = "desktop-e2e")]
+    let window_state = window_state.with_filename(
+        test_home
+            .join(tauri_plugin_window_state::DEFAULT_FILENAME)
+            .to_string_lossy()
+            .into_owned(),
+    );
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -123,6 +135,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
+        .plugin(window_state.build())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_log::Builder::default()

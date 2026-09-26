@@ -30,6 +30,7 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "=2.10.0"
 tauri-plugin-os = "2"
+tauri-plugin-window-state = "2.4.1"
 tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }
 tauri-plugin-wdio = { version = "=1.4.0", optional = true }
 

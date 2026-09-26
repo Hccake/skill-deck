@@ -41,6 +41,8 @@ flowchart TD
 
 主窗口提供 `Skills`、`Discover` 和 `Settings` 三个一级页面，并集中展示当前安装流程、写操作状态和恢复入口。Windows 启用 WSL 支持并发现发行版后，主窗口还会显示 Environment 切换入口；`Skills`、`Discover` 以及 `Settings` 中的 Agents 和 Projects 使用用户当前选择的 Windows 或 WSL 位置，通用设置、Git 和关于页不依赖该选择。
 
+主窗口正常退出后，由窗口状态插件保存普通状态的尺寸、位置和最大化状态，再次打开时恢复。原位置不在可用显示器上时由系统重新放置窗口。首次启动或记录不可用时使用默认窗口，最小化状态不随启动恢复。窗口恢复不改变未保存草稿与进行中写操作的关闭保护。
+
 Windows 用户可以在通用设置中启用 WSL 支持；启用并发现发行版后，主窗口提供持续可见的 Environment 切换入口。WSL Environment 使用 `WSL · 发行版名称` 展示。WSL 支持关闭或没有可用发行版时不显示该入口。macOS 和 Linux 不展示 WSL 支持设置或 Environment 切换入口。
 
 安装向导在独立窗口中完成，可以从 `Skills` 页的全局或项目区域发起，也可以从 `Discover` 页的 Skill 详情发起。打开向导不会改变主窗口当前显示的内容。
@@ -285,6 +287,8 @@ Git 代理只通过本次进程的 `http.proxy` 参数生效，不读取、修�
 | 操作未完成，需要检查相关文件 | 持续展示恢复记录，并引导用户打开相关位置、处理文件和刷新状态 |
 
 ## 平台与产品限制
+
+- 部分 Linux/GTK 桌面使用客户端窗口装饰时，恢复窗口可能使尺寸逐次增大，属于窗口状态插件的[已知问题](https://github.com/tauri-apps/plugins-workspace/issues/3553)。
 
 | 桌面平台 | 默认管理位置 | 切换能力 |
 |---|---|---|

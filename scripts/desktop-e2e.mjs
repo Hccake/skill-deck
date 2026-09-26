@@ -96,8 +96,14 @@ async function main() {
       'build', '--debug', '--no-bundle', '--features', 'desktop-e2e', '--config', JSON.stringify(config), '--', '--locked',
     ], env);
   }
-  await assertDriverPortAvailable(Number(env.TAURI_WEBDRIVER_PORT ?? 4445));
-  await runNode(path.join(repository, 'node_modules/@wdio/cli/bin/wdio.js'), ['run', 'e2e/wdio.conf.mjs'], env);
+  const port = Number(env.TAURI_WEBDRIVER_PORT ?? 4445);
+  await assertDriverPortAvailable(port);
+  if (process.argv.includes('--window-state')) {
+    const { verifyWindowState } = await import('../e2e/window-state.mjs');
+    await verifyWindowState(paths.binary, run, port);
+  } else {
+    await runNode(path.join(repository, 'node_modules/@wdio/cli/bin/wdio.js'), ['run', 'e2e/wdio.conf.mjs'], env);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
