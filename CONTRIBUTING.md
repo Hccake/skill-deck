@@ -96,6 +96,7 @@ Rust 命令接口是进程间通信（IPC）的权威。修改命令或公开 DT
 | 前端组件、状态或工作流 | 相关 Vitest；完成前运行 `pnpm lint`、`pnpm test` 和 `pnpm build` |
 | Rust 规则或业务用例 | 相关 Rust 测试；完成前运行格式检查、静态检查和受影响的 Rust 测试 |
 | Tauri 命令、公开 DTO 或窗口权限 | `pnpm bindings:generate`、`pnpm bindings:check`，以及命令、权限和相关前端测试 |
+| 真实 WebView 中的交互、主题或窗口布局 | 在目标平台运行 `pnpm test:desktop`，检查运行目录中的截图与日志 |
 | WSL shell 脚本或传输协议 | 相关 Rust 测试和下述 ShellCheck；涉及真实发行版时增加 Windows 与 WSL 联合检查 |
 
 Rust 的完整检查命令为：

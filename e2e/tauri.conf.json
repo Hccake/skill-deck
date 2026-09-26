@@ -1,0 +1,17 @@
+{
+  "identifier": "com.skill-deck.desktop-e2e",
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "main",
+        "install-wizard",
+        {
+          "identifier": "desktop-e2e",
+          "windows": ["main", "install-wizard"],
+          "permissions": ["wdio:default"]
+        }
+      ]
+    }
+  }
+}

@@ -100,6 +100,32 @@ Git Adapter 测试验证各 Environment 的代理通过单次命令的 `http.pro
 
 前端测试从用户能够看到或操作的结果出发，优先通过 `role`、`label`、文本和可见状态定位元素，具体原则见 [Testing Library](https://testing-library.com/docs/guiding-principles)。测试结束时不应留下未处理的 Promise 拒绝或 React `act(...)` 警告。
 
+### 真实桌面自动化
+
+`pnpm test:desktop` 使用 WebdriverIO 和 `@wdio/tauri-service` 的 embedded provider，在测试版 Tauri 进程中启动 WebDriver 服务。它操作应用自带的 WebView，无需额外安装 `tauri-driver`、EdgeDriver 或 WebKitWebDriver。运行前需要安装当前平台的 Tauri 构建依赖，并具备可见桌面会话；WSL 需要 WSLg。
+
+```bash
+pnpm test:desktop
+# 仅修改 e2e 用例、复用已经构建的测试应用时
+pnpm test:desktop --no-build
+```
+
+默认输出根目录为当前用户的 `.cache/skill-deck-validation/desktop`，可通过 `SKILL_DECK_DESKTOP_ROOT` 指定仓库外的固定目录。脚本打印本轮 `runs/<平台>-<随机标识>` 路径，其中保存截图、WebView 运行信息、日志和隔离数据。`target` 与 `dist` 用于增量构建；测试结束后关闭应用，运行证据保留供排查，确认不再需要时可删除对应运行目录。同一桌面会话按顺序运行测试。
+
+测试通过独立 Cargo feature `desktop-e2e`、Tauri 配置和 Vite 配置启用自动化插件。正式构建默认不包含这些插件及其窗口权限。测试版使用独立应用标识、用户数据目录和 WebView 数据目录，并关闭 WSL 集成；该可执行文件仅用于本机验证，不作为发布制品。
+
+当前用例覆盖主窗口启动、真实配置 IPC、设置页导航，以及 720×520、800×600、1000×760 内容区域下的浅色与深色主题。断言检查关键导航与横向溢出，截图用于人工或 Agent 视觉复核；截图成功本身不代表所有视觉细节均已验收。原生标题栏、系统对话框、托盘、多窗口及真实 WSL 操作需要补充对应测试或原生桌面验收。
+
+| 运行位置 | 实际验证的渲染环境 |
+|---|---|
+| WSL 内运行 Linux 应用 | WebKitGTK，通过 WSLg 显示 |
+| Windows 原生工具链构建并运行 | WebView2 |
+| macOS 原生工具链构建并运行 | WKWebView |
+
+Windows 验收需在 Windows 原生工作区或受管理的验证副本内执行同一命令。首次构建前，运行 `pnpm prepare:wsl-worker -- --distro Ubuntu` 准备当前源码对应的 Worker 资源；用例本身保持 WSL 集成关闭。其他前置依赖见[开发环境说明](../CONTRIBUTING.md#开发环境)。WSL 中的结果只能证明 Linux 应用行为；浏览器预览用于前端快速检查，不能替代目标平台桌面验收。接入依据见 [Tauri WebDriver 文档](https://v2.tauri.app/develop/tests/webdriver/)。
+
+端口默认使用 `127.0.0.1:4445`，可通过 `TAURI_WEBDRIVER_PORT` 调整；端口已被占用时，入口脚本直接报错。当前锁定的服务版本可能在会话结束时记录 `Failed to clear mock store: A sessionId is required for this command`，这是上游在会话销毁后清理 mock 的警告。判断退出是否正常时，应同时检查用例结果、应用进程和端口释放情况。
+
 ### 异步状态、定时器与焦点
 
 组件通过状态、ref 回调或 React 提交阶段的 effect 驱动焦点和其他 DOM 副作用。需要在浏览器绘制前完成焦点调整时使用 `useLayoutEffect`。`setTimeout` 只用于产品明确要求的延迟，不用于协调同一次提交中的状态更新、元素挂载和焦点顺序。
