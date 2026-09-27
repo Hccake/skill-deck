@@ -53,7 +53,7 @@ function hasCommittedComparison(snapshot: ContextSkillSnapshot): boolean {
 }
 
 interface SkillsPanelProps {
-  /** 紧凑模式 — 选中 skill 后由 SkillsPage 传入 */
+  /** 详情面板打开时使用紧凑列表。 */
   compact: boolean;
 }
 
@@ -169,7 +169,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     };
   }, [selectedContext, activateAutomaticChecks]);
 
-  // ③a 仅在 context 真正切换时关闭详情面板
+  // 切换范围时清空旧对象，详情面板的开关由工作区保留。
   const previousContextRef = useRef(selectedContextKey);
   useEffect(() => {
     if (previousContextRef.current !== selectedContextKey) {
@@ -177,16 +177,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       previousContextRef.current = selectedContextKey;
     }
   }, [selectedContextKey, deselectSkill]);
-
-  // Esc 键关闭详情面板
-  useEffect(() => {
-    if (!selectedSkillRef) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') deselectSkill();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSkillRef, deselectSkill]);
 
   const filterableAgents = useMemo(() => {
     const agentsById = new Map<AgentId, ResolvedAgent>();

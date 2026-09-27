@@ -22,6 +22,7 @@
     "close": "Close"
   },
   "libraries": {
+    "navigation": "Select Skill Library",
     "title": "Skill Libraries",
     "usage": {
       "applied": "Applied in {{count}} places",
@@ -370,6 +371,7 @@
     }
   },
   "context": {
+    "navigation": "Select Global or Project",
     "title": "Available Scope",
     "global": "Global",
     "globalSubtitle": "Available in every project",
@@ -407,6 +409,8 @@
     }
   },
   "skills": {
+    "noSelection": "No Skill selected",
+    "resizePanels": "Resize Skill List and Details",
     "title": "My Skills",
     "empty": "No skills installed",
     "emptyHint": "Click \"Add\" to install your first skill",

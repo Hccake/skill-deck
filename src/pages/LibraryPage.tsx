@@ -1,14 +1,12 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import { useGroupRef } from 'react-resizable-panels';
 import {
   BookOpen,
   Check,
@@ -33,7 +31,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { SkillsWorkspace } from '@/components/skills/SkillsWorkspace';
+import { useLayoutStore } from '@/stores/layout';
 import {
   LibraryCompactItem,
   LibraryAddDialog,
@@ -74,16 +73,6 @@ import {
   captureLibraryDeletion,
   type LibraryDeletionRequest,
 } from '@/workflows/library-deletion';
-
-// react-resizable-panels v4 把裸数字当作像素，百分比必须写成字符串。
-const SPLIT_VIEW_LAYOUT = {
-  'library-skills-list-panel': 22,
-  'library-skill-detail-panel': 78,
-} as const;
-
-const LIST_VIEW_LAYOUT = {
-  'library-skills-list-panel': 100,
-} as const;
 
 function useLibraryViewState<T>(
   key: string,
@@ -152,6 +141,8 @@ export function LibraryPage() {
   );
   const [deleteRequest, setDeleteRequest] = useState<LibraryDeletionRequest | null>(null);
   const [query, setQuery] = useLibraryViewState(localViewKey, '');
+  const detailOpen = useLayoutStore((state) => state.libraryDetailOpen);
+  const setDetailOpen = useLayoutStore((state) => state.setLibraryDetailOpen);
   const [selectedSkillName, setSelectedSkillName] = useLibraryViewState<string | null>(
     localViewKey,
     null,
@@ -159,9 +150,7 @@ export function LibraryPage() {
   const [skillContent, setSkillContent] = useLibraryViewState<string | null>(localViewKey, null);
   const [contentError, setContentError] = useLibraryViewState(localViewKey, false);
 
-  const layoutRef = useGroupRef();
   const addTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const previousSplitViewRef = useRef(false);
   const committedRouteKeyRef = useRef<string | null>(null);
   const contentRequestId = useRef(0);
   const routeSyncKey = `${environmentKey(environment)}:${requestedLibraryId ?? ''}`;
@@ -293,6 +282,7 @@ export function LibraryPage() {
     const libraryId = workspace.selectedLibraryId;
     if (!libraryId) return;
     const requestId = ++contentRequestId.current;
+    setDetailOpen(true);
     setSelectedSkillName(skillName);
     setSkillContent(null);
     setContentError(false);
@@ -302,7 +292,14 @@ export function LibraryPage() {
     } catch {
       if (requestId === contentRequestId.current) setContentError(true);
     }
-  }, [environment, workspace.selectedLibraryId, setSelectedSkillName, setSkillContent, setContentError]);
+  }, [environment, workspace.selectedLibraryId, setSelectedSkillName, setSkillContent, setContentError, setDetailOpen]);
+
+  const closeDetail = () => {
+    contentRequestId.current += 1;
+    setSelectedSkillName(null);
+    setSkillContent(null);
+    setDetailOpen(false);
+  };
 
   useEffect(() => {
     if (!requestedSkillName || workspace.detailPhase !== 'ready'
@@ -407,8 +404,7 @@ export function LibraryPage() {
     [updatePhase, pendingUpdate, lastResults],
   );
 
-  // 与 Skills 页一致：选中成员即进入分栏，列表切换为紧凑导航。
-  const compact = Boolean(selectedSkillName);
+  const compact = detailOpen;
 
   // 检查完成且没有发现更新时，按钮就地换成 ✓，800ms 后恢复——与 Skills 页同一反馈。
   const [checkDone, setCheckDone] = useState(false);
@@ -488,36 +484,14 @@ export function LibraryPage() {
     return workspace.detail.skills.find((s) => s.name === selectedSkillName) ?? null;
   }, [selectedSkillName, workspace.detail]);
 
-  // 分栏出现或消失时重置布局。单栏时列表必须能占满 100%，否则会被 maxSize 钳住留白。
-  useLayoutEffect(() => {
-    const hasDetail = Boolean(selectedSkill);
-    if (hasDetail === previousSplitViewRef.current) return;
-
-    const expectedPanelCount = hasDetail ? 2 : 1;
-    const nextLayout = hasDetail ? SPLIT_VIEW_LAYOUT : LIST_VIEW_LAYOUT;
-    let cancelled = false;
-
-    const applyLayoutWhenReady = (attempt = 0) => {
-      if (cancelled) return;
-      const group = layoutRef.current;
-      if (!group) return;
-
-      if (Object.keys(group.getLayout()).length === expectedPanelCount) {
-        group.setLayout(nextLayout);
-        previousSplitViewRef.current = hasDetail;
-        return;
-      }
-      if (attempt < 10) queueMicrotask(() => applyLayoutWhenReady(attempt + 1));
-    };
-
-    applyLayoutWhenReady();
-    return () => { cancelled = true; };
-  }, [selectedSkill, layoutRef]);
-
   return (
     <TooltipProvider>
-      <div className="library-page-shell flex h-full min-h-0 w-full overflow-hidden bg-background">
-        {/* 左侧侧边栏 */}
+      <SkillsWorkspace
+        kind="library"
+        contextKey={localViewKey}
+        detailOpen={detailOpen}
+        onCloseDetail={closeDetail}
+        sidebar={(
         <LibrarySidebar
           libraries={workspace.catalog?.libraries ?? []}
           usageProjection={workspace.catalog?.usageProjection}
@@ -538,9 +512,23 @@ export function LibraryPage() {
             setDeleteRequest(captureLibraryDeletion(environment, library));
           }}
         />
-
-      {/* 右侧主工作区 */}
-      <main className="library-workspace flex min-w-0 flex-1 flex-col overflow-hidden bg-panel">
+        )}
+        detail={selectedSkill ? (
+          <LibrarySkillDetailPanel
+            skill={selectedSkill}
+            check={checks[selectedSkill.name]}
+            result={lastResults[selectedSkill.name]}
+            content={skillContent}
+            loading={skillContent === null && !contentError}
+            contentError={contentError}
+            busy={busy}
+            onClose={closeDetail}
+            onUpdate={(name) => void prepareUpdates([name])}
+            onRemove={(name) => void openSkillRemoval(name)}
+            onRetry={() => void openSkillContent(selectedSkill.name)}
+          />
+        ) : null}
+        header={(navigation) => <>
         {workspace.catalogError && workspace.catalog ? (
           <div role="alert" className="library-workspace-gutter flex shrink-0 items-center justify-between gap-3 py-2 text-sm text-destructive">
             <div className="min-w-0">
@@ -569,22 +557,12 @@ export function LibraryPage() {
             })}</span>
           </div>
         ) : null}
-        {workspace.catalogError && !workspace.catalog ? (
-          <div role="alert" className="m-auto max-w-md py-16 text-center">
-            <p className="text-sm font-medium text-destructive">{t('libraries.loadError')}</p>
-            <p className="mt-2 break-words text-xs text-destructive">
-              {formatAppError(workspace.catalogError, t)}
-            </p>
-            <Button className="mt-4 gap-2" variant="outline" onClick={() => void workspace.execute({ kind: 'load' })}>
-              <RefreshCw className="size-4" aria-hidden="true" />
-              {t('common.retry')}
-            </Button>
-          </div>
-        ) : workspace.detail ? (
-          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        {workspace.detail ? (
+          <>
             {/* 库工作区工具条由主工作区宽度控制。最窄档使用固定双行，避免自由换行导致跳动。 */}
             <div role="region" aria-label={workspace.detail.name} className="library-workspace-header library-workspace-gutter shrink-0 py-2 border-b border-border/40">
               <div className="library-header-identity">
+                {navigation}
                 <h2 className="min-w-0 shrink truncate text-sm font-bold tracking-normal text-foreground/90">
                   <span className="truncate">{workspace.detail.name}</span>
                 </h2>
@@ -656,22 +634,28 @@ export function LibraryPage() {
             </div>
 
             {updateAppError && !pendingUpdate ? <p className="px-4 py-2 text-sm text-destructive" role="alert">{formatAppError(updateAppError, t)}</p> : null}
-            {/* 主内容区域：双栏 Split View 或 单栏 */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <ResizablePanelGroup
-                id="library-page-split-layout"
-                orientation="horizontal"
-                className="h-full"
-                groupRef={layoutRef}
-              >
-                {/* 列表 Panel */}
-                <ResizablePanel
-                  id="library-skills-list-panel"
-                  defaultSize={selectedSkill ? '22%' : '100%'}
-                  minSize={selectedSkill ? '12%' : '100%'}
-                  maxSize={selectedSkill ? '85%' : '100%'}
-                  className="h-full flex flex-col min-w-0"
-                >
+          </>
+        ) : navigation ? (
+          <div className="library-workspace-header library-workspace-gutter shrink-0 border-b py-2">
+            {navigation}
+            <span className="min-w-0 truncate text-sm font-bold">
+              {workspace.catalog?.libraries.find((library) => library.id === workspace.selectedLibraryId)?.name ?? t('libraries.title')}
+            </span>
+          </div>
+        ) : null}
+        </>}
+      >
+        {workspace.catalogError && !workspace.catalog ? (
+          <div role="alert" className="m-auto max-w-md py-16 text-center">
+            <p className="text-sm font-medium text-destructive">{t('libraries.loadError')}</p>
+            <p className="mt-2 break-words text-xs text-destructive">{formatAppError(workspace.catalogError, t)}</p>
+            <Button className="mt-4 gap-2" variant="outline" onClick={() => void workspace.execute({ kind: 'load' })}>
+              <RefreshCw className="size-4" aria-hidden="true" />
+              {t('common.retry')}
+            </Button>
+          </div>
+        ) : workspace.detail ? (
+          <div className="flex h-full min-h-0 min-w-0 flex-col">
                   {/* 搜索永久属于列表面板：它过滤的就是下面这个列表，紧凑模式下也跟着收窄。
                       放在 ScrollArea 之外，列表滚动时不会跑掉。 */}
                   {workspace.detail.skills.length > 0 ? (
@@ -803,36 +787,6 @@ export function LibraryPage() {
                       )}
                     </div>
                   </ScrollArea>
-                </ResizablePanel>
-
-                {/* 详情 Panel (仅当选中 Skill 时展示) */}
-                {selectedSkill ? (
-                  <>
-                    <ResizableHandle className="bg-border/60 hover:bg-primary transition-colors" />
-                    <ResizablePanel
-                      id="library-skill-detail-panel"
-                      defaultSize="78%"
-                      minSize="15%"
-                      className="h-full bg-surface"
-                    >
-                      <LibrarySkillDetailPanel
-                        skill={selectedSkill}
-                        check={checks[selectedSkill.name]}
-                        result={lastResults[selectedSkill.name]}
-                        content={skillContent}
-                        loading={skillContent === null && !contentError}
-                        contentError={contentError}
-                        busy={busy}
-                        onClose={() => setSelectedSkillName(null)}
-                        onUpdate={(name) => void prepareUpdates([name])}
-                        onRemove={(name) => void openSkillRemoval(name)}
-                        onRetry={() => void openSkillContent(selectedSkill.name)}
-                      />
-                    </ResizablePanel>
-                  </>
-                ) : null}
-              </ResizablePanelGroup>
-            </div>
           </div>
         ) : workspace.selectedLibraryId && workspace.detailPhase === 'error' ? (
           <div className="m-auto max-w-md py-16 text-center">
@@ -868,7 +822,7 @@ export function LibraryPage() {
             </Button>
           </div>
         )}
-      </main>
+      </SkillsWorkspace>
 
       {/* 创建 / 重命名库 Dialog */}
       <Dialog open={nameDialog !== null} onOpenChange={(open) => {
@@ -984,5 +938,6 @@ export function LibraryPage() {
           }}
         />
       ) : null}
-    </div>    </TooltipProvider>  );
+    </TooltipProvider>
+  );
 }

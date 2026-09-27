@@ -172,7 +172,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
             <div className="space-y-3">
               <div className="flex flex-wrap justify-between items-start gap-x-4 gap-y-2">
-                <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
+                <div className="flex min-w-0 flex-auto flex-wrap items-center gap-2">
                   <h2 className="min-w-0 text-xl font-heading font-semibold text-foreground leading-7 [overflow-wrap:anywhere]">
                     {skill.name}
                   </h2>

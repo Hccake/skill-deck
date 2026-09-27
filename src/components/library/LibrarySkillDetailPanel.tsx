@@ -1,4 +1,4 @@
-import { memo, useEffect } from 'react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpCircle, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -55,15 +55,6 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
 }: LibrarySkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
 
-  // 详情是分栏而不是弹窗，但用户对 Escape 关闭当前面板有同样的预期。
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
-  }, [onClose]);
-
   const presentation = skillStatusPresentation(skill, check);
   const sourceLabel = presentation.sourceLabel;
   const sourceUrl = isOpenableUrl(skill.sourceUrl)
@@ -89,7 +80,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
           <div className="w-full space-y-4 px-6 py-6 sm:px-8 sm:py-6">
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                <div className="flex min-w-0 flex-1 basis-48 flex-wrap items-center gap-2">
+                <div className="flex min-w-0 flex-auto flex-wrap items-center gap-2">
                   <h2 className="min-w-0 font-heading text-xl font-semibold leading-7 text-foreground [overflow-wrap:anywhere]">
                     {skill.name}
                   </h2>

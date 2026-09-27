@@ -40,6 +40,7 @@ function GlobalContextItem({ buttonRef }: GlobalContextItemProps) {
       ref={buttonRef}
       type="button"
       onClick={selectGlobal}
+      aria-current={isSelected ? 'location' : undefined}
       className={cn(
         'w-full px-4 py-2 text-left transition-colors cursor-pointer',
         isSelected
@@ -110,6 +111,7 @@ function ProjectContextItem({
         ref={selectionRef}
         type="button"
         onClick={() => selectProject(project.binding.id)}
+        aria-current={isSelected ? 'location' : undefined}
         className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 pr-3 text-left cursor-pointer appearance-none"
       >
         <Folder className={cn('h-4 w-4 flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
@@ -228,7 +230,7 @@ export function ContextSidebar() {
   };
 
   return (
-    <aside className="skills-context-sidebar flex flex-col h-full bg-canvas flex-shrink-0 border-r border-border/50">
+    <aside className="flex h-full w-full flex-col bg-canvas border-r border-border/50">
       <div className="flex-shrink-0 pt-3">
         <div>
           <h3 className="px-4 mb-2 text-xs font-semibold text-muted-foreground/80">

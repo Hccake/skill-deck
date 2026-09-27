@@ -1,6 +1,6 @@
 // src/pages/SkillsPage.tsx
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { useGroupRef } from 'react-resizable-panels';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { contextKey, globalContext } from '@/lib/context';
@@ -19,7 +19,8 @@ import { CopyToProjectDialogContainer } from '@/components/skills/CopyToProjectD
 import { UpdatePlanDialogContainer } from '@/components/skills/UpdatePlanDialogContainer';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { openSkillRemoval } from '@/workflows/skill-remove';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { SkillsWorkspace } from '@/components/skills/SkillsWorkspace';
+import { projectDisplayName } from '@/lib/projects/presentation';
 import type { InstalledSkill, InstalledSkillLocation } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
@@ -32,16 +33,8 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
 };
 const EMPTY_SKILL_NAMES: string[] = [];
 
-const SPLIT_VIEW_LAYOUT = {
-  'skills-list-panel': 22,
-  'skill-detail-panel': 78,
-} as const;
-
-const LIST_VIEW_LAYOUT = {
-  'skills-list-panel': 100,
-} as const;
-
 export function SkillsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const selectedContextKey = contextKey(selectedContext);
@@ -55,6 +48,9 @@ export function SkillsPage() {
   const selectedProject = selectedScope.scope === 'project'
     ? projects.find((project) => project.binding.id === selectedScope.project_id)
     : null;
+  const contextLabel = selectedScope.scope === 'project'
+    ? selectedProject ? projectDisplayName(selectedProject) : t('context.projects')
+    : t('context.global');
   const selectedProjectPath = selectedProject?.binding.nativePath;
   const snapshots = useSkillsDataStore((state) => state.snapshots);
   const globalSnapshot = snapshots[globalContextKey] ?? EMPTY_SNAPSHOT;
@@ -67,6 +63,8 @@ export function SkillsPage() {
   const skillContent = useSkillDetailStore((s) => s.skillContent);
   const loadingContent = useSkillDetailStore((s) => s.loadingContent);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
+  const detailOpen = useSkillDetailStore((s) => s.detailOpen);
+  const closeDetail = useSkillDetailStore((s) => s.closeDetail);
   const reloadContent = useSkillDetailStore((s) => s.reloadContent);
   const forceUpdateScopes = useSkillsDataStore((s) => s.forceUpdateScopes);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
@@ -82,14 +80,12 @@ export function SkillsPage() {
     ? projectSnapshot.agents
     : globalSnapshot.agents;
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
-  const layoutRef = useGroupRef();
   const previousContextRef = useRef(selectedContextKey);
 
   const selectedSkill = useMemo(
     () => findSkillByIdentity(selectedSkillRef, globalSkills, projectSkills, selectedProjectPath),
     [globalSkills, projectSkills, selectedProjectPath, selectedSkillRef]
   );
-  const previousSplitViewRef = useRef(Boolean(selectedSkill));
 
   const agentDisplayNames = useMemo(
     () => new Map(allAgents.map((agent) => [agentId(agent), agentDisplayName(agent)])),
@@ -154,104 +150,52 @@ export function SkillsPage() {
     openCopyToProject(skill, selectedContext);
   }, [openCopyToProject, selectedContext]);
 
-  useLayoutEffect(() => {
-    const hasDetail = Boolean(selectedSkill);
-    const hadDetail = previousSplitViewRef.current;
-
-    if (hasDetail === hadDetail) return;
-
-    const expectedPanelCount = hasDetail ? 2 : 1;
-    const nextLayout = hasDetail ? SPLIT_VIEW_LAYOUT : LIST_VIEW_LAYOUT;
-    let cancelled = false;
-
-    const applyLayoutWhenReady = (attempt = 0) => {
-      if (cancelled) return;
-
-      const group = layoutRef.current;
-      if (!group) return;
-
-      if (Object.keys(group.getLayout()).length === expectedPanelCount) {
-        group.setLayout(nextLayout);
-        previousSplitViewRef.current = hasDetail;
-        return;
-      }
-
-      if (attempt < 10) {
-        queueMicrotask(() => applyLayoutWhenReady(attempt + 1));
-      }
-    };
-
-    applyLayoutWhenReady();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSkill, layoutRef]);
-
   return (
     <>
-    <div className="skills-page-shell flex h-full min-w-0">
-      {/* Left Sidebar: Context */}
-      <ContextSidebar />
+      <SkillsWorkspace
+        contextKey={selectedContextKey}
+        detailOpen={detailOpen}
+        onCloseDetail={closeDetail}
+        sidebar={<ContextSidebar />}
+        detail={selectedSkill ? (
+          <SkillDetailPanel
+            key={selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : `${selectedSkill.scope}:${selectedSkill.name}`}
+            skill={selectedSkill}
+            content={skillContent}
+            loading={loadingContent}
+            agentDisplayNames={agentDisplayNames}
+            updateStatus={selectedSkillUpdateStatus}
+            isCheckingUpdates={isCheckingSelectedSkillUpdates}
+            context={selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext}
+            pathBase={(selectedSkill.scope === 'project' ? projectSnapshot : globalSnapshot).pathBase}
+            onClose={closeDetail}
+            onCheckUpdates={handleDetailCheckUpdates}
+            onUpdate={handleDetailUpdate}
+            onDelete={handleDetailDelete}
+            onRetry={reloadContent}
+            onManageAgents={handleManageAgents}
+            onCopyToProject={selectedSkill.scope === 'project' ? handleCopyToProject : undefined}
+            onConfigureGitCredentials={() => navigate('/settings?section=git')}
+            onOpenLibraryVersion={(version) => navigate(`/libraries?${new URLSearchParams({ library: version.libraryId, skill: version.skillName })}`)}
+          />
+        ) : null}
+      >
+        {(navigation) => <>
+          {navigation ? (
+            <div className="flex shrink-0 items-center gap-2 border-b bg-panel px-3 py-1">
+              {navigation}
+              <span className="min-w-0 truncate text-sm font-medium" title={contextLabel}>{contextLabel}</span>
+            </div>
+          ) : null}
+          <div className="min-h-0 flex-1">
+            <SkillsPanel compact={detailOpen} />
+          </div>
+        </>}
+      </SkillsWorkspace>
 
-      {/* Main content area with height constraint */}
-      <div className="flex-1 min-w-0 overflow-hidden">
-        <ResizablePanelGroup
-          id="skills-page-layout"
-          orientation="horizontal"
-          className="h-full"
-          groupRef={layoutRef}
-        >
-          {/* Skills list panel */}
-          <ResizablePanel
-            id="skills-list-panel"
-            defaultSize={selectedSkill ? '22%' : '100%'}
-            minSize={selectedSkill ? '12%' : '100%'}
-            maxSize={selectedSkill ? '85%' : '100%'}
-          >
-            <SkillsPanel compact={!!selectedSkill} />
-          </ResizablePanel>
-
-          {/* Detail panel — only when a skill is selected */}
-          {selectedSkill && (
-            <>
-              <ResizableHandle className="bg-transparent" />
-              <ResizablePanel
-                id="skill-detail-panel"
-                defaultSize="78%"
-                minSize="15%"
-                className="bg-surface relative"
-              >
-                <SkillDetailPanel
-                  key={selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : `${selectedSkill.scope}:${selectedSkill.name}`}
-                  skill={selectedSkill}
-                  content={skillContent}
-                  loading={loadingContent}
-                  agentDisplayNames={agentDisplayNames}
-                  updateStatus={selectedSkillUpdateStatus}
-                  isCheckingUpdates={isCheckingSelectedSkillUpdates}
-                  context={selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext}
-                  pathBase={(selectedSkill.scope === 'project' ? projectSnapshot : globalSnapshot).pathBase}
-                  onClose={deselectSkill}
-                  onCheckUpdates={handleDetailCheckUpdates}
-                  onUpdate={handleDetailUpdate}
-                  onDelete={handleDetailDelete}
-                  onRetry={reloadContent}
-                  onManageAgents={handleManageAgents}
-                  onCopyToProject={selectedSkill.scope === 'project' ? handleCopyToProject : undefined}
-                  onConfigureGitCredentials={() => navigate('/settings?section=git')}
-                  onOpenLibraryVersion={(version) => navigate(`/libraries?${new URLSearchParams({ library: version.libraryId, skill: version.skillName })}`)}
-                />
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
-      </div>
-    </div>
-
-    <ManageAgentsDialogContainer />
-    <CopyToProjectDialogContainer />
-    <UpdatePlanDialogContainer />
+      <ManageAgentsDialogContainer />
+      <CopyToProjectDialogContainer />
+      <UpdatePlanDialogContainer />
     </>
   );
 }

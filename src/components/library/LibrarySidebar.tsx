@@ -91,6 +91,7 @@ function LibrarySidebarItem({
       <button
         type="button"
         onClick={onSelect}
+        aria-current={isSelected ? 'location' : undefined}
         className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2 pr-3 text-left cursor-pointer appearance-none"
       >
         <LibraryBig className={cn('h-4 w-4 flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
@@ -156,7 +157,7 @@ export const LibrarySidebar = memo(function LibrarySidebar({
   const { t } = useTranslation();
 
   return (
-    <aside className="libraries-sidebar flex h-full min-h-0 flex-col flex-shrink-0 border-r border-border/50 bg-canvas">
+    <aside className="flex h-full min-h-0 w-full flex-col border-r border-border/50 bg-canvas">
       <div className="flex min-h-0 flex-1 flex-col pt-3">
         <h3 className="flex-shrink-0 px-4 mb-2 text-xs font-semibold text-muted-foreground/80">
           {t('libraries.title')}

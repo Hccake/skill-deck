@@ -22,7 +22,7 @@ import { WindowControls } from './WindowControls';
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-[13px] font-medium transition-all duration-150 select-none border',
+    'group flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-[13px] font-medium transition-colors duration-150 select-none border',
     isActive
       ? 'bg-background text-primary font-semibold shadow-xs border-border/60'
       : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-background/50'
@@ -52,7 +52,7 @@ export function Header() {
   return (
     <header
       data-tauri-drag-region
-      className="grid h-12 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/80 bg-background/95 backdrop-blur-md shrink-0 gap-2 overflow-hidden select-none"
+      className="grid h-12 grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center border-b border-border/80 bg-background/95 backdrop-blur-md shrink-0 gap-2 overflow-hidden select-none"
     >
       {/* Left: Logo, Title & Environment */}
       <div
@@ -80,19 +80,19 @@ export function Header() {
       >
         <NavLink to="/" end className={getNavLinkClass} aria-label={t('nav.skills')} title={t('nav.skills')} onClick={(event) => guardNavigation(event, '/')}>
           <Package className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="hidden lg:inline">{t('nav.skills')}</span>
+          <span className="hidden group-aria-[current=page]:inline lg:inline">{t('nav.skills')}</span>
         </NavLink>
         <NavLink to="/libraries" className={getNavLinkClass} aria-label={t('nav.libraries')} title={t('nav.libraries')} onClick={(event) => guardNavigation(event, '/libraries')}>
           <LibraryBig className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="hidden lg:inline">{t('nav.libraries')}</span>
+          <span className="hidden group-aria-[current=page]:inline lg:inline">{t('nav.libraries')}</span>
         </NavLink>
         <NavLink to="/discover" className={getNavLinkClass} aria-label={t('nav.discover')} title={t('nav.discover')} onClick={(event) => guardNavigation(event, '/discover')}>
           <Compass className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="hidden lg:inline">{t('nav.discover')}</span>
+          <span className="hidden group-aria-[current=page]:inline lg:inline">{t('nav.discover')}</span>
         </NavLink>
         <NavLink to="/settings" className={getNavLinkClass} aria-label={t('nav.settings')} title={t('nav.settings')} onClick={(event) => guardNavigation(event, '/settings')}>
           <Settings className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="hidden lg:inline">{t('nav.settings')}</span>
+          <span className="hidden group-aria-[current=page]:inline lg:inline">{t('nav.settings')}</span>
         </NavLink>
       </nav>
 
@@ -102,7 +102,7 @@ export function Header() {
           'flex items-center gap-0.5 lg:gap-1 min-w-0 justify-end h-full',
           windows ? 'pr-0' : 'pr-2 sm:pr-3',
         )}
-        data-tauri-drag-region="false"
+        data-tauri-drag-region
       >
         <InstallWizardStatusControl />
         <RecoveryCenter />

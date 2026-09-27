@@ -15,6 +15,7 @@ import {
 import type { EnvironmentRef, LibraryMembershipOutcome } from '@/bindings';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
+import { useLayoutStore } from '@/stores/layout';
 
 const execute = vi.hoisted(() => vi.fn());
 const addDialog = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
@@ -134,6 +135,7 @@ describe('LibraryPage maintenance', () => {
   });
 
   beforeEach(() => {
+    useLayoutStore.setState({ libraryDetailOpen: false });
     vi.clearAllMocks();
     addDialog.props = null;
     workspaceView.catalog = {
@@ -489,6 +491,7 @@ describe('LibraryPage maintenance', () => {
     // 未选中时是完整卡片：有标识列，也有行内移除按钮。
     expect(screen.getByTestId('library-skill-marker')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: removeName })).toHaveLength(1);
+    const sidebar = screen.getByRole('navigation', { name: 'libraries.navigation' });
     expect(screen.queryByRole('button', { name: 'common.close' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'api-design' }));
@@ -498,6 +501,8 @@ describe('LibraryPage maintenance', () => {
     // 详情面板接管，移除动作仍然只有一处——没有在列表和详情之间重复。
     expect(screen.getByRole('button', { name: 'common.close' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: removeName })).toHaveLength(1);
+    expect(screen.getByRole('navigation', { name: 'libraries.navigation' })).toBe(sidebar);
+    expect(screen.getByRole('separator', { name: 'skills.resizePanels' })).toBeTruthy();
   });
 
   it('loads the selected Skill content from the Library storage', async () => {
@@ -511,6 +516,38 @@ describe('LibraryPage maintenance', () => {
       'api-design',
     ));
     expect(await screen.findByText('API design')).toBeTruthy();
+  });
+
+  it('keeps the narrow split layout through a library switch and places navigation in the library header', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 720, configurable: true });
+    workspaceView.catalog!.libraries.push({ id: 'lib-2', name: 'Documentation', skillCount: 0 });
+    try {
+      const view = render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+      fireEvent.click(screen.getByRole('button', { name: 'api-design' }));
+      await screen.findByText('API design');
+      const toggle = screen.getByRole('button', { name: 'libraries.navigation' });
+      expect.soft(toggle.closest('.library-workspace-header')).not.toBeNull();
+      fireEvent.click(toggle);
+      fireEvent.click(screen.getByRole('button', { name: /^Documentation/ }));
+      expect(execute).toHaveBeenCalledWith({ kind: 'select', libraryId: 'lib-2' });
+      workspaceView.selectedLibraryId = 'lib-2';
+      workspaceView.detail = null;
+      workspaceView.detailPhase = 'loading';
+      view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+      expect(screen.getByRole('separator', { name: 'skills.resizePanels' })).toBeTruthy();
+      expect(screen.queryByRole('navigation', { name: 'libraries.navigation' })).toBeNull();
+      expect(screen.queryByText('API design')).toBeNull();
+      expect(screen.getByRole('button', { name: 'libraries.navigation' }).getAttribute('aria-expanded')).toBe('false');
+      workspaceView.detail = { id: 'lib-2', name: 'Documentation', skills: [], usages: [] };
+      workspaceView.detailPhase = 'ready';
+      view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+      expect(screen.getByText('skills.noSelection')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'common.close' }));
+      expect(screen.queryByRole('separator')).toBeNull();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
+    }
   });
 
   it('keeps the Library member count stable while search reports its own result count', () => {
@@ -610,23 +647,4 @@ describe('LibraryPage maintenance', () => {
     expect(execute).toHaveBeenCalledWith({ kind: 'select', libraryId: 'lib-1' });
   });
 
-});
-
-describe('LibraryPage split layout', () => {
-  it('sizes both panels with percentages', () => {
-    // react-resizable-panels v4 把裸数字当像素：`maxSize={60}` 会把列表钳到 60px 宽且拖不动。
-    // 这个失效是静默的（不报错、类型也合法），所以在源码层面守住百分比写法。
-    const sources = import.meta.glob('../LibraryPage.tsx', {
-      query: '?raw',
-      import: 'default',
-      eager: true,
-    }) as Record<string, string>;
-    const source = Object.values(sources)[0];
-    const sizeProps = source.match(/(?:default|min|max)Size=\{?[^\n]*/g) ?? [];
-
-    expect(sizeProps.length).toBeGreaterThan(0);
-    for (const prop of sizeProps) {
-      expect(prop).toMatch(/%/);
-    }
-  });
 });

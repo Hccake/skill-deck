@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
 import type { SkillLocationRef, InstalledLibraryVersion, InstalledSkill, ProjectInfo } from '@/bindings';
@@ -48,10 +48,12 @@ const mocks = vi.hoisted(() => ({
     forceCheckUpdates: vi.fn(),
   },
   skillDetailState: {
+    detailOpen: false,
     selectedSkillRef: null as null | { name: string; scope: 'global' | 'project'; projectPath?: string | null },
     skillContent: null as string | null,
     loadingContent: false,
     deselectSkill: vi.fn(),
+    closeDetail: vi.fn(),
     reloadContent: vi.fn(),
   },
   skillDialogState: {
@@ -158,7 +160,10 @@ vi.mock('@/stores/skills-data', () => ({
 }));
 
 vi.mock('@/stores/skill-detail', () => ({
-  useSkillDetailStore: (selector: (state: typeof mocks.skillDetailState) => unknown) => selector(mocks.skillDetailState),
+  useSkillDetailStore: (selector: (state: typeof mocks.skillDetailState) => unknown) => selector({
+    ...mocks.skillDetailState,
+    detailOpen: mocks.skillDetailState.detailOpen || Boolean(mocks.skillDetailState.selectedSkillRef),
+  }),
 }));
 
 vi.mock('@/stores/skill-dialog', () => ({
@@ -252,7 +257,7 @@ vi.mock('@/components/ui/resizable', () => ({
   },
   ResizablePanel: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => {
     mocks.resizable.panels.push(props);
-    return <div>{children}</div>;
+    return <div id={String(props.id)}>{children}</div>;
   },
   ResizableHandle: () => <div>handle</div>,
 }));
@@ -277,6 +282,8 @@ describe('SkillsPage', () => {
     mocks.updateWorkflowState.open.mockResolvedValue(true);
     mocks.updateWorkflowState.close.mockReset();
     mocks.skillDetailState.selectedSkillRef = null;
+    mocks.skillDetailState.detailOpen = false;
+    mocks.skillDetailState.closeDetail.mockReset();
     mocks.skillDetailState.skillContent = null;
     mocks.skillDetailState.loadingContent = false;
     mocks.skillDetailState.deselectSkill.mockReset();
@@ -317,6 +324,22 @@ describe('SkillsPage', () => {
     expect(await view.findByRole('heading', { name: 'lib-1 · toolkit' })).toBeTruthy();
   });
 
+  it('keeps the project scope identifiable while its project metadata is loading', () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 720, configurable: true });
+    try {
+      mocks.workspaceContextState.selectedContext = {
+        environment: { kind: 'native' }, scope: { scope: 'project', project_id: 'loading-project' },
+      };
+      mocks.skillDetailState.selectedSkillRef = { name: 'toolkit', scope: 'global' };
+      mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
+      const view = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
+      expect(view.getByText('context.projects')).toBeTruthy();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
+    }
+  });
+
   it('updates the panel layout without remounting the group when entering split view', () => {
     const { rerender } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
@@ -338,13 +361,37 @@ describe('SkillsPage', () => {
 
     expect(mocks.resizable.lifecycle).toEqual(['mount:skills-page-layout']);
     expect(mocks.skillsPanelLifecycle).toEqual(['mount']);
-    expect(mocks.resizable.setLayout).toHaveBeenCalledWith({
-      'skills-list-panel': 22,
-      'skill-detail-panel': 78,
-    });
+    const layout = mocks.resizable.setLayout.mock.calls.at(-1)![0];
+    expect(layout['skills-list-panel'] * (window.innerWidth - 209) / 100).toBeCloseTo(320);
+    expect(mocks.resizable.panels).toContainEqual(expect.objectContaining({ id: 'skills-list-panel', minSize: 240 }));
+    expect(mocks.resizable.panels).toContainEqual(expect.objectContaining({ id: 'skill-detail-panel', minSize: 360 }));
   });
 
-  it('waits for the target panel count before applying the split layout', async () => {
+  it('keeps a blank detail pane and list-side scope controls after a scope switch clears the selection', () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 720, configurable: true });
+    try {
+      mocks.skillDetailState.detailOpen = true;
+      mocks.skillDetailState.selectedSkillRef = { name: 'toolkit', scope: 'global' };
+      mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
+      const view = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
+      const navigation = view.getByRole('button', { name: 'context.navigation' });
+      expect(navigation.closest('#skills-list-panel')).not.toBeNull();
+      mocks.workspaceContextState.selectedContext = {
+        environment: { kind: 'native' }, scope: { scope: 'project', project_id: 'project-2' },
+      };
+      mocks.skillDetailState.selectedSkillRef = null;
+      view.rerender(<MemoryRouter><SkillsPage /></MemoryRouter>);
+      expect(view.getByText('skills.noSelection')).toBeTruthy();
+      expect(view.getByText('skills-panel').getAttribute('data-compact')).toBe('true');
+      expect(view.queryByRole('navigation', { name: 'context.navigation' })).toBeNull();
+      expect(view.getByRole('button', { name: 'context.navigation' })).toBeTruthy();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
+    }
+  });
+
+  it('applies the desired width when the new panel finishes registering', () => {
     const { rerender } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
 
     mocks.resizable.getLayout
@@ -364,12 +411,12 @@ describe('SkillsPage', () => {
 
     expect(mocks.resizable.setLayout).not.toHaveBeenCalled();
 
-    await waitFor(() => {
-      expect(mocks.resizable.setLayout).toHaveBeenCalledWith({
-        'skills-list-panel': 22,
-        'skill-detail-panel': 78,
-      });
+    act(() => {
+      const onLayoutChange = mocks.resizable.groups.at(-1)!.onLayoutChange as () => void;
+      onLayoutChange();
     });
+    const layout = mocks.resizable.setLayout.mock.calls.at(-1)![0];
+    expect(layout['skills-list-panel'] * (window.innerWidth - 209) / 100).toBeCloseTo(320);
   });
 
   it('passes identity-keyed update status to the detail panel', () => {

@@ -22,6 +22,7 @@
     "close": "关闭"
   },
   "libraries": {
+    "navigation": "选择 Skill 库",
     "title": "Skill 库",
     "usage": {
       "applied": "应用于 {{count}} 处",
@@ -370,6 +371,7 @@
     }
   },
   "context": {
+    "navigation": "选择全局或项目",
     "title": "可用范围",
     "global": "全局",
     "globalSubtitle": "所有项目可用",
@@ -407,6 +409,8 @@
     }
   },
   "skills": {
+    "noSelection": "未选择 Skill",
+    "resizePanels": "调整 Skill 列表与详情宽度",
     "title": "My Skills",
     "empty": "暂无已安装的 Skill",
     "emptyHint": "点击「添加」安装你的第一个 Skill",

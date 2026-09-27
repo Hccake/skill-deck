@@ -42,12 +42,27 @@ const a = { name: 'a', scope: 'global' } as InstalledSkill;
 const b = { name: 'b', scope: 'global' } as InstalledSkill;
 
 beforeEach(() => {
-  useSkillDetailStore.getState().deselectSkill();
+  useSkillDetailStore.getState().closeDetail();
   fixtures.read.mockReset();
   fixtures.skills = [a, b];
 });
 
 describe('Skill detail request identity', () => {
+  it('keeps the pane open when clearing a selection and discards its pending content', async () => {
+    const pending = deferred();
+    fixtures.read.mockReturnValueOnce(pending.promise);
+    const reading = useSkillDetailStore.getState().selectSkill(a);
+    expect(useSkillDetailStore.getState().detailOpen).toBe(true);
+    useSkillDetailStore.getState().deselectSkill();
+    pending.resolve('previous scope');
+    await reading;
+    expect(useSkillDetailStore.getState()).toMatchObject({
+      detailOpen: true, selectedSkillRef: null, skillContent: null, loadingContent: false,
+    });
+    useSkillDetailStore.getState().closeDetail();
+    expect(useSkillDetailStore.getState().detailOpen).toBe(false);
+  });
+
   it('does not let an older A response win after A → B → A', async () => {
     const old = deferred();
     const latest = deferred();

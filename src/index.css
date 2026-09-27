@@ -210,11 +210,6 @@
     container-name: library-page;
   }
 
-  .libraries-sidebar {
-    width: 256px;
-    transition: width 180ms ease-out;
-  }
-
   .library-workspace {
     container-type: inline-size;
     container-name: library-workspace;
@@ -256,18 +251,6 @@
 
   .library-usage-compact-count {
     display: none;
-  }
-
-  @container library-page (max-width: 900px) {
-    .libraries-sidebar {
-      width: 224px;
-    }
-  }
-
-  @container library-page (max-width: 760px) {
-    .libraries-sidebar {
-      width: 208px;
-    }
   }
 
   @container library-workspace (max-width: 719px) {
@@ -321,29 +304,6 @@
 
     .library-update-summary {
       max-width: 160px;
-    }
-  }
-
-  .skills-context-sidebar {
-    width: 272px;
-    transition: width 180ms ease-out;
-  }
-
-  @container skills-page (max-width: 1440px) {
-    .skills-context-sidebar {
-      width: 248px;
-    }
-  }
-
-  @container skills-page (max-width: 1180px) {
-    .skills-context-sidebar {
-      width: 224px;
-    }
-  }
-
-  @container skills-page (max-width: 980px) {
-    .skills-context-sidebar {
-      width: 208px;
     }
   }
 

@@ -13,6 +13,7 @@ import {
 import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 
 interface SkillDetailState {
+  detailOpen: boolean;
   selectedSkillRef: SkillIdentity | null;
   selectedContext: SkillLocationRef | null;
   skillContent: string | null;
@@ -20,6 +21,7 @@ interface SkillDetailState {
 
   selectSkill: (skill: InstalledSkill) => Promise<void>;
   deselectSkill: () => void;
+  closeDetail: () => void;
   reloadContent: () => Promise<void>;
 }
 
@@ -68,6 +70,7 @@ async function resolveSelectedSkill(
 let contentRequestGeneration = 0;
 
 export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
+  detailOpen: false,
   selectedSkillRef: null,
   selectedContext: null,
   skillContent: null,
@@ -92,6 +95,7 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
     const isCurrentRequest = () => requestGeneration === contentRequestGeneration
       && getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === nextSelectedSkillKey;
     set({
+      detailOpen: true,
       selectedSkillRef: nextSelectedSkillRef,
       selectedContext,
       skillContent: null,
@@ -118,6 +122,11 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
   deselectSkill: () => {
     contentRequestGeneration += 1;
     set({ selectedSkillRef: null, selectedContext: null, skillContent: null, loadingContent: false });
+  },
+
+  closeDetail: () => {
+    get().deselectSkill();
+    set({ detailOpen: false });
   },
 
   reloadContent: async () => {

@@ -69,6 +69,11 @@ describe('Header', () => {
 
     expect(screen.getByRole('banner').hasAttribute('data-tauri-drag-region')).toBe(true);
     expect(screen.getByRole('navigation').getAttribute('data-tauri-drag-region')).toBe('false');
+    const tools = screen.getByRole('button', { name: 'theme.dark' }).parentElement!;
+    expect(['', 'true']).toContain(tools.getAttribute('data-tauri-drag-region'));
+    for (const button of tools.querySelectorAll('button')) {
+      expect(button.hasAttribute('data-tauri-drag-region')).toBe(false);
+    }
     for (const region of container.querySelectorAll('[data-tauri-drag-region]')) {
       expect(['', 'true', 'false']).toContain(region.getAttribute('data-tauri-drag-region'));
     }
