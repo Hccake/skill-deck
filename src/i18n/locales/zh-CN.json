@@ -411,6 +411,7 @@
   "skills": {
     "noSelection": "未选择 Skill",
     "resizePanels": "调整 Skill 列表与详情宽度",
+    "resizeSidebar": "调整侧栏宽度",
     "title": "My Skills",
     "empty": "暂无已安装的 Skill",
     "emptyHint": "点击「添加」安装你的第一个 Skill",

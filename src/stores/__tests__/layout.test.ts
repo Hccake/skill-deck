@@ -6,14 +6,19 @@ import { useLayoutStore } from '../layout';
 describe('layout preferences', () => {
   beforeEach(() => {
     localStorage.clear();
-    useLayoutStore.setState({ skillsListWidth: 320, libraryListWidth: 320 });
+    useLayoutStore.setState({ skillsListWidth: null, libraryListWidth: null, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
+  });
+
+  it('starts both workspaces in automatic sizing mode', () => {
+    expect(useLayoutStore.getInitialState().skillsListWidth).toBeNull();
+    expect(useLayoutStore.getInitialState().libraryListWidth).toBeNull();
   });
 
   it('persists only a valid user-selected width', () => {
     useLayoutStore.getState().setSkillsListWidth(412.4);
     expect(useLayoutStore.getState().skillsListWidth).toBe(412);
     const stored = JSON.parse(localStorage.getItem('skill-deck-layout')!);
-    expect(stored.state).toEqual({ skillsListWidth: 412, libraryListWidth: 320 });
+    expect(stored.state).toEqual({ skillsListWidth: 412, libraryListWidth: null, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
     for (const width of [NaN, Infinity, -1, 0, 180, 100000]) {
       useLayoutStore.getState().setSkillsListWidth(width);
       expect(useLayoutStore.getState().skillsListWidth).toBe(412);
@@ -24,23 +29,43 @@ describe('layout preferences', () => {
     useLayoutStore.getState().setSkillsListWidth(400);
     useLayoutStore.getState().setLibraryListWidth(280);
     const stored = localStorage.getItem('skill-deck-layout')!;
-    useLayoutStore.setState({ skillsListWidth: 320, libraryListWidth: 320 });
+    useLayoutStore.setState({ skillsListWidth: null, libraryListWidth: null });
     localStorage.setItem('skill-deck-layout', stored);
     await useLayoutStore.persist.rehydrate();
     expect(useLayoutStore.getState().skillsListWidth).toBe(400);
     expect(useLayoutStore.getState().libraryListWidth).toBe(280);
   });
 
-  it('preserves a valid Skills preference when an older record has no library width', async () => {
-    localStorage.setItem('skill-deck-layout', JSON.stringify({ state: { skillsListWidth: 400 }, version: 1 }));
+  it('keeps the untouched workspace automatic after rehydrating a manual resize', async () => {
+    useLayoutStore.getState().setSkillsListWidth(400);
+    const stored = localStorage.getItem('skill-deck-layout')!;
+    useLayoutStore.setState({ skillsListWidth: null, libraryListWidth: null });
+    localStorage.setItem('skill-deck-layout', stored);
     await useLayoutStore.persist.rehydrate();
     expect(useLayoutStore.getState().skillsListWidth).toBe(400);
-    expect(useLayoutStore.getState().libraryListWidth).toBe(320);
+    expect(useLayoutStore.getState().libraryListWidth).toBeNull();
   });
 
   it.each([null, { skillsListWidth: -100 }, { skillsListWidth: '400' }])('ignores invalid stored preferences: %j', async (state) => {
-    localStorage.setItem('skill-deck-layout', JSON.stringify({ state, version: 1 }));
+    localStorage.setItem('skill-deck-layout', JSON.stringify({ state, version: 2 }));
     await useLayoutStore.persist.rehydrate();
-    expect(useLayoutStore.getState().skillsListWidth).toBe(320);
+    expect(useLayoutStore.getState().skillsListWidth).toBeNull();
+  });
+
+  it('persists sidebar widths independently without changing the list preferences', async () => {
+    useLayoutStore.getState().setSkillsSidebarWidth(296.4);
+    useLayoutStore.getState().setLibrarySidebarWidth(224);
+    const stored = localStorage.getItem('skill-deck-layout')!;
+    useLayoutStore.setState({ skillsSidebarWidth: 208, librarySidebarWidth: 208 });
+    localStorage.setItem('skill-deck-layout', stored);
+    await useLayoutStore.persist.rehydrate();
+    expect(useLayoutStore.getState()).toMatchObject({
+      skillsSidebarWidth: 296, librarySidebarWidth: 224,
+      skillsListWidth: null, libraryListWidth: null,
+    });
+    for (const width of [NaN, Infinity, 191, 321]) {
+      useLayoutStore.getState().setSkillsSidebarWidth(width);
+      expect(useLayoutStore.getState().skillsSidebarWidth).toBe(296);
+    }
   });
 });

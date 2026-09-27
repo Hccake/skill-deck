@@ -238,21 +238,23 @@ vi.mock('@/components/skills/UpdatePlanDialogContainer', () => ({
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => {
-    mocks.resizable.groups.push(props);
-    const groupRef = props.groupRef as { current?: { setLayout: typeof mocks.resizable.setLayout; getLayout: typeof mocks.resizable.getLayout } } | undefined;
+    const navigationGroup = String(props.id).endsWith('-navigation-layout');
+    if (!navigationGroup) mocks.resizable.groups.push(props);
+    const groupRef = props.groupRef as { current?: { setLayout: (layout: Record<string, number>) => Record<string, number>; getLayout: () => Record<string, number> } } | undefined;
     if (groupRef) {
       groupRef.current = {
-        setLayout: mocks.resizable.setLayout,
-        getLayout: mocks.resizable.getLayout,
+        setLayout: navigationGroup ? (layout: Record<string, number>) => layout : mocks.resizable.setLayout,
+        getLayout: navigationGroup ? () => ({ navigation: 20, content: 80 }) : mocks.resizable.getLayout,
       };
     }
     useEffect(() => {
+      if (navigationGroup) return;
       const id = String(props.id ?? 'group');
       mocks.resizable.lifecycle.push(`mount:${id}`);
       return () => {
         mocks.resizable.lifecycle.push(`unmount:${id}`);
       };
-    }, [props.id]);
+    }, [props.id, navigationGroup]);
     return <div>{children}</div>;
   },
   ResizablePanel: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => {
@@ -296,6 +298,7 @@ describe('SkillsPage', () => {
     mocks.resizable.panels.length = 0;
     mocks.resizable.lifecycle.length = 0;
     mocks.resizable.setLayout.mockReset();
+    mocks.resizable.setLayout.mockImplementation((layout: Record<string, number>) => layout);
     mocks.resizable.getLayout.mockReset();
     mocks.resizable.getLayout.mockReturnValue({});
     mocks.skillsPanelLifecycle.length = 0;
@@ -362,7 +365,7 @@ describe('SkillsPage', () => {
     expect(mocks.resizable.lifecycle).toEqual(['mount:skills-page-layout']);
     expect(mocks.skillsPanelLifecycle).toEqual(['mount']);
     const layout = mocks.resizable.setLayout.mock.calls.at(-1)![0];
-    expect(layout['skills-list-panel'] * (window.innerWidth - 209) / 100).toBeCloseTo(320);
+    expect(layout['skills-list-panel']).toBeCloseTo(30);
     expect(mocks.resizable.panels).toContainEqual(expect.objectContaining({ id: 'skills-list-panel', minSize: 240 }));
     expect(mocks.resizable.panels).toContainEqual(expect.objectContaining({ id: 'skill-detail-panel', minSize: 360 }));
   });
@@ -416,7 +419,23 @@ describe('SkillsPage', () => {
       onLayoutChange();
     });
     const layout = mocks.resizable.setLayout.mock.calls.at(-1)![0];
-    expect(layout['skills-list-panel'] * (window.innerWidth - 209) / 100).toBeCloseTo(320);
+    expect(layout['skills-list-panel']).toBeCloseTo(30);
+  });
+
+  it('reapplies an automatically clamped layout after the panel size settles', () => {
+    mocks.resizable.getLayout.mockReturnValue({ 'skills-list-panel': 40, 'skill-detail-panel': 60 });
+    mocks.resizable.setLayout.mockReturnValueOnce({ 'skills-list-panel': 40, 'skill-detail-panel': 60 });
+    mocks.skillDetailState.selectedSkillRef = { name: 'toolkit', scope: 'global' };
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
+    render(<MemoryRouter><SkillsPage /></MemoryRouter>);
+    expect(mocks.resizable.setLayout).toHaveBeenCalledTimes(1);
+
+    const panel = mocks.resizable.panels.filter(panel => panel.id === 'skills-list-panel').at(-1)!;
+    act(() => (panel.onResize as () => void)());
+    expect(mocks.resizable.setLayout).toHaveBeenCalledTimes(2);
+    expect(mocks.resizable.setLayout.mock.calls.at(-1)![0]['skills-list-panel']).toBeCloseTo(30);
+    act(() => (panel.onResize as () => void)());
+    expect(mocks.resizable.setLayout).toHaveBeenCalledTimes(2);
   });
 
   it('passes identity-keyed update status to the detail panel', () => {

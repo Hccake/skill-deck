@@ -411,6 +411,7 @@
   "skills": {
     "noSelection": "No Skill selected",
     "resizePanels": "Resize Skill List and Details",
+    "resizeSidebar": "Resize Sidebar",
     "title": "My Skills",
     "empty": "No skills installed",
     "emptyHint": "Click \"Add\" to install your first skill",

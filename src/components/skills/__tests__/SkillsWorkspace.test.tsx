@@ -2,25 +2,32 @@
 import '@/test-utils';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PropsWithChildren, PointerEventHandler } from 'react';
+import type { ComponentProps, PropsWithChildren, PointerEventHandler, Ref } from 'react';
 import { SkillsWorkspace } from '../SkillsWorkspace';
 import { useLayoutStore } from '@/stores/layout';
 
-const resizeEvents = vi.hoisted(() => ({ changed: null as null | ((layout: Record<string, number>) => void) }));
+const resizeEvents = vi.hoisted(() => ({
+  changed: null as null | ((layout: Record<string, number>) => void),
+  sidebarChanged: null as null | ((layout: Record<string, number>) => void),
+}));
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/ui/resizable', () => ({
-  ResizablePanelGroup: ({ children, groupRef, onLayoutChanged, onPointerDownCapture }: PropsWithChildren<{
+  ResizablePanelGroup: ({ children, id, groupRef, onLayoutChanged, onPointerDownCapture }: PropsWithChildren<{
+    id: string;
     groupRef: { current: unknown };
     onLayoutChanged: (layout: Record<string, number>) => void;
     onPointerDownCapture?: PointerEventHandler<HTMLDivElement>;
   }>) => {
-    groupRef.current = { getLayout: () => ({ list: 50, detail: 50 }), setLayout: () => {} };
-    resizeEvents.changed = onLayoutChanged;
+    groupRef.current = { getLayout: () => ({ list: 50, detail: 50 }), setLayout: (layout: Record<string, number>) => layout };
+    if (id.endsWith('-navigation-layout')) resizeEvents.sidebarChanged = onLayoutChanged;
+    else resizeEvents.changed = onLayoutChanged;
     return <div onPointerDownCapture={onPointerDownCapture}>{children}</div>;
   },
   ResizablePanel: ({ children }: PropsWithChildren) => <div>{children}</div>,
-  ResizableHandle: () => <div role="separator" tabIndex={0} />,
+  ResizableHandle: ({ elementRef, id, 'aria-label': label, hidden, onKeyDownCapture, onFocus, onBlur }: ComponentProps<'div'> & { elementRef?: Ref<HTMLDivElement> }) => (
+    <div ref={elementRef} id={id} role="separator" aria-label={label} hidden={hidden} onKeyDownCapture={onKeyDownCapture} onFocus={onFocus} onBlur={onBlur} tabIndex={0} />
+  ),
 }));
 
 let width = 1024;
@@ -50,7 +57,7 @@ function workspace(contextKey = 'global', kind: 'skills' | 'library' = 'skills',
 describe('Skills workspace navigation', () => {
   beforeEach(() => {
     width = 1024;
-    useLayoutStore.setState({ skillsListWidth: 320, libraryListWidth: 320 });
+    useLayoutStore.setState({ skillsListWidth: 320, libraryListWidth: 320, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width, height: 600 }) as DOMRect);
     vi.stubGlobal('ResizeObserver', class {
       private callback: () => void;
@@ -120,7 +127,7 @@ describe('Skills workspace navigation', () => {
     act(() => resizeEvents.changed!({ 'skills-list-panel': 45, 'skill-detail-panel': 55 }));
     expect(useLayoutStore.getState().skillsListWidth).toBe(320);
     // 分栏库先聚焦分隔条并消费指针事件，事件目标仍可能是相邻面板。
-    screen.getByRole('separator').focus();
+    screen.getByRole('separator', { name: 'skills.resizePanels' }).focus();
     const pointer = new Event('pointerdown', { bubbles: true, cancelable: true });
     pointer.preventDefault();
     fireEvent(screen.getByRole('textbox'), pointer);
@@ -138,6 +145,46 @@ describe('Skills workspace navigation', () => {
     fireEvent.click(toggle);
     act(() => screen.getByRole('button', { name: 'Dialog action' }).focus());
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it.each(['skills', 'library'] as const)('remembers a %s sidebar resize without changing the list or the other sidebar', (kind) => {
+    render(workspace('global', kind));
+    act(() => resizeEvents.sidebarChanged!({ [`${kind}-navigation-panel`]: 25, [`${kind}-content-panel`]: 75 }));
+    expect(useLayoutStore.getState().skillsSidebarWidth).toBe(208);
+    expect(useLayoutStore.getState().librarySidebarWidth).toBe(208);
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'skills.resizeSidebar' }), { key: 'ArrowRight' });
+    act(() => resizeEvents.sidebarChanged!({ [`${kind}-navigation-panel`]: 25, [`${kind}-content-panel`]: 75 }));
+    expect(useLayoutStore.getState()).toMatchObject({
+      skillsSidebarWidth: kind === 'skills' ? 256 : 208,
+      librarySidebarWidth: kind === 'library' ? 256 : 208,
+      skillsListWidth: 320, libraryListWidth: 320,
+    });
+  });
+
+  it('returns focus from the sidebar separator to the drawer entry when the window narrows', () => {
+    render(workspace());
+    screen.getByRole('separator', { name: 'skills.resizeSidebar' }).focus();
+    resize(720);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'context.navigation' }));
+    expect(screen.queryByRole('separator', { name: 'skills.resizeSidebar' })).toBeNull();
+  });
+
+  it('restores separator focus after the browser blurs the hidden control to the page', () => {
+    render(workspace());
+    const handle = screen.getByRole('separator', { name: 'skills.resizeSidebar' });
+    handle.focus();
+    handle.blur();
+    resize(720);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'context.navigation' }));
+  });
+
+  it('keeps focus in the search field after the user leaves the sidebar separator', () => {
+    render(workspace());
+    screen.getByRole('separator', { name: 'skills.resizeSidebar' }).focus();
+    const search = screen.getByRole('textbox');
+    search.focus();
+    resize(720);
+    expect(document.activeElement).toBe(search);
   });
 
   it('closes an empty detail pane with Escape after navigation has consumed its own Escape', () => {

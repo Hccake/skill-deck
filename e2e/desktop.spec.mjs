@@ -42,9 +42,24 @@ async function panelWidths(kind) {
   }, kind);
 }
 
-async function resizeSeparator(key) {
+async function assertAutomaticSplit(kind) {
+  for (const [width, list, detail] of [[720, 240, 479], [800, 240, 559], [900, 269.7, 629.3], [1000, 240, 551], [1280, 320, 751]]) {
+    await viewport(width, 600);
+    const actual = await panelWidths(kind);
+    assert.ok(Math.abs(actual.list - list) < 2 && Math.abs(actual.detail - detail) < 2, JSON.stringify({ kind, width, actual }));
+    assert.equal(await $(`#${kind}-context-navigation`).isDisplayed(), width >= 1000);
+    if (width <= 900) await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `workspace-${kind}-default-${width}.png`));
+  }
+  const preferred = await browser.execute(kind => {
+    const state = JSON.parse(localStorage.getItem('skill-deck-layout'))?.state;
+    return state?.[kind === 'skills' ? 'skillsListWidth' : 'libraryListWidth'] ?? null;
+  }, kind);
+  assert.equal(preferred, null, 'Automatic window resizing must not create a manual width preference');
+}
+
+async function resizeSeparator(key, kind = 'skills', part = 'detail') {
   // embedded 1.4 的拖动仅派发 MouseEvent；PointerEvent 鼠标拖动由 Windows 原生补验。
-  await browser.execute(() => document.querySelector('[role="separator"]').focus());
+  await browser.execute(id => document.getElementById(id).focus(), `${kind}-${part}-resize`);
   await browser.keys(key);
   await settle();
 }
@@ -131,19 +146,15 @@ describe('Skill Deck desktop', () => {
     await $('[data-testid="skill-card-title"] button').click();
     await $('.skill-prose').waitForDisplayed();
     await settle();
+    await assertAutomaticSplit('skills');
     assert.ok(Math.abs((await panelWidths('skills')).list - 320) < 2);
     await resizeSeparator('ArrowRight');
     const chosen = (await panelWidths('skills')).list;
     assert.ok(chosen > 370 && chosen < 430, `Keyboard resize result: ${chosen}`);
 
-    // 超过导航重新展开的阈值，保证在 360px 详情面板中检查标题。
-    await viewport(820, 600);
-    const minimumDetail = await panelWidths('skills');
-    assert.ok(Math.abs(minimumDetail.detail - 360) < 2, JSON.stringify(minimumDetail));
-    await assertDetailHeader('skills');
-
     await viewport(720, 520);
     const narrow = await panelWidths('skills');
+    assert.ok(Math.abs(narrow.detail - 360) < 2, JSON.stringify(narrow));
     assert.ok(narrow.list >= 239 && narrow.detail >= 359, JSON.stringify(narrow));
     await assertDetailHeader('skills');
     assert.equal(await $('#skills-context-navigation').isDisplayed(), false);
@@ -172,8 +183,9 @@ describe('Skill Deck desktop', () => {
     await $('[data-testid="library-skill-title"] button').click();
     await $('.skill-prose').waitForDisplayed();
     await settle();
+    await assertAutomaticSplit('library');
     assert.ok(Math.abs((await panelWidths('library')).list - 320) < 2);
-    await resizeSeparator('ArrowLeft');
+    await resizeSeparator('ArrowLeft', 'library');
     const libraryWidth = (await panelWidths('library')).list;
     assert.ok(libraryWidth > 250 && libraryWidth < 290, `Library resize result: ${libraryWidth}`);
     await viewport(800, 600);
@@ -269,5 +281,61 @@ describe('Skill Deck desktop', () => {
     await $('button=Cancel').waitForDisplayed();
     await $('button=Cancel').click();
     await browser.switchToWindow(main);
+  });
+
+  it('resizes the two sidebars independently and keeps drawer contents mounted', async () => {
+    const widthOf = kind => browser.execute(kind => document.getElementById(`${kind}-context-navigation`).getBoundingClientRect().width, kind);
+    for (const [kind, route, title, detailId, key, steps, expected] of [
+      ['skills', '/', '[data-testid="skill-card-title"] button', 'skill-detail-panel', 'ArrowRight', 2, 320],
+      ['library', '/libraries', '[data-testid="library-skill-title"] button', 'library-skill-detail-panel', 'ArrowLeft', 1, 192],
+    ]) {
+      await viewport(1280, 800);
+      await $(`header nav a[href="${route}"]`).click();
+      if (kind === 'skills') await $('#skills-context-navigation aside > div:first-child button').click();
+      else await $('#library-context-navigation').$('button*=Workspace review').click();
+      if (!(await $(`#${detailId}`).isExisting())) {
+        await $(title).waitForDisplayed();
+        await $(title).click();
+      }
+      await settle();
+      assert.ok(Math.abs(await widthOf(kind) - 208) < 2);
+      // embedded 1.4 未转换 Home/End 的 WebDriver 键码；边界通过方向键到达。
+      for (let step = 0; step < steps; step++) await resizeSeparator(key, kind, 'sidebar');
+      const sidebarState = await browser.execute(kind => ({
+        width: document.getElementById(`${kind}-context-navigation`).getBoundingClientRect().width,
+        panelWidth: document.getElementById(`${kind}-navigation-panel`).getBoundingClientRect().width,
+        active: document.activeElement.id,
+        preferences: localStorage.getItem('skill-deck-layout'),
+      }), kind);
+      assert.ok(Math.abs(sidebarState.width - expected) < 2, JSON.stringify({ kind, expected, ...sidebarState }));
+      await browser.execute(kind => { window.__sidebarBeforeResize = document.getElementById(`${kind}-context-navigation`); }, kind);
+      await viewport(720, 520);
+      assert.equal(await $(`#${kind}-sidebar-resize`).isDisplayed(), false);
+      assert.equal(await browser.execute(() => document.activeElement.getAttribute('aria-controls')), `${kind}-context-navigation`);
+      await $(`[aria-controls="${kind}-context-navigation"]`).click();
+      assert.ok(Math.abs(await widthOf(kind) - 208) < 2, 'Drawers keep a stable width');
+      assert.equal(await browser.execute(kind => window.__sidebarBeforeResize === document.getElementById(`${kind}-context-navigation`), kind), true);
+      await browser.keys('Escape');
+      await viewport(1280, 800);
+      assert.ok(Math.abs(await widthOf(kind) - expected) < 2);
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `workspace-${kind}-sidebar-resized.png`));
+    }
+    await viewport(1000, 760);
+    await resizeSeparator('ArrowRight', 'library', 'sidebar');
+    await resizeSeparator('ArrowRight', 'library', 'sidebar');
+    assert.equal(await $('#library-context-navigation').isDisplayed(), true);
+    assert.ok(Math.abs(await widthOf('library') - 279) < 2);
+    const panels = await panelWidths('library');
+    assert.ok(panels.list >= 239 && panels.detail >= 359, JSON.stringify(panels));
+    await viewport(1280, 800);
+    await browser.refresh();
+    await $('header nav a[href="/libraries"]').waitForDisplayed();
+    await $('header nav a[href="/libraries"]').click();
+    await settle();
+    assert.ok(Math.abs(await widthOf('library') - 279) < 2);
+    await $('header nav a[href="/"]').click();
+    await settle();
+    assert.ok(Math.abs(await widthOf('skills') - 320) < 2);
+    await browser.execute(() => { delete window.__sidebarBeforeResize; });
   });
 });

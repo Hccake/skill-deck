@@ -544,7 +544,8 @@ describe('LibraryPage maintenance', () => {
       view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
       expect(screen.getByText('skills.noSelection')).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'common.close' }));
-      expect(screen.queryByRole('separator')).toBeNull();
+      expect(screen.queryByRole('separator', { name: 'skills.resizePanels' })).toBeNull();
+      expect(screen.getByRole('separator', { name: 'skills.resizeSidebar' })).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
     }
