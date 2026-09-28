@@ -64,11 +64,14 @@ describe('Header', () => {
     expect(screen.queryByTestId('window-controls') !== null).toBe(customControls);
   });
 
-  it('uses the Tauri drag-region contract and excludes the navigation from dragging', () => {
+  it('keeps navigation gaps draggable and excludes interactive controls', () => {
     const { container } = render(<MemoryRouter><Header /></MemoryRouter>);
 
     expect(screen.getByRole('banner').hasAttribute('data-tauri-drag-region')).toBe(true);
-    expect(screen.getByRole('navigation').getAttribute('data-tauri-drag-region')).toBe('false');
+    expect(['', 'true']).toContain(screen.getByRole('navigation').getAttribute('data-tauri-drag-region'));
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('data-tauri-drag-region')).toBe('false');
+    }
     const tools = screen.getByRole('button', { name: 'theme.dark' }).parentElement!;
     expect(['', 'true']).toContain(tools.getAttribute('data-tauri-drag-region'));
     for (const button of tools.querySelectorAll('button')) {
