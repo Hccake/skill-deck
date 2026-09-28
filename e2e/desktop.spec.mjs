@@ -410,4 +410,73 @@ describe('Skill Deck desktop', () => {
     assert.ok(Math.abs(await widthOf('skills') - 320) < 2);
     await browser.execute(() => { delete window.__sidebarBeforeResize; });
   });
+  it('navigates scoped Skills and library members with separate focus and selection', async () => {
+    const environment = { kind: 'native' };
+    const home = process.env.SKILL_DECK_E2E_HOME;
+    const projectSkill = path.join(home, 'projects', 'scope-layout', '.agents', 'skills', 'review');
+    await mkdir(projectSkill, { recursive: true });
+    await writeFile(path.join(projectSkill, 'SKILL.md'), '---\nname: review\ndescription: Project keyboard fixture.\n---\n# Project review\n');
+    const catalog = await invoke('list_skill_libraries', { environment });
+    const libraryId = catalog.libraries.find(library => library.name === 'Workspace review').id;
+    const source = await invoke('discover_skill_source', { environment, source: path.join(home, '.agents', 'skills', 'code-review'), operationId: 'keyboard-review', selectionIntent: { wildcardRequested: true, explicitSkillNames: [] } });
+    const payloads = await invoke('acquire_selected_payloads', { request: { discoverySession: source.discoverySession, skillPaths: source.skills.map(skill => skill.relativePath) } });
+    const request = { environment, libraryId, discoverySession: source.discoverySession, skills: source.skills.map(skill => ({ skillName: skill.installDirName, payload: payloads.find(payload => payload.skillPath === skill.relativePath) })) };
+    const preview = await invoke('preview_add_library_skills', { request });
+    await invoke('add_skills_to_library', { request: { request, expectedToken: preview.token, membership: preview.membership, acknowledgeRedirect: false } });
+    await browser.refresh();
+    await viewport(1280, 800);
+
+    for (const [kind, route, listId, detailId] of [
+      ['skills', '/', 'skills-list-panel', 'skill-detail-panel'],
+      ['library', '/libraries', 'library-skills-list-panel', 'library-skill-detail-panel'],
+    ]) {
+      await $(`header nav a[href="${route}"]`).click();
+      await settle();
+      if (kind === 'library') await $('#library-context-navigation').$('button*=Workspace review').click();
+      else await $('#skills-context-navigation [data-project-id] > button').click();
+      await settle();
+      if (await $(`#${detailId}`).isExisting()) await $(`#${detailId} button[title="Close"], #${detailId} button[aria-label="Close"]`).click();
+      const first = `#${listId} button[data-skill-open]`;
+      await $(first).waitForDisplayed();
+      await browser.execute(selector => document.querySelector(selector).focus(), first);
+      // embedded 1.4 仅合成 KeyboardEvent，不执行按钮的默认激活；Enter/Space 由受信输入补验。
+      await $(first).click();
+      await $('.skill-prose').waitForDisplayed();
+      const state = () => browser.execute((listId, detailId) => {
+        const rows = [...document.getElementById(listId).querySelectorAll('button[data-skill-open]')];
+        return {
+          active: rows.indexOf(document.activeElement),
+          selected: rows.findIndex(row => row.getAttribute('aria-current') === 'true'),
+          tabStops: rows.map(row => row.tabIndex),
+          keys: rows.map(row => row.closest('[data-skill-item]').dataset.skillItem),
+          detail: document.getElementById(detailId)?.querySelector('h2')?.textContent,
+        };
+      }, listId, detailId);
+      const before = await state();
+      assert.equal(before.active, 0, `${kind}: title should hand focus to the corresponding row`);
+      assert.equal(before.tabStops.filter(value => value === 0).length, 1);
+      if (kind === 'skills') assert.ok(before.keys.some(key => key === 'global:review') && before.keys.some(key => key.startsWith('project:') && key.endsWith(':review')));
+      await browser.keys('ArrowDown');
+      const moved = await state();
+      assert.equal(moved.active, 1);
+      assert.equal(moved.selected, 0);
+      assert.equal(moved.detail, before.detail);
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `keyboard-${kind}-focus-selection.png`));
+      await browser.execute(() => document.activeElement.click());
+      await browser.waitUntil(async () => (await state()).selected === 1);
+      await browser.keys(['Control', 'f']);
+      assert.equal(await browser.execute(() => document.activeElement.hasAttribute('data-skill-search')), true);
+      const search = $(`#${listId} input[data-skill-search]`);
+      await search.setValue('no-matching-skill-keyboard');
+      await browser.keys('Escape');
+      assert.equal(await search.getValue(), '');
+      assert.equal(await $(`#${detailId}`).isExisting(), true);
+      assert.equal(await browser.execute(() => document.activeElement.hasAttribute('data-skill-search')), true);
+      const selectedKey = (await state()).keys[1];
+      await browser.keys('Escape');
+      assert.equal(await $(`#${detailId}`).isExisting(), false);
+      assert.equal(await browser.execute(() => document.activeElement.closest('[data-skill-item]')?.dataset.skillItem), selectedKey);
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `keyboard-${kind}-return.png`));
+    }
+  });
 });

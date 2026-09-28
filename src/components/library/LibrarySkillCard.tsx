@@ -88,6 +88,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
 
   return (
     <SkillCardShell
+      itemKey={skill.name}
       onPointerDown={onClick ? activation.onPointerDown : undefined}
       onClick={onClick ? activation.onClick : undefined}
     >

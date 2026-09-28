@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/tooltip';
 import { SkillsWorkspace } from '@/components/skills/SkillsWorkspace';
 import { useLayoutStore } from '@/stores/layout';
+import { useSkillListKeyboard } from '@/hooks/useSkillListKeyboard';
 import {
   LibraryCompactItem,
   LibraryAddDialog,
@@ -148,6 +149,7 @@ export function LibraryPage() {
     null,
   );
   const [skillContent, setSkillContent] = useLibraryViewState<string | null>(localViewKey, null);
+  const keyboard = useSkillListKeyboard({ compact: detailOpen, selectedKey: selectedSkillName, contextKey: localViewKey });
   const [contentError, setContentError] = useLibraryViewState(localViewKey, false);
 
   const addTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -655,7 +657,7 @@ export function LibraryPage() {
             </Button>
           </div>
         ) : workspace.detail ? (
-          <div className="flex h-full min-h-0 min-w-0 flex-col">
+          <div {...keyboard} className="flex h-full min-h-0 min-w-0 flex-col">
                   {/* 搜索永久属于列表面板：它过滤的就是下面这个列表，紧凑模式下也跟着收窄。
                       放在 ScrollArea 之外，列表滚动时不会跑掉。 */}
                   {workspace.detail.skills.length > 0 ? (
@@ -667,11 +669,18 @@ export function LibraryPage() {
                         />
                         <Input
                           type="search"
+                          data-skill-search
                           name="library-skill-search"
                           autoComplete="off"
                           spellCheck={false}
                           value={query}
                           onChange={(event) => setQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Escape' || !query || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setQuery('');
+                          }}
                           placeholder={t('libraries.searchSkills')}
                           aria-label={t('libraries.searchSkills')}
                           className="h-8 border-transparent bg-muted pl-9 pr-8 text-sm shadow-none placeholder:text-zinc-600 dark:placeholder:text-muted-foreground hover:bg-accent focus-visible:bg-background focus-visible:ring-1"

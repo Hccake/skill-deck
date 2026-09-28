@@ -10,6 +10,7 @@ import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface SkillCardShellProps {
+  itemKey?: string;
   /** 分栏视图需要知道详情属于哪一行。 */
   selected?: boolean;
   className?: string;
@@ -27,6 +28,7 @@ interface SkillCardShellProps {
  * 只负责容器样式，内容布局（含 `CardContent` 与进度条之类的兄弟节点）由各自的卡片决定。
  */
 export const SkillCardShell = memo(function SkillCardShell({
+  itemKey,
   selected = false,
   className,
   children,
@@ -35,6 +37,7 @@ export const SkillCardShell = memo(function SkillCardShell({
 }: SkillCardShellProps) {
   return (
     <Card
+      data-skill-item={itemKey}
       className={cn(
         'group relative gap-0 rounded-xl border border-border bg-card py-0 shadow-none transition-colors duration-150',
         'hover:border-foreground/20',
@@ -111,7 +114,8 @@ export function SkillCardAction({ label, className, ...props }: ComponentProps<t
   );
 }
 
-export const SkillCompactRow = memo(function SkillCompactRow({ name, source, selected, onClick }: {
+export const SkillCompactRow = memo(function SkillCompactRow({ name, source, selected, onClick, itemKey }: {
+  itemKey?: string;
   name: string;
   source: string | null;
   selected: boolean;
@@ -122,6 +126,8 @@ export const SkillCompactRow = memo(function SkillCompactRow({ name, source, sel
       <TooltipTrigger asChild>
         <button
           type="button"
+          data-skill-open
+          data-skill-item={itemKey}
           aria-current={selected ? 'true' : undefined}
           className={cn(
             'group relative block min-h-14 w-full cursor-pointer overflow-hidden px-4 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',

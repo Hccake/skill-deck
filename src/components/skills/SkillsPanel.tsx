@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
+import { useSkillListKeyboard } from '@/hooks/useSkillListKeyboard';
 import {
   useSkillsDataStore,
   type ContextSkillSnapshot,
@@ -127,6 +128,11 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const selectSkill = useSkillDetailStore((s) => s.selectSkill);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
+  const keyboard = useSkillListKeyboard({
+    compact,
+    contextKey: selectedContextKey,
+    selectedKey: selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : null,
+  });
   // 分栏视图需要知道详情属于哪一行，卡片据此显示选中态。
   const openAdd = useSkillDialogStore((s) => s.openAdd);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
@@ -427,7 +433,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-panel">
+    <div {...keyboard} className="flex flex-col h-full overflow-hidden bg-panel">
       {/* Toolbar — compact 模式也保留搜索与 Agent 筛选 */}
       <div className={compact ? 'px-3 sm:px-4 py-2 shrink-0' : 'px-4 sm:px-6 py-2 shrink-0'}>
         <SkillsToolbar

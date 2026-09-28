@@ -71,6 +71,7 @@ export function SkillsToolbar({
         )} aria-hidden="true" />
         <Input
           type="search"
+          data-skill-search
           aria-label={t('skills.search')}
           name="skill-search"
           autoComplete="off"
@@ -78,7 +79,7 @@ export function SkillsToolbar({
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           onKeyDown={(event) => {
-            if (event.key !== 'Escape' || searchQuery.length === 0) return;
+            if (event.key !== 'Escape' || searchQuery.length === 0 || event.nativeEvent.isComposing || event.keyCode === 229) return;
             event.preventDefault();
             event.stopPropagation();
             onSearchChange('');

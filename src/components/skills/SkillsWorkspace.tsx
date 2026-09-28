@@ -162,7 +162,7 @@ export function SkillsWorkspace({ kind = 'skills', contextKey, sidebar, children
       ref={shellRef}
       className={cn(kind === 'skills' ? 'skills-page-shell' : 'library-page-shell', 'relative flex h-full min-h-0 min-w-0 overflow-hidden')}
       onKeyDown={(event) => {
-        if (event.key !== 'Escape' || event.defaultPrevented || !detailOpen) return;
+        if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 || !detailOpen) return;
         if (event.target instanceof Element && event.target.closest(PORTAL_SURFACE)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -202,7 +202,7 @@ export function SkillsWorkspace({ kind = 'skills', contextKey, sidebar, children
           if (navigationOpen && next instanceof Element && !event.currentTarget.contains(next) && !next.closest(PORTAL_SURFACE)) setOpenContext(null);
         }}
         onKeyDown={(event) => {
-          if (event.key !== 'Escape' || event.defaultPrevented || !navigationOpen) return;
+          if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 || !navigationOpen) return;
           if (event.target instanceof Element && event.target.closest(PORTAL_SURFACE)) return;
           event.preventDefault();
           event.stopPropagation();

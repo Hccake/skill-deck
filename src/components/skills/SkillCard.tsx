@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { toTitleCase } from '@/lib/utils';
 import { skillStatusPresentation } from '@/lib/skill-status-presentation';
+import { getSkillIdentity, getSkillIdentityKey } from '@/lib/skills/identity';
 import { formatSkillCardDate, isOpenableUrl, useCardActivation } from '@/lib/skill-card-presentation';
 import { Badge } from '@/components/ui/badge';
 import { CardContent } from '@/components/ui/card';
@@ -56,6 +57,7 @@ interface SkillCardProps {
 export const SkillCard = memo(function SkillCard({
   skill,
   displayScope,
+  projectPath,
   hasDuplicateLocation = false,
   updateStatus,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
@@ -111,6 +113,7 @@ export const SkillCard = memo(function SkillCard({
 
   return (
     <SkillCardShell
+      itemKey={getSkillIdentityKey(getSkillIdentity(skill, projectPath))}
       onPointerDown={onClick ? activation.onPointerDown : undefined}
       onClick={onClick ? activation.onClick : undefined}
     >

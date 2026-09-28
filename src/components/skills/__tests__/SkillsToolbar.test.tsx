@@ -79,5 +79,11 @@ describe('SkillsToolbar', () => {
 
     expect(onSearchChange).toHaveBeenCalledWith('');
     expect(onParentKeyDown).not.toHaveBeenCalled();
+
+    onSearchChange.mockClear();
+    fireEvent.keyDown(screen.getByRole('searchbox', { name: 'skills.search' }), {
+      key: 'Escape', isComposing: true,
+    });
+    expect(onSearchChange).not.toHaveBeenCalled();
   });
 });

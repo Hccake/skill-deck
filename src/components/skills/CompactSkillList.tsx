@@ -85,6 +85,7 @@ export const CompactSkillList = memo(function CompactSkillList({
                     <CompactSkillItem
                       key={getSkillIdentityKey(getSkillIdentity(skill, projectPath))}
                       skill={skill}
+                      projectPath={projectPath}
                       isSelected={isSameSkillIdentity(selectedSkillRef, getSkillIdentity(skill, projectPath))}
                       onClick={onSkillClick}
                     />

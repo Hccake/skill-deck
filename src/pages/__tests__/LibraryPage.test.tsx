@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { LibraryPage } from '../LibraryPage';
@@ -16,6 +16,7 @@ import type { EnvironmentRef, LibraryMembershipOutcome } from '@/bindings';
 import { toast } from 'sonner';
 import i18n from '@/i18n';
 import { useLayoutStore } from '@/stores/layout';
+import userEvent from '@testing-library/user-event';
 
 const execute = vi.hoisted(() => vi.fn());
 const addDialog = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
@@ -127,6 +128,62 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 describe('LibraryPage maintenance', () => {
+  it('browses members without selecting until activation and restores focus after closing detail', async () => {
+    const user = userEvent.setup();
+    workspaceView.detail!.skills.push({ ...workspaceView.detail!.skills[0], name: 'writing' });
+    vi.mocked(readLibrarySkillContent).mockResolvedValue('Member document');
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    act(() => screen.getByRole('button', { name: 'api-design' }).focus());
+    await user.keyboard('{Enter}');
+    const current = screen.getByRole('button', { name: /api-design https/ });
+    expect(document.activeElement).toBe(current);
+    await user.keyboard('{ArrowDown}');
+    const next = screen.getByRole('button', { name: /writing https/ });
+    expect(document.activeElement).toBe(next);
+    expect(next.getAttribute('aria-current')).toBeNull();
+    expect(readLibrarySkillContent).toHaveBeenCalledTimes(1);
+    await user.keyboard(' ');
+    await waitFor(() => expect(next.getAttribute('aria-current')).toBe('true'));
+    act(() => screen.getByRole('button', { name: 'common.close' }).focus());
+    await user.keyboard('{Enter}');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'writing' }));
+  });
+
+  it('clears library search before closing detail and limits find to the member list', async () => {
+    const user = userEvent.setup();
+    vi.mocked(readLibrarySkillContent).mockResolvedValue('Member document');
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    act(() => screen.getByRole('button', { name: 'api-design' }).focus());
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Control>}f{/Control}');
+    const search = screen.getByRole('searchbox', { name: 'libraries.searchSkills' });
+    expect(document.activeElement).toBe(search);
+    await user.type(search, 'no results', { skipClick: true });
+    await user.keyboard('{Escape}');
+    expect((search as HTMLInputElement).value).toBe('');
+    expect(document.activeElement).toBe(search);
+    expect(useLayoutStore.getState().libraryDetailOpen).toBe(true);
+    const close = screen.getByRole('button', { name: 'common.close' });
+    act(() => close.focus());
+    await user.keyboard('{Control>}f{/Control}');
+    expect(document.activeElement).toBe(close);
+    act(() => search.focus());
+    await user.keyboard('{Escape}');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'api-design' }));
+  });
+
+  it('leaves composing Escape to the input method without clearing search or closing detail', async () => {
+    vi.mocked(readLibrarySkillContent).mockResolvedValue('Member document');
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'api-design' }));
+    await screen.findByText('Member document');
+    const search = screen.getByRole('searchbox', { name: 'libraries.searchSkills' });
+    fireEvent.change(search, { target: { value: 'api' } });
+    fireEvent.keyDown(search, { key: 'Escape', isComposing: true });
+    expect((search as HTMLInputElement).value).toBe('api');
+    expect(useLayoutStore.getState().libraryDetailOpen).toBe(true);
+  });
+
   it('opens the library member requested by the Skills detail link', async () => {
     vi.mocked(readLibrarySkillContent).mockResolvedValue('Library content');
     render(<MemoryRouter initialEntries={['/libraries?library=lib-1&skill=api-design']}><LibraryPage /></MemoryRouter>);
