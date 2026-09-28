@@ -49,7 +49,7 @@ export function LibraryApplicationStrip({ application, compact = false }: Librar
         </div>
       ) : null}
       {application.syncState !== 'synced' ? (
-        <span role="status" className="shrink-0 text-xs font-medium text-warning">
+        <span role="status" className="shrink-0 text-xs font-medium text-amber-800 dark:text-warning">
           {t(`libraries.syncState.${application.syncState}`)}
         </span>
       ) : null}

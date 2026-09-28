@@ -7,8 +7,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { CompactSkillList } from '../CompactSkillList';
 import type { InstalledSkill } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
-const render = (ui: React.ReactElement) => testingRender(<MemoryRouter>{ui}</MemoryRouter>);
+const render = (ui: React.ReactElement) => testingRender(<MemoryRouter><TooltipProvider>{ui}</TooltipProvider></MemoryRouter>);
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({

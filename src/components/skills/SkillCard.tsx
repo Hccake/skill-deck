@@ -7,16 +7,18 @@ import {
   FolderOutput,
   Globe,
   Pencil,
+  RefreshCw,
   Trash2,
 } from 'lucide-react';
 import { toTitleCase } from '@/lib/utils';
 import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 import { formatSkillCardDate, isOpenableUrl, useCardActivation } from '@/lib/skill-card-presentation';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import {
   SkillCardMarker,
+  SkillCardAction,
+  SkillCardMetaRow,
   SkillCardProgressBar,
   SkillCardShell,
   SkillCardStatusLabel,
@@ -98,20 +100,21 @@ export const SkillCard = memo(function SkillCard({
     ? formatSkillCardDate(skill.updatedAt, i18n.language)
     : null;
   const activation = useCardActivation(onClick ? () => onClick(skill) : undefined);
+  const actionLabel = (key: string) => t('skills.card.actionLabel', { action: t(key), name: skill.name });
 
   const handleTitleClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     onClick?.(skill);
   }, [onClick, skill]);
 
-  const attentionRow = <SkillCardAttentionRow labels={attentionLabels} description={attentionTitle} testId="skill-card-attention" />;
+  const attentionRow = <SkillCardAttentionRow labels={attentionLabels} description={attentionTitle} testId="skill-card-attention" className="mt-1.5" />;
 
   return (
     <SkillCardShell
       onPointerDown={onClick ? activation.onPointerDown : undefined}
       onClick={onClick ? activation.onClick : undefined}
     >
-      <CardContent className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-start gap-x-2.5 px-3.5 py-3">
+      <CardContent className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-start gap-x-2.5 px-3 py-2">
         <Tooltip>
           <TooltipTrigger asChild>
             <div>
@@ -121,20 +124,25 @@ export const SkillCard = memo(function SkillCard({
           <TooltipContent><p>{t(`skills.scopeIcon.${displayScope}`)}</p></TooltipContent>
         </Tooltip>
 
-        <div className="min-w-0 space-y-1.5">
-          <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-col">
+          <div className="flex min-w-0 items-start justify-between gap-2">
             <div data-testid="skill-card-title" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden pt-0.5">
               {onClick ? (
-                <button
-                  type="button"
-                  title={skill.name}
-                  className="min-w-0 shrink cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  onClick={handleTitleClick}
-                >
-                  <h3 className="truncate font-heading text-sm font-semibold leading-5 text-foreground">
-                    {skill.name}
-                  </h3>
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-skill-open
+                      className="min-w-0 shrink cursor-pointer text-left outline-none"
+                      onClick={handleTitleClick}
+                    >
+                      <h3 className="truncate font-heading text-sm font-semibold leading-5 tracking-normal text-foreground">
+                        {skill.name}
+                      </h3>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">{skill.name}</TooltipContent>
+                </Tooltip>
               ) : (
                 <h3 className="truncate font-heading text-sm font-semibold leading-5 text-foreground">
                   {skill.name}
@@ -150,27 +158,25 @@ export const SkillCard = memo(function SkillCard({
               ) : null}
               <CrossfadeSwap transitionKey={statusTransitionKey} className="shrink-0">
                 {activeUpdatePhase ? (
-                  <Badge variant="outline" className="shrink-0 text-xs text-primary motion-safe:animate-pulse">
+                  <Badge variant="outline" className="shrink-0 text-xs text-primary">
+                    <RefreshCw className="size-3 motion-safe:animate-spin" aria-hidden="true" />
                     {t(resolveSkillUpdatePhaseI18nKey(activeUpdatePhase))}
                   </Badge>
                 ) : updateStatus === 'done' ? (
-                  <Badge variant="outline" className="shrink-0 text-xs text-success">{t('skills.updateDone')}</Badge>
+                  <Badge variant="outline" className="shrink-0 text-xs text-emerald-700 dark:text-success">{t('skills.updateDone')}</Badge>
                 ) : updateStatus === 'failed' ? (
-                  <Badge variant="outline" className="shrink-0 text-xs text-destructive">{t('skills.updateFailed')}</Badge>
+                  <Badge variant="outline" className="shrink-0 text-xs text-red-700 dark:text-destructive">{t('skills.updateFailed')}</Badge>
                 ) : titleStatusLabelKey ? (
                   <SkillCardStatusLabel label={t(titleStatusLabelKey)} />
                 ) : null}
               </CrossfadeSwap>
             </div>
 
-            <div className="flex shrink-0 items-center gap-0.5 -mr-1 -mt-0.5">
+            <div className="-mr-1 flex h-6 shrink-0 items-center gap-0.5">
               {canShowUpdateAction ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
+                <SkillCardAction
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  aria-label={t('skills.actions.update')}
-                  title={t('skills.actions.update')}
+                  label={actionLabel('skills.actions.update')}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -178,15 +184,12 @@ export const SkillCard = memo(function SkillCard({
                   }}
                 >
                   <ArrowUpCircle className="size-4" aria-hidden="true" />
-                </Button>
+                </SkillCardAction>
               ) : null}
               {displayScope === 'project' && onCopyToProject ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
+                <SkillCardAction
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                  aria-label={t('skills.actions.copyToProject')}
-                  title={t('skills.actions.copyToProject')}
+                  label={actionLabel('skills.actions.copyToProject')}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -194,15 +197,12 @@ export const SkillCard = memo(function SkillCard({
                   }}
                 >
                   <FolderOutput className="size-3.5" aria-hidden="true" />
-                </Button>
+                </SkillCardAction>
               ) : null}
               {onManageAgents ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
+                <SkillCardAction
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-muted hover:text-foreground"
-                  aria-label={t('skills.manageAgents.action')}
-                  title={t('skills.manageAgents.action')}
+                  label={actionLabel('skills.manageAgents.action')}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -210,15 +210,12 @@ export const SkillCard = memo(function SkillCard({
                   }}
                 >
                   <Pencil className="size-3.5" aria-hidden="true" />
-                </Button>
+                </SkillCardAction>
               ) : null}
               {onDelete ? (
-                <Button
-                  variant="ghost"
-                  size="icon"
+                <SkillCardAction
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={t('skills.actions.delete')}
-                  title={t('skills.actions.delete')}
+                  label={actionLabel('skills.actions.delete')}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -226,22 +223,21 @@ export const SkillCard = memo(function SkillCard({
                   }}
                 >
                   <Trash2 className="size-3.5" aria-hidden="true" />
-                </Button>
+                </SkillCardAction>
               ) : null}
             </div>
           </div>
 
           {skill.description ? (
-            <p className="line-clamp-2 text-xs leading-[18px] text-muted-foreground">
+            <p className="mt-0.5 line-clamp-2 text-xs leading-[18px] text-muted-foreground">
               {skill.description}
             </p>
           ) : null}
 
+          {attentionRow}
+
           {sourceLabel || skill.gitRef || updatedAt ? (
-            <div
-              data-testid="skill-card-metadata"
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground/80 [&>span:not(:last-child)]:after:ml-2 [&>span:not(:last-child)]:after:text-border [&>span:not(:last-child)]:after:content-['·']"
-            >
+            <SkillCardMetaRow className="mt-1.5">
               {sourceLabel ? (
                 <span className="inline-flex min-w-0 items-center">
                   {presentation.local ? <span>{sourceLabel}</span> : (
@@ -260,7 +256,7 @@ export const SkillCard = memo(function SkillCard({
                 <span className="inline-flex items-center">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span tabIndex={0} className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+                      <span tabIndex={0} className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
                         {t('skills.updated', { time: updatedAt.short })}
                       </span>
                     </TooltipTrigger>
@@ -268,17 +264,15 @@ export const SkillCard = memo(function SkillCard({
                   </Tooltip>
                 </span>
               ) : null}
-            </div>
+            </SkillCardMetaRow>
           ) : null}
 
-          {attentionRow}
-
           {effectiveAgents.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <div className="mt-2 flex min-w-0 flex-wrap items-start gap-x-1.5 gap-y-1">
               {effectiveAgents.map((agentId) => (
                 <span
                   key={agentId}
-                  className="inline-flex h-5.5 items-center rounded-full bg-primary/10 px-2.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20"
+                  className="inline-flex min-h-5 max-w-full items-center rounded-full bg-primary/6 px-2 py-0.5 text-xs leading-4 font-medium text-[color:color-mix(in_srgb,var(--primary)_55%,var(--muted-foreground))] ring-1 ring-inset ring-primary/12 dark:bg-primary/8 dark:ring-primary/14 [overflow-wrap:anywhere]"
                 >
                   {agentDisplayNames.get(agentId) ?? agentId}
                 </span>

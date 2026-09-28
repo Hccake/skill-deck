@@ -83,7 +83,7 @@ export function SkillsToolbar({
             event.stopPropagation();
             onSearchChange('');
           }}
-          className="h-8 border-transparent bg-muted pl-8 text-sm shadow-none transition-colors hover:bg-accent focus-visible:bg-background focus-visible:ring-1"
+          className="h-8 border-transparent bg-muted pl-8 text-sm shadow-none transition-colors placeholder:text-zinc-600 dark:placeholder:text-muted-foreground hover:bg-accent focus-visible:bg-background focus-visible:ring-1"
         />
       </div>
 

@@ -468,6 +468,7 @@
     "projectUnavailableDescription": "The current system cannot access this project. Check its location, or switch to a system where the project has been added.",
     "updateCheckIncompleteCount": "{{count}} checks incomplete",
     "card": {
+      "actionLabel": "{{action}}: {{name}}",
       "sourceIncomplete": "Source information is incomplete",
       "sourceNeedsAttention": "Cannot check for updates",
       "sourceMissingUpstream": "This Skill is no longer in the source",

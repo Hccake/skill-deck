@@ -248,9 +248,9 @@ export const SkillsSection = memo(function SkillsSection({
       {/* Section Header */}
       <div className="mb-2 flex flex-row items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <h2 className="flex shrink-0 items-center gap-1 text-sm font-bold tracking-normal text-foreground/90">
+          <h2 className="flex shrink-0 items-center gap-1 text-sm font-semibold tracking-normal text-foreground">
             {title}
-            <span className="text-xs font-semibold opacity-50">({skills.length})</span>
+            <span className="text-xs font-medium tabular-nums text-muted-foreground">({skills.length})</span>
           </h2>
           {pathExists ? (
             <span
@@ -268,7 +268,7 @@ export const SkillsSection = memo(function SkillsSection({
                         key={item}
                         className={cn(
                           'inline-flex min-w-0 items-center gap-1 font-medium',
-                          isAnyUpdating ? 'text-primary' : 'text-muted-foreground/80',
+                          isAnyUpdating ? 'text-primary' : 'text-muted-foreground',
                         )}
                       >
                         <span
@@ -286,7 +286,7 @@ export const SkillsSection = memo(function SkillsSection({
                                 <span
                                   role="img"
                                   tabIndex={0}
-                                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-warning outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-amber-800 dark:text-warning outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                   aria-label={t('skills.updateStatusLabel.checkIncomplete')}
                                 >
                                   <CircleAlert aria-hidden="true" className="h-3.5 w-3.5" />
@@ -307,7 +307,7 @@ export const SkillsSection = memo(function SkillsSection({
                         <span
                           className={cn(
                             'truncate',
-                            isAnyUpdating ? 'text-primary' : 'text-muted-foreground/80',
+                            isAnyUpdating ? 'text-primary' : 'text-muted-foreground',
                           )}
                         >
                           {item}
@@ -345,7 +345,7 @@ export const SkillsSection = memo(function SkillsSection({
               )}
               {onCheckUpdates && skills.length > 0 && checkableCount > 0 && (
                 checkDone && updatesCount === 0 ? (
-                  <span className="inline-flex items-center justify-center h-7 px-2 text-xs text-success font-medium gap-1.5">
+                  <span className="inline-flex items-center justify-center h-7 px-2 text-xs text-emerald-700 dark:text-success font-medium gap-1.5">
                     <Check className="h-3.5 w-3.5" />
                     {t('skills.checkCompleted')}
                   </span>
@@ -409,7 +409,7 @@ export const SkillsSection = memo(function SkillsSection({
           {skills.length === 0 ? (
             emptyState
           ) : (
-            <div className="grid gap-2.5">
+            <div className="grid gap-2">
               {skills.map((skill) => {
                 const identityKey = getSkillIdentityKey({
                   name: skill.name,

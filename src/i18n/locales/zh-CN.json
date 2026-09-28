@@ -468,6 +468,7 @@
     "projectUnavailableDescription": "当前系统无法访问该项目。请检查项目位置，或切换到已经添加该项目的系统。",
     "updateCheckIncompleteCount": "{{count}} 个更新检查未完成",
     "card": {
+      "actionLabel": "{{action}}：{{name}}",
       "sourceIncomplete": "来源信息不完整",
       "sourceNeedsAttention": "无法检查更新",
       "sourceMissingUpstream": "来源中已找不到此 Skill",

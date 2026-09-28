@@ -1,7 +1,9 @@
 // src/components/skills/CompactSkillItem.tsx
 import { memo, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { InstalledSkill } from '@/bindings';
-import { cn } from '@/lib/utils';
+import { skillStatusPresentation } from '@/lib/skill-status-presentation';
+import { SkillCompactRow } from './card/SkillCardPrimitives';
 
 interface CompactSkillItemProps {
   skill: InstalledSkill;
@@ -14,37 +16,12 @@ export const CompactSkillItem = memo(function CompactSkillItem({
   isSelected,
   onClick,
 }: CompactSkillItemProps) {
+  const { t } = useTranslation();
   const handleClick = useCallback(() => {
     onClick(skill);
   }, [onClick, skill]);
-
-  return (
-    <button
-      type="button"
-      className={cn(
-        'group relative w-full text-left px-4 py-2.5 block overflow-hidden transition-colors cursor-pointer',
-        isSelected
-          ? 'bg-primary/5 select-none shadow-[inset_2px_0_0_0_theme(colors.primary.DEFAULT)]'
-          : 'hover:bg-foreground/[0.03] text-muted-foreground'
-      )}
-      onClick={handleClick}
-    >
-      <div className={cn(
-        'w-full text-sm tracking-tight truncate',
-        isSelected ? 'font-heading font-bold text-primary' : 'font-heading font-semibold text-foreground'
-      )}>
-        {skill.name}
-      </div>
-      <div className={cn(
-        'w-full text-xs truncate mt-0.5 flex items-center gap-1',
-        isSelected ? 'text-primary/70' : 'text-muted-foreground/60'
-      )}>
-        {skill.source ? (
-          <span className="font-mono">{skill.source}</span>
-        ) : (
-          <span className="italic opacity-60">Local</span>
-        )}
-      </div>
-    </button>
-  );
+  const presentation = skillStatusPresentation(skill);
+  const source = presentation.local ? t('skills.updateStatusLabel.localSource')
+    : presentation.sourceLabel ?? (presentation.notice ? t(presentation.notice.labelKey) : null);
+  return <SkillCompactRow name={skill.name} source={source} selected={isSelected} onClick={handleClick} />;
 });

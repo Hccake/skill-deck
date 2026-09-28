@@ -62,18 +62,18 @@ export const CompactSkillList = memo(function CompactSkillList({
           {isProjectSelected ? (
             <div className="mb-4">
               <div className="flex items-center justify-between px-1.5 mb-1.5 mt-1">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 text-sm leading-5 font-semibold tracking-normal text-muted-foreground">
                   {projectTitle}
-                  <span className="font-normal opacity-70">({projectSkills.length})</span>
+                  <span className="text-xs font-normal tabular-nums">({projectSkills.length})</span>
                 </div>
                 <div className="flex items-center gap-0.5">
                   {pathExists && onManageProjectLibraries ? (
-                    <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={onManageProjectLibraries} aria-label={t('libraries.manage')} title={t('libraries.manage')}>
+                    <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={onManageProjectLibraries} aria-label={t('libraries.manage')} title={t('libraries.manage')}>
                       <SlidersHorizontal className="size-3.5" aria-hidden="true" />
                     </Button>
                   ) : null}
                   {pathExists && onAddProject ? (
-                    <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
+                    <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
                       <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   ) : null}
@@ -96,18 +96,18 @@ export const CompactSkillList = memo(function CompactSkillList({
           {/* Global skills section */}
           <div className="mb-4">
             <div className="flex items-center justify-between px-1.5 mb-1.5 mt-1">
-              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 text-sm leading-5 font-semibold tracking-normal text-muted-foreground">
                 {t('skills.globalSkills')}
-                <span className="font-normal opacity-70">({globalSkills.length})</span>
+                <span className="text-xs font-normal tabular-nums">({globalSkills.length})</span>
               </div>
               <div className="flex items-center gap-0.5">
                 {onManageGlobalLibraries ? (
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={onManageGlobalLibraries} aria-label={t('libraries.manage')} title={t('libraries.manage')}>
+                  <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:bg-primary/10 hover:text-primary" onClick={onManageGlobalLibraries} aria-label={t('libraries.manage')} title={t('libraries.manage')}>
                     <SlidersHorizontal className="size-3.5" aria-hidden="true" />
                   </Button>
                 ) : null}
                 {onAddGlobal ? (
-                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
+                  <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} aria-label={t('skills.add')} title={t('skills.add')} disabled={writeBlocked}>
                     <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                   </Button>
                 ) : null}

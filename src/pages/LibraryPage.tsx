@@ -454,7 +454,7 @@ export function LibraryPage() {
 
       {workspace.detail?.skills.some((skill) => skill.updateCapability?.canCheckForUpdates !== false) ? (
         checkDone && availableUpdates.length === 0 ? (
-          <span className="inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs font-medium text-success">
+          <span className="inline-flex h-7 items-center justify-center gap-1.5 px-2 text-xs font-medium text-emerald-700 dark:text-success">
             <Check className="size-3.5" aria-hidden="true" />
             <span className="library-secondary-action-label">{t('skills.checkUpToDate')}</span>
           </span>
@@ -563,10 +563,10 @@ export function LibraryPage() {
             <div role="region" aria-label={workspace.detail.name} className="library-workspace-header library-workspace-gutter shrink-0 py-2 border-b border-border/40">
               <div className="library-header-identity">
                 {navigation}
-                <h2 className="min-w-0 shrink truncate text-sm font-bold tracking-normal text-foreground/90">
+                <h2 className="min-w-0 shrink truncate text-sm font-semibold tracking-normal text-foreground">
                   <span className="truncate">{workspace.detail.name}</span>
                 </h2>
-                <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground/70">
+                <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
                   {t('libraries.skillCount', { count: workspace.detail.skills.length })}
                 </span>
 
@@ -593,8 +593,8 @@ export function LibraryPage() {
                               className={cn(
                                 'inline-flex min-w-0 items-center gap-1 font-medium',
                                 item.tone === 'accent' && 'text-primary',
-                                item.tone === 'warning' && 'text-warning',
-                                item.tone === 'neutral' && 'text-muted-foreground/80',
+                                item.tone === 'warning' && 'text-amber-800 dark:text-warning',
+                                item.tone === 'neutral' && 'text-muted-foreground',
                               )}
                             >
                               {index > 0 ? (
@@ -638,7 +638,7 @@ export function LibraryPage() {
         ) : navigation ? (
           <div className="library-workspace-header library-workspace-gutter shrink-0 border-b py-2">
             {navigation}
-            <span className="min-w-0 truncate text-sm font-bold">
+            <span className="min-w-0 truncate text-sm font-semibold">
               {workspace.catalog?.libraries.find((library) => library.id === workspace.selectedLibraryId)?.name ?? t('libraries.title')}
             </span>
           </div>
@@ -674,7 +674,7 @@ export function LibraryPage() {
                           onChange={(event) => setQuery(event.target.value)}
                           placeholder={t('libraries.searchSkills')}
                           aria-label={t('libraries.searchSkills')}
-                          className="h-8 pl-9 pr-8"
+                          className="h-8 border-transparent bg-muted pl-9 pr-8 text-sm shadow-none placeholder:text-zinc-600 dark:placeholder:text-muted-foreground hover:bg-accent focus-visible:bg-background focus-visible:ring-1"
                         />
                         {query ? (
                           <Button
@@ -691,7 +691,7 @@ export function LibraryPage() {
                       </div>
                       {query.trim() ? (
                         <p
-                          className="mt-1 text-right text-[11px] tabular-nums text-muted-foreground"
+                          className="mt-1 text-right text-xs leading-[18px] tabular-nums text-muted-foreground"
                           aria-live="polite"
                         >
                           {t('libraries.searchResultCount', {
@@ -769,7 +769,7 @@ export function LibraryPage() {
                           ))}
                         </div>
                       ) : (
-                        <div className="space-y-2.5">
+                        <div className="space-y-2">
                           {visibleSkills.map((skill) => (
                             <LibrarySkillCard
                               key={skill.name}

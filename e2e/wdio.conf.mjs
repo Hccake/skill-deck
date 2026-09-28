@@ -12,6 +12,7 @@ if (!output || !binary || !process.env.SKILL_DECK_E2E_HOME) {
 const recoveryFixture = path.join(process.env.SKILL_DECK_E2E_HOME, 'recovery', 'operation-layout-fixture');
 await mkdir(recoveryFixture, { recursive: true });
 await writeFile(path.join(recoveryFixture, 'recovery.json'), 'layout-fixture');
+await mkdir(path.join(process.env.SKILL_DECK_E2E_HOME, '.codex'), { recursive: true });
 
 export const config = {
   runner: 'local',

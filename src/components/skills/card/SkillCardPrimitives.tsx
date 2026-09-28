@@ -1,10 +1,11 @@
-import { memo, type ReactNode } from 'react';
+import { memo, type ComponentProps, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, CircleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowUpCircle, ExternalLink, CircleAlert, type LucideIcon } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -21,7 +22,7 @@ interface SkillCardShellProps {
  * 两个页面的 Skill 卡片共用的外壳。
  *
  * 根节点保持普通 `div`：卡内有标题、来源和操作按钮，`role="button"` 不允许交互式后代。
- * 键盘路径由卡内的标题按钮承担，聚焦时靠 `:focus-visible` 让整卡显示聚焦环。
+ * 名称入口聚焦时强调整卡，来源与行内命令只强调各自控件。
  *
  * 只负责容器样式，内容布局（含 `CardContent` 与进度条之类的兄弟节点）由各自的卡片决定。
  */
@@ -35,11 +36,11 @@ export const SkillCardShell = memo(function SkillCardShell({
   return (
     <Card
       className={cn(
-        'group relative gap-0 rounded-xl border border-border bg-card py-0 transition-[border-color,box-shadow] duration-200',
-        'hover:border-primary/40 hover:shadow-sm',
-        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:border-primary/40',
+        'group relative gap-0 rounded-xl border border-border bg-card py-0 shadow-none transition-colors duration-150',
+        'hover:border-foreground/20',
+        'has-[[data-skill-open]:focus-visible]:ring-2 has-[[data-skill-open]:focus-visible]:ring-ring has-[[data-skill-open]:focus-visible]:border-primary',
         onClick && 'cursor-pointer',
-        selected && 'border-primary ring-1 ring-primary/40 bg-accent/20 shadow-sm',
+        selected && 'border-primary ring-1 ring-primary/40 bg-primary/5',
         className,
       )}
       onPointerDown={onPointerDown}
@@ -70,15 +71,14 @@ export const SkillSourceLink = memo(function SkillSourceLink({
   const openable = isOpenableUrl(url) ? url : null;
 
   const source = !openable ? (
-    <span className={cn('max-w-48 truncate', className)} title={hint ? undefined : label} tabIndex={hint ? 0 : undefined}>{label}</span>
+    <span className={cn('block max-w-48 truncate outline-none focus-visible:ring-2 focus-visible:ring-ring', className)} tabIndex={0}>{label}</span>
   ) : (
     <button
       type="button"
       aria-label={label}
-      title={hint ? undefined : t('skills.externalLink')}
       className={cn(
         'inline-flex min-w-0 cursor-pointer items-center gap-1 font-medium text-primary outline-none',
-        'transition-colors hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring/50',
+        'hover:underline focus-visible:ring-2 focus-visible:ring-ring',
         className,
       )}
       onClick={(event) => {
@@ -93,8 +93,52 @@ export const SkillSourceLink = memo(function SkillSourceLink({
       <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
     </button>
   );
-  return hint ? <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
-    <TooltipContent className="max-w-80 text-wrap">{hint}</TooltipContent></Tooltip> : source;
+  return <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
+    <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">
+      <p>{label}</p>
+      {hint ? <p className="mt-1">{hint}</p> : null}
+    </TooltipContent></Tooltip>;
+});
+
+export function SkillCardAction({ label, className, ...props }: ComponentProps<typeof Button> & { label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" {...props} aria-label={label} className={cn('size-7 cursor-pointer text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring', className)} />
+      </TooltipTrigger>
+      <TooltipContent className="data-[state=closed]:animate-none!">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export const SkillCompactRow = memo(function SkillCompactRow({ name, source, selected, onClick }: {
+  name: string;
+  source: string | null;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-current={selected ? 'true' : undefined}
+          className={cn(
+            'group relative block min-h-14 w-full cursor-pointer overflow-hidden px-4 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+            selected ? 'bg-primary/8 shadow-[inset_2px_0_0_0_theme(colors.primary.DEFAULT)]' : 'hover:bg-accent/40',
+          )}
+          onClick={onClick}
+        >
+          <div className={cn('truncate font-heading text-sm font-semibold leading-5 tracking-normal', selected ? 'text-primary' : 'text-foreground')}>{name}</div>
+          <div className="mt-0.5 min-h-[18px] truncate text-xs leading-[18px] text-zinc-600 dark:text-muted-foreground">{source}</div>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">
+        <p className="font-medium">{name}</p>
+        {source ? <p className="mt-1">{source}</p> : null}
+      </TooltipContent>
+    </Tooltip>
+  );
 });
 
 /**
@@ -111,11 +155,12 @@ export const SkillCardStatusLabel = memo(function SkillCardStatusLabel({
 }) {
   return (
     <span className={cn(
-      'inline-flex h-5 shrink-0 items-center rounded-sm px-1.5 text-[11px] font-medium',
+      'inline-flex min-h-5.5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-xs leading-[18px] font-medium',
       tone === 'accent' ? 'bg-primary/10 text-primary'
         : tone === 'muted' ? 'bg-muted text-muted-foreground'
-          : 'bg-warning/10 text-warning',
+          : 'bg-warning/10 text-amber-800 dark:text-warning',
     )}>
+      {tone === 'accent' ? <ArrowUpCircle className="size-3 shrink-0" aria-hidden="true" /> : null}
       {label}
     </span>
   );
@@ -128,10 +173,12 @@ export const SkillCardAttentionRow = memo(function SkillCardAttentionRow({
   labels,
   testId,
   description,
+  className,
 }: {
   labels: readonly string[];
   testId?: string;
   description?: string;
+  className?: string;
 }) {
   if (labels.length === 0) return null;
   const row = (
@@ -140,7 +187,7 @@ export const SkillCardAttentionRow = memo(function SkillCardAttentionRow({
       role="note"
       aria-label={labels.join('，')}
       tabIndex={description ? 0 : undefined}
-      className="flex items-start gap-1.5 rounded-sm text-xs leading-5 text-warning/90 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      className={cn('flex items-start gap-1.5 rounded-sm text-xs leading-[18px] text-amber-800 dark:text-warning outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
     >
       <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
       <div className="flex min-w-0 flex-wrap gap-x-1.5">
@@ -154,7 +201,7 @@ export const SkillCardAttentionRow = memo(function SkillCardAttentionRow({
     </div>
   );
   return description ? <Tooltip><TooltipTrigger asChild>{row}</TooltipTrigger>
-    <TooltipContent className="max-w-80 whitespace-pre-line text-wrap">{description}</TooltipContent></Tooltip> : row;
+    <TooltipContent className="max-w-80 whitespace-pre-line text-wrap data-[state=closed]:animate-none!">{description}</TooltipContent></Tooltip> : row;
 });
 
 /**
@@ -221,7 +268,7 @@ export const SkillCardMetaRow = memo(function SkillCardMetaRow({
     <div
       data-testid="skill-card-meta"
       className={cn(
-        'flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground/80',
+        'flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-[18px] text-muted-foreground',
         "[&>span:not(:last-child)]:after:ml-2 [&>span:not(:last-child)]:after:text-border [&>span:not(:last-child)]:after:content-['·']",
         className,
       )}

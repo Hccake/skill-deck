@@ -119,6 +119,12 @@ describe('Skill Deck desktop', () => {
         }));
         assert.equal(layout.overflow, false);
         assert.ok(layout.navigation.length >= 4 && layout.navigation.every(Boolean));
+        const links = await browser.execute(() => [...document.querySelectorAll('header nav a')].map(link => ({
+          height: link.getBoundingClientRect().height,
+          labelVisible: link.querySelector('span').getBoundingClientRect().width > 0,
+        })));
+        assert.ok(links.every(link => Math.abs(link.height - 32) < 1), JSON.stringify(links));
+        if (width >= 800) assert.ok(links.every(link => link.labelVisible), JSON.stringify(links));
         await $('header').moveTo();
         await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `settings-${width}x${height}-${theme.toLowerCase()}.png`));
       }
@@ -127,11 +133,37 @@ describe('Skill Deck desktop', () => {
     await browser.waitUntil(async () => browser.execute(() => location.pathname === '/'));
   });
 
+  it('adapts navigation labels to the space left by surrounding controls', async () => {
+    await viewport(800, 600);
+    const labels = () => browser.execute(() => [...document.querySelectorAll('header nav a > span')].filter(el => el.getBoundingClientRect().width > 0).length);
+    assert.equal(await labels(), 4);
+    try {
+      // 占宽夹具只验证导航容量，不代表真实 WSL 切换。
+      await browser.execute(() => { document.querySelector('header').firstElementChild.style.width = '280px'; });
+      await browser.waitUntil(async () => (await labels()) === 1);
+      assert.equal(await $('header nav a[aria-current="page"] > span').isDisplayed(), true);
+      const heights = await browser.execute(() => [...document.querySelectorAll('header nav a')].map(el => el.getBoundingClientRect().height));
+      assert.ok(heights.every(height => Math.abs(height - 32) < 1), JSON.stringify(heights));
+    } finally {
+      await browser.execute(() => { document.querySelector('header').firstElementChild.style.removeProperty('width'); });
+    }
+    await browser.waitUntil(async () => (await labels()) === 4);
+  });
+
   it('preserves user panel widths and navigation focus in the real workspaces', async () => {
     const home = process.env.SKILL_DECK_E2E_HOME;
     const fixture = path.join(home, '.agents', 'skills', 'review');
     await mkdir(fixture, { recursive: true });
     await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n# Workspace review\n\nVerify navigation, resizing, and keyboard focus.\n');
+    for (const [name, description] of [
+      ['code-review', 'Review code changes for correctness, maintainability, and security.'],
+      ['cross-platform-testing-and-validation', 'Validate paths, file operations, and application behavior on Windows, macOS, and Linux.'],
+      ['frontend-design', 'Create consistent interfaces for desktop applications and web products.'],
+    ]) {
+      const directory = path.join(home, '.agents', 'skills', name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n# ${name}\n\n${description}\n`);
+    }
     const environment = { kind: 'native' };
     const catalog = await invoke('create_skill_library', { environment, name: 'Workspace review' });
     const libraryId = catalog.libraries.find(library => library.name === 'Workspace review').id;
@@ -142,6 +174,39 @@ describe('Skill Deck desktop', () => {
     await invoke('add_skills_to_library', { request: { request, expectedToken: preview.token, membership: preview.membership, acknowledgeRedirect: false } });
     await browser.refresh();
     await $('[data-testid="skill-card-title"] button').waitForDisplayed();
+    await viewport(800, 600);
+    const cards = await browser.execute(() => [...document.querySelectorAll('[data-slot="card"]')]
+      .filter(card => card.querySelector('[data-testid="skill-card-title"]'))
+      .map(card => {
+        const source = card.querySelector('[data-testid="skill-card-meta"]').getBoundingClientRect();
+        const agent = [...card.querySelectorAll('span')].find(el => el.textContent === 'Codex').getBoundingClientRect();
+        const title = card.querySelector('h3').getBoundingClientRect();
+        const description = card.querySelector('p').getBoundingClientRect();
+        const action = card.querySelector('[data-testid="skill-card-title"]').nextElementSibling.querySelector('button').getBoundingClientRect();
+        return { height: card.getBoundingClientRect().height, bottom: card.getBoundingClientRect().bottom, sourceX: source.x, sourceBottom: source.bottom, agentX: agent.x, agentY: agent.y, agentHeight: agent.height, titleX: title.x, descriptionX: description.x, titleDescriptionGap: description.y - title.bottom, descriptionSourceGap: source.y - description.bottom, actionHeight: action.height, actionDescriptionGap: description.y - action.bottom };
+      }));
+    assert.equal(cards.length, 4);
+    assert.ok(cards.every(card => Math.abs(card.agentY - card.sourceBottom - 8) < 1 && Math.abs(card.agentX - card.sourceX) < 1), JSON.stringify(cards));
+    assert.ok(cards.every(card => Math.abs(card.titleX - card.sourceX) < 1 && Math.abs(card.descriptionX - card.sourceX) < 1 && Math.abs(card.agentHeight - 20) < 1), JSON.stringify(cards));
+    assert.ok(cards.every(card => Math.abs(card.titleDescriptionGap - 4) < 1 && Math.abs(card.descriptionSourceGap - 6) < 1 && Math.abs(card.actionHeight - 28) < 1 && card.actionDescriptionGap >= -0.5), JSON.stringify(cards));
+    assert.ok(cards.every(card => card.height <= 134) && cards.filter(card => card.bottom <= 600).length >= 3, JSON.stringify(cards));
+    await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'workspace-card-density-800.png'));
+    const title = '[data-testid="skill-card-title"] button';
+    await browser.execute(selector => document.querySelector(selector).focus(), title);
+    await $('[role="tooltip"]').waitForExist();
+    await browser.executeAsync(done => {
+      document.querySelector('input[name="skill-search"]').focus();
+      requestAnimationFrame(() => requestAnimationFrame(done));
+    });
+    await browser.execute(selector => document.querySelector(selector).focus(), title);
+    // 等退出动画结束后再确认，避免只观察到一个瞬间出现的旧提示。
+    await browser.executeAsync(done => setTimeout(done, 250));
+    const disclosure = await browser.execute(selector => ({
+      name: document.querySelector(selector).textContent,
+      tooltip: document.querySelector('[role="tooltip"]')?.textContent,
+    }), title);
+    assert.equal(disclosure.tooltip, disclosure.name);
+    await browser.execute(() => document.activeElement.blur());
     await viewport(1280, 800);
     await $('[data-testid="skill-card-title"] button').click();
     await $('.skill-prose').waitForDisplayed();
@@ -180,6 +245,13 @@ describe('Skill Deck desktop', () => {
 
     await $('header nav a[href="/libraries"]').click();
     await $('[data-testid="library-skill-title"] button').waitForDisplayed();
+    const libraryCard = await browser.execute(() => {
+      const card = document.querySelector('[data-testid="library-skill-title"]').closest('[data-slot="card"]');
+      const [title, description, source] = ['h3', 'p', '[data-testid="skill-card-meta"]'].map(selector => card.querySelector(selector).getBoundingClientRect());
+      return { lefts: [title.x, description.x, source.x], titleDescriptionGap: description.y - title.bottom, descriptionSourceGap: source.y - description.bottom };
+    });
+    assert.ok(libraryCard.lefts.every(left => Math.abs(left - libraryCard.lefts[0]) < 1), JSON.stringify(libraryCard));
+    assert.ok(Math.abs(libraryCard.titleDescriptionGap - 4) < 1 && Math.abs(libraryCard.descriptionSourceGap - 6) < 1, JSON.stringify(libraryCard));
     await $('[data-testid="library-skill-title"] button').click();
     await $('.skill-prose').waitForDisplayed();
     await settle();

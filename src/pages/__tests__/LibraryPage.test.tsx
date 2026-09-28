@@ -225,7 +225,7 @@ describe('LibraryPage maintenance', () => {
     expect(screen.getByRole('status', {
       name: 'libraries.updateSummary.updateAvailable:{"count":1}',
     })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'libraries.update' }));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.card.actionLabel:{"action":"libraries.update","name":"api-design"}' }));
     expect(await screen.findByText(/libraries.confirmUpdateDescription/)).toBeTruthy();
     expect(prepareLibrarySkillUpdates).toHaveBeenCalledWith(expect.any(String), {
       environment: { kind: 'native' },
