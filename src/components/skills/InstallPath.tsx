@@ -6,12 +6,14 @@ import type { ResourceLocator, ScopePathBase, SkillLocation } from '@/bindings';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { presentInstallPath } from '@/lib/install-path';
+import { cn } from '@/lib/utils';
 
-export function InstallPath({ path, base, scope, copyable = true }: {
+export function InstallPath({ path, base, scope, copyable = true, className }: {
   path: ResourceLocator;
   base?: ScopePathBase | null;
   scope: SkillLocation['scope'];
   copyable?: boolean;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -36,13 +38,13 @@ export function InstallPath({ path, base, scope, copyable = true }: {
 
   return (
     <TooltipProvider>
-    <div className="flex min-w-0 max-w-full items-center gap-1">
+    <div className={cn('flex min-w-0 max-w-full items-center gap-1 text-muted-foreground', className)}>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
             aria-label={t('skills.installPath.viewFullPath', { path: label })}
-            className="min-w-0 max-w-full rounded-sm text-left text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            className="min-w-0 max-w-full rounded-sm text-left text-inherit hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <code className="flex min-w-0 max-w-full text-xs leading-5" translate="no" aria-hidden="true">
               {split > 0 ? <span className="min-w-0 truncate">{label.slice(0, split)}</span> : null}

@@ -19,6 +19,7 @@ import { CardContent } from '@/components/ui/card';
 import {
   SkillCardMarker,
   SkillCardAction,
+  SkillAgentBadge,
   SkillCardMetaRow,
   SkillCardProgressBar,
   SkillCardShell,
@@ -273,12 +274,9 @@ export const SkillCard = memo(function SkillCard({
           {effectiveAgents.length > 0 ? (
             <div className="mt-2 flex min-w-0 flex-wrap items-start gap-x-1.5 gap-y-1">
               {effectiveAgents.map((agentId) => (
-                <span
-                  key={agentId}
-                  className="inline-flex min-h-5 max-w-full items-center rounded-full bg-primary/6 px-2 py-0.5 text-xs leading-4 font-medium text-[color:color-mix(in_srgb,var(--primary)_55%,var(--muted-foreground))] ring-1 ring-inset ring-primary/12 dark:bg-primary/8 dark:ring-primary/14 [overflow-wrap:anywhere]"
-                >
+                <SkillAgentBadge key={agentId}>
                   {agentDisplayNames.get(agentId) ?? agentId}
-                </span>
+                </SkillAgentBadge>
               ))}
             </div>
           ) : null}

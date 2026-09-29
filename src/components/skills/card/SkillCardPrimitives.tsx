@@ -114,6 +114,14 @@ export function SkillCardAction({ label, className, ...props }: ComponentProps<t
   );
 }
 
+export function SkillAgentBadge({ children }: { children: ReactNode }) {
+  return (
+    <span className="skill-agent-badge inline-flex min-h-5 max-w-full items-center rounded-full bg-primary/6 px-2 py-0.5 text-xs leading-4 font-medium text-[color:color-mix(in_srgb,var(--primary)_55%,var(--muted-foreground))] ring-1 ring-inset ring-primary/12 dark:bg-primary/8 dark:ring-primary/14 [overflow-wrap:anywhere]">
+      {children}
+    </span>
+  );
+}
+
 export const SkillCompactRow = memo(function SkillCompactRow({ name, source, selected, onClick, itemKey }: {
   itemKey?: string;
   name: string;

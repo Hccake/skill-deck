@@ -480,6 +480,9 @@
     "detail": {
       "title": "Skill Details",
       "description": "Description",
+      "expandDescription": "Expand description",
+      "collapseDescription": "Collapse description",
+      "retryCheckHint": "The last check did not complete. Check the source again for a new version.",
       "source": "Source",
       "path": "Source Path",
       "pathHint": "The complete Skill content in the common Skill directory. Other Agents can use it through links or copies.",

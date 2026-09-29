@@ -480,6 +480,9 @@
     "detail": {
       "title": "Skill 详情",
       "description": "描述",
+      "expandDescription": "展开简介",
+      "collapseDescription": "收起简介",
+      "retryCheckHint": "上次检查未完成，重新检查来源是否有新版本。",
       "source": "来源",
       "path": "源文件路径",
       "pathHint": "通用 Skill 目录中的完整 Skill 内容；其他 Agent 可以通过链接或副本使用。",

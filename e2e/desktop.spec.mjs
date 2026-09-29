@@ -157,7 +157,7 @@ describe('Skill Deck desktop', () => {
     await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n# Workspace review\n\nVerify navigation, resizing, and keyboard focus.\n');
     for (const [name, description] of [
       ['code-review', 'Review code changes for correctness, maintainability, and security.'],
-      ['cross-platform-testing-and-validation', 'Validate paths, file operations, and application behavior on Windows, macOS, and Linux.'],
+      ['cross-platform-testing-and-validation', 'Validate paths, file operations, and application behavior on Windows, macOS, and Linux. Review platform-specific assumptions, record evidence from each runtime, and confirm that the final package contains the expected resources.'],
       ['frontend-design', 'Create consistent interfaces for desktop applications and web products.'],
     ]) {
       const directory = path.join(home, '.agents', 'skills', name);
@@ -225,6 +225,11 @@ describe('Skill Deck desktop', () => {
     assert.equal(await $('#skills-context-navigation').isDisplayed(), false);
     assert.equal(await $('header nav a[aria-current="page"] span').isDisplayed(), true);
     await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'workspace-skills-720.png'));
+    // 原生窗口可能仍位于系统鼠标下方；先关闭悬停提示，再单独验证抽屉的 Esc。
+    if (await $('[role="tooltip"]').isExisting()) {
+      await browser.keys('Escape');
+      await $('[role="tooltip"]').waitForExist({ reverse: true });
+    }
     const toggle = $('[aria-controls="skills-context-navigation"]');
     await toggle.click();
     assert.equal(await browser.execute(() => document.activeElement.getAttribute('aria-current')), 'location');
@@ -406,6 +411,7 @@ describe('Skill Deck desktop', () => {
     await settle();
     assert.ok(Math.abs(await widthOf('library') - 279) < 2);
     await $('header nav a[href="/"]').click();
+    await $('#skills-context-navigation').waitForDisplayed();
     await settle();
     assert.ok(Math.abs(await widthOf('skills') - 320) < 2);
     await browser.execute(() => { delete window.__sidebarBeforeResize; });
@@ -477,6 +483,80 @@ describe('Skill Deck desktop', () => {
       assert.equal(await $(`#${detailId}`).isExisting(), false);
       assert.equal(await browser.execute(() => document.activeElement.closest('[data-skill-item]')?.dataset.skillItem), selectedKey);
       await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `keyboard-${kind}-return.png`));
+    }
+  });
+  it('adapts both detail metadata layouts to the panel width inside a wide window', async () => {
+    const saved = await browser.execute(() => localStorage.getItem('skill-deck-layout'));
+    try {
+      await viewport(1280, 800);
+      for (const [kind, route, panelId, titleSelector] of [
+        ['skills', '/', 'skill-detail-panel', '[data-testid="skill-card-title"] button'],
+        ['library', '/libraries', 'library-skill-detail-panel', '[data-testid="library-skill-title"] button'],
+      ]) {
+      for (const width of [360, 480, 640]) {
+        await browser.execute(({ saved, width, kind }) => {
+          const layout = JSON.parse(saved);
+          Object.assign(layout.state, { skillsSidebarWidth: 208, librarySidebarWidth: 208, skillsDetailOpen: false, libraryDetailOpen: false });
+          layout.state[kind === 'skills' ? 'skillsListWidth' : 'libraryListWidth'] = 1071 - width;
+          localStorage.setItem('skill-deck-layout', JSON.stringify(layout));
+        }, { saved, width, kind });
+        await browser.refresh();
+        await $(`header nav a[href="${route}"]`).waitForDisplayed();
+        await $(`header nav a[href="${route}"]`).click();
+        await $(titleSelector).waitForDisplayed();
+        await $(titleSelector).click();
+        await $('.skill-prose').waitForDisplayed(); await settle();
+        const geometry = await browser.execute(panelId => {
+          const panel = document.getElementById(panelId);
+          const content = panel.querySelector('.skill-detail-content');
+          const fields = [...panel.querySelectorAll('.skill-detail-field')];
+          const path = panel.querySelector('button[aria-label="Copy path"]')?.closest('.skill-detail-field');
+          const agentField = panel.querySelector('.skill-agent-badge')?.closest('.skill-detail-field');
+          return {
+            width: panel.getBoundingClientRect().width,
+            gutter: parseFloat(getComputedStyle(content).paddingLeft),
+            contentWidth: content.clientWidth - parseFloat(getComputedStyle(content).paddingLeft) * 2,
+            pathWidth: path?.getBoundingClientRect().width,
+            agentsLast: !agentField || fields.every(field => field === agentField || field.getBoundingClientRect().bottom <= agentField.getBoundingClientRect().top),
+            sourceLabel: fields.some(field => field.firstElementChild.textContent === 'Source'),
+            labels: fields.map(field => ({ size: getComputedStyle(field.firstElementChild).fontSize, spacing: getComputedStyle(field.firstElementChild).letterSpacing })),
+            agents: [...panel.querySelectorAll('.skill-agent-badge')].map(el => ({ height: el.getBoundingClientRect().height, size: getComputedStyle(el).fontSize })),
+            overflow: content.scrollWidth > content.clientWidth,
+          };
+        }, panelId);
+        assert.ok(Math.abs(geometry.width - width) < 2, JSON.stringify(geometry));
+        assert.equal(geometry.gutter, width < 560 ? 16 : 24);
+        assert.ok(geometry.labels.length >= 1 && geometry.labels.every(label => label.size === '12px' && ['normal', '0px'].includes(label.spacing)), JSON.stringify(geometry));
+        assert.equal(geometry.sourceLabel, true);
+        assert.equal(geometry.agentsLast, true);
+        if (kind === 'skills') {
+          assert.ok(geometry.pathWidth >= Math.min(geometry.contentWidth, 320) - 2, JSON.stringify(geometry));
+          assert.ok(geometry.agents.length > 0 && geometry.agents.every(agent => Math.abs(agent.height - 20) < 1 && agent.size === '12px'), JSON.stringify(geometry));
+        } else {
+          assert.equal(geometry.agents.length, 0);
+          assert.ok(geometry.pathWidth == null);
+        }
+        assert.equal(geometry.overflow, false);
+        await assertDetailHeader(kind);
+        await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `detail-${kind}-${width}.png`));
+        if (kind === 'skills' && width === 360) {
+          await $('[data-skill-item="global:cross-platform-testing-and-validation"][data-skill-open]').click();
+          const expand = $('#skill-detail-panel button[aria-label="Expand description"]');
+          await expand.waitForDisplayed();
+          const descriptionId = await expand.getAttribute('aria-controls');
+          const height = () => browser.execute(id => document.getElementById(id).getBoundingClientRect().height, descriptionId);
+          const collapsedHeight = await height();
+          assert.ok(collapsedHeight <= 45);
+          await expand.click();
+          await browser.waitUntil(async () => await height() > collapsedHeight + 20);
+          await $('#skill-detail-panel button[aria-label="Collapse description"]').click();
+          await browser.waitUntil(async () => Math.abs(await height() - collapsedHeight) < 1);
+        }
+      }
+      }
+    } finally {
+      await browser.execute(saved => localStorage.setItem('skill-deck-layout', saved), saved);
+      await browser.refresh();
     }
   });
 });
