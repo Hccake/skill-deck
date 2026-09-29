@@ -1,0 +1,35 @@
+.skill-detail-layout {
+  container: skill-detail / inline-size;
+}
+
+.skill-detail-content {
+  min-width: 0;
+  padding: 16px;
+}
+
+.skill-detail-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+}
+
+.skill-detail-dates {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  max-width: 100%;
+  gap: 12px 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-detail-path {
+  flex: 1 1 320px;
+  min-width: min(100%, 320px);
+}
+
+@container skill-detail (min-width: 560px) {
+  .skill-detail-content {
+    padding-inline: 24px;
+  }
+}

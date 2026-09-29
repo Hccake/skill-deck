@@ -1,8 +1,8 @@
-import { memo, useCallback, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, Copy, Link2, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Copy, Link2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -10,11 +10,12 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { cn } from '@/lib/utils';
+import './SkillDetail.css';
 
 /**
- * 详情面板元信息网格中的一格。
+ * 详情面板中的属性字段。
  *
- * 标签使用统一的小型大写排版；缺值的格由调用方省略，网格自然收缩。
+ * 标签与值作为整体排布，字段宽度由内容及可用空间决定。
  */
 export const DetailField = memo(function DetailField({
   label,
@@ -26,14 +27,60 @@ export const DetailField = memo(function DetailField({
   children: ReactNode;
 }) {
   return (
-    <div className={cn('flex flex-col', className)}>
-      <span className="font-heading text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+    <dl className={cn('skill-detail-field flex min-w-0 max-w-full flex-col', className)}>
+      <dt className="text-xs font-normal leading-[18px] tracking-normal text-muted-foreground">
         {label}
-      </span>
-      <div className="mt-1 text-sm font-semibold text-accent-foreground">{children}</div>
-    </div>
+      </dt>
+      <dd className="mt-1 min-w-0 text-[13px] font-normal leading-5 text-foreground [overflow-wrap:anywhere]">{children}</dd>
+    </dl>
   );
 });
+
+export function DetailDescription({ children }: { children: string }) {
+  const { t } = useTranslation();
+  const id = useId();
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  useEffect(() => {
+    const element = textRef.current;
+    if (!element) return;
+    const measure = () => setOverflows(element.scrollHeight > (parseFloat(getComputedStyle(element).lineHeight) || 22) * 2 + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [children]);
+
+  return (
+    <div className="flex items-start gap-1">
+      <p ref={textRef} id={id} className={cn('min-w-0 flex-1 text-sm leading-[22px] text-muted-foreground [overflow-wrap:anywhere]', !expanded && 'line-clamp-2')}>
+        {children}
+      </p>
+      {overflows ? (
+        <DetailAction className="size-7" label={t(expanded ? 'skills.detail.collapseDescription' : 'skills.detail.expandDescription')}
+          aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(value => !value)}>
+          {expanded ? <ChevronUp className="size-4" aria-hidden="true" /> : <ChevronDown className="size-4" aria-hidden="true" />}
+        </DetailAction>
+      ) : null}
+    </div>
+  );
+}
+
+export function DetailAction({ label, hint, className, disabled, ...props }: ComponentProps<typeof Button> & { label: string; hint?: string }) {
+  const button = <Button variant="ghost" size="icon" {...props} disabled={disabled} aria-label={label}
+    className={cn('size-8 shrink-0 cursor-pointer text-muted-foreground hover:bg-muted/50 hover:text-foreground', className)} />;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {disabled ? <span tabIndex={hint ? 0 : undefined} aria-label={hint}
+          className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">{button}</span> : button}
+      </TooltipTrigger>
+      <TooltipContent className="max-w-80 text-wrap data-[state=closed]:animate-none!">{hint ?? label}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 /**
  * 可复制的路径值。
@@ -165,15 +212,14 @@ export const DetailSourceLink = memo(function DetailSourceLink({
   const openable = isOpenableUrl(url) ? url : null;
 
   const source = !openable ? (
-      <span tabIndex={hint ? 0 : undefined} className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
-        <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
+      <span tabIndex={0} className="skill-detail-source inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-[13px] leading-5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
         <span className="truncate">{label}</span>
+        <Link2 className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
       </span>
   ) : (
     <button
       type="button"
-      title={hint ? undefined : t('skills.externalLink')}
-      className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-sm font-medium text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+      className="skill-detail-source inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-[13px] font-medium leading-5 text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
       onClick={() => {
         void openUrl(openable).catch((error: unknown) => {
           console.error('Failed to open Skill source:', error);
@@ -181,10 +227,13 @@ export const DetailSourceLink = memo(function DetailSourceLink({
         });
       }}
     >
-      <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="truncate">{label}</span>
+      <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
     </button>
   );
-  return hint ? <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
-    <TooltipContent className="max-w-80 text-wrap">{hint}</TooltipContent></Tooltip> : source;
+  return <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
+    <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-all text-wrap data-[state=closed]:animate-none!">
+      <p>{label}</p>
+      {hint ? <p className="mt-1">{hint}</p> : null}
+    </TooltipContent></Tooltip>;
 });

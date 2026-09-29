@@ -1,7 +1,6 @@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpCircle, Trash2, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   SkillCardAttentionRow,
@@ -9,6 +8,8 @@ import {
 } from '@/components/skills/card/SkillCardPrimitives';
 import {
   DetailBody,
+  DetailAction,
+  DetailDescription,
   DetailField,
   DetailSourceLink,
 } from '@/components/skills/detail/DetailPrimitives';
@@ -37,8 +38,7 @@ interface LibrarySkillDetailPanelProps {
 /**
  * 库成员详情。
  *
- * 与 `Skills` 页详情使用同一套版式：标题与操作簇、独立一行的来源链接、无边框的元信息标签
- * 网格、正文。库成员没有安装路径和关联 Agent，元信息改为展示来源侧的坐标。
+ * 与已安装详情共用字段层级和操作规格，属性展示库成员自己的来源坐标。
  */
 export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   skill,
@@ -71,14 +71,14 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   const noticeDescription = presentation.notice?.error ? formatAppError(presentation.notice.error, t)
     : presentation.notice?.hintKey ? t(presentation.notice.hintKey) : undefined;
 
-  const hasMetadata = Boolean(skill.updatedAt || skill.pluginName || skill.refName);
+  const hasMetadata = Boolean(presentation.local || sourceLabel || skill.updatedAt || skill.pluginName || skill.refName);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-surface">
+    <div className="skill-detail-layout flex h-full flex-col overflow-hidden bg-surface">
       <div className="relative min-h-0 flex-1">
         <ScrollArea className="absolute inset-0 h-full w-full">
-          <div className="w-full space-y-4 px-6 py-6 sm:px-8 sm:py-6">
-            <div className="space-y-3">
+          <div className="skill-detail-content w-full space-y-4">
+            <div className="space-y-2">
               <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                 <div className="flex min-w-0 flex-auto flex-wrap items-center gap-2">
                   <h2 className="min-w-0 font-heading text-xl font-semibold leading-7 text-foreground [overflow-wrap:anywhere]">
@@ -91,79 +91,74 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
 
                 <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-1">
                   {canUpdate && onUpdate ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-8 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                      aria-label={t('libraries.update')}
-                      title={t('libraries.update')}
+                    <DetailAction
+                      className="text-primary hover:bg-primary/10 hover:text-primary"
+                      label={t('libraries.update')}
                       disabled={busy}
                       onClick={() => onUpdate(skill.name)}
                     >
                       <ArrowUpCircle className="size-4" aria-hidden="true" />
-                    </Button>
+                    </DetailAction>
                   ) : null}
 
                   {onRemove ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-8 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={t('libraries.removeSkill', { name: skill.name })}
-                      title={t('libraries.removeSkillTitle', { name: skill.name })}
+                    <DetailAction
+                      className="hover:bg-destructive/10 hover:text-destructive"
+                      label={t('libraries.removeSkill', { name: skill.name })}
+                      hint={t('libraries.removeSkillTitle', { name: skill.name })}
                       disabled={busy}
                       onClick={() => onRemove(skill.name)}
                     >
                       <Trash2 className="size-4" aria-hidden="true" />
-                    </Button>
+                    </DetailAction>
                   ) : null}
 
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8 cursor-pointer text-muted-foreground hover:bg-muted hover:text-foreground"
+                  <DetailAction
+                    className="ml-1"
                     onClick={onClose}
-                    aria-label={t('common.close')}
+                    label={t('common.close')}
                   >
                     <X className="size-4" aria-hidden="true" />
-                  </Button>
+                  </DetailAction>
                 </div>
               </div>
 
               {skill.description ? (
-                <p className="max-w-4xl text-sm leading-relaxed text-muted-foreground">
-                  {skill.description}
-                </p>
+                <DetailDescription key={skill.name}>{skill.description}</DetailDescription>
               ) : null}
 
             </div>
 
-            {presentation.local ? <p className="text-sm text-muted-foreground">{t('skills.updateStatusLabel.localSource')}</p> : sourceLabel ? (
-              <DetailSourceLink label={sourceLabel} url={sourceUrl} hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
-            ) : null}
-            <SkillCardAttentionRow labels={attentionLabels} description={noticeDescription} />
-
             {hasMetadata ? (
-              <div className="grid grid-cols-2 gap-4 border-b border-border pb-4 md:grid-cols-3">
+              <div className="skill-detail-metadata">
+                {presentation.local || sourceLabel ? (
+                  <DetailField label={t('skills.detail.source')}>
+                    {presentation.local ? t('skills.updateStatusLabel.localSource') : (
+                      <DetailSourceLink label={sourceLabel!} url={sourceUrl}
+                        hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
+                    )}
+                  </DetailField>
+                ) : null}
                 {skill.updatedAt ? (
                   <DetailField label={t('skills.detail.updated')}>
-                    {formatTime(skill.updatedAt, i18n.language)}
+                    <time className="tabular-nums" dateTime={skill.updatedAt}>{formatTime(skill.updatedAt, i18n.language)}</time>
                   </DetailField>
                 ) : null}
                 {skill.pluginName ? (
                   <DetailField label={t('libraries.pluginName')}>
-                    <span className="truncate">{skill.pluginName}</span>
+                    <span className="block">{skill.pluginName}</span>
                   </DetailField>
                 ) : null}
                 {skill.refName ? (
                   <DetailField label={t('libraries.refName')}>
-                    <span className="truncate font-mono">{skill.refName}</span>
+                    <span className="block font-mono">{skill.refName}</span>
                   </DetailField>
                 ) : null}
               </div>
             ) : null}
+            <SkillCardAttentionRow labels={attentionLabels} description={noticeDescription} />
 
-            <div className="pb-10">
+            <div className="border-t border-border/70 pt-4 pb-8">
               <DetailBody
                 loading={loading}
                 content={content}

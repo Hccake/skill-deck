@@ -43,12 +43,55 @@ const makeSkill = (overrides: Partial<SkillListItem> = {}): SkillListItem => ({
 });
 
 describe('SkillDetailPanel', () => {
+  it('retries an incomplete remote check through the single header action', async () => {
+    const onCheckUpdates = vi.fn(async () => 'notCompleted' as const);
+    render(<TooltipProvider><SkillDetailPanel
+      skill={makeSkill({
+        hasUpdate: false,
+        source: 'owner/repo',
+        sourceUrl: 'https://github.com/owner/repo',
+        updateStatus: 'cannotCheck',
+        updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+        updateEvidence: {
+          source: 'owner/repo', requestedRef: null, resolvedRef: null, refRevision: null,
+          checkedAtEpochMs: null, expiresAtEpochMs: null, freshness: 'unavailable',
+          lastAttempt: { checkedAtEpochMs: Date.now(), failure: {
+            reason: 'network', message: 'offline', retryAtEpochMs: null, providerCooldown: false,
+          } },
+        },
+      })}
+      content="Document" loading={false} agentDisplayNames={new Map()}
+      onClose={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()} onRetry={vi.fn()}
+      onManageAgents={vi.fn()} onCheckUpdates={onCheckUpdates}
+    /></TooltipProvider>);
+    expect(screen.getByText('skills.detail.source')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.updateEvidence.actions.retry' })).toBeNull();
+    const check = screen.getByRole('button', { name: 'skills.checkUpdates' });
+    act(() => check.focus());
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.detail.retryCheckHint');
+    await act(async () => { fireEvent.click(check); });
+    expect(onCheckUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('discloses a maintenance command on keyboard focus and still targets the current Skill', async () => {
+    const onManageAgents = vi.fn();
+    const skill = makeSkill();
+    render(<TooltipProvider><SkillDetailPanel skill={skill} content="Content" loading={false}
+      agentDisplayNames={new Map()} onClose={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()}
+      onRetry={vi.fn()} onManageAgents={onManageAgents} /></TooltipProvider>);
+    const action = screen.getByRole('button', { name: 'skills.manageAgents.action' });
+    act(() => action.focus());
+    expect((await screen.findByRole('tooltip')).textContent).toBe('skills.manageAgents.action');
+    fireEvent.click(action);
+    expect(onManageAgents).toHaveBeenCalledWith(skill);
+  });
+
   it('does not call a completed check up to date when the source Skill was deleted', async () => {
     render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, updateStatus: 'deletedUpstream', updateReason: 'deletedUpstream' })}
       content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
       onUpdate={vi.fn()} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()}
       onCheckUpdates={vi.fn(async () => 'completed' as const)} /></TooltipProvider>);
-    await act(async () => { fireEvent.click(screen.getByTitle('skills.checkUpdates')); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'skills.checkUpdates' })); });
     expect(screen.queryByTitle('skills.checkCompleted')).toBeNull();
     expect(screen.queryByTitle('skills.checkUpToDate')).toBeNull();
     expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
@@ -58,7 +101,7 @@ describe('SkillDetailPanel', () => {
     render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, canRunUpdate: true })}
       content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
       onUpdate={onUpdate} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()} /></TooltipProvider>);
-    fireEvent.click(screen.getByTitle('skills.actions.update'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.actions.update' }));
     expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
   });
   it('shows the same-name library version with its own maintenance entry', () => {
@@ -81,8 +124,8 @@ describe('SkillDetailPanel', () => {
       onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()}
     /></TooltipProvider>);
     expect(screen.getByRole('alert').textContent).toContain('mutation.result.errors.eveSingleFile');
-    expect((screen.getByTitle('skills.manageAgents.action') as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTitle('skills.actions.delete') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'skills.manageAgents.action' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'skills.actions.delete' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   beforeEach(() => {
@@ -158,9 +201,9 @@ describe('SkillDetailPanel', () => {
       'skills.manageAgents.action',
       'skills.actions.delete',
     ]) {
-      expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: title }) as HTMLButtonElement).disabled).toBe(true);
     }
-    expect((screen.getByTitle('common.close') as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'common.close' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
 
@@ -186,7 +229,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
     expect(screen.getByText(label)).toBeTruthy();
   });
 
@@ -210,7 +253,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    fireEvent.click(screen.getByTitle('skills.checkUpdates'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.checkUpdates' }));
 
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
   });
@@ -236,13 +279,13 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    const check = screen.getByTitle('skills.checkUpdates');
+    const check = screen.getByRole('button', { name: 'skills.checkUpdates' });
     expect((check as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(check);
     expect(onCheckUpdates).not.toHaveBeenCalled();
   });
 
-  it('disables Force during provider cooldown and exposes the retry time', () => {
+  it('disables Force during provider cooldown and exposes the retry time', async () => {
     const retryAtEpochMs = Date.now() + 60_000;
     render(
       <TooltipProvider>
@@ -284,8 +327,10 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    const check = screen.getByTitle('skills.updateEvidence.retryAt') as HTMLButtonElement;
+    const check = screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement;
     expect(check.disabled).toBe(true);
+    act(() => screen.getByLabelText('skills.updateEvidence.retryAt').focus());
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.updateEvidence.retryAt');
   });
 
   it('re-enables Force when the observed provider cooldown is already expired', async () => {
@@ -334,7 +379,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect((screen.getByTitle('skills.updateEvidence.retryAt') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(true);
 
     vi.setSystemTime(1_120_000);
     rerender(
@@ -359,7 +404,7 @@ describe('SkillDetailPanel', () => {
     );
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
-    expect((screen.getByTitle('skills.checkUpdates') as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(false);
     vi.useRealTimers();
   });
 
@@ -451,7 +496,7 @@ describe('SkillDetailPanel', () => {
 
     expect(screen.getByText('skills.card.sourceIncomplete')).toBeTruthy();
     expect(screen.queryByText('skills.updateStatus.cannotCheck')).toBeNull();
-    expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'skills.actions.update' })).toBeTruthy();
   });
 
   it('shows upstream-deleted state without ordinary update action', () => {
@@ -483,8 +528,8 @@ describe('SkillDetailPanel', () => {
 
     expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
     expect(screen.queryByText('skills.updateReason.deletedUpstream')).toBeNull();
-    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-    expect(screen.getByTitle('skills.actions.delete')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'skills.actions.delete' })).toBeTruthy();
   });
 
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
@@ -508,7 +553,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
   });
 
   it('keeps manual update available when the backend cannot compare versions', () => {
@@ -533,7 +578,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'skills.actions.update' })).toBeTruthy();
   });
 
   it.each([
@@ -591,7 +636,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.checkUpdates')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.checkUpdates' })).toBeNull();
   });
 
   it('shows duplicate copies as a maintenance note instead of another badge group', () => {
@@ -713,7 +758,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    fireEvent.click(screen.getByTitle('skills.checkUpdates'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.checkUpdates' }));
 
     await waitFor(() => {
       expect(screen.getByTitle('skills.checkUpToDate')).toBeTruthy();

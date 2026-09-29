@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LibrarySkillDetailPanel } from '../LibrarySkillDetailPanel';
@@ -30,6 +30,17 @@ const sampleSkill: LibrarySkillSummary = {
 };
 
 describe('LibrarySkillDetailPanel', () => {
+  it('reveals the removal action on focus and keeps the member as its target', async () => {
+    const onRemove = vi.fn();
+    render(<TooltipProvider><LibrarySkillDetailPanel skill={sampleSkill}
+      content="Document" loading={false} onClose={vi.fn()} onRemove={onRemove} /></TooltipProvider>);
+    const remove = screen.getByRole('button', { name: 'libraries.removeSkill:{"name":"backend-utils"}' });
+    act(() => remove.focus());
+    expect((await screen.findByRole('tooltip')).textContent).toBe('libraries.removeSkillTitle:{"name":"backend-utils"}');
+    fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledWith('backend-utils');
+  });
+
   const renderPanel = (skill: LibrarySkillSummary, onRetry = vi.fn()) => {
     render(
       <TooltipProvider>
@@ -63,6 +74,7 @@ describe('LibrarySkillDetailPanel', () => {
     });
 
     // 详情是卡片的超集：卡片上有的元数据，详情不能反而缺。
+    expect(screen.getByText('skills.detail.source')).toBeTruthy();
     expect(screen.getByText('libraries.pluginName')).toBeTruthy();
     expect(screen.getByText('hccake/skills')).toBeTruthy();
     expect(screen.getByText('libraries.refName')).toBeTruthy();

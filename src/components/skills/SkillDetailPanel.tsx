@@ -10,13 +10,15 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   DetailBody,
+  DetailAction,
+  DetailDescription,
   DetailField,
   DetailSourceLink,
 } from '@/components/skills/detail/DetailPrimitives';
 import { formatTime } from '@/lib/utils';
 import type { InstalledLibraryVersion, InstalledSkill, InstalledSkillLocation, ScopePathBase, SkillLocationRef, UpdateCheckOutcome } from '@/bindings';
 import { InstallPath } from './InstallPath';
-import { SkillCardAttentionRow, SkillCardStatusLabel } from './card/SkillCardPrimitives';
+import { SkillAgentBadge, SkillCardAttentionRow, SkillCardStatusLabel } from './card/SkillCardPrimitives';
 import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 import {
   hasIncompleteUpdateCheck,
@@ -163,14 +165,17 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const noticeDescription = notice?.error ? formatAppError(notice.error, t)
     : notice?.hintKey ? t(notice.hintKey) : undefined;
   const canShowUpdateAction = (skill.canRunUpdate === true || (skill.hasUpdate === true && skill.canRunUpdate !== false)) && !isDeletedUpstream;
+  const canConfigureCredentials = isIncompleteCheck && (typedFailure?.reason === 'rateLimited' || typedFailure?.reason === 'authenticationRequired');
+  const canInspectSource = isIncompleteCheck && typedFailure != null
+    && ['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
+    && Boolean(skill.sourceUrl);
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-surface">
-      {/* 沉浸式滚动文档流 (Scrollable Document Area) */}
+    <div className="skill-detail-layout h-full flex flex-col overflow-hidden bg-surface">
       <div className="flex-1 min-h-0 relative">
         <ScrollArea className="absolute inset-0 w-full h-full">
-          <div className="px-6 py-6 sm:px-8 sm:py-6 w-full space-y-4">
+          <div className="skill-detail-content w-full space-y-4">
 
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div className="flex flex-wrap justify-between items-start gap-x-4 gap-y-2">
                 <div className="flex min-w-0 flex-auto flex-wrap items-center gap-2">
                   <h2 className="min-w-0 text-xl font-heading font-semibold text-foreground leading-7 [overflow-wrap:anywhere]">
@@ -193,16 +198,14 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     </Badge>
                   ) : null}
                   {canShowUpdateAction && !updateStatus ? (
-                      <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-primary hover:text-primary hover:bg-primary/10 cursor-pointer"
-                          title={t('skills.actions.update')}
+                      <DetailAction
+                          className="text-primary hover:text-primary hover:bg-primary/10"
+                          label={t('skills.actions.update')}
                           disabled={writeBlocked}
                           onClick={handleUpdate}
                       >
-                        <ArrowUpCircle className="h-4 w-4" />
-                      </Button>
+                        <ArrowUpCircle className="h-4 w-4" aria-hidden="true" />
+                      </DetailAction>
                   ) : null}
                   {!isUpdateInProgress && onCheckUpdates && skill.canCheckForUpdates === true ? (
                     showCheckDone ? (
@@ -214,87 +217,59 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                         <Check className="h-4 w-4" />
                       </div>
                     ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
-                        title={cooldownActive && cooldownDeadline
+                      <DetailAction
+                        className="hover:text-primary hover:bg-primary/10"
+                        label={t('skills.checkUpdates')}
+                        hint={cooldownActive && cooldownDeadline
                           ? t('skills.updateEvidence.retryAt', {
                               time: new Date(cooldownDeadline).toLocaleString(i18n.language),
                             })
-                          : t('skills.checkUpdates')}
+                          : t(isIncompleteCheck ? 'skills.detail.retryCheckHint' : 'skills.checkUpdates')}
                         disabled={isCheckingUpdates || cooldownActive}
                         onClick={() => {
                           void handleCheckUpdates();
                         }}
                       >
-                        <RefreshCw className={`h-4 w-4 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} />
-                      </Button>
+                        <RefreshCw className={`h-4 w-4 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
+                      </DetailAction>
                     )
                   ) : null}
                   {skill.scope === 'project' && onCopyToProject ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
-                      title={t('skills.actions.copyToProject')}
+                    <DetailAction
+                      className="hover:text-primary hover:bg-primary/10"
+                      label={t('skills.actions.copyToProject')}
                       disabled={writeBlocked}
                       onClick={handleCopyToProject}
                     >
-                      <FolderOutput className="h-4 w-4" />
-                    </Button>
+                      <FolderOutput className="h-4 w-4" aria-hidden="true" />
+                    </DetailAction>
                   ) : null}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
-                    title={t('skills.manageAgents.action')}
+                  <DetailAction
+                    label={t('skills.manageAgents.action')}
                     disabled={writeBlocked}
                     onClick={handleManageAgents}
                   >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-                    title={t('skills.actions.delete')}
+                    <Pencil className="h-4 w-4" aria-hidden="true" />
+                  </DetailAction>
+                  <DetailAction
+                    className="hover:text-destructive hover:bg-destructive/10"
+                    label={t('skills.actions.delete')}
                     disabled={writeBlocked}
                     onClick={handleDelete}
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
-                    title={t('common.close')}
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </DetailAction>
+                  <DetailAction
+                    className="ml-1"
+                    label={t('common.close')}
                     onClick={onClose}
                   >
-                    <X className="h-4 w-4" />
-                  </Button>
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </DetailAction>
                 </div>
               </div>
               {skill.description ? (
-                <p className="max-w-4xl text-sm text-muted-foreground leading-relaxed">
-                  {skill.description}
-                </p>
-              ) : null}
-              {skill.libraryVersions?.length ? (
-                <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
-                  <p className="text-muted-foreground">{t('skills.detail.libraryVersions')}</p>
-                  {skill.libraryVersions.map((version) => (
-                    <Button
-                      key={`${version.libraryId}:${version.skillName}`}
-                      variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left"
-                      onClick={() => onOpenLibraryVersion?.(version)}
-                      disabled={!onOpenLibraryVersion}
-                    >
-                      {version.libraryName} · {version.skillName}
-                      <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    </Button>
-                  ))}
-                </div>
+                <DetailDescription key={skill.name}>{skill.description}</DetailDescription>
               ) : null}
               {skill.maintenanceError ? (
                 <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
@@ -303,124 +278,131 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
               ) : null}
             </div>
 
-            {/* Source link */}
-            {presentation.local ? <p className="text-sm text-muted-foreground">{t('skills.updateStatusLabel.localSource')}</p>
-              : presentation.sourceLabel ? (
-              <DetailSourceLink label={presentation.sourceLabel} url={skill.sourceUrl} hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
-            ) : null}
-            {notice ? <SkillCardAttentionRow labels={[t(notice.labelKey)]} description={noticeDescription} /> : null}
-            {isIncompleteCheck && typedFailure ? (
-              <div
-                role="status"
-                className="flex flex-wrap items-center gap-2 text-sm"
-              >
-                <div className="flex flex-wrap gap-2">
-                  {typedFailure.reason === 'rateLimited'
-                    || typedFailure.reason === 'authenticationRequired' ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={onConfigureGitCredentials}
-                      disabled={!onConfigureGitCredentials}
-                    >
-                      <KeyRound className="h-3.5 w-3.5" />
-                      {t('skills.updateEvidence.actions.configureToken')}
-                    </Button>
-                  ) : null}
-                  {['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
-                    && skill.sourceUrl ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleOpenSource(skill.sourceUrl)}
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      {t('skills.updateEvidence.actions.openSource')}
-                    </Button>
-                  ) : null}
-                  {!cooldownActive && onCheckUpdates ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={isCheckingUpdates}
-                      onClick={() => void handleCheckUpdates()}
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} />
-                      {t('skills.updateEvidence.actions.retry')}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Metadata grid */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pb-4 border-b border-border">
-              {skill.installedAt ? (
-                <DetailField label={t('skills.detail.installed')}>
-                  {formatTime(skill.installedAt, i18n.language)}
-                </DetailField>
-              ) : null}
-              {skill.updatedAt ? (
-                <DetailField label={t('skills.detail.updated')}>
-                  {formatTime(skill.updatedAt, i18n.language)}
-                </DetailField>
-              ) : null}
-              <DetailField
-                label={t('skills.detail.installPath')}
-                className="col-span-2 md:col-span-1"
-              >
-                <InstallPath
-                  path={{ environment: context?.environment ?? pathBase?.logicalRoot.environment ?? { kind: 'native' }, nativePath: skill.canonicalPath }}
-                  base={pathBase}
-                  scope={skill.scope}
-                />
-              </DetailField>
-            </div>
-
-            {/* Agents row */}
-            <div className="flex flex-wrap items-start gap-3">
-              <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
-                {t('skills.detail.agents')}
-              </span>
-              <div className="flex min-w-0 flex-1 flex-col gap-2">
-                {displayAgents.length > 0 ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {displayAgents.map((agentId) => (
-                      <span
-                        key={agentId}
-                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary"
-                      >
-                        {agentDisplayNames.get(agentId) ?? agentId}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-[11px] text-muted-foreground/60">{t('skills.detail.noAgents')}</span>
-                )}
-                {duplicateCopyCount > 0 ? (
-                  <div className="flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      {duplicateCopyAgentSummary ? (
-                        <>
-                          <span className="font-medium">{duplicateCopyAgentSummary}</span>
-                          {duplicateCopyAgentSeparator}
-                          {t('skills.detail.extraCopiesNamedHint')}
-                        </>
-                      ) : (
-                        t('skills.detail.extraCopiesCountHint', { count: duplicateCopyCount })
-                      )}
-                    </span>
+            <div className="space-y-3">
+              <div className="skill-detail-metadata">
+                {presentation.local || presentation.sourceLabel ? (
+                  <DetailField label={t('skills.detail.source')}>
+                    {presentation.local ? t('skills.updateStatusLabel.localSource') : (
+                      <DetailSourceLink label={presentation.sourceLabel!} url={skill.sourceUrl}
+                        hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
+                    )}
+                  </DetailField>
+                ) : null}
+                {skill.installedAt || skill.updatedAt ? (
+                  <div className="skill-detail-dates">
+                    {skill.installedAt ? (
+                      <DetailField label={t('skills.detail.installed')}>
+                        <time dateTime={skill.installedAt}>{formatTime(skill.installedAt, i18n.language)}</time>
+                      </DetailField>
+                    ) : null}
+                    {skill.updatedAt ? (
+                      <DetailField label={t('skills.detail.updated')}>
+                        <time dateTime={skill.updatedAt}>{formatTime(skill.updatedAt, i18n.language)}</time>
+                      </DetailField>
+                    ) : null}
                   </div>
                 ) : null}
+                <DetailField label={t('skills.detail.installPath')} className="skill-detail-path">
+                  <InstallPath
+                    path={{ environment: context?.environment ?? pathBase?.logicalRoot.environment ?? { kind: 'native' }, nativePath: skill.canonicalPath }}
+                    base={pathBase}
+                    scope={skill.scope}
+                    className="h-5 text-foreground"
+                  />
+                </DetailField>
               </div>
+
+              {notice || canConfigureCredentials || canInspectSource ? (
+                <div
+                  role="status"
+                  className="space-y-2 text-sm"
+                >
+                  {notice ? <SkillCardAttentionRow labels={[t(notice.labelKey)]} description={noticeDescription} /> : null}
+                  {canConfigureCredentials || canInspectSource ? (
+                    <div className="flex flex-wrap gap-2">
+                      {canConfigureCredentials ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={onConfigureGitCredentials}
+                          disabled={!onConfigureGitCredentials}
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                          {t('skills.updateEvidence.actions.configureToken')}
+                        </Button>
+                      ) : null}
+                      {canInspectSource ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenSource(skill.sourceUrl)}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {t('skills.updateEvidence.actions.openSource')}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {skill.libraryVersions?.length ? (
+                <DetailField label={t('skills.detail.libraryVersions')}>
+                  <div className="flex flex-col items-start gap-1">
+                    {skill.libraryVersions.map((version) => (
+                      <Button
+                        key={`${version.libraryId}:${version.skillName}`}
+                        variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left text-[13px] leading-5 has-[>svg]:px-0 [overflow-wrap:anywhere]"
+                        onClick={() => onOpenLibraryVersion?.(version)}
+                        disabled={!onOpenLibraryVersion}
+                      >
+                        {version.libraryName} · {version.skillName}
+                        <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+                      </Button>
+                    ))}
+                  </div>
+                </DetailField>
+              ) : null}
+
+              {/* Agents row */}
+              <DetailField label={t('skills.detail.agents')}>
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  {displayAgents.length > 0 ? (
+                    <div className="flex flex-wrap items-start gap-x-1.5 gap-y-1">
+                      {displayAgents.map((agentId) => (
+                        <SkillAgentBadge key={agentId}>
+                          {agentDisplayNames.get(agentId) ?? agentId}
+                        </SkillAgentBadge>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[13px] text-muted-foreground">{t('skills.detail.noAgents')}</span>
+                  )}
+                  {duplicateCopyCount > 0 ? (
+                    <div className="flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {duplicateCopyAgentSummary ? (
+                          <>
+                            <span className="font-medium">{duplicateCopyAgentSummary}</span>
+                            {duplicateCopyAgentSeparator}
+                            {t('skills.detail.extraCopiesNamedHint')}
+                          </>
+                        ) : (
+                          t('skills.detail.extraCopiesCountHint', { count: duplicateCopyCount })
+                        )}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              </DetailField>
+
             </div>
 
             {/* Markdown 正文 */}
-            <div className="pb-10">
+            <div className="border-t border-border/70 pt-4 pb-8">
               {!skill.maintenanceError ? <DetailBody loading={loading} content={content} onRetry={onRetry} /> : null}
             </div>
 
