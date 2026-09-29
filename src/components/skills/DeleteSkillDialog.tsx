@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { useDialogReturnFocus } from '@/hooks/useDialogReturnFocus';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { projectDisplayName } from '@/lib/projects/presentation';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
@@ -22,6 +23,7 @@ import './DeleteSkillDialog.css';
 
 export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const { t } = useTranslation();
+  const dialogFocus = useDialogReturnFocus();
   const target = useSkillDialogStore((state) => state.deleteTarget);
   const preview = useSkillDialogStore((state) => state.deletePreview);
   const feedback = useSkillDialogStore((state) => state.deleteFeedback);
@@ -74,9 +76,11 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
         aria-busy={loading || removing}
         aria-describedby={undefined}
         onOpenAutoFocus={(event) => {
+          dialogFocus.onOpenAutoFocus();
           event.preventDefault();
           cancelButtonRef.current?.focus();
         }}
+        onCloseAutoFocus={dialogFocus.onCloseAutoFocus}
       >
         <DialogHeader className="min-h-14 min-w-0 justify-center border-b py-3 pl-5 pr-12 text-left">
           <DialogTitle className="min-w-0 text-base leading-6 [overflow-wrap:anywhere]">

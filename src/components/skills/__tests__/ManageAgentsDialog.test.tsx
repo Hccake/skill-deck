@@ -3,6 +3,7 @@
 import '@/test-utils';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   InstalledSkill,
@@ -102,6 +103,26 @@ async function renderDialog({
 describe('ManageAgentsDialog', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('returns focus to the maintenance command after cancelling', async () => {
+    const user = userEvent.setup();
+    function Example() {
+      const [open, setOpen] = useState(false);
+      return <TooltipProvider>
+        <button onClick={() => setOpen(true)}>Manage current Skill</button>
+        {open ? <ManageAgentsDialog skill={skill} context={context}
+          loadAgentSelection={async () => snapshot()} onClose={() => setOpen(false)}
+          onSave={vi.fn()} /> : null}
+      </TooltipProvider>;
+    }
+    render(<Example />);
+    const command = screen.getByRole('button', { name: 'Manage current Skill' });
+    await user.click(command);
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(command);
   });
 
   it('places installation mode before Agent choices and exposes its help', async () => {

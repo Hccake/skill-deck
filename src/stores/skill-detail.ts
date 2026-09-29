@@ -18,6 +18,7 @@ interface SkillDetailState {
   selectedContext: SkillLocationRef | null;
   skillContent: string | null;
   loadingContent: boolean;
+  contentError: boolean;
 
   selectSkill: (skill: InstalledSkill) => Promise<void>;
   deselectSkill: () => void;
@@ -75,6 +76,7 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
   selectedContext: null,
   skillContent: null,
   loadingContent: false,
+  contentError: false,
 
   selectSkill: async (skill) => {
     const workspaceContext = useWorkspaceContextStore.getState().selectedContext;
@@ -100,6 +102,7 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
       selectedContext,
       skillContent: null,
       loadingContent: true,
+      contentError: false,
     });
 
     try {
@@ -114,14 +117,14 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
     } catch (e) {
       if (isCurrentRequest()) {
         console.error('[selectSkill] Failed to read content:', e);
-        set({ skillContent: null, loadingContent: false });
+        set({ skillContent: null, loadingContent: false, contentError: true });
       }
     }
   },
 
   deselectSkill: () => {
     contentRequestGeneration += 1;
-    set({ selectedSkillRef: null, selectedContext: null, skillContent: null, loadingContent: false });
+    set({ selectedSkillRef: null, selectedContext: null, skillContent: null, loadingContent: false, contentError: false });
   },
 
   closeDetail: () => {
@@ -137,13 +140,13 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
     const requestGeneration = ++contentRequestGeneration;
     const isCurrentRequest = () => requestGeneration === contentRequestGeneration
       && getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey;
-    set({ skillContent: null, loadingContent: true });
+    set({ loadingContent: true, contentError: false });
 
     try {
       const selectedSkill = await resolveSelectedSkill(selectedSkillRef, selectedContext);
       if (!selectedSkill) {
         if (isCurrentRequest()) {
-          set({ skillContent: null, loadingContent: false });
+          set({ loadingContent: false, contentError: true });
         }
         return;
       }
@@ -157,7 +160,7 @@ export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
       }
     } catch {
       if (isCurrentRequest()) {
-        set({ skillContent: null, loadingContent: false });
+        set({ loadingContent: false, contentError: true });
       }
     }
   },

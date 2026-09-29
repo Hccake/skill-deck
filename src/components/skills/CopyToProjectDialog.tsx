@@ -31,6 +31,7 @@ import type {
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { ProjectIdentity } from '@/components/projects/ProjectIdentity';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { useDialogReturnFocus } from '@/hooks/useDialogReturnFocus';
 import type { CopyOutcome } from '@/workflows/skill-copy';
 import { AgentSelectionPanel } from '@/components/agents/selection/AgentSelectionPanel';
 import {
@@ -119,6 +120,7 @@ function CopyToProjectDialogSession({
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
+  const dialogFocus = useDialogReturnFocus();
   const writeBlocked = useBusinessWriteBlocked();
   const [copying, setCopying] = useState(false);
   const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>('idle');
@@ -317,6 +319,7 @@ function CopyToProjectDialogSession({
       onOpenChange={(nextOpen) => !nextOpen && open && !copying && onClose()}
     >
       <DialogContent
+        {...dialogFocus}
         className="grid h-[min(42rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl"
         dismissible={!copying}
         closeLabel={t('common.close')}

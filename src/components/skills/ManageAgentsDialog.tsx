@@ -24,6 +24,7 @@ import {
 } from '@/hooks/useAgentSelectionSession';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { useDialogReturnFocus } from '@/hooks/useDialogReturnFocus';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -56,6 +57,7 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   onSave,
 }: ManageAgentsDialogProps) {
   const { t } = useTranslation();
+  const dialogFocus = useDialogReturnFocus();
   const [saving, setSaving] = useState(false);
   const requestCloseRef = useRef(onClose);
   const agentSelectionRequest = useMemo<ManageAgentSelectionSessionRequest>(() => ({
@@ -71,6 +73,7 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && requestCloseRef.current()}>
       <DialogContent
+        {...dialogFocus}
         className="grid h-[min(42rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-3xl"
         dismissible={!saving}
         closeLabel={t('common.close')}

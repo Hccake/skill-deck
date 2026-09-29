@@ -48,6 +48,28 @@ beforeEach(() => {
 });
 
 describe('Skill detail request identity', () => {
+  it('keeps the last readable document during reload and reports a failed refresh', async () => {
+    fixtures.read.mockResolvedValueOnce('Readable document');
+    await useSkillDetailStore.getState().selectSkill(a);
+    const pending = deferred();
+    fixtures.read.mockReturnValueOnce(pending.promise);
+    const reload = useSkillDetailStore.getState().reloadContent();
+    expect(useSkillDetailStore.getState()).toMatchObject({
+      skillContent: 'Readable document', loadingContent: true, contentError: false,
+    });
+    await vi.waitFor(() => expect(fixtures.read).toHaveBeenCalledTimes(2));
+    pending.reject(new Error('read failed'));
+    await reload;
+    expect(useSkillDetailStore.getState()).toMatchObject({
+      skillContent: 'Readable document', loadingContent: false, contentError: true,
+    });
+    fixtures.read.mockResolvedValueOnce('Refreshed document');
+    await useSkillDetailStore.getState().reloadContent();
+    expect(useSkillDetailStore.getState()).toMatchObject({
+      skillContent: 'Refreshed document', loadingContent: false, contentError: false,
+    });
+  });
+
   it('keeps the pane open when clearing a selection and discards its pending content', async () => {
     const pending = deferred();
     fixtures.read.mockReturnValueOnce(pending.promise);

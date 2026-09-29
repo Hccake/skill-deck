@@ -338,7 +338,7 @@ export function UpdatePlanDialog({
         onCloseAutoFocus={(event) => {
           if (returnFocus.current?.isConnected) {
             event.preventDefault();
-            returnFocus.current.focus();
+            returnFocus.current.focus({ preventScroll: true });
           }
         }}
         dismissible={!executing}
