@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useId, useRef, useState, type ComponentPr
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, ChevronDown, ChevronUp, Copy, Link2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Copy, Link2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -11,6 +11,53 @@ import { toast } from 'sonner';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { cn } from '@/lib/utils';
 import './SkillDetail.css';
+
+export function DetailHeader({ name, contentState, children }: {
+  name: string;
+  contentState?: 'refreshing' | 'stale';
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const nameRef = useRef<HTMLHeadingElement>(null);
+  const [truncated, setTruncated] = useState(false);
+  useEffect(() => {
+    const element = nameRef.current;
+    if (!element) return;
+    const measure = () => setTruncated(element.scrollWidth > element.clientWidth);
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    measure();
+    return () => observer.disconnect();
+  }, [name]);
+
+  return (
+    <div className="skill-detail-header">
+      <div className="skill-detail-heading flex items-center gap-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <h2 ref={nameRef} tabIndex={truncated ? 0 : undefined}
+              className="min-w-0 flex-1 truncate rounded-sm font-heading text-base font-semibold leading-6 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {name}
+            </h2>
+          </TooltipTrigger>
+          {truncated ? <TooltipContent className="max-w-96 break-all text-wrap data-[state=closed]:animate-none!">{name}</TooltipContent> : null}
+        </Tooltip>
+        {contentState ? <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} role="img" aria-label={t(contentState === 'stale' ? 'skills.detail.refreshFailed' : 'skills.detail.refreshing')}
+              className="shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {contentState === 'stale'
+                ? <AlertTriangle className="size-3.5 text-warning" aria-hidden="true" />
+                : <RefreshCw className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{t(contentState === 'stale' ? 'skills.detail.refreshFailed' : 'skills.detail.refreshing')}</TooltipContent>
+        </Tooltip> : null}
+      </div>
+      <div className="skill-detail-actions">{children}</div>
+    </div>
+  );
+}
 
 /**
  * 详情面板中的属性字段。
@@ -55,7 +102,7 @@ export function DetailDescription({ children }: { children: string }) {
 
   return (
     <div className="flex items-start gap-1">
-      <p ref={textRef} id={id} className={cn('min-w-0 flex-1 text-sm leading-[22px] text-muted-foreground [overflow-wrap:anywhere]', !expanded && 'line-clamp-2')}>
+      <p ref={textRef} id={id} className={cn('min-w-0 flex-1 text-sm leading-[22px] text-foreground/80 [overflow-wrap:anywhere]', !expanded && 'line-clamp-2')}>
         {children}
       </p>
       {overflows ? (
@@ -74,8 +121,8 @@ export function DetailAction({ label, hint, className, disabled, ...props }: Com
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        {disabled ? <span tabIndex={hint ? 0 : undefined} aria-label={hint}
-          className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">{button}</span> : button}
+        <span tabIndex={disabled && hint ? 0 : undefined} aria-label={disabled ? hint : undefined}
+          className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">{button}</span>
       </TooltipTrigger>
       <TooltipContent className="max-w-80 text-wrap data-[state=closed]:animate-none!">{hint ?? label}</TooltipContent>
     </Tooltip>
@@ -158,6 +205,26 @@ export const DetailBody = memo(function DetailBody({
 }) {
   const { t } = useTranslation();
 
+  if (content) {
+    return (
+      <div>
+        {loading ? <p role="status" className="mb-3 text-xs leading-5 text-muted-foreground">{t('skills.detail.refreshing')}</p> : null}
+        {!loading && errorMessage ? (
+          <div role="alert" className="mb-3 flex items-start gap-2 text-xs leading-5 text-foreground">
+            <div className="min-w-0 flex-1">
+              <p>{errorMessage}</p>
+              <p className="text-muted-foreground">{t('skills.detail.showingPreviousContent')}</p>
+            </div>
+            {onRetry ? <Button variant="outline" size="sm" onClick={onRetry}><RefreshCw className="size-3.5" aria-hidden="true" />{t('skills.detail.retry')}</Button> : null}
+          </div>
+        ) : null}
+        <div className="skill-prose skill-prose-with-lists" aria-busy={loading}>
+          <MarkdownContent content={content} />
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -170,16 +237,8 @@ export const DetailBody = memo(function DetailBody({
     );
   }
 
-  if (content) {
-    return (
-      <div className="skill-prose skill-prose-with-lists">
-        <MarkdownContent content={content} />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+    <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
       <p className={cn('pb-4 text-sm', errorMessage && 'text-destructive')}>
         {errorMessage ?? t('skills.detail.emptyContent')}
       </p>

@@ -10,6 +10,7 @@ import {
   DetailBody,
   DetailAction,
   DetailDescription,
+  DetailHeader,
   DetailField,
   DetailSourceLink,
 } from '@/components/skills/detail/DetailPrimitives';
@@ -75,59 +76,48 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
 
   return (
     <div className="skill-detail-layout flex h-full flex-col overflow-hidden bg-surface">
+      <DetailHeader name={skill.name} contentState={content ? loading ? 'refreshing' : contentError ? 'stale' : undefined : undefined}>
+        {canUpdate && onUpdate ? (
+          <DetailAction
+            className="text-primary hover:bg-primary/10 hover:text-primary"
+            label={t('libraries.update')}
+            disabled={busy}
+            onClick={() => onUpdate(skill.name)}
+          >
+            <ArrowUpCircle className="size-4" aria-hidden="true" />
+          </DetailAction>
+        ) : null}
+
+        {onRemove ? (
+          <DetailAction
+            className="hover:bg-destructive/10 hover:text-destructive"
+            label={t('libraries.removeSkill', { name: skill.name })}
+            hint={t('libraries.removeSkillTitle', { name: skill.name })}
+            disabled={busy}
+            onClick={() => onRemove(skill.name)}
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+          </DetailAction>
+        ) : null}
+
+        <DetailAction
+          className="skill-detail-close"
+          onClick={onClose}
+          label={t('common.close')}
+        >
+          <X className="size-4" aria-hidden="true" />
+        </DetailAction>
+      </DetailHeader>
       <div className="relative min-h-0 flex-1">
         <ScrollArea className="absolute inset-0 h-full w-full">
           <div className="skill-detail-content w-full space-y-4">
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                <div className="flex min-w-0 flex-auto flex-wrap items-center gap-2">
-                  <h2 className="min-w-0 font-heading text-xl font-semibold leading-7 text-foreground [overflow-wrap:anywhere]">
-                    {skill.name}
-                  </h2>
-                  {presentation.available ? (
-                    <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} />
-                  ) : null}
-                </div>
-
-                <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-1">
-                  {canUpdate && onUpdate ? (
-                    <DetailAction
-                      className="text-primary hover:bg-primary/10 hover:text-primary"
-                      label={t('libraries.update')}
-                      disabled={busy}
-                      onClick={() => onUpdate(skill.name)}
-                    >
-                      <ArrowUpCircle className="size-4" aria-hidden="true" />
-                    </DetailAction>
-                  ) : null}
-
-                  {onRemove ? (
-                    <DetailAction
-                      className="hover:bg-destructive/10 hover:text-destructive"
-                      label={t('libraries.removeSkill', { name: skill.name })}
-                      hint={t('libraries.removeSkillTitle', { name: skill.name })}
-                      disabled={busy}
-                      onClick={() => onRemove(skill.name)}
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                    </DetailAction>
-                  ) : null}
-
-                  <DetailAction
-                    className="ml-1"
-                    onClick={onClose}
-                    label={t('common.close')}
-                  >
-                    <X className="size-4" aria-hidden="true" />
-                  </DetailAction>
-                </div>
-              </div>
-
+            {skill.description || presentation.available ? <div className="space-y-2">
               {skill.description ? (
                 <DetailDescription key={skill.name}>{skill.description}</DetailDescription>
               ) : null}
+              {presentation.available ? <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} /> : null}
 
-            </div>
+            </div> : null}
 
             {hasMetadata ? (
               <div className="skill-detail-metadata">

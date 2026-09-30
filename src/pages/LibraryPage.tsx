@@ -55,6 +55,7 @@ import { cn } from '@/lib/utils';
 import { formatAppError } from '@/utils/format-app-error';
 import { membershipNeedsAttention } from '@/lib/libraries/membership';
 import { readLibrarySkillContent } from '@/hooks/useTauriApi';
+import { useDialogReturnFocus } from '@/hooks/useDialogReturnFocus';
 import { useLibraryUpdateWorkflow } from '@/workflows/library-update';
 import { libraryUpdateDisplayStatuses } from '@/lib/libraries/update-progress';
 import {
@@ -97,6 +98,7 @@ function useLibraryViewState<T>(
 
 export function LibraryPage() {
   const { t } = useTranslation();
+  const detailDialogFocus = useDialogReturnFocus();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedLibraryId = searchParams.get('library');
   const requestedSkillName = searchParams.get('skill');
@@ -149,12 +151,14 @@ export function LibraryPage() {
     null,
   );
   const [skillContent, setSkillContent] = useLibraryViewState<string | null>(localViewKey, null);
+  const [loadingContent, setLoadingContent] = useLibraryViewState(localViewKey, false);
   const keyboard = useSkillListKeyboard({ compact: detailOpen, selectedKey: selectedSkillName, contextKey: localViewKey });
   const [contentError, setContentError] = useLibraryViewState(localViewKey, false);
 
   const addTriggerRef = useRef<HTMLButtonElement | null>(null);
   const committedRouteKeyRef = useRef<string | null>(null);
   const contentRequestId = useRef(0);
+  const contentRevision = useRef<{ view: string; name: string; hash: string | undefined } | null>(null);
   const routeSyncKey = `${environmentKey(environment)}:${requestedLibraryId ?? ''}`;
 
   useEffect(() => {
@@ -280,26 +284,34 @@ export function LibraryPage() {
     });
   };
 
-  const openSkillContent = useCallback(async (skillName: string) => {
+  const openSkillContent = useCallback(async (skillName: string, reload = false) => {
     const libraryId = workspace.selectedLibraryId;
     if (!libraryId) return;
+    if (!reload && selectedSkillName === skillName && (skillContent !== null || loadingContent)) return;
+    contentRevision.current = { view: localViewKey, name: skillName,
+      hash: workspace.detail?.skills.find(skill => skill.name === skillName)?.contentHash };
     const requestId = ++contentRequestId.current;
     setDetailOpen(true);
     setSelectedSkillName(skillName);
-    setSkillContent(null);
+    if (selectedSkillName !== skillName) setSkillContent(null);
+    setLoadingContent(true);
     setContentError(false);
     try {
       const content = await readLibrarySkillContent(environment, libraryId, skillName);
       if (requestId === contentRequestId.current) setSkillContent(content);
     } catch {
       if (requestId === contentRequestId.current) setContentError(true);
+    } finally {
+      if (requestId === contentRequestId.current) setLoadingContent(false);
     }
-  }, [environment, workspace.selectedLibraryId, setSelectedSkillName, setSkillContent, setContentError, setDetailOpen]);
+  }, [environment, workspace.selectedLibraryId, workspace.detail, localViewKey, selectedSkillName, skillContent, loadingContent, setSelectedSkillName, setSkillContent, setContentError, setDetailOpen, setLoadingContent]);
 
   const closeDetail = () => {
     contentRequestId.current += 1;
     setSelectedSkillName(null);
     setSkillContent(null);
+    setLoadingContent(false);
+    setContentError(false);
     setDetailOpen(false);
   };
 
@@ -486,6 +498,16 @@ export function LibraryPage() {
     return workspace.detail.skills.find((s) => s.name === selectedSkillName) ?? null;
   }, [selectedSkillName, workspace.detail]);
 
+  const selectedContentHash = selectedSkill?.contentHash;
+  useEffect(() => {
+    const previous = contentRevision.current;
+    if (selectedSkillName && selectedContentHash !== undefined && previous
+      && previous.view === localViewKey && previous.name === selectedSkillName
+      && previous.hash !== selectedContentHash) {
+      void openSkillContent(selectedSkillName, true);
+    }
+  }, [localViewKey, selectedSkillName, selectedContentHash, openSkillContent]);
+
   return (
     <TooltipProvider>
       <SkillsWorkspace
@@ -517,17 +539,18 @@ export function LibraryPage() {
         )}
         detail={selectedSkill ? (
           <LibrarySkillDetailPanel
+            key={`${localViewKey}:${selectedSkill.name}`}
             skill={selectedSkill}
             check={checks[selectedSkill.name]}
             result={lastResults[selectedSkill.name]}
             content={skillContent}
-            loading={skillContent === null && !contentError}
+            loading={loadingContent}
             contentError={contentError}
             busy={busy}
             onClose={closeDetail}
             onUpdate={(name) => void prepareUpdates([name])}
             onRemove={(name) => void openSkillRemoval(name)}
-            onRetry={() => void openSkillContent(selectedSkill.name)}
+            onRetry={() => void openSkillContent(selectedSkill.name, true)}
           />
         ) : null}
         header={(navigation) => <>
@@ -879,7 +902,7 @@ export function LibraryPage() {
           cancelUpdates();
         }
       }}>
-        <DialogContent>
+        <DialogContent {...detailDialogFocus}>
           <DialogHeader>
             <DialogTitle>{t('libraries.confirmUpdateTitle')}</DialogTitle>
             <DialogDescription>{updatePhase === 'preparing' ? t('skills.updatePlan.loadingPreview') : t('libraries.confirmUpdateDescription', { count: pendingUpdate?.skillNames.length ?? 0 })}</DialogDescription>
@@ -909,7 +932,7 @@ export function LibraryPage() {
           void workspace.execute({ kind: 'discardRetire' });
         }
       }}>
-        <DialogContent>
+        <DialogContent {...detailDialogFocus}>
           <DialogHeader>
             <DialogTitle>{t('libraries.removeSkillTitle', { name: removeSkillName ?? '' })}</DialogTitle>
             <DialogDescription>{t('libraries.removeSkillDescription')}</DialogDescription>

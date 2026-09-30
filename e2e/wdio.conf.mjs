@@ -38,6 +38,15 @@ export const config = {
     if (!passed) {
       await mkdir(output, { recursive: true });
       await browser.saveScreenshot(path.join(output, `failed-${test.title.replace(/[^a-z0-9]+/gi, '-')}.png`));
+      const geometry = await browser.execute(() => ({
+        requested: window.__desktopViewport,
+        window: { width: innerWidth, height: innerHeight, outerWidth, outerHeight, x: screenX, y: screenY, scale: devicePixelRatio },
+        screen: { width: screen.width, height: screen.height, availableWidth: screen.availWidth, availableHeight: screen.availHeight },
+        active: document.activeElement.id,
+        layout: localStorage.getItem('skill-deck-layout'),
+        panels: [...document.querySelectorAll('[data-slot="resizable-panel"]')].map(el => ({ id: el.id, width: el.getBoundingClientRect().width })),
+      }));
+      await writeFile(path.join(output, `failed-${test.title.replace(/[^a-z0-9]+/gi, '-')}.json`), JSON.stringify(geometry, null, 2));
     }
   },
 };

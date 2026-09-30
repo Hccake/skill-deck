@@ -2,9 +2,47 @@
   container: skill-detail / inline-size;
 }
 
+.skill-detail-header {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 16px 4px;
+  background: var(--surface);
+}
+
+.skill-detail-heading {
+  flex: 1 1 120px;
+  min-width: min(100%, 120px);
+}
+
+.skill-detail-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 .skill-detail-content {
   min-width: 0;
-  padding: 16px;
+  padding: 0 16px 16px;
+}
+
+.skill-detail-close {
+  position: relative;
+  margin-left: 12px;
+}
+
+.skill-detail-close::before {
+  position: absolute;
+  left: -8px;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  content: '';
+  pointer-events: none;
 }
 
 .skill-detail-metadata {
@@ -28,8 +66,33 @@
   min-width: min(100%, 320px);
 }
 
+.skill-detail-layout .skill-prose h1 {
+  margin-block: 24px 8px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0;
+}
+
+.skill-detail-layout .skill-prose h2 {
+  margin-block: 20px 8px;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.skill-detail-layout .skill-prose h3 {
+  margin-block: 16px 6px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.skill-detail-layout .skill-prose > :first-child {
+  margin-top: 0;
+}
+
 @container skill-detail (min-width: 560px) {
-  .skill-detail-content {
+  .skill-detail-content,
+  .skill-detail-header {
     padding-inline: 24px;
   }
 }

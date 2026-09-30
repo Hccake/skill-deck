@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { formatAppError } from '@/utils/format-app-error';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
-import { Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
+import { Check, X, RefreshCw, Trash2, ArrowUpCircle, Bot, FolderOutput, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -12,6 +12,7 @@ import {
   DetailBody,
   DetailAction,
   DetailDescription,
+  DetailHeader,
   DetailField,
   DetailSourceLink,
 } from '@/components/skills/detail/DetailPrimitives';
@@ -35,6 +36,7 @@ interface SkillDetailPanelProps {
   skill: SkillListItem;
   content: string | null;
   loading: boolean;
+  contentError?: boolean;
   agentDisplayNames: Map<string, string>;
   updateStatus?: SkillUpdateDisplayStatus;
   isCheckingUpdates?: boolean;
@@ -56,6 +58,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   skill,
   content,
   loading,
+  contentError = false,
   agentDisplayNames,
   updateStatus,
   isCheckingUpdates = false,
@@ -171,112 +174,86 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     && Boolean(skill.sourceUrl);
   return (
     <div className="skill-detail-layout h-full flex flex-col overflow-hidden bg-surface">
+      <DetailHeader name={skill.name} contentState={content ? loading ? 'refreshing' : contentError ? 'stale' : undefined : undefined}>
+        {canShowUpdateAction || updateStatus ? (
+            <DetailAction
+                className="text-primary hover:text-primary hover:bg-primary/10"
+                label={t('skills.actions.update')}
+                hint={activeUpdatePhase ? t(resolveSkillUpdatePhaseI18nKey(activeUpdatePhase)) : undefined}
+                disabled={writeBlocked || Boolean(updateStatus) || !canShowUpdateAction}
+                onClick={handleUpdate}
+            >
+              {isUpdateInProgress ? <RefreshCw className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ArrowUpCircle className="h-4 w-4" aria-hidden="true" />}
+            </DetailAction>
+        ) : null}
+        {onCheckUpdates && skill.canCheckForUpdates === true ? (
+            <DetailAction
+              className="hover:text-primary hover:bg-primary/10"
+              label={t('skills.checkUpdates')}
+              hint={cooldownActive && cooldownDeadline
+                ? t('skills.updateEvidence.retryAt', {
+                    time: new Date(cooldownDeadline).toLocaleString(i18n.language),
+                  })
+                : t(showCheckDone ? 'skills.checkUpToDate' : isIncompleteCheck ? 'skills.detail.retryCheckHint' : 'skills.checkUpdates')}
+              disabled={isUpdateInProgress || isCheckingUpdates || cooldownActive}
+              onClick={() => {
+                void handleCheckUpdates();
+              }}
+            >
+              {showCheckDone ? <Check className="size-4 text-success" aria-hidden="true" /> : <RefreshCw className={`h-4 w-4 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />}
+            </DetailAction>
+        ) : null}
+        {skill.scope === 'project' && onCopyToProject ? (
+          <DetailAction
+            className="hover:text-primary hover:bg-primary/10"
+            label={t('skills.actions.copyToProject')}
+            disabled={writeBlocked}
+            onClick={handleCopyToProject}
+          >
+            <FolderOutput className="h-4 w-4" aria-hidden="true" />
+          </DetailAction>
+        ) : null}
+        <DetailAction
+          label={t('skills.manageAgents.action')}
+          disabled={writeBlocked}
+          onClick={handleManageAgents}
+        >
+          <Bot className="h-4 w-4" aria-hidden="true" />
+        </DetailAction>
+        <DetailAction
+          className="hover:text-destructive hover:bg-destructive/10"
+          label={t('skills.actions.delete')}
+          disabled={writeBlocked}
+          onClick={handleDelete}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </DetailAction>
+        <DetailAction
+          className="skill-detail-close"
+          label={t('common.close')}
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </DetailAction>
+      </DetailHeader>
+      <span role="status" className="sr-only">{showCheckDone ? t('skills.checkUpToDate') : ''}</span>
       <div className="flex-1 min-h-0 relative">
         <ScrollArea className="absolute inset-0 w-full h-full">
           <div className="skill-detail-content w-full space-y-4">
-
-            <div className="space-y-2">
-              <div className="flex flex-wrap justify-between items-start gap-x-4 gap-y-2">
-                <div className="flex min-w-0 flex-auto flex-wrap items-center gap-2">
-                  <h2 className="min-w-0 text-xl font-heading font-semibold text-foreground leading-7 [overflow-wrap:anywhere]">
-                    {skill.name}
-                  </h2>
-                  {presentation.available && !updateStatus ? <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} /> : null}
-                </div>
-                <div className="ml-auto flex max-w-full shrink-0 flex-wrap justify-end gap-1">
-                  {activeUpdatePhase ? (
-                    <UpdatingStatusBadge phase={activeUpdatePhase} />
-                  ) : null}
-                  {updateStatus === 'done' ? (
-                    <Badge variant="outline" className="h-8 px-2 text-xs text-success">
-                      {t('skills.updateDone')}
-                    </Badge>
-                  ) : null}
-                  {updateStatus === 'failed' ? (
-                    <Badge variant="outline" className="h-8 px-2 text-xs text-destructive">
-                      {t('skills.updateFailed')}
-                    </Badge>
-                  ) : null}
-                  {canShowUpdateAction && !updateStatus ? (
-                      <DetailAction
-                          className="text-primary hover:text-primary hover:bg-primary/10"
-                          label={t('skills.actions.update')}
-                          disabled={writeBlocked}
-                          onClick={handleUpdate}
-                      >
-                        <ArrowUpCircle className="h-4 w-4" aria-hidden="true" />
-                      </DetailAction>
-                  ) : null}
-                  {!isUpdateInProgress && onCheckUpdates && skill.canCheckForUpdates === true ? (
-                    showCheckDone ? (
-                      <div
-                        className="flex h-8 w-8 items-center justify-center text-success"
-                        aria-label={t('skills.checkUpToDate')}
-                        title={t('skills.checkUpToDate')}
-                      >
-                        <Check className="h-4 w-4" />
-                      </div>
-                    ) : (
-                      <DetailAction
-                        className="hover:text-primary hover:bg-primary/10"
-                        label={t('skills.checkUpdates')}
-                        hint={cooldownActive && cooldownDeadline
-                          ? t('skills.updateEvidence.retryAt', {
-                              time: new Date(cooldownDeadline).toLocaleString(i18n.language),
-                            })
-                          : t(isIncompleteCheck ? 'skills.detail.retryCheckHint' : 'skills.checkUpdates')}
-                        disabled={isCheckingUpdates || cooldownActive}
-                        onClick={() => {
-                          void handleCheckUpdates();
-                        }}
-                      >
-                        <RefreshCw className={`h-4 w-4 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />
-                      </DetailAction>
-                    )
-                  ) : null}
-                  {skill.scope === 'project' && onCopyToProject ? (
-                    <DetailAction
-                      className="hover:text-primary hover:bg-primary/10"
-                      label={t('skills.actions.copyToProject')}
-                      disabled={writeBlocked}
-                      onClick={handleCopyToProject}
-                    >
-                      <FolderOutput className="h-4 w-4" aria-hidden="true" />
-                    </DetailAction>
-                  ) : null}
-                  <DetailAction
-                    label={t('skills.manageAgents.action')}
-                    disabled={writeBlocked}
-                    onClick={handleManageAgents}
-                  >
-                    <Pencil className="h-4 w-4" aria-hidden="true" />
-                  </DetailAction>
-                  <DetailAction
-                    className="hover:text-destructive hover:bg-destructive/10"
-                    label={t('skills.actions.delete')}
-                    disabled={writeBlocked}
-                    onClick={handleDelete}
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                  </DetailAction>
-                  <DetailAction
-                    className="ml-1"
-                    label={t('common.close')}
-                    onClick={onClose}
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </DetailAction>
-                </div>
-              </div>
+            {skill.description || skill.maintenanceError || presentation.available || updateStatus ? <div className="space-y-2">
               {skill.description ? (
                 <DetailDescription key={skill.name}>{skill.description}</DetailDescription>
               ) : null}
+              {presentation.available && !updateStatus ? <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} /> : null}
+              {activeUpdatePhase ? <UpdatingStatusBadge phase={activeUpdatePhase} /> : null}
+              {updateStatus === 'done' ? <p role="status" className="text-xs leading-5 text-success">{t('skills.updateDone')}</p> : null}
+              {updateStatus === 'failed' ? <p role="alert" className="text-xs leading-5 text-destructive">{t('skills.updateFailed')}</p> : null}
               {skill.maintenanceError ? (
                 <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
                   {formatAppError(skill.maintenanceError, t)}
                 </p>
               ) : null}
-            </div>
+            </div> : null}
 
             <div className="space-y-3">
               <div className="skill-detail-metadata">
@@ -403,7 +380,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
             {/* Markdown 正文 */}
             <div className="border-t border-border/70 pt-4 pb-8">
-              {!skill.maintenanceError ? <DetailBody loading={loading} content={content} onRetry={onRetry} /> : null}
+              {!skill.maintenanceError ? <DetailBody loading={loading} content={content}
+                errorMessage={contentError ? t('skills.detail.loadError') : null} onRetry={onRetry} /> : null}
             </div>
 
           </div>

@@ -19,6 +19,9 @@ async function viewport(width, height) {
     await browser.setWindowRect(null, null, requestedWidth, requestedHeight);
     await settle();
     const actual = await browser.execute(() => ({ width: innerWidth, height: innerHeight }));
+    await browser.execute(({ width, height, actual }) => {
+      window.__desktopViewport = { requested: { width, height }, actual };
+    }, { width, height, actual });
     if (actual.width === width && actual.height === height) return;
     requestedWidth += width - actual.width;
     requestedHeight += height - actual.height;
@@ -62,6 +65,15 @@ async function resizeSeparator(key, kind = 'skills', part = 'detail') {
   await browser.execute(id => document.getElementById(id).focus(), `${kind}-${part}-resize`);
   await browser.keys(key);
   await settle();
+  const state = await browser.execute(({ kind, part }) => {
+    const preference = `${kind}${part === 'sidebar' ? 'Sidebar' : 'List'}Width`;
+    const id = part === 'sidebar' ? `${kind}-context-navigation` : kind === 'skills' ? 'skills-list-panel' : 'library-skills-list-panel';
+    return { width: document.getElementById(id).getBoundingClientRect().width,
+      preferred: JSON.parse(localStorage.getItem('skill-deck-layout')).state[preference],
+      active: document.activeElement.id, window: [innerWidth, innerHeight] };
+  }, { kind, part });
+  assert.ok(state.preferred !== null && Math.abs(state.width - state.preferred) < 2,
+    `Keyboard resize must persist before another window change: ${JSON.stringify({ kind, part, ...state })}`);
 }
 
 async function assertDetailHeader(kind) {
@@ -72,14 +84,14 @@ async function assertDetailHeader(kind) {
     const actions = row.lastElementChild;
     const rect = element => {
       const bounds = element.getBoundingClientRect();
-      return { x: bounds.x, y: bounds.y, right: bounds.right, width: bounds.width };
+      return { x: bounds.x, y: bounds.y, centerY: bounds.y + bounds.height / 2, right: bounds.right, width: bounds.width };
     };
     const text = document.createRange();
     text.selectNodeContents(title);
     return { row: rect(row), title: rect(title), textWidth: text.getBoundingClientRect().width, actions: rect(actions), gap: parseFloat(getComputedStyle(row).columnGap) };
   }, kind);
   assert.ok(geometry.textWidth + geometry.actions.width + geometry.gap <= geometry.row.width, `Short-title fixture must fit: ${JSON.stringify(geometry)}`);
-  assert.ok(Math.abs(geometry.title.y - geometry.actions.y) < 2, `Title and actions should share a row: ${JSON.stringify(geometry)}`);
+  assert.ok(Math.abs(geometry.title.centerY - geometry.actions.centerY) < 2, `Title and actions should share a center line: ${JSON.stringify(geometry)}`);
   assert.ok(geometry.actions.right <= geometry.row.right + 1, JSON.stringify(geometry));
 }
 
@@ -154,7 +166,8 @@ describe('Skill Deck desktop', () => {
     const home = process.env.SKILL_DECK_E2E_HOME;
     const fixture = path.join(home, '.agents', 'skills', 'review');
     await mkdir(fixture, { recursive: true });
-    await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n# Workspace review\n\nVerify navigation, resizing, and keyboard focus.\n');
+    await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n# Workspace review\n\n'
+      + Array.from({ length: 36 }, (_, index) => `## Section ${index + 1}\n\nVerify navigation, resizing, and keyboard focus while reading the current document. Keep the selected Skill and its maintenance commands available.\n`).join('\n'));
     for (const [name, description] of [
       ['code-review', 'Review code changes for correctness, maintainability, and security.'],
       ['cross-platform-testing-and-validation', 'Validate paths, file operations, and application behavior on Windows, macOS, and Linux. Review platform-specific assumptions, record evidence from each runtime, and confirm that the final package contains the expected resources.'],
@@ -557,6 +570,62 @@ describe('Skill Deck desktop', () => {
     } finally {
       await browser.execute(saved => localStorage.setItem('skill-deck-layout', saved), saved);
       await browser.refresh();
+    }
+  });
+
+  it('keeps detail commands visible during long reading and resets only for another object', async () => {
+    await $('header nav a[href="/"]').waitForDisplayed();
+    await viewport(1200, 640);
+    for (const [kind, route, panelId, listId] of [
+      ['skills', '/', 'skill-detail-panel', 'skills-list-panel'],
+      ['library', '/libraries', 'library-skill-detail-panel', 'library-skills-list-panel'],
+    ]) {
+      await $(`header nav a[href="${route}"]`).click();
+      await $(`#${kind}-context-navigation`).waitForDisplayed();
+      if (kind === 'skills') await $('#skills-context-navigation aside > div:first-child button').click();
+      else await $('#library-context-navigation').$('button*=Workspace review').click();
+      const select = async name => {
+        await $(`#${listId} [data-skill-open]`).waitForDisplayed();
+        await browser.execute(({ listId, key }) => {
+          const item = [...document.getElementById(listId).querySelectorAll('[data-skill-open]')]
+            .find(el => el.closest('[data-skill-item]').dataset.skillItem === key);
+          item.click();
+        }, { listId, key: kind === 'skills' ? `global:${name}` : name });
+        await $(`#${panelId} .skill-prose`).waitForDisplayed();
+        await settle();
+      };
+      await select('review');
+      await viewport(720, 520);
+      const initial = await browser.execute(panelId => {
+        const root = document.getElementById(panelId);
+        const header = root.querySelector('.skill-detail-header').getBoundingClientRect();
+        const viewport = root.querySelector('[data-radix-scroll-area-viewport]');
+        viewport.scrollTop = 1400;
+        return { y: header.y, height: header.height };
+      }, panelId);
+      await settle();
+      const reading = await browser.execute(panelId => {
+        const root = document.getElementById(panelId);
+        const header = root.querySelector('.skill-detail-header').getBoundingClientRect();
+        return { y: header.y, height: header.height, scroll: root.querySelector('[data-radix-scroll-area-viewport]').scrollTop };
+      }, panelId);
+      assert.ok(Math.abs(reading.y - initial.y) < 1 && reading.height <= 77 && reading.scroll > 1000, JSON.stringify(reading));
+      await select('review');
+      assert.ok(await browser.execute(panelId => document.getElementById(panelId).querySelector('[data-radix-scroll-area-viewport]').scrollTop > 1000, panelId));
+      if (kind === 'skills') {
+        const command = `#${panelId} button[aria-label="Manage linked Agents"]`;
+        await browser.execute(selector => document.querySelector(selector).focus(), command);
+        await $(command).click();
+        await $('[role="dialog"]').waitForDisplayed();
+        await $('[role="dialog"]').$('button=Cancel').click();
+        await $('[role="dialog"]').waitForExist({ reverse: true });
+        await browser.waitUntil(async () => browser.execute(selector => document.activeElement === document.querySelector(selector), command));
+        assert.ok(await browser.execute(panelId => document.getElementById(panelId).querySelector('[data-radix-scroll-area-viewport]').scrollTop > 1000, panelId));
+      }
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `detail-reading-${kind}-720.png`));
+      await select('code-review');
+      assert.equal(await browser.execute(panelId => document.getElementById(panelId).querySelector('[data-radix-scroll-area-viewport]').scrollTop, panelId), 0);
+      await viewport(1200, 640);
     }
   });
 });

@@ -93,7 +93,7 @@ describe('SkillDetailPanel', () => {
       onCheckUpdates={vi.fn(async () => 'completed' as const)} /></TooltipProvider>);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'skills.checkUpdates' })); });
     expect(screen.queryByTitle('skills.checkCompleted')).toBeNull();
-    expect(screen.queryByTitle('skills.checkUpToDate')).toBeNull();
+    expect(screen.queryByText('skills.checkUpToDate')).toBeNull();
     expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
   });
   it('keeps an update entry for remaining copies after the source is already current', () => {
@@ -211,7 +211,7 @@ describe('SkillDetailPanel', () => {
     ['acquiring', 'skills.updatePhaseAcquiring'],
     ['validating', 'skills.updatePhaseValidating'],
     ['updating', 'skills.updatePhaseUpdating'],
-  ] as const)('shows the %s phase instead of the update button', (updateStatus, label) => {
+  ] as const)('keeps the update command disabled while showing the %s phase', (updateStatus, label) => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -229,7 +229,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'skills.actions.update' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(label)).toBeTruthy();
   });
 
@@ -761,7 +761,7 @@ describe('SkillDetailPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.checkUpdates' }));
 
     await waitFor(() => {
-      expect(screen.getByTitle('skills.checkUpToDate')).toBeTruthy();
+      expect(screen.getByText('skills.checkUpToDate')).toBeTruthy();
     });
 
     rerender(
@@ -783,7 +783,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.checkUpToDate')).toBeNull();
+    expect(screen.queryByText('skills.checkUpToDate')).toBeNull();
   });
 
   it('resets the updating phase when switching to a different skill identity', () => {

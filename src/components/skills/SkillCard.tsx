@@ -6,7 +6,7 @@ import {
   Folder,
   FolderOutput,
   Globe,
-  Pencil,
+  Bot,
   RefreshCw,
   Trash2,
 } from 'lucide-react';
@@ -213,7 +213,7 @@ export const SkillCard = memo(function SkillCard({
                     onManageAgents(skill);
                   }}
                 >
-                  <Pencil className="size-3.5" aria-hidden="true" />
+                  <Bot className="size-3.5" aria-hidden="true" />
                 </SkillCardAction>
               ) : null}
               {onDelete ? (

@@ -128,6 +128,36 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 describe('LibraryPage maintenance', () => {
+  it('retains the document during a member revision reload and exposes retry after failure', async () => {
+    let rejectRead!: (error: Error) => void;
+    vi.mocked(readLibrarySkillContent).mockResolvedValueOnce('Previous member document')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRead = reject; }))
+      .mockResolvedValueOnce('Updated member document');
+    const view = render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'api-design' }));
+    const previous = await screen.findByText('Previous member document');
+    workspaceView.detail = { ...workspaceView.detail!, skills: workspaceView.detail!.skills.map(skill => ({ ...skill, contentHash: 'new-hash' })) };
+    view.rerender(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    await waitFor(() => expect(readLibrarySkillContent).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Previous member document')).toBe(previous);
+    expect(screen.getByText('skills.detail.refreshing')).toBeTruthy();
+    await act(async () => rejectRead(new Error('Read failed')));
+    expect(screen.getByText('Previous member document')).toBe(previous);
+    expect(screen.getByText(/skills.detail.showingPreviousContent/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'skills.detail.retry' }));
+    expect(await screen.findByText('Updated member document')).toBeTruthy();
+  });
+
+  it('keeps the selected member document when activating its row again', async () => {
+    vi.mocked(readLibrarySkillContent).mockResolvedValue('Member document');
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'api-design' }));
+    const document = await screen.findByText('Member document');
+    fireEvent.click(screen.getByRole('button', { name: /api-design https/ }));
+    expect(readLibrarySkillContent).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Member document')).toBe(document);
+  });
+
   it('browses members without selecting until activation and restores focus after closing detail', async () => {
     const user = userEvent.setup();
     workspaceView.detail!.skills.push({ ...workspaceView.detail!.skills[0], name: 'writing' });
@@ -228,7 +258,7 @@ describe('LibraryPage maintenance', () => {
     membershipView.outcome = null;
     (contextState.selectedContext as { environment: EnvironmentRef }).environment = { kind: 'native' };
     execute.mockResolvedValue({ status: 'succeeded', snapshot: {} });
-    vi.mocked(readLibrarySkillContent).mockResolvedValue('# API design');
+    vi.mocked(readLibrarySkillContent).mockReset().mockResolvedValue('# API design');
     vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({
       outcome: 'completed',
       sources: [],

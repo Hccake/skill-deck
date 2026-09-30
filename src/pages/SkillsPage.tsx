@@ -62,6 +62,7 @@ export function SkillsPage() {
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   const skillContent = useSkillDetailStore((s) => s.skillContent);
   const loadingContent = useSkillDetailStore((s) => s.loadingContent);
+  const contentError = useSkillDetailStore((s) => s.contentError);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const detailOpen = useSkillDetailStore((s) => s.detailOpen);
   const closeDetail = useSkillDetailStore((s) => s.closeDetail);
@@ -159,10 +160,11 @@ export function SkillsPage() {
         sidebar={<ContextSidebar />}
         detail={selectedSkill ? (
           <SkillDetailPanel
-            key={selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : `${selectedSkill.scope}:${selectedSkill.name}`}
+            key={`${selectedSkill.scope === 'project' ? selectedContextKey : globalContextKey}:${selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : selectedSkill.name}`}
             skill={selectedSkill}
             content={skillContent}
             loading={loadingContent}
+            contentError={contentError}
             agentDisplayNames={agentDisplayNames}
             updateStatus={selectedSkillUpdateStatus}
             isCheckingUpdates={isCheckingSelectedSkillUpdates}
