@@ -1,5 +1,18 @@
 .skill-detail-layout {
+  --skill-document-subtle: #f6f8fa;
+  --skill-document-inline: #eff1f3;
+  --skill-table-background: #ffffff;
+  --skill-table-stripe: #f6f8fa;
+  --skill-table-border: #d1d9e0;
   container: skill-detail / inline-size;
+}
+
+.dark .skill-detail-layout {
+  --skill-document-subtle: #18181b;
+  --skill-document-inline: #252529;
+  --skill-table-background: #0d1117;
+  --skill-table-stripe: #151b23;
+  --skill-table-border: #3d444d;
 }
 
 .skill-detail-header {
@@ -86,7 +99,8 @@
   line-height: 20px;
 }
 
-.skill-detail-layout .skill-prose > :first-child {
+.skill-detail-layout .skill-prose > :first-child,
+.skill-detail-layout .skill-markdown > :first-child {
   margin-top: 0;
 }
 
@@ -125,7 +139,7 @@
   border-radius: 3px;
   padding: 1px 4px;
   color: var(--foreground);
-  background: var(--muted);
+  background: var(--skill-document-inline);
   font-size: 13px;
 }
 
@@ -137,6 +151,7 @@
 }
 
 .skill-code-block {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 36px;
   align-items: start;
@@ -146,7 +161,32 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--muted);
+  background: var(--skill-document-subtle);
+}
+
+.skill-code-block[data-multiline='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.skill-code-block[data-multiline='true'] .skill-code-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  margin: 0;
+  border: 1px solid var(--border);
+  background: var(--skill-document-subtle);
+  opacity: 0;
+}
+
+.skill-code-block[data-multiline='true']:hover .skill-code-copy,
+.skill-code-block[data-multiline='true']:focus-within .skill-code-copy {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .skill-code-block[data-multiline='true'] .skill-code-copy {
+    opacity: 1;
+  }
 }
 
 .skill-detail-layout .skill-code-block pre {
@@ -165,6 +205,10 @@
   color: var(--foreground);
   font-size: 13px;
   line-height: 20px;
+}
+
+.skill-detail-layout .skill-code-block[data-multiline='true'] pre code {
+  padding-right: 36px;
 }
 
 .skill-code-copy {
@@ -186,26 +230,32 @@
 }
 
 .skill-detail-layout .skill-table-scroll table {
-  width: auto;
+  width: max-content;
   max-width: 100%;
   margin: 0;
   font-size: 13px;
   line-height: 20px;
+  font-variant-numeric: tabular-nums;
 }
 
 .skill-detail-layout .skill-table-scroll th,
 .skill-detail-layout .skill-table-scroll td {
-  box-sizing: content-box;
-  min-width: 10ch;
-  max-width: 32ch;
-  padding: 6px 12px;
+  padding: 6px 13px;
+  border: 1px solid var(--skill-table-border);
   vertical-align: top;
   overflow-wrap: normal;
 }
 
 .skill-detail-layout .skill-table-scroll th {
-  background: var(--muted);
   color: var(--foreground);
+}
+
+.skill-detail-layout .skill-table-scroll tr {
+  background: var(--skill-table-background);
+}
+
+.skill-detail-layout .skill-table-scroll tr:nth-child(even) {
+  background: var(--skill-table-stripe);
 }
 
 @container skill-detail (min-width: 560px) {
@@ -213,4 +263,81 @@
   .skill-detail-header {
     padding-inline: 24px;
   }
+}
+
+.skill-detail-layout .skill-document-link {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.skill-document-link:focus-visible,
+.skill-markdown [data-document-anchor]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.skill-document-reference {
+  color: var(--foreground);
+}
+
+.skill-resource-action {
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+.skill-detail-layout .skill-markdown img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.skill-detail-layout .skill-markdown img[hidden] {
+  display: none;
+}
+
+.skill-markdown img:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.skill-image-fallback {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: calc(100% - 30px);
+  vertical-align: middle;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.skill-image-fallback > svg {
+  margin-top: 3px;
+}
+
+.skill-image-message {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.skill-image-message > span + span::before {
+  content: ' \00b7 ';
+}
+
+.skill-document-link .skill-image-fallback {
+  color: var(--primary);
+}
+
+.skill-document-link .skill-image-message > span:first-child {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

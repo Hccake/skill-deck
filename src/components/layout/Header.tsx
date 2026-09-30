@@ -23,10 +23,10 @@ import { WindowControls } from './WindowControls';
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'group flex h-8 shrink-0 items-center gap-1.5 px-2.5 sm:px-3 rounded-md text-sm leading-5 font-medium tracking-normal transition-colors duration-150 select-none border',
+    'group relative flex h-8 shrink-0 items-center gap-1.5 px-2.5 sm:px-3 rounded text-sm leading-5 font-medium tracking-normal transition-colors duration-150 select-none hover:bg-foreground/5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
     isActive
-      ? 'bg-background text-primary font-semibold shadow-xs border-border/60'
-      : 'border-transparent text-zinc-600 dark:text-muted-foreground hover:text-foreground hover:bg-background/50'
+      ? "text-foreground font-semibold after:pointer-events-none after:absolute after:bottom-0.5 after:left-1/2 after:h-0.5 after:w-5 after:-translate-x-1/2 after:rounded-full after:bg-primary after:content-['']"
+      : 'text-zinc-600 dark:text-muted-foreground hover:text-foreground'
   );
 
 const LOCALE_OPTIONS: { value: Locale; code: string; label: string }[] = [
@@ -63,7 +63,8 @@ export function Header() {
   useLayoutEffect(() => {
     const space = navigationSpace.current;
     const nav = navigation.current;
-    if (!space || !nav) return;
+    const header = space?.parentElement;
+    if (!space || !nav || !header) return;
     let disposed = false;
     const measure = () => {
       const available = space.getBoundingClientRect().width;
@@ -77,9 +78,12 @@ export function Header() {
           fullWidth += label.getBoundingClientRect().width + gap;
         }
       }
-      setShowLabels((previous) => fullWidth + (previous ? 0 : 8) <= available);
+      // 窄窗口使用紧凑导航；展开时两侧各保留 24px 拖动空白，并留出恢复缓冲。
+      const wideEnough = header.getBoundingClientRect().width >= 800;
+      setShowLabels((previous) => wideEnough && fullWidth + 48 + (previous ? 0 : 8) <= available);
     };
     const observer = new ResizeObserver(measure);
+    observer.observe(header);
     observer.observe(space);
     observer.observe(nav);
     for (const label of nav.querySelectorAll('[data-nav-label]')) observer.observe(label);
@@ -91,7 +95,7 @@ export function Header() {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-12 items-center border-b border-border/80 bg-background/95 backdrop-blur-md shrink-0 gap-2 overflow-hidden select-none"
+      className="flex h-12 items-center border-b border-border/60 bg-background shrink-0 gap-2 overflow-hidden select-none"
     >
       {/* Left: Logo, Title & Environment */}
       <div
@@ -112,32 +116,33 @@ export function Header() {
         </div>
       </div>
 
-      {/* Center: Desktop Segmented Navigation */}
+      {/* 一级导航融入标题栏，项目之间的空隙保持可拖动。 */}
       <div ref={navigationSpace} className="flex h-full min-w-0 flex-1 items-center justify-center" data-tauri-drag-region>
-      <nav
-        ref={navigation}
-        className="flex w-max shrink-0 items-center gap-0.5 p-0.5 sm:p-1 bg-muted/60 dark:bg-muted/40 rounded-lg border border-border/50"
-        data-tauri-drag-region="false"
-      >
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) => cn(getNavLinkClass({ isActive }), !showLabels && !isActive && 'gap-0')}
-            aria-label={t(label)}
-            title={t(label)}
-            onClick={(event) => guardNavigation(event, to)}
-          >
-            {({ isActive }) => <>
-              <Icon className="size-4.5 shrink-0" aria-hidden="true" />
-              <span className={cn('overflow-hidden', !showLabels && !isActive && 'w-0')} aria-hidden={!showLabels && !isActive}>
-                <span data-nav-label className="block w-max whitespace-nowrap">{t(label)}</span>
-              </span>
-            </>}
-          </NavLink>
-        ))}
-      </nav>
+        <nav
+          ref={navigation}
+          className="flex w-max shrink-0 items-center gap-1"
+          data-tauri-drag-region
+        >
+          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) => cn(getNavLinkClass({ isActive }), !showLabels && !isActive && 'gap-0')}
+              aria-label={t(label)}
+              title={t(label)}
+              data-tauri-drag-region="false"
+              onClick={(event) => guardNavigation(event, to)}
+            >
+              {({ isActive }) => <>
+                <Icon className="size-4.5 shrink-0" aria-hidden="true" />
+                <span className={cn('overflow-hidden', !showLabels && !isActive && 'w-0')} aria-hidden={!showLabels && !isActive}>
+                  <span data-nav-label className="block w-max whitespace-nowrap">{t(label)}</span>
+                </span>
+              </>}
+            </NavLink>
+          ))}
+        </nav>
       </div>
 
       {/* Right: Tool Buttons & Window Controls */}

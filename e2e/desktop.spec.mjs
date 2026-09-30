@@ -122,21 +122,31 @@ describe('Skill Deck desktop', () => {
       for (const theme of ['Light', 'Dark']) {
         await $(`button=${theme}`).click();
         await browser.waitUntil(async () => browser.execute((value) => document.documentElement.classList.contains(value), theme.toLowerCase()));
-        const layout = await browser.execute(() => ({
-          overflow: document.documentElement.scrollWidth > innerWidth,
-          navigation: [...document.querySelectorAll('header nav a')].map((element) => {
-            const rect = element.getBoundingClientRect();
-            return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
-          }),
-        }));
+        const layout = await browser.execute(() => {
+          const header = document.querySelector('header');
+          const bounds = header.getBoundingClientRect();
+          const navigation = header.querySelector('nav').getBoundingClientRect();
+          return {
+            overflow: document.documentElement.scrollWidth > innerWidth,
+            headerHeight: bounds.height,
+            navigationClearance: [navigation.top - bounds.top, bounds.bottom - parseFloat(getComputedStyle(header).borderBottomWidth) - navigation.bottom],
+            navigation: [...header.querySelectorAll('nav a')].map((element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
+            }),
+          };
+        });
         assert.equal(layout.overflow, false);
+        assert.equal(layout.headerHeight, 48);
+        assert.ok(layout.navigationClearance.every(gap => gap >= 7), JSON.stringify(layout));
         assert.ok(layout.navigation.length >= 4 && layout.navigation.every(Boolean));
         const links = await browser.execute(() => [...document.querySelectorAll('header nav a')].map(link => ({
           height: link.getBoundingClientRect().height,
           labelVisible: link.querySelector('span').getBoundingClientRect().width > 0,
         })));
         assert.ok(links.every(link => Math.abs(link.height - 32) < 1), JSON.stringify(links));
-        if (width >= 800) assert.ok(links.every(link => link.labelVisible), JSON.stringify(links));
+        if (width === 720) assert.equal(links.filter(link => link.labelVisible).length, 1, JSON.stringify(links));
+        if (width >= 1000) assert.ok(links.every(link => link.labelVisible), JSON.stringify(links));
         await $('header').moveTo();
         await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `settings-${width}x${height}-${theme.toLowerCase()}.png`));
       }
@@ -146,9 +156,26 @@ describe('Skill Deck desktop', () => {
   });
 
   it('adapts navigation labels to the space left by surrounding controls', async () => {
-    await viewport(800, 600);
     const labels = () => browser.execute(() => [...document.querySelectorAll('header nav a > span')].filter(el => el.getBoundingClientRect().width > 0).length);
+    await $('header nav a[href="/settings"]').click();
+    for (const locale of ['简体中文', 'English']) {
+      await $(`button=${locale}`).click();
+      await viewport(840, 600);
+      assert.equal(await labels(), 4);
+      for (const width of [720, 798]) {
+        await viewport(width, 600);
+        assert.equal(await labels(), 1, `${locale} at ${width}px should keep only the current label`);
+        assert.equal(await $('header nav a[aria-current="page"] > span').isDisplayed(), true);
+      }
+    }
+    await viewport(840, 600);
     assert.equal(await labels(), 4);
+    const room = await browser.execute(() => {
+      const nav = document.querySelector('header nav').getBoundingClientRect();
+      const space = document.querySelector('header nav').parentElement.getBoundingClientRect();
+      return [nav.left - space.left, space.right - nav.right];
+    });
+    assert.ok(room.every(width => width >= 24), JSON.stringify(room));
     try {
       // 占宽夹具只验证导航容量，不代表真实 WSL 切换。
       await browser.execute(() => { document.querySelector('header').firstElementChild.style.width = '280px'; });
@@ -160,6 +187,7 @@ describe('Skill Deck desktop', () => {
       await browser.execute(() => { document.querySelector('header').firstElementChild.style.removeProperty('width'); });
     }
     await browser.waitUntil(async () => (await labels()) === 4);
+    await $('header nav a[href="/"]').click();
   });
 
   it('preserves user panel widths and navigation focus in the real workspaces', async () => {
@@ -168,6 +196,7 @@ describe('Skill Deck desktop', () => {
     await mkdir(fixture, { recursive: true });
     await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n'
       + await readFile(new URL('./fixtures/detail-document.md', import.meta.url), 'utf8') + '\n\n'
+      + await readFile(new URL('./fixtures/detail-resources.md', import.meta.url), 'utf8') + '\n\n'
       + Array.from({ length: 36 }, (_, index) => `## Section ${index + 1}\n\nVerify navigation, resizing, and keyboard focus while reading the current document. Keep the selected Skill and its maintenance commands available.\n`).join('\n'));
     for (const [name, description] of [
       ['code-review', 'Review code changes for correctness, maintainability, and security.'],
@@ -598,6 +627,8 @@ describe('Skill Deck desktop', () => {
             .find(el => el.closest('[data-skill-item]').dataset.skillItem === key).click(), kind === 'skills' ? 'global:review' : 'review');
           await $(`#${panelId} .skill-code-block`).waitForDisplayed();
           await settle();
+          await browser.execute(panelId => document.getElementById(panelId).querySelector('.skill-code-block[data-multiline="true"] .skill-code-copy').focus({ preventScroll: true }), panelId);
+          await settle();
           const result = await browser.execute(panelId => {
             const root = document.getElementById(panelId), prose = root.querySelector('.skill-prose');
             const codes = [...prose.querySelectorAll('pre')], tables = [...prose.querySelectorAll('.skill-table-scroll')];
@@ -610,6 +641,19 @@ describe('Skill Deck desktop', () => {
               shortTableTab: tables[0].tabIndex, tableCount: tables.length,
               copyCount: prose.querySelectorAll('.skill-code-copy').length,
               copySeparated: copy.getBoundingClientRect().left >= pre.getBoundingClientRect().right,
+              multilineLayouts: codes.slice(1).map(code => {
+                const block = code.parentElement;
+                const topSpace = code.getBoundingClientRect().top - block.getBoundingClientRect().top + parseFloat(getComputedStyle(code).paddingTop);
+                return { widthDelta: block.clientWidth - code.clientWidth, topSpace };
+              }),
+              copyFocusOpacity: getComputedStyle(document.activeElement).opacity,
+              copyHasFocus: document.activeElement === codes[1].parentElement.querySelector('.skill-code-copy'),
+              tableHeaderBackground: getComputedStyle(prose.querySelector('thead tr')).backgroundColor,
+              tableRowBackgrounds: [...tables[0].querySelectorAll('tbody tr')].map(row => getComputedStyle(row).backgroundColor),
+              tableBorders: [...tables[0].querySelectorAll('th, td')].map(cell => {
+                const style = getComputedStyle(cell);
+                return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth];
+              }),
               codeSize: getComputedStyle(pre.firstElementChild).fontSize,
               quoteStyle: getComputedStyle(prose.querySelector('blockquote')).fontStyle };
           }, panelId);
@@ -619,14 +663,64 @@ describe('Skill Deck desktop', () => {
           assert.equal(result.tableScroll > 0, result.tableOverflow, JSON.stringify(result));
           if (width === 360) assert.equal(result.tableOverflow, true, JSON.stringify(result));
           assert.ok(result.shortTableTab === -1 && result.tableCount === 2 && result.copyCount === 3 && result.copySeparated, JSON.stringify(result));
+          assert.ok(result.multilineLayouts.every(layout => Math.abs(layout.widthDelta) < 2 && layout.topSpace <= 12), JSON.stringify(result));
+          assert.ok(result.copyHasFocus && result.copyFocusOpacity === '1', JSON.stringify(result));
+          assert.equal(result.tableHeaderBackground, result.tableRowBackgrounds[0], JSON.stringify(result));
+          assert.ok(result.tableRowBackgrounds.length >= 2 && result.tableRowBackgrounds[0] !== result.tableRowBackgrounds[1], JSON.stringify(result));
+          assert.ok(result.tableBorders.every(borders => borders.every(width => parseFloat(width) > 0)), JSON.stringify(result));
           assert.equal(result.codeSize, '13px');
           assert.equal(result.quoteStyle, 'normal');
-          await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `detail-content-${kind}-${width}.png`));
         }
       }
     } finally {
       await browser.execute(saved => localStorage.setItem('skill-deck-layout', saved), saved);
       await browser.refresh();
+    }
+  });
+
+  it('navigates document sections without leaving either detail and shows unsupported resources inline', async () => {
+    await $('header nav a[href="/"]').waitForDisplayed();
+    for (const [kind, route, panelId] of [['skills', '/', 'skill-detail-panel'], ['library', '/libraries', 'library-skill-detail-panel']]) {
+      await viewport(1200, 640);
+      await $(`header nav a[href="${route}"]`).click();
+      await $(`#${kind}-context-navigation`).waitForDisplayed();
+      if (kind === 'skills') await $('#skills-context-navigation aside > div:first-child button').click();
+      else await $('#library-context-navigation').$('button*=Workspace review').click();
+      await $('[data-skill-open]').waitForDisplayed();
+      await browser.execute(key => [...document.querySelectorAll('[data-skill-open]')]
+        .find(el => el.closest('[data-skill-item]').dataset.skillItem === key).click(), kind === 'skills' ? 'global:review' : 'review');
+      await $(`#${panelId} .skill-document-link`).waitForExist();
+      await viewport(720, 520);
+      const locationBefore = await browser.getUrl();
+      // embedded 驱动会在 click 后强制回焦；此处按先聚焦再激活的顺序验证应用行为。
+      await browser.execute(panelId => {
+        const link = document.getElementById(panelId).querySelector('a[href="#重复章节-1"]');
+        link.focus({ preventScroll: true });
+        link.click();
+      }, panelId);
+      const chapter = await browser.execute(panelId => {
+        const root = document.getElementById(panelId), viewport = root.querySelector('[data-radix-scroll-area-viewport]');
+        return { anchor: document.activeElement.dataset.documentAnchor,
+          offset: document.activeElement.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+          firstMargin: getComputedStyle(root.querySelector('.skill-markdown').firstElementChild).marginTop,
+          overflow: root.querySelector('.skill-prose').scrollWidth > root.querySelector('.skill-prose').clientWidth,
+          imageFallbacks: root.querySelectorAll('.skill-image-fallback').length,
+          unsafeControls: root.querySelectorAll('a button, a a').length,
+          images: root.querySelectorAll('.skill-markdown img').length };
+      }, panelId);
+      assert.equal(chapter.anchor, '重复章节-1');
+      assert.equal(chapter.firstMargin, '0px');
+      assert.ok(Math.abs(chapter.offset - 8) < 2, JSON.stringify(chapter));
+      assert.ok(!chapter.overflow && chapter.imageFallbacks === 2 && chapter.images === 0 && chapter.unsafeControls === 0, JSON.stringify(chapter));
+      assert.equal(await browser.getUrl(), locationBefore);
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `detail-resources-${kind}-720.png`));
+      await browser.execute(panelId => {
+        const link = document.getElementById(panelId).querySelector('a[href="#"]');
+        link.focus({ preventScroll: true });
+        link.click();
+      }, panelId);
+      assert.equal(await browser.execute(() => document.activeElement.classList.contains('skill-markdown')), true);
+      assert.equal(await browser.getUrl(), locationBefore);
     }
   });
 
