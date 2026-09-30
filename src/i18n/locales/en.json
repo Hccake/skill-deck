@@ -420,7 +420,7 @@
     "readIncomplete": "{{count}} Skill locations could not be read completely. Other results remain available.",
     "readIncompleteWithOmitted": "{{count}} Skill locations could not be read completely; {{omitted}} details are omitted. Other results remain available.",
     "add": "Add",
-    "enabled": "Enabled: {{count}}/{{total}} agents",
+    "enabled": "Installed to {{count}}/{{total}} agents",
     "scope": {
       "global": "Global",
       "addProject": "Add Project..."
@@ -809,7 +809,7 @@
         "hot": "Hot"
       },
       "emptyTitle": "Explore the Ecosystem",
-      "emptyDescription": "Browse the directory or search for specific agent skills. Select an item from the list to preview its capabilities and install it into your agent deck.",
+      "emptyDescription": "Browse the directory or search for specific Agent Skills. Select an item from the list to preview its capabilities and install it globally or into a project.",
       "overview": "Overview",
       "skillContent": "Skill Content",
       "loadDetailErrorTitle": "Failed to load detailed information.",
@@ -821,7 +821,7 @@
       "firstSeen": "First Seen",
       "securityAudits": "Security Audits",
       "installedOn": "Agent Installs",
-      "installedWorkspaces": "Installed Workspaces",
+      "installedWorkspaces": "Installed Locations",
       "riskBadge": {
         "safe": "Safe Risk",
         "low": "Low Risk",
@@ -1511,7 +1511,7 @@
         "selfCopy": "The source and destination resolve to the same physical location.",
         "payloadSessionExpired": "The source snapshot expired. Create a fresh preview.",
         "staleContext": "The context changed after preview. Review the refreshed plan.",
-        "staleRegistry": "The Agent registry changed after preview. Review the refreshed plan.",
+        "staleRegistry": "The Agent Registry changed after preview. Review the refreshed plan.",
         "staleEnvironment": "The environment changed after preview. Review the refreshed plan.",
         "stalePayload": "The prepared content is no longer valid. Prepare it again and confirm.",
         "staleTarget": "A destination changed after preview. Review the refreshed plan.",

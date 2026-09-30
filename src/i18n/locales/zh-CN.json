@@ -420,7 +420,7 @@
     "readIncomplete": "{{count}} 个 Skill 位置暂时无法完整读取，其他结果仍可使用。",
     "readIncompleteWithOmitted": "{{count}} 个 Skill 位置暂时无法完整读取，其中 {{omitted}} 项未展开；其他结果仍可使用。",
     "add": "添加",
-    "enabled": "已启用: {{count}}/{{total}} 个 Agent",
+    "enabled": "已安装到 {{count}}/{{total}} 个 Agent",
     "scope": {
       "global": "全局",
       "addProject": "添加项目..."
@@ -509,7 +509,7 @@
       "installed": "安装时间",
       "updated": "更新时间",
       "installPath": "安装路径",
-      "agents": "关联 Agents",
+      "agents": "关联 Agent",
       "defaultAvailableCount": "可直接使用 {{count}}",
       "privateCopyCount": "额外保留 {{count}}",
       "syncedAgents": "已安装到",
@@ -806,10 +806,10 @@
       "tabs": {
         "popular": "全部",
         "trending": "趋势",
-        "hot": "热度"
+        "hot": "热门"
       },
       "emptyTitle": "探索 Skill 生态",
-      "emptyDescription": "浏览目录或搜索特定的 agent skills。选择列表中的条目即可预览能力，并安装到你的 agent deck。",
+      "emptyDescription": "浏览目录或搜索特定的 Agent Skill。选择列表中的条目即可预览能力，并安装到全局或项目中。",
       "overview": "概览",
       "skillContent": "Skill 内容",
       "loadDetailErrorTitle": "加载详细信息失败。",
@@ -821,7 +821,7 @@
       "firstSeen": "首次收录",
       "securityAudits": "安全审计",
       "installedOn": "Agent 安装量",
-      "installedWorkspaces": "已安装 Workspace",
+      "installedWorkspaces": "已安装位置",
       "riskBadge": {
         "safe": "安全",
         "low": "低风险",
@@ -1090,7 +1090,7 @@
       "confirmInvalidDelete": "删除无效记录",
       "deleted": "Agent 信息已删除",
       "deleteError": "Agent 信息删除失败",
-      "deleteStale": "Agent Registry 已发生变化，请检查刷新后的影响并重新输入 Agent ID。",
+      "deleteStale": "Agent 注册表已发生变化，请检查刷新后的影响并重新输入 Agent ID。",
       "deleting": "正在删除…",
       "retryDelete": "重试删除",
       "deleteTitle": "删除 {{name}}？",
@@ -1511,7 +1511,7 @@
         "selfCopy": "来源和目标指向同一个物理位置。",
         "payloadSessionExpired": "来源快照已过期，请重新生成预览。",
         "staleContext": "Skill 位置在预览后发生变化，请检查刷新后的计划。",
-        "staleRegistry": "Agent Registry 在预览后发生变化，请检查刷新后的计划。",
+        "staleRegistry": "Agent 注册表在预览后发生变化，请检查刷新后的计划。",
         "staleEnvironment": "环境在预览后发生变化，请检查刷新后的计划。",
         "stalePayload": "准备内容已失效，请重新准备并确认。",
         "staleTarget": "目标在预览后发生变化，请检查刷新后的计划。",

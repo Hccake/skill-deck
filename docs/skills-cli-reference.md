@@ -4,7 +4,7 @@
 
 [`skills` CLI](https://github.com/vercel-labs/skills) 是由 `vercel-labs/skills` 独立维护的第三方 Skill 管理工具。Skill Deck 不调用该 CLI，也不依赖 Node.js 运行；来源获取、Agent 解析、文件写入和用户工作流都由 Skill Deck 自行实现。
 
-Skill Deck 和 `skills` CLI 都会在通用 Skill 目录中读写 Skill，也会读写 lock 中含义相同的字段。因此，一个工具安装到通用目录中的 Skill 可以由另一个工具继续管理。兼容范围不包括完整的 lock 内容、交互流程和执行结果：使用第三方 CLI 更新 Skill 后，Skill Deck 的扩展字段可能丢失；两个工具对安装失败也有各自的处理方式。
+Skill Deck 和 `skills` CLI 会读写通用目录、Agent 专用目录中的 Skill，以及 lock 中含义相同的字段。Skill Deck 根据实际位置和归属继续维护直接安装，包括 CLI 只写入专用目录的安装。兼容范围不包括完整的 lock 内容、交互流程和执行结果：使用第三方 CLI 更新 Skill 后，Skill Deck 的扩展字段可能丢失；两个工具对安装失败也有各自的处理方式。
 
 Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两个工具共同使用的数据，并了解 Agent 生态的变化。第三方 CLI 的新功能只说明可能出现了新的用户需求，不会自动成为 Skill Deck 的产品需求；确定需要支持后，再根据桌面应用的使用方式重新设计。
 
@@ -18,7 +18,7 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 | Git 提交 | `435076e78988e1e6ec40d00b0b1d76bdbbc5419a` |
 | 开发依赖 | `skills: 1.5.23` |
 
-仓库通过精确固定的开发依赖运行兼容测试，桌面应用不会加载这个依赖。Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent；当前测试会调用实际 CLI，检查版本，并在离线临时项目中覆盖这两类位置、同时选择多个位置、只选择其他 Agent，以及从本机 Git 来源更新后重新安装。
+仓库通过精确固定的开发依赖运行兼容测试，桌面应用不会加载这个依赖。测试先调用真实 CLI 生成普通专用目录和 Eve 根 Agent、子 Agent 安装，再把相同文件及 lock 交给 Skill Deck 验证读取与维护。脚本测试同时保留 CLI 自身的安装和重新安装输出检查；平台入口见[测试与验证规范](./testing.md#第三方-cli-安装兼容)。
 
 下述兼容规则以该版本为准。Agent 的读取位置和检测方式还需要以对应 Agent 的官方资料和实际行为为准，第三方 CLI 的配置不能单独作为 Agent 支持依据。
 
@@ -26,12 +26,12 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 
 | 内容 | 两个工具共同使用的部分 | Skill Deck 独立实现的能力 |
 |---|---|---|
-| Skill 目录 | 通用 Skill 目录和完整 Skill 内容 | 内容快照、风险检查、恢复数据以及 Windows 与 WSL 之间的写入 |
+| Skill 目录 | 通用目录、Agent 专用目录和目录型 Skill 内容 | 实际位置与库归属识别、内容快照、风险检查、恢复数据以及 Windows 与 WSL 之间的写入 |
 | 来源 | 简写、Git URL、本地路径、通过约定地址发现（Well-known）、`ref` 和 Skill 子路径的兼容含义 | 获取进度、信任信息、缓存和界面反馈 |
 | Agent | 当前参考版本已知的 Agent ID，以及写入 lock 的兼容选择信息 | 用户添加的 Agent 信息、检测结果、关联关系和安装选项 |
 | 全局 lock | `skills` CLI v3 路径和共同字段 | 修改 lock 时无损保留未涉及的内容 |
 | 项目 lock | `skills` CLI v1 字段、排序、内容哈希和 Eve 安装位置 | `sourceUrl`、`remoteHash`、`pluginName` 和旧路径迁移 |
-| 安装与更新 | 来源、Skill 子路径、通用目录和兼容 lock 记录 | 预览、批量执行、取消、恢复和具体错误反馈 |
+| 安装与更新 | 来源、Skill 子路径、已有安装和兼容 lock 记录 | 实际目标规划、预览、批量执行、取消、恢复和具体错误反馈 |
 
 Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户添加的 Agent 信息不写入第三方 CLI 的数据格式。Skill Deck 只对两个工具都会读写的数据提供兼容保证。
 
@@ -71,7 +71,9 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `lastSelectedAgents` | `skills` CLI | CLI 最近一次选择的 Agent ID |
 | `defaultTargetAgents` | 旧版 Skill Deck | 当前版本不读取、不写入且不清理；重写全局 lock 时原样保留 |
 
-Skill Deck 在用户确认 Agent 选择并进入安装确认步骤时写入 `lastSelectedAgents`，内容只包含当前参考版本能够识别的内置 Agent ID。该字段记录最近确认的安装选择，不表示安装已经成功。全局安装和项目安装共用当前 Environment 的全局字段；明确指定 Agent 的安装入口不会更新该字段。初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。
+`lastSelectedAgents` 的写入时机、初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。该字段只保存当前参考版本能够识别的内置 Agent ID，记录最近确认的安装选择，不表示安装已经成功。
+
+旧版 `defaultTargetAgents` 在全局 lock 重写时作为未拥有字段保留。旧全局格式转换为项目 lock 时，该字段与其他全局根字段一起剥离，不进入项目格式。
 
 ## 项目 lock 与 Eve 安装位置
 
@@ -99,6 +101,10 @@ Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent。当前参考�
 - 外部已有的 `subagents: []` 原样保留，在已确认的 Eve 项目中按照当前参考版本的规则读取；字段类型错误或数组中出现非字符串值时，按 lock 损坏处理。
 
 Eve 的用户选择和目标模型见[Agent 模型](./agent-model.md#eve-专用安装目标)。
+
+现有位置的兼容读取与缺失位置恢复分别授权。项目 lock 中的明确记录是恢复缺失 Eve Skill 目录的前提：缺省或空数组不授权创建此前未明确记录的根目标，记录与位置发生歧义时停止维护。恢复动作本身由更新流程定义，见[Skill 生命周期](./skill-lifecycle.md#更新)。
+
+当前参考 CLI 可以生成 Eve 目录型和单文件型内容，并移除其中的 `name`。Skill Deck 依据项目记录识别这类内容，写入只支持目录型安装；必要目标包含单文件时保留文件并阻断整份 Skill，具体规则见[Skill 生命周期](./skill-lifecycle.md#更新)。
 
 `computedHash` 按确定顺序组合相对路径和文件内容并计算 SHA-256，同时排除 `.git`、`node_modules` 等不属于 Skill 内容的目录。Skill Deck 从本次已经固定的完整内容计算同样的哈希。
 
@@ -155,13 +161,17 @@ Skill Deck 可以自行增加获取缓存、进度、信任信息和安全检查
 
 `skills` CLI 的 Agent 注册表可以帮助发现新的 Agent、读取位置和适配方式。Skill Deck 更新随应用提供的 Agent 信息前，还要核对对应 Agent 的官方资料和实际行为，再把确认后的内容纳入自身注册表。
 
-CLI 的 Agent 选择字段只保存当前参考版本能够理解的 Agent ID。用户添加的 Agent ID 保存在 Skill Deck 扩展字段中。检测结果、关联关系、安装位置分组和界面筛选由 Skill Deck 自行计算，完整规则见[Agent 模型](./agent-model.md)。
+CLI 的最近选择字段 `lastSelectedAgents` 只保存当前参考版本能够识别的内置 Agent ID。用户添加的 Agent 定义由 Skill Deck 的应用配置保存，不写入该字段；库应用选择则保存在对应 Environment 的库应用记录中。
+
+检测结果、关联关系、安装位置分组和界面筛选由 Skill Deck 自行计算，完整规则见[Agent 模型](./agent-model.md)。
 
 第三方 CLI 推出新功能后，先确认它解决的用户问题、适用人群以及是否与 Skill Deck 的使用场景相同。确定需要支持后，再结合桌面应用如何展示状态、批量处理、请求确认、报告错误，以及如何支持取消、恢复和无障碍操作，重新设计具体方案。
 
 ## 两个工具在安装和更新时的差异
 
-两个工具都会根据保存的来源重新安装完整 Skill。Skill Deck 安装到通用 Skill 目录中的 Skill，以及写入 lock 的兼容来源信息，可以继续由 CLI 读取；预览、批量执行、取消、恢复和错误反馈则属于 Skill Deck 自身的工作流。
+两个工具都会根据保存的来源重新取得完整 Skill。CLI 更新重新调用安装流程，重放已记录的 Eve 目标，其 Agent 选择仍遵循 CLI 安装规则。Skill Deck 按整份 Skill 发起更新，从实际安装确定既有目标；通用目录不是更新前提，新检测到的 Agent 也不会自动加入本次更新。
+
+Skill Deck 在预览中列出实际位置、差异保留和明确授权的 Eve 恢复。预览、批量执行、取消、恢复和错误反馈属于 Skill Deck 自身的工作流；比较版本时两个已有标记不相等即有更新，不为旧算法增加校准流程。
 
 第三方 CLI 可以从本地路径安装，并在项目 lock 中保存 `sourceType: "local"`；这类记录没有远端更新能力。Skill Deck 在复制本地来源 Skill 时保持相同含义。没有有效来源记录的 Skill 只复制实际内容，不伪造来源类型；具体规则见[Skill 生命周期](./skill-lifecycle.md#复制到项目)。
 

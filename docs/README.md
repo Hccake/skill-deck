@@ -8,9 +8,9 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 |---|---|---|
 | [`CONTEXT.md`](../CONTEXT.md) | Skill Deck 的统一领域词汇，只定义概念身份与边界 | 领域术语、概念边界或推荐用词变化 |
 | [产品行为与交互](./product.md) | 用户看到的核心概念、页面能力、用户工作流、反馈规则、Agent 筛选交互和产品限制 | 用户可见能力、交互语义或产品限制变化 |
-| [Agent 模型](./agent-model.md) | Agent 注册表、Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组和安装初始选择 | Agent 模型、解析规则或选择语义变化 |
-| [Environment、Skill 位置与项目管理](./environments-and-projects.md) | 应用所在系统、Windows 与 WSL 切换、全局 Skill、项目 Skill、已添加项目、路径解析和跨文件系统访问 | Windows/WSL 切换、全局或项目行为、已添加项目、路径或文件访问规则变化 |
-| [Skill 生命周期](./skill-lifecycle.md) | 来源、发现、安装、读取、更新、管理 Agent、复制和移除 | Skill 从来源进入本地后的业务流程变化 |
+| [Agent 模型](./agent-model.md) | Agent 注册表、读取与检测位置、关联关系、筛选候选、安装选择和库应用中的 Agent 选择 | Agent 模型、解析规则或选择语义变化 |
+| [Environment、Skill 位置与项目管理](./environments-and-projects.md) | 应用所在系统、Windows 与 WSL 切换、全局与项目 Scope、已添加项目、库数据归属、路径解析和跨文件系统访问 | Environment、Scope、项目、数据归属或文件访问规则变化 |
+| [Skill 生命周期](./skill-lifecycle.md) | 来源与发现、直接安装 Skill 的维护、库成员生命周期、库应用与逐目录版本选举 | Skill 安装与维护、库成员变化、应用关系或版本选择规则变化 |
 | [更新检查](./update-checking.md) | 远端版本比较、缓存、重试、限流、凭据和状态文件 | 远端版本比较或检查策略变化 |
 | [系统架构](./architecture.md) | 系统边界、应用内部结构、进程与窗口、IPC 契约、平台适配、数据归属和安全保证 | 顶层模块、典型调用方向、窗口、传输接口、平台实现或数据归属变化 |
 | [测试与验证规范](./testing.md) | 测试类型、覆盖范围、测试夹具、跨平台规则和断言原则 | 测试架构、平台测试能力、测试夹具或验证策略变化 |
@@ -26,9 +26,11 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 |---|---|
 | 修改领域术语或概念边界 | [`CONTEXT.md`](../CONTEXT.md)，再进入对应领域主文档 |
 | 修改用户可见功能、页面交互或 Agent 筛选 | [产品行为与交互](./product.md)，再按涉及概念进入对应主文档 |
-| 修改 Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组或安装初始选择 | [Agent 模型](./agent-model.md) |
+| 修改 Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、安装选择或库应用中的 Agent 选择 | [Agent 模型](./agent-model.md) |
 | 修改应用所在系统、Windows/WSL 切换、全局或项目行为、已添加项目、路径解析或跨文件系统访问 | [Environment、Skill 位置与项目管理](./environments-and-projects.md) |
 | 修改来源、发现、安装、更新、管理 Agent、复制或移除 | [Skill 生命周期](./skill-lifecycle.md)；涉及远端检查时增加[更新检查](./update-checking.md)，涉及写入机制时增加[执行与恢复](./execution-and-recovery.md) |
+| 修改库成员的添加、更新、移除或重新激活 | [库成员生命周期](./skill-lifecycle.md#库成员生命周期)；涉及事务与清理时增加[执行与恢复](./execution-and-recovery.md) |
+| 修改 Scope 的库选择、优先顺序、成员同步或同名版本选择 | [库应用与版本选举](./skill-lifecycle.md#库应用与版本选举)；涉及 Agent 可选条件时增加[Agent 模型](./agent-model.md#skill-库的-agent-选择) |
 | 修改路由、跨窗口通信、Tauri 命令、WSL 传输或顶层依赖 | [系统架构](./architecture.md) |
 | 新增或修改测试、测试夹具、平台适配器验证或 E2E | [测试与验证规范](./testing.md)；修改 CI 命令时增加[贡献指南](../CONTRIBUTING.md) |
 | 跟踪 `skills` CLI 版本变化 | [skills CLI 参考与兼容](./skills-cli-reference.md)，再按变化类型进入受影响的领域主文档 |
@@ -41,6 +43,7 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 | 用户可见能力、交互语义和产品限制 | `product.md` |
 | 领域术语与概念边界 | 根目录 `CONTEXT.md` |
 | Agent、Skill、Environment 和项目的长期业务规则 | 对应领域主文档 |
+| 库成员生命周期、库应用关系和逐目录版本选举 | `skill-lifecycle.md` |
 | 顶层技术边界、职责和跨层一致性 | `architecture.md` |
 | 测试类型、覆盖范围、测试夹具和跨平台验证 | `testing.md` |
 | 变更、一致性和恢复保证 | `execution-and-recovery.md` |
@@ -66,9 +69,11 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 - 被放弃的方案和取舍理由集中记录在 ADR，长期主文档说明当前状态。
 - 安全禁止、兼容差异和用户需要据此决策的产品限制可以使用直接否定句。
 - Agent、Skill、WSL、CLI、Tauri、Rust 等专业术语可以保留原文；普通叙述使用自然中文。代码中的 `EnvironmentRef`、`SkillLocationRef` 等名称只在对应实现语境中使用。
+- 中文正文使用“Skill 库”“直接安装 Skill”“直接安装版本”和“库版本”；Scope 表示全局或项目管理范围，目录和路径表示文件系统位置。新增术语先在首次使用处说明含义。
 - 精确代码名称、字段、状态值、命令和路径使用行内代码格式，并只在需要对应实现或协议时出现。
 - 共享文档中的命令示例只使用工具的原始命令，不包含开发者个人的命令包装器或运行时管理前缀。
 - 每个段落表达一个主要结论；复杂条件使用列表、表格或图示。
+- 阶段性计划、迭代编号和待办迁移保存在 `.scratch/**`；长期文档说明当前规则及仍然存在的兼容例外。
 - 领域术语由根目录 `CONTEXT.md` 定义，领域主文档说明规则，其他文档复用同一表达。
 - 产品文档说明用户入口、可见状态、操作和反馈；默认值计算、路径归属、缓存策略与写入协议由对应领域、架构或执行文档维护。
 - 源码可以直接提供的完整 Agent、命令、类型、组件、状态模块和制品清单由源码维护。

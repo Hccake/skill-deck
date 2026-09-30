@@ -37,8 +37,9 @@
 ## ✨ 核心能力
 
 - **发现与安装**：从在线目录发现 Skill，查看来源、说明和安全信息，或者从 GitHub、Git、本地目录、约定地址（Well-known 地址）、原始 `SKILL.md` 文件和 ZIP、tar 归档安装
-- **浏览与维护**：阅读已安装 Skill 的完整内容，检查并执行更新；来源失效时可以保留当前 Skill，或移除后从其他来源重新安装；私有 GitHub 来源可以复用本机 Git 凭据检查更新
+- **浏览与维护**：按实际安装位置阅读和更新直接安装 Skill，支持仅存在于 Agent 专用目录中的安装；同名库版本独立维护。没有来源记录的 Skill 作为本地内容保留；私有 GitHub 来源可以复用本机 Git 凭据检查更新
 - **项目与 Agent 管理**：统一查看全局与项目 Skill，按 Agent 筛选，调整 Skill 可供哪些 Agent 使用，并在项目之间复制 Skill；既可以使用随应用提供的 Agent 信息，也可以添加自己的 Agent 信息
+- **Skill 库**：创建可复用的 Skill 集合，将有序的库应用到全局或项目位置，持续同步成员变化，并在受管理链接需要修复时主动重新应用
 - **跨平台管理**：在 Windows、macOS 和 Linux 上管理 Skill；Windows 用户还可以切换到已安装的 WSL 发行版
 - **窗口偏好**：重新打开应用时恢复主窗口的尺寸、位置和最大化状态
 
@@ -54,7 +55,7 @@
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/images/skills.png" alt="Skills 工作台">
+      <img src="docs/images/skills.png" alt="Skills 页">
       <br />
       <em>分别查看全局 Skill 与项目 Skill，并按 Agent 筛选。</em>
     </td>
@@ -116,12 +117,16 @@
 也可以直接粘贴 [`skills` CLI](https://github.com/vercel-labs/skills) 的 `skills add` 安装命令。Skill Deck 会解析其中的来源、Skill 和目标 Agent，并在安装前提供确认和调整：
 
 ```bash
-npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
+npx skills add vercel-labs/agent-skills --skill web-design-guidelines -a claude-code
 ```
 
 ### 3. 确认并安装
 
-选择需要安装的 Skill、目标 Agent 和安装方式，检查变更预览，然后执行安装。下载地址发生跨主机重定向时，需要明确确认最终下载主机。直接下载属于一次性全新安装来源，安装后不提供更新；再次安装前需要先移除现有 Skill。安装完成后，关联的 Agent 即可读取该 Skill；你也可以在 Skills 工作台中继续阅读和管理 Agent。
+选择需要安装的 Skill、目标 Agent 和安装方式，检查变更预览，然后执行安装。下载地址发生跨主机重定向时，需要明确确认最终下载主机。直接下载属于一次性全新安装来源，安装后不提供更新；再次安装前需要先移除现有 Skill。安装完成后，关联的 Agent 即可读取该 Skill；你也可以在 `Skills` 页中继续阅读和管理 Agent。
+
+按已保存来源更新 Skill 时，需要通过真实目录定位内容，并满足临时内容保留额度。目录链接路径和超大来源会被拒绝并给出处理提示，本地已安装内容保持不变。详见[更新检查](docs/update-checking.md)。
+
+更新保持现有 Agent 关联，并在确认前列出实际影响位置。通用内容固定更新，独立副本可选择是否更新，链接跟随目标内容。详见[Skill 生命周期](docs/skill-lifecycle.md#更新)。
 
 ---
 

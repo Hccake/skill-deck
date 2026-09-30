@@ -1,6 +1,6 @@
 # Agent 模型
 
-AI Agent 是能够根据任务目标和当前上下文决定后续步骤、调用工具并执行操作的 AI 智能体。它独立于 Skill Deck 安装和运行；Skill Deck 只记录各类 Agent 的 Skill 读取位置和 Agent 检测位置，再根据当前 Environment 和 Skill 位置解析实际路径与状态。随应用提供的信息和用户添加的信息进入同一个注册表，并使用同一套读取、检测和关联规则。
+AI Agent 独立于 Skill Deck 安装和运行。Skill Deck 保存其 Skill 读取位置和检测位置，再按当前 Environment 和 Scope 解析路径与状态。内置 Agent 和自定义 Agent 使用同一个注册表及同一套读取、检测和关联规则。
 
 ```mermaid
 flowchart LR
@@ -16,7 +16,7 @@ flowchart LR
     Resolve --> Selection["目标选择与最近选择"]
 ```
 
-Skill 读取位置说明 Agent 在全局或具体 Project 中查找 Skill 时会扫描哪些目录，Agent 检测位置说明 Skill Deck 可以通过哪些文件或目录推测该 Agent 是否安装。系统分别计算检测结果、目录检查结果和关联关系：检测结果说明当前 Environment 是否命中检测条件；目录检查结果说明指定位置是否存在有效 Skill；关联 Agent 则是按照读取规则能够读取某个 Skill 的外部 Agent。界面从关联 Agent 中选出已经检测到的 Agent，用于卡片、详情和筛选。
+Skill 读取位置说明 Agent 在全局或项目中扫描哪些目录，Agent 检测位置用于推测它是否安装。检测结果、目录状态和关联关系分别计算；界面根据这些结果组织卡片、详情、筛选和安装选择。
 
 ## Agent 注册表
 
@@ -38,14 +38,16 @@ Skill 读取位置说明 Agent 在全局或具体 Project 中查找 Skill 时会
 Skill Deck 为每个 Agent 保存以下跨 Environment 共享的稳定内容：
 
 - `id` 与 `displayName`；
-- Agent 在全局和具体 Project 中分别使用的 Skill 读取位置；
+- Agent 在全局和具体项目中分别使用的 Skill 读取位置；
 - 每种读取场景是否扫描通用 Skill 目录、Agent 专用 Skill 目录或两者；
 - 一个或多个用于判断 Agent 是否安装的检测位置；
 - 随应用提供的别名、旧版路径和适配信息。
 
-通用 Skill 目录包括全局的 `~/.agents/skills` 和项目根目录下的 `.agents/skills`。这些位置在 Agent Skills 生态中被广泛用作 Skill 的存放位置，但不属于 Agent Skills 格式规范。Skill Deck 根据 Agent 在全局和 Project 中的扫描规则，判断它是否会从这些位置读取 Skill，并据此计算 Agent 与 Skill 的关联关系。Skill Deck 与第三方 `skills` CLI 共用这些位置时的数据兼容规则，见[skills CLI 参考与兼容](./skills-cli-reference.md)。Agent 专用 Skill 目录由具体 Agent 产品规定。
+通用 Skill 目录包括全局的 `~/.agents/skills` 和项目根目录下的 `.agents/skills`。Agent 专用 Skill 目录由具体 Agent 产品规定。Skill Deck 按 Agent 在两类目录中的读取规则判断关联关系。
 
-Agent 在全局或 Project 中使用的扫描方式由以下稳定值表示：
+通用目录约定与 Agent Skills 格式规范的区别，以及与第三方 CLI 共用目录时的兼容规则，见[skills CLI 参考与兼容](./skills-cli-reference.md#通用-skill-目录)。
+
+Agent 在全局或项目中使用的扫描方式由以下稳定值表示：
 
 | 值 | 含义 |
 |---|---|
@@ -53,9 +55,9 @@ Agent 在全局或 Project 中使用的扫描方式由以下稳定值表示：
 | `Private` | 只扫描 Agent 专用 Skill 目录 |
 | `Both` | 同时扫描两类目录 |
 
-`Standard` 表示 Agent 在对应的全局或 Project 中扫描 `.agents/skills` 目录，不表示其中的 Skill 适用于所有 Agent 或任务。
+`Standard` 表示 Agent 在对应的全局或项目中扫描 `.agents/skills` 目录，不表示其中的 Skill 适用于所有 Agent 或任务。
 
-Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` 表示该 Agent 在其中一种场景下同时扫描通用 Skill 目录和 Agent 专用 Skill 目录。界面使用相应的中文说明，并分开展示检测结果和目录检查结果。
+Agent 在全局和项目中分别声明支持情况和扫描方式，`Both` 表示该 Agent 在其中一种场景下同时扫描通用 Skill 目录和 Agent 专用 Skill 目录。界面使用相应的中文说明，并分开展示检测结果和目录检查结果。
 
 注册表中的 Skill 读取位置和 Agent 检测位置在所有 Environment 间共享。实际路径、检测结果和目录状态在当前 Environment 中解析；切换 Environment 后，同一份声明会得到新的运行时结果。符号链接或复制属于每次 Skill 安装和维护操作，见[Skill 生命周期](./skill-lifecycle.md)。
 
@@ -63,8 +65,8 @@ Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` �
 
 用户添加的 Agent 信息支持以下路径声明：
 
-- Agent 在全局读取时使用的 Skill 读取位置，可以相对于当前 Environment 的 Home 或 ConfigHome，也可以使用绝对路径；
-- Agent 在 Project 内读取时使用的 Skill 读取位置，以项目根目录为基准并使用相对路径；
+- Agent 在全局读取时使用的 Skill 读取位置，可以相对于当前 Environment 的用户主目录（Home）或配置目录（ConfigHome），也可以使用绝对路径；
+- Agent 在项目内读取时使用的 Skill 读取位置，以项目根目录为基准并使用相对路径；
 - 检测路径可以使用 Home、ConfigHome、项目根目录或绝对路径；
 - 项目相对路径只有结合当前已添加项目的记录才能解析为绝对路径，代码通过 `RegisteredProject` 取得这条记录。
 
@@ -90,9 +92,11 @@ Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` �
 
 ### 目录检查
 
-目录检查分别读取当前全局或项目位置中的通用 Skill 目录和 Agent 专用 Skill 目录。目标可读且包含有效 `SKILL.md` 时，该位置确认存在当前 Skill。符号链接、junction 和普通目录使用同一套有效性判断；失效链接、指向文件的目录链接、不可读取目标和缺少有效 `SKILL.md` 的目录返回无效结果。
+目录检查分别读取当前全局或项目位置中的通用 Skill 目录和 Agent 专用 Skill 目录。目标可读且包含有效 `SKILL.md` 时，该位置确认存在当前 Skill。符号链接、Windows 目录联接（junction）和普通目录使用同一套有效性判断；失效链接、指向文件的目录链接、不可读取目标和缺少有效 `SKILL.md` 的目录返回无效结果。
 
 目录检查只说明一个具体位置的状态。界面将读取方式、目录状态、Agent 可用性和维护异常分开展示。
+
+Eve 的目录型内容可以通过明确的项目来源记录补充读取身份，规则见下文[Eve 专用安装目标](#eve-专用安装目标)。通用目录缺失不影响其他有效安装位置的读取。
 
 ### 关联 Agent
 
@@ -103,6 +107,8 @@ Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` �
 
 关联关系由 Agent 的读取规则和当前目录检查结果决定，与检测状态无关。专用安装目标同样需要检查实际目标位置，并在关联关系中保留所属 Agent ID。
 
+Skills 页的关联以实际直接安装版本为准。同名库版本与直接版本并存时，读取库版本的 Agent 不计入直接版本；通过链接读取同一直接内容的 Agent 合并到该内容位置。
+
 ### 界面展示与筛选
 
 读取通用 Skill 目录的 Agent 数量较多。为了让卡片和详情保持紧凑，界面只展示关联 Agent 中当前已检测到的 Agent；未展示的 Agent 仍然属于关联 Agent。Agent 筛选也使用这组已经检测到的关联 Agent 匹配 Skill。
@@ -111,13 +117,15 @@ Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` �
 
 ## Agent 选择与安装位置分组
 
-安装和管理 Agent 使用同一份选择快照。每个标准 Agent 都明确声明自己读取通用 Skill 目录、Agent 专用 Skill 目录或两者都读取。界面按读取方式组织信息：
+安装和管理 Agent 使用同一份选择快照。普通安装选项按 Agent 对通用目录和专用目录的读取方式分组，Eve 专用目标见下文：
 
 - 读取通用 Skill 目录的 Agent 显示在第一个自动可用信息区；同时读取两类目录的 Agent 也属于这一组；
 - 只读取专用 Skill 目录的 Agent 对应“选择后可使用”中的安装选项；
 - 同时读取两类目录的 Agent 只有在专用 Skill 目录还能形成独立安装位置时，才会在自动可用信息区下提供“同时写入 Agent 专用 Skill 目录（可选）”设置。
 
-每个安装选项对应一个可以独立选择和写入的 Agent 专用 Skill 目录。多个 Agent 的专用目录指向同一文件系统位置时，后端将它们合并为一个安装选项。界面只显示一个 Checkbox，但保留组内所有 Agent ID；预览和执行阶段也只写入一次。
+每个安装选项对应一个可以独立选择和写入的 Agent 专用 Skill 目录。多个 Agent 的专用目录指向同一文件系统位置时，后端将它们合并为一个安装选项。界面只显示一个复选框，但保留组内所有 Agent ID；预览和执行阶段也只写入一次。
+
+安装、复制、管理 Agent、移除和库应用复用相同的目录分组。Agent ID 保留目录的读取者和用户可见归属，目录中的版本由[统一版本选举规则](./skill-lifecycle.md#库应用与版本选举)确定。
 
 选择界面统一处理选项展示、当前勾选、展开状态和快照过期后的重新确认。各业务分别提供打开界面时的选中项：安装使用入口意图、检测结果和最近选择；管理 Agent 使用当前直接安装关系；复制使用源 Skill 的直接安装关系；库应用使用当前 Scope 已保存的 Agent 关联。只有普通安装会读取和更新最近选择。
 
@@ -125,9 +133,9 @@ Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` �
 
 Agent 专用 Skill 目录与当前通用 Skill 目录解析到同一文件系统身份时，后端将该 Agent 视为可直接使用，不再生成单独安装选项或专用目录写入选项。该规则依据实际文件系统身份生效，不依赖保存信息中的路径写法。
 
-管理 Agent 时，应用还会检查每个安装位置中已有的链接、副本、失效链接和无法识别的内容。这些现有状态不会影响选项属于“选择后可使用”还是“同时写入 Agent 自己的 Skill 目录（可选）”。无法识别的现有安装保持只读，避免覆盖不属于当前 Skill 的内容。
+管理 Agent 时，应用分别显示已有链接、副本、失效链接和目录冲突。这些状态不改变按读取方式确定的选项分组。既有安装项的识别与保护规则见[现有目录与归属](./skill-lifecycle.md#现有目录与归属)。
 
-安装请求可以携带注册表中尚不存在的 Agent ID。应用保留原始 ID，并在选择内容之前说明本次无法处理这些 Agent。未知 Agent 不显示 Checkbox，也不参与检测分组、安装位置合并和安装方式计算；用户无需在当前流程中手动移除它们，它们不会阻止当前 Skill 的安装，其他有效 Agent 安装项也可以继续执行。
+安装请求可以携带注册表中尚不存在的 Agent ID。应用保留原始 ID，并在选择内容之前说明本次无法处理这些 Agent。未知 Agent 不显示复选框，也不参与检测分组、安装位置合并和安装方式计算；用户无需在当前流程中手动移除它们，它们不会阻止当前 Skill 的安装，其他有效 Agent 安装项也可以继续执行。
 
 复制与安装使用同一套 Agent 信息、安装选项和选择请求。复制界面按照源 Skill 当前的直接安装关系预先选择 Agent，再将用户确认的关联映射到同一目标 Environment 中的全部目标项目。目标项目已有的其他 Agent 关联继续保留。跨 Environment 复制时，选择界面不展示来自源 Environment 的 Agent 检测状态和目录；后端仍根据每个目标项目的实际目录生成写入计划。
 
@@ -144,9 +152,9 @@ Agent 专用 Skill 目录与当前通用 Skill 目录解析到同一文件系统
 
 读取通用 Skill 目录的 Agent 自动可用，不需要用户勾选，也不会因为自动可用而勾选其可选的专用目录。用户在 Agent 选择页确认并进入安装确认步骤时，应用把当前 `skills` CLI 能够识别的内置 Agent 写入当前 Environment 的全局 `lastSelectedAgents`。该字段记录最近确认的安装选择，不表示安装已经成功。全局安装和项目安装共用这份最近选择；用户添加的 Agent、Eve 专用目标、额外写入 Agent 自己目录的可选项和安装方式不写入该字段。
 
-应用会忽略历史中已经无效或无法识别的 Agent ID，但不会为了清理历史而单独改写 lock。读取历史失败时，向导仍允许用户选择目标；保存历史失败时，本次安装仍可继续。Agent 注册表或目录状态变化导致选择 revision 过期时，用户需要根据最新选项重新确认。
+应用会忽略历史中已经无效或无法识别的 Agent ID，但不会为了清理历史而单独改写 lock。读取历史失败时，向导仍允许用户选择目标；保存历史失败时，本次安装仍可继续。Agent 注册表或目录状态变化导致选择快照过期时，用户需要根据最新选项重新确认。
 
-旧版 Skill Deck 写入的 `defaultTargetAgents` 不再参与运行时选择或 Agent 删除。应用重写全局 lock 时将其作为未拥有字段原样保留；旧全局 lock 转换为项目 lock 时，该字段仍按全局根字段剥离。具体兼容规则见[skills CLI 参考与兼容](./skills-cli-reference.md)。
+旧版 `defaultTargetAgents` 不参与安装初始选择或 Agent 删除。该字段的保留和迁移规则见[skills CLI 参考与兼容](./skills-cli-reference.md#全局-lock)。
 
 ## Eve 专用安装目标
 
@@ -155,9 +163,37 @@ Eve 使用专用目标模型。在识别为 Eve 的项目中，用户可以选�
 - `eve:root`：项目根 Agent；
 - `eve:<subagent>`：已经发现的具名子 Agent。
 
-Eve 目标沿用 Eve 的 Agent ID，并将根 Agent 或子 Agent 作为本次操作的具体位置。安装内容从通用 Skill 目录中该 Skill 的内容快照派生，Project lock 保存目标位置，后续读取和更新依据该记录重新定位目标。
+Eve 目标沿用 Eve 的 Agent ID，并将根 Agent 或子 Agent 作为本次操作的具体位置。安装内容从已准备的 Skill 内容派生，项目 lock 保存目标位置。后续读取依据明确记录匹配实际位置，可以在不修改文件的情况下识别缺少 `name` 的 Eve 内容；无记录或匹配有歧义时保留诊断。
+
+Eve 维护支持目录型安装。明确记录的 Skill 目录缺失时的恢复条件和入口由更新流程负责，见[Skill 生命周期](./skill-lifecycle.md#更新)；恢复不重建 Agent 定义。单文件安装的限制和更新范围同样见该文档。
 
 全局安装使用普通 Agent 目标。兼容字段的编码规则见[skills CLI 参考与兼容](./skills-cli-reference.md)。
+
+## Skill 库的 Agent 选择
+
+读取通用 Skill 目录的 Agent 可以通过该目录使用库成员。库管理界面只为同时满足以下条件的 Agent 提供专用目录选择：
+
+- 只读取 Agent 专用 Skill 目录；
+- 使用标准 Skill 内容，无需转换；
+- 支持通过链接读取内容。
+
+同一 Scope 应用的全部库共用这组选项。多个 Agent 解析到同一物理目录时，合并为一个选项并保留全部 Agent 身份。需要复制或转换内容的 Agent 通过直接安装流程取得 Skill。
+
+管理直接安装 Skill 的 Agent 时，复选框只表示直接安装版本是否关联该目录。目录当前指向任一已知库版本时，复选框不选中，界面单独说明它正在使用库版本；较低优先级库的链接也按库版本识别。关联变化后的目录结果见[库应用与版本选举](./skill-lifecycle.md#库应用与版本选举)。
+
+库应用中新增、保留和取消 Agent 选择分别处理：
+
+| 操作 | 规则 |
+|---|---|
+| 新增选择 | Agent 必须满足当前读取方式和目录能力；未知 ID 不能作为新关联加入 |
+| 保留已有选择 | 当前不再可选的 Agent 继续保留并显示原因；调整其他库设置时仍可保存这些已有 ID |
+| 取消选择 | 用户明确取消后移除应用记录中的关联，并按当前能够定位的目录清理已知库链接 |
+
+取消关联时，系统保留其他 Agent 仍需使用的版本，以及用户自行替换的内容。当前目录或已知旧路径都无法解析时，旧文件可能残留；系统不维护位置历史，也不会因此永久阻止取消关联或删除库。未检测到 Agent 不会自动取消已保存的选择。
+
+自定义 Agent 被库应用选择后，仍可修改显示名称和检测设置。用户先从当前可见的引用位置取消选择，才能修改 Agent ID、全局或项目读取位置，或者删除该 Agent。
+
+引用检查只覆盖当前可见的 Environment。暂时不可访问的 Environment 中的引用和定义变化后无法定位的旧文件，不属于本次操作能够确认的清理范围。
 
 ## 删除用户添加的 Agent 信息
 
@@ -165,15 +201,4 @@ Eve 目标沿用 Eve 的 Agent ID，并将根 Agent 或子 Agent 作为本次操
 
 删除操作只移除 Skill Deck 保存的 Skill 读取位置和 Agent 检测位置，目录中的 Skill 文件和 lock 中的历史字段继续保留。
 
-## 领域规则
-
-1. 随应用提供和用户添加的 Agent 信息使用同一注册表与 Skill 工作流，信息来源决定维护权限。
-2. Agent 在全局和 Project 中分别声明 Skill 读取支持和扫描方式；`Both` 表示该 Agent 在其中一种场景下同时扫描两类 Skill 目录。
-3. Agent 的 Skill 读取位置和 Agent 检测位置在所有 Environment 中共享；解析得到的路径和运行状态只在当前会话中使用。
-4. 检测结果影响提示、排序、安装初始选择和界面展示，不参与决定 Agent 与 Skill 的关联关系；用户明确选择的目标代表本次操作意图，最近选择只用于后续安装的初始状态。
-5. 目录检查来自当前 Environment 对实际目录的读取结果。
-6. 关联 Agent 按读取规则能够读取目标 Skill，与检测状态无关。
-7. 筛选候选可以没有关联 Skill；空筛选结果只说明当前条件下没有 Skill。
-8. 指向同一实际目录的目标按文件系统身份分组，同时保留全部 Agent ID。
-9. 目标 Agent 表示本次操作目标；筛选候选表示可以用于筛选的 Agent；关联 Agent 表示当前读取关系；界面展示集合表示页面实际列出的 Agent；Agent 专用安装项表示写入 Agent 专用 Skill 目录的链接或副本。
-10. 安装请求中的未知 Agent 保留原 ID 并显示为不可用目标，只有注册表中的有效目标可以进入安装计划。
+删除流程会列出选择该 Agent 的 Skill 库应用。用户从这些位置取消选择后，可以继续删除 Agent 信息。

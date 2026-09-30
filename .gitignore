@@ -33,6 +33,8 @@ vercel-skills
 /.scratch/
 /skills-lock.json
 .gitnexus
+/.codegraph/
+/CLAUDE.md
 .pnpm-store
 .superpowers
 /.tmp-skill-deck-*/

@@ -38,8 +38,9 @@
 ## ✨ Core capabilities
 
 - **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, Well-known URLs, raw `SKILL.md` files, and ZIP/tar archives
-- **Browse and maintain** — Read installed Skill content and check or apply updates; keep Skills whose sources are unavailable, or remove them before installing from another source; private GitHub sources can reuse local Git credentials for update checks
+- **Browse and maintain** — Read and update directly installed Skills in their actual locations, including installations found only in Agent directories. Same-name Library versions remain separately maintained. Skills without source records remain local; private GitHub sources can reuse local Git credentials for update checks
 - **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects; use built-in agent definitions or add your own
+- **Skill Libraries** — Build reusable Skill collections, apply an ordered set to Global or Project locations, keep member changes synchronized, and reapply a location when managed links need repair
 - **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions
 - **Window preferences**: Restore the main window's size, position, and maximized state when reopening the app
 
@@ -117,12 +118,16 @@ Choose an online result or enter a Skill source. For example:
 You can also paste a [`skills` CLI](https://github.com/vercel-labs/skills) `skills add` command. Skill Deck parses its source, Skill names, and target agents, then lets you confirm and adjust them before installation:
 
 ```bash
-npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
+npx skills add vercel-labs/agent-skills --skill web-design-guidelines -a claude-code
 ```
 
 ### 3. Confirm and install
 
 Select the Skills, target agents, and installation mode, review the change preview, and run the installation. Cross-host download redirects require explicit confirmation. Direct downloads are one-time, new-install sources and do not provide updates; remove the installed Skill before installing it again. After installation, the selected agents can read the Skill; you can continue reading and managing agents from the Skills workspace.
+
+Updating Skills from a saved source requires real source directories and available temporary storage capacity. Directory-link paths and oversized sources are rejected with guidance; existing installed content is preserved. See [update checking](docs/update-checking.md).
+
+Updates preserve existing Agent associations and show the affected locations before confirmation. Common content is always included; independent copies can be selected individually, and links follow their target content. See [Skill lifecycle](docs/skill-lifecycle.md#更新).
 
 ---
 
@@ -151,7 +156,7 @@ Use `pnpm tauri build` for a production build. Build output is located at `src-t
 
 ## 📄 License
 
-[Apache License](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ---
 
