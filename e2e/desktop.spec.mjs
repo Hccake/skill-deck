@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { browser, $ } from '@wdio/globals';
 
@@ -166,7 +166,8 @@ describe('Skill Deck desktop', () => {
     const home = process.env.SKILL_DECK_E2E_HOME;
     const fixture = path.join(home, '.agents', 'skills', 'review');
     await mkdir(fixture, { recursive: true });
-    await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n# Workspace review\n\n'
+    await writeFile(path.join(fixture, 'SKILL.md'), '---\nname: review\ndescription: Desktop workspace validation.\n---\n'
+      + await readFile(new URL('./fixtures/detail-document.md', import.meta.url), 'utf8') + '\n\n'
       + Array.from({ length: 36 }, (_, index) => `## Section ${index + 1}\n\nVerify navigation, resizing, and keyboard focus while reading the current document. Keep the selected Skill and its maintenance commands available.\n`).join('\n'));
     for (const [name, description] of [
       ['code-review', 'Review code changes for correctness, maintainability, and security.'],
@@ -566,6 +567,62 @@ describe('Skill Deck desktop', () => {
           await browser.waitUntil(async () => Math.abs(await height() - collapsedHeight) < 1);
         }
       }
+      }
+    } finally {
+      await browser.execute(saved => localStorage.setItem('skill-deck-layout', saved), saved);
+      await browser.refresh();
+    }
+  });
+
+  it('keeps technical content within each detail pane and exposes horizontal scrolling', async () => {
+    await $('header nav a[href="/"]').waitForDisplayed();
+    const saved = await browser.execute(() => localStorage.getItem('skill-deck-layout'));
+    try {
+      await viewport(1200, 640);
+      for (const [kind, route, panelId] of [['skills', '/', 'skill-detail-panel'], ['library', '/libraries', 'library-skill-detail-panel']]) {
+        for (const width of [360, 640]) {
+          await browser.execute(({ saved, kind, width }) => {
+            const layout = JSON.parse(saved);
+            Object.assign(layout.state, { skillsSidebarWidth: 208, librarySidebarWidth: 208 });
+            layout.state[kind === 'skills' ? 'skillsListWidth' : 'libraryListWidth'] = 991 - width;
+            localStorage.setItem('skill-deck-layout', JSON.stringify(layout));
+          }, { saved, kind, width });
+          await browser.refresh();
+          await $(`header nav a[href="${route}"]`).waitForDisplayed();
+          await $(`header nav a[href="${route}"]`).click();
+          await $(`#${kind}-context-navigation`).waitForDisplayed();
+          if (kind === 'skills') await $('#skills-context-navigation aside > div:first-child button').click();
+          else await $('#library-context-navigation').$('button*=Workspace review').click();
+          await $('[data-skill-open]').waitForDisplayed();
+          await browser.execute(key => [...document.querySelectorAll('[data-skill-open]')]
+            .find(el => el.closest('[data-skill-item]').dataset.skillItem === key).click(), kind === 'skills' ? 'global:review' : 'review');
+          await $(`#${panelId} .skill-code-block`).waitForDisplayed();
+          await settle();
+          const result = await browser.execute(panelId => {
+            const root = document.getElementById(panelId), prose = root.querySelector('.skill-prose');
+            const codes = [...prose.querySelectorAll('pre')], tables = [...prose.querySelectorAll('.skill-table-scroll')];
+            const copy = prose.querySelector('.skill-code-copy'), pre = codes[0];
+            pre.scrollLeft = 100;
+            tables[1].scrollLeft = 100;
+            return { width: root.getBoundingClientRect().width, overflow: prose.scrollWidth > prose.clientWidth,
+              codeScroll: pre.scrollLeft, tableScroll: tables[1].scrollLeft, codeTab: pre.tabIndex, tableTab: tables[1].tabIndex,
+              tableOverflow: tables[1].scrollWidth > tables[1].clientWidth + 1,
+              shortTableTab: tables[0].tabIndex, tableCount: tables.length,
+              copyCount: prose.querySelectorAll('.skill-code-copy').length,
+              copySeparated: copy.getBoundingClientRect().left >= pre.getBoundingClientRect().right,
+              codeSize: getComputedStyle(pre.firstElementChild).fontSize,
+              quoteStyle: getComputedStyle(prose.querySelector('blockquote')).fontStyle };
+          }, panelId);
+          assert.ok(Math.abs(result.width - width) < 2 && !result.overflow, JSON.stringify(result));
+          assert.ok(result.codeScroll > 0 && result.codeTab === 0, JSON.stringify(result));
+          assert.equal(result.tableTab, result.tableOverflow ? 0 : -1, JSON.stringify(result));
+          assert.equal(result.tableScroll > 0, result.tableOverflow, JSON.stringify(result));
+          if (width === 360) assert.equal(result.tableOverflow, true, JSON.stringify(result));
+          assert.ok(result.shortTableTab === -1 && result.tableCount === 2 && result.copyCount === 3 && result.copySeparated, JSON.stringify(result));
+          assert.equal(result.codeSize, '13px');
+          assert.equal(result.quoteStyle, 'normal');
+          await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `detail-content-${kind}-${width}.png`));
+        }
       }
     } finally {
       await browser.execute(saved => localStorage.setItem('skill-deck-layout', saved), saved);

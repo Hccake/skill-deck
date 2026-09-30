@@ -90,6 +90,124 @@
   margin-top: 0;
 }
 
+.skill-detail-layout .skill-prose {
+  min-width: 0;
+  line-height: 24px;
+  overflow-wrap: anywhere;
+}
+
+.skill-detail-layout .skill-prose p {
+  margin-bottom: 12px;
+}
+
+.skill-detail-layout .skill-prose ul,
+.skill-detail-layout .skill-prose ol {
+  margin-block: 0 12px;
+  padding-left: 20px;
+}
+
+.skill-detail-layout .skill-prose li {
+  margin-block: 0 4px;
+}
+
+.skill-detail-layout .skill-prose li > ul,
+.skill-detail-layout .skill-prose li > ol {
+  margin-block: 4px;
+}
+
+.skill-detail-layout .skill-prose li > :last-child,
+.skill-detail-layout .skill-prose blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.skill-detail-layout .skill-prose code:not(pre code) {
+  border: 0;
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: var(--foreground);
+  background: var(--muted);
+  font-size: 13px;
+}
+
+.skill-detail-layout .skill-prose blockquote {
+  margin-block: 12px;
+  padding-left: 12px;
+  color: inherit;
+  font-style: normal;
+}
+
+.skill-code-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: start;
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--muted);
+}
+
+.skill-detail-layout .skill-code-block pre {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 10px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  background: transparent;
+}
+
+.skill-detail-layout .skill-code-block pre code {
+  display: block;
+  width: max-content;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.skill-code-copy {
+  margin: 4px;
+}
+
+.skill-table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.skill-code-block pre:focus-visible,
+.skill-table-scroll:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.skill-detail-layout .skill-table-scroll table {
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.skill-detail-layout .skill-table-scroll th,
+.skill-detail-layout .skill-table-scroll td {
+  box-sizing: content-box;
+  min-width: 10ch;
+  max-width: 32ch;
+  padding: 6px 12px;
+  vertical-align: top;
+  overflow-wrap: normal;
+}
+
+.skill-detail-layout .skill-table-scroll th {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
 @container skill-detail (min-width: 560px) {
   .skill-detail-content,
   .skill-detail-header {

@@ -1,7 +1,5 @@
 import { memo, useCallback, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Copy, Link2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,6 +8,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { cn } from '@/lib/utils';
+import { DetailMarkdown } from './DetailMarkdown';
 import './SkillDetail.css';
 
 export function DetailHeader({ name, contentState, children }: {
@@ -183,10 +182,6 @@ export const CopyablePath = memo(function CopyablePath({ value }: { value: strin
   );
 });
 
-const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
-});
-
 /**
  * 详情正文的三种状态：读取中、读取失败或没有内容、以及渲染 `SKILL.md`。
  *
@@ -219,7 +214,7 @@ export const DetailBody = memo(function DetailBody({
           </div>
         ) : null}
         <div className="skill-prose skill-prose-with-lists" aria-busy={loading}>
-          <MarkdownContent content={content} />
+          <DetailMarkdown content={content} />
         </div>
       </div>
     );
