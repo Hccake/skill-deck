@@ -121,6 +121,44 @@ describe('Skill Deck desktop', () => {
     await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'main.png'));
   });
 
+  it('expands Settings navigation at normal window widths and preserves compact navigation', async () => {
+    await $('header nav a[href="/settings"]').click();
+    await $('button=English').waitForDisplayed();
+    await $('button=English').click();
+    const records = [];
+    for (const width of [800, 720, 766, 768, 1024, 1280, 800]) {
+      await viewport(width, 600);
+      const state = await browser.execute(() => {
+        const sidebar = document.querySelector('aside');
+        const main = document.querySelector('main');
+        const entries = [...sidebar.querySelectorAll('button[aria-label]')];
+        return {
+          width: innerWidth,
+          sidebar: sidebar.getBoundingClientRect().width,
+          visibleLabels: entries.filter(button => button.lastElementChild.getBoundingClientRect().width > 0).length,
+          entries: entries.length,
+          overflow: main.scrollWidth > main.clientWidth || document.documentElement.scrollWidth > innerWidth,
+          buttonsInside: entries.every(button => {
+            const rect = button.getBoundingClientRect();
+            return rect.left >= sidebar.getBoundingClientRect().left && rect.right <= sidebar.getBoundingClientRect().right;
+          }),
+        };
+      });
+      records.push(state);
+      await writeFile(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'settings-navigation.json'), JSON.stringify(records, null, 2));
+      if ([720, 800, 1280].includes(width)) {
+        await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `settings-navigation-${width}.png`));
+      }
+      assert.equal(state.entries, 6);
+      assert.equal(state.visibleLabels, width >= 768 ? 6 : 0, JSON.stringify(state));
+      assert.ok(Math.abs(state.sidebar - (width >= 1024 ? 224 : width >= 768 ? 160 : 64)) < 1, JSON.stringify(state));
+      assert.equal(state.overflow, false, JSON.stringify(state));
+      assert.equal(state.buttonsInside, true, JSON.stringify(state));
+    }
+    await $('header nav a[href="/"]').click();
+    await $('#skills-context-navigation').waitForDisplayed();
+  });
+
   it('opens settings and renders light and dark themes at supported sizes', async () => {
     await $('header nav a[href="/settings"]').click();
     await $('button=English').waitForDisplayed();

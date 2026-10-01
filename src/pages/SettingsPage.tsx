@@ -115,15 +115,15 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-muted/10">
-      <aside className="flex w-[64px] shrink-0 border-r border-border/60 bg-background/90 backdrop-blur lg:w-56">
-        <div className="flex h-full w-full flex-col px-2.5 lg:px-3 py-3">
-          <div className="hidden items-center px-2 pb-3 lg:flex">
+      <aside className="flex w-16 shrink-0 border-r border-border/60 bg-background/90 backdrop-blur md:w-40 lg:w-56">
+        <nav aria-label={t('settings.nav.sectionLabel')} className="flex h-full w-full flex-col px-2.5 py-3 md:px-3">
+          <div className="hidden items-center px-2 pb-3 md:flex">
             <h1 className="text-lg font-semibold tracking-normal text-foreground">
               {t('settings.title')}
             </h1>
           </div>
 
-          <nav className="space-y-0.5">
+          <div className="space-y-0.5">
             {SETTINGS_SECTIONS.map((section) => {
               const Icon = section.icon;
               const selected = section.id === activeSection;
@@ -134,9 +134,10 @@ export function SettingsPage() {
                     <button
                       type="button"
                       aria-label={t(section.titleKey)}
+                      aria-current={selected ? 'page' : undefined}
                       onClick={() => setSection(section.id)}
                       className={cn(
-                        'group relative flex h-10 w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 lg:justify-start lg:px-3',
+                        'group relative flex h-10 w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 md:justify-start md:px-3',
                         selected
                           ? 'bg-muted/50 font-medium text-foreground shadow-sm'
                           : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
@@ -152,27 +153,28 @@ export function SettingsPage() {
                           selected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                         )}
                       />
-                      <span className="hidden truncate lg:inline">
+                      <span className="hidden truncate md:inline">
                         {t(section.titleKey)}
                       </span>
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8} showArrow={false} className="lg:hidden">
+                  <TooltipContent side="right" sideOffset={8} showArrow={false} className="md:hidden">
                     {t(section.titleKey)}
                   </TooltipContent>
                 </Tooltip>
               );
             })}
-          </nav>
+          </div>
 
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
                 aria-label={t('settings.nav.about')}
+                aria-current={activeSection === 'about' ? 'page' : undefined}
                 onClick={() => setSection('about')}
                 className={cn(
-                  'group relative mt-auto flex h-10 w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 lg:justify-start lg:px-3',
+                  'group relative mt-auto flex h-10 w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 md:justify-start md:px-3',
                   activeSection === 'about'
                     ? 'bg-muted/50 font-medium text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
@@ -188,17 +190,17 @@ export function SettingsPage() {
                     activeSection === 'about' ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                   )}
                 />
-                <span className="hidden truncate lg:inline">{t('settings.nav.about')}</span>
+                <span className="hidden truncate md:inline">{t('settings.nav.about')}</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8} showArrow={false} className="lg:hidden">
+            <TooltipContent side="right" sideOffset={8} showArrow={false} className="md:hidden">
               {t('settings.nav.about')}
             </TooltipContent>
           </Tooltip>
-        </div>
+        </nav>
       </aside>
 
-      <main className="flex-1 overflow-auto">
+      <main className="min-w-0 flex-1 overflow-auto">
         <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-10">
 
 

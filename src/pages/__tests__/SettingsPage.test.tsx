@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render as testingRender, screen } from '@testing-library/react';
+import { fireEvent, render as testingRender, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPage } from '../SettingsPage';
@@ -80,7 +80,7 @@ describe('SettingsPage', () => {
     })).toBeNull();
   });
 
-  it('keeps Settings navigation labelled without redundant title text', async () => {
+  it('labels Settings navigation and updates its current section', async () => {
     render(
       <MemoryRouter initialEntries={['/settings']}>
         <SettingsPage />
@@ -93,6 +93,12 @@ describe('SettingsPage', () => {
 
     expect(general.getAttribute('aria-label')).toBe('settings.nav.general');
     expect(general.getAttribute('title')).toBeNull();
+    const navigation = screen.getByRole('navigation', { name: 'settings.nav.sectionLabel' });
+    expect(within(navigation).getByRole('button', { name: 'settings.nav.general' }).getAttribute('aria-current')).toBe('page');
+    fireEvent.click(within(navigation).getByRole('button', { name: 'settings.nav.agents' }));
+    expect(await screen.findByText('agents-environment:Ubuntu;view:;id:')).toBeDefined();
+    expect(general.hasAttribute('aria-current')).toBe(false);
+    expect(within(navigation).getByRole('button', { name: 'settings.nav.agents' }).getAttribute('aria-current')).toBe('page');
   });
 
   it('opens Agent management as an independent settings subpage', async () => {
