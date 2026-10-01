@@ -104,7 +104,7 @@ Download the latest release from [GitHub Releases](https://github.com/hccake/ski
 
 ### 1. Choose an install entry point
 
-Choose a Skill from the Discover page to open the installation wizard in the current environment. The wizard defaults to Global Skills; you can select an added project to install there. You can also open the install entry directly from Global Skills or a project on the Skills page.
+Browse Skills on the Discover page with the mouse or arrow keys, press Enter to view details, then choose Install. The installation wizard uses the current environment and defaults to Global Skills; you can select an added project to install there. You can also open the install entry directly from Global Skills or a project on the Skills page.
 
 ### 2. Provide a Skill source
 

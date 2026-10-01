@@ -1,4 +1,7 @@
-import { useMemo, useCallback, useState, useEffect } from 'react';
+import { useMemo, useCallback, useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useGroupRef, type Layout } from 'react-resizable-panels';
+import { useLayoutStore } from '@/stores/layout';
+import { SKILLS_LIST_MIN_WIDTH, SKILL_DETAIL_MIN_WIDTH } from '@/lib/skills-layout';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
@@ -8,6 +11,7 @@ import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { DiscoverListPanel } from '@/components/skills/discover/DiscoverListPanel';
 import { DiscoverDetailPanel } from '@/components/skills/discover/DiscoverDetailPanel';
+import '@/components/skills/discover/Discover.css';
 import { Compass } from 'lucide-react';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
 import { getSkillInstallLocations } from '@/lib/discover-utils';
@@ -23,20 +27,53 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   requestId: 0,
 };
 
-const DISCOVER_PANEL_LAYOUT = {
-  list: {
-    defaultSize: '30%',
-    minSize: '20%',
-    maxSize: '50%',
-  },
-  detail: {
-    defaultSize: '70%',
-    minSize: '30%',
-  },
-} as const;
-
 export function DiscoverPage() {
   const { t } = useTranslation();
+  const shellRef = useRef<HTMLDivElement>(null);
+  const groupRef = useGroupRef();
+  const separatorRef = useRef<HTMLDivElement>(null);
+  const preferredWidth = useLayoutStore(state => state.discoverListWidth);
+  const saveWidth = useLayoutStore(state => state.setDiscoverListWidth);
+  const [availableWidth, setAvailableWidth] = useState(window.innerWidth - 6);
+  const pendingLayout = useRef(true);
+  const userResizing = useRef(false);
+  const listWidth = Math.max(SKILLS_LIST_MIN_WIDTH, Math.min(
+    preferredWidth ?? Math.min(320, availableWidth * 0.3), availableWidth - SKILL_DETAIL_MIN_WIDTH,
+  ));
+
+  useLayoutEffect(() => {
+    const root = shellRef.current;
+    if (!root) return;
+    const measure = () => {
+      const width = root.getBoundingClientRect().width;
+      if (width > 0) setAvailableWidth(width - (separatorRef.current?.getBoundingClientRect().width ?? 6));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+
+  const applyLayout = useCallback(() => {
+    const group = groupRef.current;
+    if (!pendingLayout.current || !group || availableWidth <= 0 || Object.keys(group.getLayout()).length !== 2) return;
+    pendingLayout.current = false;
+    userResizing.current = false;
+    const percentage = listWidth / availableWidth * 100;
+    const applied = group.setLayout({ 'discover-list-fixed': percentage, 'discover-detail-fixed': 100 - percentage });
+    pendingLayout.current = Math.abs(applied['discover-list-fixed'] - percentage) > 0.01;
+  }, [availableWidth, groupRef, listWidth]);
+
+  useLayoutEffect(() => {
+    pendingLayout.current = true;
+    applyLayout();
+  }, [applyLayout]);
+
+  const rememberLayout = (layout: Layout) => {
+    if (!userResizing.current || pendingLayout.current) return;
+    userResizing.current = false;
+    saveWidth(layout['discover-list-fixed'] / 100 * availableWidth);
+  };
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const { projects } = useProjectWorkspace(selectedContext.environment);
   const globalSkillContext = useMemo(
@@ -99,22 +136,49 @@ export function DiscoverPage() {
     }, selectedContext);
   }, [openAddWithPrefill, selectedContext]);
 
+  const closeDetail = () => {
+    const root = shellRef.current;
+    const entries = Array.from(root?.querySelectorAll<HTMLButtonElement>('button[data-skill-open]') ?? []);
+    const target = entries.find(entry => entry.dataset.skillItem === selectedSkill?.detailUrl)
+      ?? entries.find(entry => entry.tabIndex === 0)
+      ?? entries[0]
+      ?? root?.querySelector<HTMLInputElement>('input[data-skill-search]');
+    setSelectedSkill(null);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  };
+
   const installLocations = selectedSkill
     ? getSkillInstallLocations(installedSkillLocations, selectedSkill)
     : [];
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-background">
+    <div ref={shellRef} className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-background"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229 || !selectedSkill) return;
+        if (!(event.target instanceof Element) || !event.currentTarget.contains(event.target)
+          || event.target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeDetail();
+      }}
+    >
       <ResizablePanelGroup
         id="discover-page-layout-fixed"
+        groupRef={groupRef}
+        onLayoutChange={applyLayout}
+        onLayoutChanged={rememberLayout}
+        onPointerDownCapture={event => {
+          userResizing.current = event.defaultPrevented && document.activeElement === separatorRef.current;
+        }}
         orientation="horizontal"
         className="h-full"
       >
         <ResizablePanel
           id="discover-list-fixed"
-          defaultSize={DISCOVER_PANEL_LAYOUT.list.defaultSize}
-          minSize={DISCOVER_PANEL_LAYOUT.list.minSize}
-          maxSize={DISCOVER_PANEL_LAYOUT.list.maxSize}
+          defaultSize={listWidth}
+          minSize={SKILLS_LIST_MIN_WIDTH}
+          onResize={applyLayout}
           className="border-r min-w-0"
         >
           <div className="h-full w-full min-w-0 flex flex-col overflow-hidden">
@@ -128,19 +192,26 @@ export function DiscoverPage() {
           </div>
         </ResizablePanel>
 
-        <ResizableHandle className="relative w-1.5 bg-border/40 hover:bg-primary/50 transition-colors z-50 after:absolute after:inset-y-0 after:-left-2 after:-right-2 after:cursor-col-resize" />
+        <ResizableHandle
+          id="discover-detail-resize"
+          elementRef={separatorRef}
+          aria-label={t('skills.resizePanels')}
+          onKeyDownCapture={event => {
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) userResizing.current = true;
+          }}
+          className="relative w-1.5 bg-border/40 hover:bg-primary/50 transition-colors z-50 after:absolute after:inset-y-0 after:-left-2 after:-right-2 after:cursor-col-resize" />
 
         <ResizablePanel
           id="discover-detail-fixed"
-          defaultSize={DISCOVER_PANEL_LAYOUT.detail.defaultSize}
-          minSize={DISCOVER_PANEL_LAYOUT.detail.minSize}
+          minSize={SKILL_DETAIL_MIN_WIDTH}
           className="bg-surface relative min-w-0"
         >
           {selectedSkill ? (
             <DiscoverDetailPanel
+              key={selectedSkill.detailUrl}
               skill={selectedSkill}
               installLocations={installLocations}
-              onClose={() => setSelectedSkill(null)}
+              onClose={closeDetail}
               onInstall={handleInstall}
             />
           ) : (

@@ -1,13 +1,15 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { toast } from 'sonner';
+import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { useTranslation } from 'react-i18next';
 import {
   X,
   Star,
   ShieldCheck,
   ShieldAlert,
-  Github,
+  Link2,
   Terminal,
-  Activity,
   ChevronDown,
   ChevronRight,
   DownloadCloud,
@@ -16,7 +18,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DiscoverRichText } from './DiscoverRichText';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { getDiscoverSkillDetail } from '@/lib/discover/api';
 import { formatInstalls } from '@/lib/discover/format';
@@ -25,8 +28,6 @@ import type { DiscoverAuditRisk, DiscoverSecurityAudit, DiscoverSkillSummary } f
 import { delay } from '@/lib/discover-utils';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { projectPathBasename } from '@/lib/projects/presentation';
-
-const PROSE_WITH_LISTS_CLASS_NAME = 'skill-prose skill-prose-with-lists';
 
 interface DiscoverDetailPanelProps {
   skill: DiscoverSkillSummary;
@@ -48,7 +49,7 @@ function RiskBadge({ risk, t }: { risk?: DiscoverAuditRisk; t: (key: string) => 
     return (
       <Badge
         variant="secondary"
-        className="flex items-center gap-1.5 border-emerald-500/20 bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/18"
+        className="flex items-center gap-1.5 border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"
       >
         <ShieldCheck className="h-3 w-3" />
         {t(`skills.discover.riskBadge.${riskKey}`)}
@@ -68,14 +69,14 @@ function getAuditTone(status: DiscoverSecurityAudit['status']) {
   if (status === 'pass') {
     return {
       dotClassName: 'bg-emerald-500',
-      statusClassName: 'text-emerald-700',
+      statusClassName: 'text-emerald-700 dark:text-emerald-400',
     };
   }
 
   if (status === 'warn') {
     return {
       dotClassName: 'bg-amber-500',
-      statusClassName: 'text-amber-700',
+      statusClassName: 'text-amber-700 dark:text-amber-400',
     };
   }
 
@@ -98,7 +99,7 @@ function createFallbackDetail(skill: DiscoverSkillSummary): DiscoverSkillDetail 
     description: skill.summary,
     summaryHtml: undefined,
     highlights: [],
-    repoUrl: skill.source.startsWith('http') ? skill.source : `https://github.com/${skill.source}`,
+    repoUrl: undefined,
     installCommand: undefined,
     firstSeen: undefined,
     securityAudits: [],
@@ -117,6 +118,10 @@ function HeaderMetaItem({ icon, label, value }: { icon: ReactNode; label: string
   );
 }
 
+function SectionTitle({ children }: { children: ReactNode }) {
+  return <h3 className="mb-2 text-xs font-medium leading-[18px] text-muted-foreground">{children}</h3>;
+}
+
 export function DiscoverDetailPanel({
   skill,
   installLocations,
@@ -125,6 +130,8 @@ export function DiscoverDetailPanel({
 }: DiscoverDetailPanelProps) {
   const { t } = useTranslation();
   const writeBlocked = useBusinessWriteBlocked();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [detail, setDetail] = useState<DiscoverSkillDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -166,280 +173,176 @@ export function DiscoverDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [skill.detailUrl]);
+  }, [skill.detailUrl, retryCount]);
+
+  const handleLink = (event: MouseEvent<HTMLElement>) => {
+    if (event.defaultPrevented || (event.type === 'auxclick' && event.button !== 1)) return;
+    const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
+    if (!anchor || !event.currentTarget.contains(anchor)) return;
+    event.preventDefault();
+    const target = anchor.getAttribute('href');
+    if (!isOpenableUrl(target)) return;
+    void openUrl(target).catch(() => toast.error(t('skills.detail.linkOpenFailed')));
+  };
 
   const displayData = detail ?? createFallbackDetail(skill);
   const hasOverviewContent = Boolean(displayData.summaryHtml || displayData.description || displayData.highlights.length > 0);
 
+  const hasRisk = Boolean(displayData.auditRisk && displayData.auditRisk !== 'unknown');
+  const hasDecisionInfo = installLocations.length > 0 || displayData.securityAudits.length > 0 || hasRisk;
+  const hasExtraInfo = displayData.weeklyInstalls !== undefined || displayData.installedOn.length > 0 || Boolean(displayData.firstSeen);
+
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-surface">
-      <div className="shrink-0 border-b bg-surface px-4 py-4 @sm:px-6 @md:px-8 @lg:px-10 @xl:px-12">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0 flex-1 flex-col gap-2.5">
-            <div className="flex min-w-0 flex-wrap items-center gap-2 pb-1">
-              <h2 className="truncate text-xl font-heading font-semibold leading-tight text-foreground">{displayData.name}</h2>
-              <RiskBadge risk={displayData.auditRisk} t={t} />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
-            {displayData.repoUrl ? (
-              <a
-                href={displayData.repoUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline"
-              >
-                <Github className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{displayData.source}</span>
-              </a>
-            ) : (
-              <div className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
-                <Github className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{displayData.source}</span>
-              </div>
-            )}
-
-            {displayData.weeklyInstalls !== undefined && (
-              <>
-                <span className="h-1 w-1 rounded-full bg-border/80" />
-                <HeaderMetaItem
-                  icon={<Activity className="h-3.5 w-3.5" />}
-                  label={t('skills.discover.weeklyInstalls')}
-                  value={formatInstalls(displayData.weeklyInstalls)}
-                />
-              </>
-            )}
-
-            {displayData.stars !== undefined && (
-              <>
-                <span className="h-1 w-1 rounded-full bg-border/80" />
-                <HeaderMetaItem
-                  icon={<Star className="h-3.5 w-3.5 text-amber-500" />}
-                  label={t('skills.discover.starsLabel')}
-                  value={formatInstalls(displayData.stars)}
-                />
-              </>
-            )}
+    <div className="discover-detail @container relative flex h-full flex-col overflow-hidden bg-surface" onClick={handleLink} onAuxClick={handleLink}>
+      <div role="group" aria-label={t('skills.discover.currentSkill')} className="discover-detail-header shrink-0 border-b bg-surface">
+        <div className="discover-header-identity min-w-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <h2 ref={headingRef} tabIndex={0} className="min-w-0 flex-1 line-clamp-2 rounded-sm font-heading text-xl font-semibold leading-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {displayData.name}
+              </h2>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all">{displayData.name}</TooltipContent>
+          </Tooltip>
+          <div className="discover-header-meta">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {isOpenableUrl(displayData.repoUrl) ? (
+                  <a href={displayData.repoUrl} className="discover-source-link inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-sm text-xs leading-[18px] text-muted-foreground hover:text-foreground">
+                    <Link2 className="mt-0.5 size-3.5 shrink-0" /><span className="discover-source-name">{displayData.source}</span>
+                  </a>
+                ) : (
+                  <span tabIndex={0} className="inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-sm text-xs leading-[18px] text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <Link2 className="mt-0.5 size-3.5 shrink-0" /><span className="discover-source-name">{displayData.source}</span>
+                  </span>
+                )}
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all">
+                <p>{displayData.source}</p>{isOpenableUrl(displayData.repoUrl) && <p>{displayData.repoUrl}</p>}
+              </TooltipContent>
+            </Tooltip>
+            {displayData.stars !== undefined && <HeaderMetaItem icon={<Star className="size-3.5 text-amber-500" />} label={t('skills.discover.starsLabel')} value={formatInstalls(displayData.stars)} />}
           </div>
         </div>
-        
-        <div className="flex shrink-0 items-center gap-2">
-            <Button
-              className="h-8 shrink-0 rounded-full px-4 text-[13px] font-medium tracking-wide shadow-sm transition-transform active:scale-95"
-              variant="default"
-              onClick={() => onInstall(skill)}
-              disabled={writeBlocked}
-            >
-              <DownloadCloud className="h-3.5 w-3.5" />
-              {t('skills.discover.install')}
-            </Button>
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('common.close')} className="h-8 w-8 text-muted-foreground hover:bg-accent hover:text-foreground">
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+        <div className="discover-header-actions flex shrink-0 items-center gap-2">
+          <Button className="h-8 shrink-0 rounded-full px-4 text-[13px] font-medium shadow-sm" onClick={() => onInstall(skill)} disabled={writeBlocked}>
+            <DownloadCloud className="h-3.5 w-3.5" />{t('skills.discover.install')}
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('common.close')} className="h-8 w-8 text-muted-foreground hover:bg-accent hover:text-foreground">
+            <X className="h-4 w-4" />
+          </Button>
         </div>
       </div>
-
-      <div className="min-h-0 flex-1 bg-surface @container">
+      <span role="status" className="sr-only">{loading ? t('skills.discover.loadingDetail') : ''}</span>
+      <div className="min-h-0 flex-1">
         <ScrollArea className="h-full">
-          <div className="space-y-6 px-4 py-5 @sm:px-6 @md:px-8 @lg:px-10 @xl:px-12 @lg:py-6">
+          <div className="discover-detail-content" aria-busy={loading}>
             {loading ? (
-              <div className="space-y-5" data-testid="discover-detail-skeleton">
-                <Skeleton className="h-5 w-52 rounded-md" />
-                <div className="flex flex-wrap items-start gap-8">
-                  <div className="flex-1 min-w-[320px] max-w-3xl space-y-5">
-                    <Skeleton className="h-28 w-full rounded-lg" />
-                    <Skeleton className="h-64 w-full rounded-lg" />
-                    <Skeleton className="h-10 w-44 rounded-lg" />
-                  </div>
-                  <aside className="w-full md:w-[280px] shrink-0 space-y-4 pt-1">
-                    <Skeleton className="h-10 w-full rounded-lg" />
-                    <Skeleton className="h-24 w-full rounded-lg" />
-                    <Skeleton className="h-20 w-full rounded-lg" />
-                  </aside>
-                </div>
+              <div className="space-y-4" data-testid="discover-detail-skeleton">
+                <Skeleton className="h-5 w-1/2" /><Skeleton className="h-24 w-full" /><Skeleton className="h-48 w-full" />
               </div>
             ) : error ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-                <ShieldAlert className="mb-3 h-8 w-8 text-destructive" />
+              <div role="alert" className="flex flex-col items-center py-10 text-center">
+                <ShieldAlert className="mb-3 size-7 text-destructive" />
                 <p className="text-sm">{t('skills.discover.loadDetailErrorTitle')}</p>
-                <p className="mt-1 text-xs">{t('skills.discover.loadDetailErrorHint')}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{t('skills.discover.loadDetailErrorHint')}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => {
+                  headingRef.current?.focus({ preventScroll: true });
+                  setRetryCount(count => count + 1);
+                }}>{t('skills.discover.retry')}</Button>
               </div>
             ) : (
-              <div className="flex flex-wrap items-start gap-10">
-                <main className="min-w-[320px] max-w-3xl flex-1 space-y-8">
-                  {hasOverviewContent && (
-                    <section className="space-y-3">
-                      <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.overview')}
+              <div className="discover-detail-grid" data-has-aside={hasDecisionInfo || hasExtraInfo} data-has-decision={hasDecisionInfo}>
+                <div className="discover-reading min-w-0 space-y-6">
+                  {hasOverviewContent && <section>
+                    <SectionTitle>{t('skills.discover.overview')}</SectionTitle>
+                    {displayData.summaryHtml ? <DiscoverRichText html={displayData.summaryHtml} /> : (
+                      <div className="skill-prose space-y-3">
+                        {displayData.description && <p>{displayData.description}</p>}
+                        {displayData.highlights.length > 0 && <ul className="list-disc space-y-1 pl-5">{displayData.highlights.map((item, index) => <li key={index}>{item}</li>)}</ul>}
                       </div>
-
-                      {displayData.summaryHtml ? (
-                        <div className={PROSE_WITH_LISTS_CLASS_NAME} dangerouslySetInnerHTML={{ __html: displayData.summaryHtml }} />
-                      ) : displayData.description ? (
-                        <div className="space-y-3">
-                          <p className="text-sm leading-7 text-foreground/82">{displayData.description}</p>
-                          {displayData.highlights.length > 0 && (
-                            <ul className="list-disc space-y-2 pl-5 text-sm leading-7 text-foreground/82 marker:text-primary/70">
-                              {displayData.highlights.map((item, idx) => (
-                                <li key={idx}>{item}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
+                    )}
+                  </section>}
+                  {displayData.contentHtml && <section>
+                    <SectionTitle>{t('skills.discover.skillContent')}</SectionTitle>
+                    <DiscoverRichText html={displayData.contentHtml} />
+                  </section>}
+                  {displayData.installCommand && <Collapsible open={installCommandOpen} onOpenChange={setInstallCommandOpen}>
+                    <CollapsibleTrigger asChild>
+                      <button type="button" className="flex w-full items-center justify-between gap-3 rounded-md py-1.5 text-left outline-none hover:bg-accent/25 focus-visible:ring-2 focus-visible:ring-ring">
+                        <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><Terminal className="size-4" />{t('skills.discover.installViaCli')}</span>
+                        {installCommandOpen ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronRight className="size-4 text-muted-foreground" />}
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-2">
+                      <code className="block w-full rounded-md border border-border bg-accent/20 p-3 text-xs leading-5 [overflow-wrap:anywhere]">{displayData.installCommand}</code>
+                    </CollapsibleContent>
+                  </Collapsible>}
+                </div>
+                {hasDecisionInfo && <div className="discover-decision-info min-w-0 space-y-6">
+                  {installLocations.length > 0 && <section>
+                    <SectionTitle>{t('skills.discover.installedWorkspaces')}</SectionTitle>
+                    <div className="space-y-2">
+                      {installLocations.map(location => location === 'global' ? (
+                        <p key={location} className="text-[13px] leading-5">{t('context.global')}</p>
                       ) : (
-                        <ul className="list-disc space-y-2 pl-5 text-sm leading-7 text-foreground/82 marker:text-primary/70">
-                          {displayData.highlights.map((item, idx) => (
-                            <li key={idx}>{item}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </section>
-                  )}
-
-                  {displayData.contentHtml && (
-                    <>
-                      {hasOverviewContent && <Separator className="bg-border/60" />}
-
-                      <section className="space-y-3">
-                        <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          {t('skills.discover.skillContent')}
+                        <div key={location} className="min-w-0">
+                          <p className="truncate text-[13px] leading-5">{projectPathBasename(location)}</p>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <code tabIndex={0} className="block truncate rounded-sm text-xs leading-[18px] text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">{location}</code>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all font-mono">{location}</TooltipContent>
+                          </Tooltip>
                         </div>
-                        <div className={PROSE_WITH_LISTS_CLASS_NAME} dangerouslySetInnerHTML={{ __html: displayData.contentHtml }} />
-                      </section>
-                    </>
-                  )}
-
-                  {displayData.installCommand && (
-                    <>
-                      <Separator className="bg-border/60" />
-
-                      <Collapsible open={installCommandOpen} onOpenChange={setInstallCommandOpen}>
-                        <section className="space-y-2">
-                          <CollapsibleTrigger asChild>
-                            <button
-                              type="button"
-                              className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left hover:bg-accent/25"
-                            >
-                              <div className="flex items-center gap-2">
-                                <Terminal className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                                  {t('skills.discover.installViaCli')}
-                                </span>
-                              </div>
-
-                              {installCommandOpen ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </button>
-                          </CollapsibleTrigger>
-
-                          <CollapsibleContent className="pt-1">
-                            <code className="block w-full overflow-x-auto break-all rounded-md border border-border/60 bg-accent/20 p-3 text-xs leading-relaxed text-muted-foreground">
-                              {displayData.installCommand}
-                            </code>
-                          </CollapsibleContent>
-                        </section>
-                      </Collapsible>
-                    </>
-                  )}
-                </main>
-
-                <aside className="w-full shrink-0 space-y-6 md:w-[280px] pt-1">
-                  {installLocations.length > 0 && (
-                    <section className="space-y-2.5">
-                      <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.installedWorkspaces')}
-                      </div>
-
-                      <div className="space-y-1">
-                        {installLocations.map((location) => (
-                          <div key={location} className="py-1 text-sm">
-                            {location === 'global' ? (
-                              <span className="text-foreground/88">{t('context.global')}</span>
-                            ) : (
-                              <div className="min-w-0">
-                                <div className="truncate text-foreground/88">{projectPathBasename(location)}</div>
-                                <div className="truncate text-[10px] text-muted-foreground/60">{location}</div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-
-                  {displayData.securityAudits.length > 0 && (
-                    <section className="space-y-2.5">
-                      <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.securityAudits')}
-                      </div>
-
-                      <div className="space-y-1.5">
-                        {displayData.securityAudits.map((audit) => {
-                          const tone = getAuditTone(audit.status);
-
-                          return (
-                            <a
-                              key={audit.url}
-                              href={audit.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              data-status={audit.status}
-                              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md py-1.5 text-sm hover:text-foreground"
-                            >
-                              <div className="min-w-0 flex items-center gap-2">
-                                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tone.dotClassName}`} />
-                                <span className="truncate text-foreground/88">{audit.name}</span>
-                              </div>
-                              <span className={`text-[11px] font-semibold uppercase tracking-[0.12em] ${tone.statusClassName}`}>
-                                {t(`skills.discover.securityStatus.${audit.status}`)}
-                              </span>
-                            </a>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  )}
-
-                  {displayData.installedOn.length > 0 && (
-                    <section className="space-y-2.5">
-                      <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.installedOn')}
-                      </div>
-
-                      <div className="space-y-1.5">
-                        {displayData.installedOn.map((entry) => (
-                          <div
-                            key={`${entry.agent}-${entry.installsText}`}
-                            className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-1.5 text-sm"
-                          >
-                            <span className="truncate text-foreground/88">{entry.agent}</span>
-                            <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">{entry.installsText}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-
-                  {displayData.firstSeen && (
-                    <section className="space-y-1.5">
-                      <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.firstSeen')}
-                      </div>
-                      <div className="text-sm text-foreground/88">{displayData.firstSeen}</div>
-                    </section>
-                  )}
-                </aside>
+                      ))}
+                    </div>
+                  </section>}
+                  {(displayData.securityAudits.length > 0 || hasRisk) && <section>
+                    <SectionTitle>{t('skills.discover.securityAudits')}</SectionTitle>
+                    {hasRisk && <div className="mb-2 flex"><RiskBadge risk={displayData.auditRisk} t={t} /></div>}
+                    <div className="space-y-1">
+                      {displayData.securityAudits.map(audit => {
+                        const tone = getAuditTone(audit.status);
+                        const content = <>
+                          <span className="flex min-w-0 items-center gap-2"><span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${tone.dotClassName}`} /><span className="min-w-0 truncate">{audit.name}</span></span>
+                          <span className={`text-xs font-medium ${tone.statusClassName}`}>{t(`skills.discover.securityStatus.${audit.status}`)}</span>
+                        </>;
+                        return <Tooltip key={audit.url}>
+                          <TooltipTrigger asChild>
+                            {isOpenableUrl(audit.url) ? (
+                              <a href={audit.url} data-status={audit.status} className="discover-audit-link grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-sm py-1 text-[13px] leading-5">{content}</a>
+                            ) : <div data-status={audit.status} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-1 text-[13px] leading-5">{content}</div>}
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all"><p>{audit.name}</p><p>{audit.url}</p></TooltipContent>
+                        </Tooltip>;
+                      })}
+                    </div>
+                  </section>}
+                </div>}
+                {hasExtraInfo && <div className="discover-extra-info min-w-0 space-y-6">
+                  {displayData.weeklyInstalls !== undefined && <section>
+                    <SectionTitle>{t('skills.discover.weeklyInstalls')}</SectionTitle>
+                    <p className="text-[13px] leading-5 tabular-nums">{formatInstalls(displayData.weeklyInstalls)}</p>
+                  </section>}
+                  {displayData.installedOn.length > 0 && <section>
+                    <SectionTitle>{t('skills.discover.installedOn')}</SectionTitle>
+                    <div className="space-y-1">
+                      {displayData.installedOn.map(entry => <div key={`${entry.agent}-${entry.installsText}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-1 text-[13px] leading-5">
+                        <span>{entry.agent}</span><span className="text-xs tabular-nums text-muted-foreground">{entry.installsText}</span>
+                      </div>)}
+                    </div>
+                  </section>}
+                  {displayData.firstSeen && <section>
+                    <SectionTitle>{t('skills.discover.firstSeen')}</SectionTitle>
+                    <p className="text-[13px] leading-5">{displayData.firstSeen}</p>
+                  </section>}
+                </div>}
               </div>
             )}
           </div>
         </ScrollArea>
       </div>
-
-
     </div>
   );
 }

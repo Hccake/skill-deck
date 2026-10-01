@@ -5,12 +5,14 @@ import { SKILLS_SIDEBAR_DEFAULT_WIDTH, SKILLS_SIDEBAR_MIN_WIDTH, SKILLS_SIDEBAR_
 interface LayoutState {
   skillsListWidth: number | null;
   libraryListWidth: number | null;
+  discoverListWidth: number | null;
   skillsSidebarWidth: number;
   librarySidebarWidth: number;
   libraryDetailOpen: boolean;
   setLibraryDetailOpen: (open: boolean) => void;
   setSkillsListWidth: (width: number) => void;
   setLibraryListWidth: (width: number) => void;
+  setDiscoverListWidth: (width: number) => void;
   setSkillsSidebarWidth: (width: number) => void;
   setLibrarySidebarWidth: (width: number) => void;
 }
@@ -27,6 +29,7 @@ export const useLayoutStore = create<LayoutState>()(persist(
   (set) => ({
     skillsListWidth: null,
     libraryListWidth: null,
+    discoverListWidth: null,
     skillsSidebarWidth: SKILLS_SIDEBAR_DEFAULT_WIDTH,
     librarySidebarWidth: SKILLS_SIDEBAR_DEFAULT_WIDTH,
     libraryDetailOpen: false,
@@ -36,6 +39,9 @@ export const useLayoutStore = create<LayoutState>()(persist(
     },
     setLibraryListWidth: (width) => {
       if (validWidth(width)) set({ libraryListWidth: Math.round(width) });
+    },
+    setDiscoverListWidth: (width) => {
+      if (validWidth(width)) set({ discoverListWidth: Math.round(width) });
     },
     setSkillsSidebarWidth: (width) => {
       if (validSidebarWidth(width)) set({ skillsSidebarWidth: Math.round(width) });
@@ -47,13 +53,14 @@ export const useLayoutStore = create<LayoutState>()(persist(
   {
     name: 'skill-deck-layout',
     version: 2,
-    partialize: ({ skillsListWidth, libraryListWidth, skillsSidebarWidth, librarySidebarWidth }) => ({ skillsListWidth, libraryListWidth, skillsSidebarWidth, librarySidebarWidth }),
+    partialize: ({ skillsListWidth, libraryListWidth, discoverListWidth, skillsSidebarWidth, librarySidebarWidth }) => ({ skillsListWidth, libraryListWidth, discoverListWidth, skillsSidebarWidth, librarySidebarWidth }),
     merge: (persisted, current) => {
       const saved = persisted as Partial<LayoutState> | null;
       return {
         ...current,
         skillsListWidth: validWidth(saved?.skillsListWidth) ? saved.skillsListWidth : null,
         libraryListWidth: validWidth(saved?.libraryListWidth) ? saved.libraryListWidth : null,
+        discoverListWidth: validWidth(saved?.discoverListWidth) ? saved.discoverListWidth : null,
         skillsSidebarWidth: validSidebarWidth(saved?.skillsSidebarWidth) ? saved.skillsSidebarWidth : SKILLS_SIDEBAR_DEFAULT_WIDTH,
         librarySidebarWidth: validSidebarWidth(saved?.librarySidebarWidth) ? saved.librarySidebarWidth : SKILLS_SIDEBAR_DEFAULT_WIDTH,
       };

@@ -4,21 +4,44 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useLayoutStore } from '../layout';
 
 describe('layout preferences', () => {
+  it('restores Discover independently and ignores invalid user widths', async () => {
+    useLayoutStore.getState().setDiscoverListWidth(480.4);
+    useLayoutStore.getState().setSkillsListWidth(400);
+    useLayoutStore.getState().setLibraryListWidth(280);
+    for (const width of [NaN, Infinity, -1, 0, 239, 100000]) {
+      useLayoutStore.getState().setDiscoverListWidth(width);
+      expect(useLayoutStore.getState().discoverListWidth).toBe(480);
+    }
+    const stored = localStorage.getItem('skill-deck-layout')!;
+    useLayoutStore.setState({ discoverListWidth: null, skillsListWidth: null, libraryListWidth: null });
+    localStorage.setItem('skill-deck-layout', stored);
+    await useLayoutStore.persist.rehydrate();
+    expect(useLayoutStore.getState()).toMatchObject({ discoverListWidth: 480, skillsListWidth: 400, libraryListWidth: 280 });
+  });
+
+  it.each([{}, { discoverListWidth: -100 }, { discoverListWidth: '400' }])('defaults Discover to automatic for older or invalid data: %j', async (extra) => {
+    localStorage.setItem('skill-deck-layout', JSON.stringify({ state: { skillsListWidth: 360, ...extra }, version: 2 }));
+    await useLayoutStore.persist.rehydrate();
+    expect(useLayoutStore.getState().discoverListWidth).toBeNull();
+    expect(useLayoutStore.getState().skillsListWidth).toBe(360);
+  });
+
   beforeEach(() => {
     localStorage.clear();
-    useLayoutStore.setState({ skillsListWidth: null, libraryListWidth: null, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
+    useLayoutStore.setState({ skillsListWidth: null, libraryListWidth: null, discoverListWidth: null, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
   });
 
   it('starts both workspaces in automatic sizing mode', () => {
     expect(useLayoutStore.getInitialState().skillsListWidth).toBeNull();
     expect(useLayoutStore.getInitialState().libraryListWidth).toBeNull();
+    expect(useLayoutStore.getInitialState().discoverListWidth).toBeNull();
   });
 
   it('persists only a valid user-selected width', () => {
     useLayoutStore.getState().setSkillsListWidth(412.4);
     expect(useLayoutStore.getState().skillsListWidth).toBe(412);
     const stored = JSON.parse(localStorage.getItem('skill-deck-layout')!);
-    expect(stored.state).toEqual({ skillsListWidth: 412, libraryListWidth: null, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
+    expect(stored.state).toEqual({ skillsListWidth: 412, libraryListWidth: null, discoverListWidth: null, skillsSidebarWidth: 208, librarySidebarWidth: 208 });
     for (const width of [NaN, Infinity, -1, 0, 180, 100000]) {
       useLayoutStore.getState().setSkillsListWidth(width);
       expect(useLayoutStore.getState().skillsListWidth).toBe(412);

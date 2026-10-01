@@ -96,6 +96,14 @@ async function assertDetailHeader(kind) {
 }
 
 describe('Skill Deck desktop', () => {
+  before(async () => {
+    const expected = { win32: /Windows/, linux: /Linux/, darwin: /Macintosh/ }[process.platform];
+    if (expected) {
+      const userAgent = await browser.execute(() => navigator.userAgent);
+      assert.match(userAgent, expected, 'The desktop driver must connect to the application on the target platform');
+    }
+  });
+
   it('opens the real main window and reads configuration through IPC', async () => {
     await $('header nav a[href="/settings"]').waitForDisplayed();
     const config = await browser.executeAsync((done) => {
@@ -779,4 +787,140 @@ describe('Skill Deck desktop', () => {
       await viewport(1200, 640);
     }
   });
+  it('browses Discover with separate keyboard focus and selection', async () => {
+    // embedded 1.4 合成按键不执行按钮默认激活；Enter/Space 用目标平台受信输入另验。
+    // 真实在线排行榜验证 WebView 交互；请求乱序和失败恢复由组件测试使用可控响应覆盖。
+    await $('header nav a[href="/discover"]').click();
+    await $('#discover-list-fixed [data-skill-open]').waitForDisplayed({ timeout: 30000 });
+    const rows = await browser.execute(() => [...document.querySelectorAll('#discover-list-fixed [data-skill-open]')].slice(0, 2).map(row => ({
+      key: row.dataset.skillItem, name: row.querySelector('.font-heading').textContent,
+    })));
+    assert.equal(rows.length, 2);
+    await browser.execute(() => document.querySelector('#discover-list-fixed [data-skill-open]').focus());
+    await browser.keys('ArrowDown');
+    assert.equal(await browser.execute(() => document.activeElement.dataset.skillItem), rows[1].key);
+    assert.equal(await $('#discover-detail-fixed h2').isExisting(), false);
+    await browser.execute(() => document.activeElement.click());
+    await $('#discover-detail-fixed h2').waitForDisplayed();
+    assert.equal(await $('#discover-detail-fixed h2').getText(), rows[1].name);
+    await browser.keys('ArrowUp');
+    assert.equal(await $('#discover-detail-fixed h2').getText(), rows[1].name);
+    assert.equal(await browser.execute(() => document.activeElement.dataset.skillItem), rows[0].key);
+    await browser.execute(() => document.activeElement.click());
+    await browser.waitUntil(async () => await $('#discover-detail-fixed h2').getText() === rows[0].name);
+    await browser.execute(() => document.querySelector('#discover-detail-fixed button[aria-label]').focus());
+    await browser.execute(() => document.activeElement.click());
+    assert.equal(await browser.execute(() => document.activeElement.dataset.skillItem), rows[0].key);
+    await browser.execute(() => document.activeElement.click());
+    await browser.keys(['Control', 'f']);
+    assert.equal(await browser.execute(() => document.activeElement.matches('input[data-skill-search]')), true);
+    await $('input[data-skill-search]').setValue('discover-keyboard-review-no-results');
+    await browser.waitUntil(async () => !(await $('[role="tab"]').isExisting()));
+    await browser.keys('Escape');
+    assert.equal(await $('input[data-skill-search]').getValue(), '');
+    assert.equal(await $('#discover-detail-fixed h2').getText(), rows[0].name);
+    await $('#discover-list-fixed [data-skill-open]').waitForDisplayed();
+    await browser.keys('Escape');
+    assert.equal(await browser.execute(() => document.activeElement.dataset.skillItem), rows[0].key);
+    assert.equal(await $('#discover-detail-fixed h2').isExisting(), false);
+    await $('header nav a[href="/"]').click();
+    await $('#skills-context-navigation').waitForDisplayed();
+  });
+
+  it('remembers Discover panel width without overwriting automatic or other page preferences', async () => {
+    await $('header nav a[href="/discover"]').click();
+    await $('#discover-list-fixed').waitForDisplayed();
+    const dimensions = () => browser.execute(() => ({
+      list: document.getElementById('discover-list-fixed').getBoundingClientRect().width,
+      detail: document.getElementById('discover-detail-fixed').getBoundingClientRect().width,
+      saved: JSON.parse(localStorage.getItem('skill-deck-layout'))?.state ?? {},
+    }));
+    await settle();
+    const initial = await dimensions();
+    const records = [];
+    for (const [width, expected] of [[720, 240], [800, 240], [1280, 320]]) {
+      await viewport(width, 600);
+      const current = await dimensions();
+      assert.ok(Math.abs(current.list - expected) < 2, JSON.stringify(current));
+      assert.ok(current.detail >= 359, JSON.stringify(current));
+      assert.equal(current.saved.discoverListWidth ?? null, null);
+      records.push({ width, ...current });
+    }
+    await browser.execute(() => document.getElementById('discover-detail-resize').focus());
+    await browser.keys('ArrowRight');
+    await browser.keys('ArrowRight');
+    await settle();
+    const manual = await dimensions();
+    assert.ok(manual.saved.discoverListWidth > 400 && Math.abs(manual.list - manual.saved.discoverListWidth) < 2, JSON.stringify(manual));
+    await viewport(720, 520);
+    const narrow = await dimensions();
+    assert.equal(narrow.saved.discoverListWidth, manual.saved.discoverListWidth);
+    assert.ok(narrow.list >= 239 && narrow.detail >= 359, JSON.stringify(narrow));
+    await viewport(1280, 800);
+    await browser.refresh();
+    await $('header nav a[href="/discover"]').waitForDisplayed();
+    await $('header nav a[href="/discover"]').click();
+    await $('#discover-list-fixed').waitForDisplayed();
+    await settle();
+    const restored = await dimensions();
+    assert.ok(Math.abs(restored.list - manual.saved.discoverListWidth) < 2, JSON.stringify(restored));
+    for (const key of ['skillsListWidth', 'libraryListWidth', 'skillsSidebarWidth', 'librarySidebarWidth']) {
+      assert.equal(restored.saved[key] ?? null, initial.saved[key] ?? (key.endsWith('SidebarWidth') ? 208 : null));
+    }
+    await writeFile(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'discover-widths.json'), JSON.stringify({ records, manual, narrow, restored }, null, 2));
+    await $('header nav a[href="/"]').click();
+    await $('#skills-context-navigation').waitForDisplayed();
+  });
+
+  it('keeps Discover commands fixed and adapts reading and decision information to the detail width', async () => {
+    await viewport(1280, 800);
+    await $('header nav a[href="/discover"]').click();
+    await $('#discover-list-fixed [data-skill-open]').waitForDisplayed({ timeout: 30000 });
+    await $('#discover-list-fixed [data-skill-open]').click();
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector('#discover-detail-fixed [data-testid="discover-detail-skeleton"]')));
+    const records = [];
+    for (const wide of [false, true]) {
+      await browser.execute(() => {
+        const separator = document.getElementById('discover-detail-resize');
+        separator.focus();
+        separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      });
+      if (wide) for (let index = 0; index < 7; index++) await browser.keys('ArrowLeft');
+      await settle();
+      const state = await browser.execute(() => {
+        const root = document.getElementById('discover-detail-fixed');
+        const header = root.querySelector('.discover-detail-header');
+        const reading = root.querySelector('.discover-reading');
+        const decision = root.querySelector('.discover-decision-info');
+        const viewport = root.querySelector('[data-radix-scroll-area-viewport]');
+        viewport.scrollTop = 0;
+        const before = header.getBoundingClientRect().top;
+        viewport.scrollTop = 180;
+        return { width: root.getBoundingClientRect().width, before, after: header.getBoundingClientRect().top,
+          identityCenter: (() => { const r = header.querySelector('.discover-header-identity')?.getBoundingClientRect(); return r ? r.top + r.height / 2 : null; })(),
+          actionsCenter: (() => { const r = header.querySelector('button').parentElement.getBoundingClientRect(); return r.top + r.height / 2; })(),
+          headerHeight: header.getBoundingClientRect().height, headerHasSource: Boolean(header.querySelector('.discover-source-name')),
+          source: header.querySelector('.discover-source-name')?.textContent,
+          sourceInside: header.querySelector('.discover-source-name')?.getBoundingClientRect().right <= header.getBoundingClientRect().right + 1,
+          overflow: root.scrollWidth > root.clientWidth || reading.scrollWidth > reading.clientWidth,
+          decisionRight: decision ? decision.getBoundingClientRect().left > reading.getBoundingClientRect().left : null,
+          decisionBefore: decision ? decision.getBoundingClientRect().top < reading.getBoundingClientRect().top : null,
+          buttonsInside: [...header.querySelectorAll('button')].every(button => button.getBoundingClientRect().right <= root.getBoundingClientRect().right + 1),
+        };
+      });
+      assert.ok(wide ? state.width > 760 : Math.abs(state.width - 360) < 2, JSON.stringify(state));
+      assert.equal(state.before, state.after);
+      assert.equal(state.headerHasSource, true);
+      assert.equal(state.sourceInside, true);
+      assert.equal(state.overflow, false);
+      assert.equal(state.buttonsInside, true);
+      if (wide) assert.ok(state.identityCenter !== null && Math.abs(state.identityCenter - state.actionsCenter) < 2, JSON.stringify(state));
+      if (state.decisionRight !== null) assert.equal(wide ? state.decisionRight : state.decisionBefore, wide, JSON.stringify(state));
+      records.push(state);
+    }
+    await writeFile(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'discover-reading.json'), JSON.stringify(records, null, 2));
+    await $('header nav a[href="/"]').click();
+    await $('#skills-context-navigation').waitForDisplayed();
+  });
+
 });
