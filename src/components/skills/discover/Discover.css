@@ -33,7 +33,7 @@
 .discover-detail-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
   gap: 4px 16px;
   padding: 16px;
 }
@@ -45,6 +45,30 @@
 .discover-header-actions {
   grid-column: 2;
   grid-row: 1;
+  min-height: 32px;
+}
+
+.discover-header-identity .skill-translation {
+  font-size: 14px;
+  line-height: 22px;
+}
+
+@container (max-width: 439px) {
+  .discover-detail-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .discover-heading-row {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .discover-header-actions {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: end;
+  }
 }
 
 .discover-header-meta {

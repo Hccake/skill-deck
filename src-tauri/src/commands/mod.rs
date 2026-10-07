@@ -23,3 +23,5 @@ mod window_role;
 pub mod wizard;
 
 pub use agents::ManagedAgentRegistry;
+
+pub(crate) mod translation;

@@ -540,6 +540,8 @@ export function LibraryPage() {
         detail={selectedSkill ? (
           <LibrarySkillDetailPanel
             key={`${localViewKey}:${selectedSkill.name}`}
+            documentKey={`${localViewKey}:${selectedSkill.name}`}
+            returnPath={`/libraries?${new URLSearchParams({ library: workspace.selectedLibraryId ?? '', skill: selectedSkill.name }).toString()}`}
             skill={selectedSkill}
             check={checks[selectedSkill.name]}
             result={lastResults[selectedSkill.name]}

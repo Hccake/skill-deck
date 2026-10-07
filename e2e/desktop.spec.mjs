@@ -149,8 +149,8 @@ describe('Skill Deck desktop', () => {
       if ([720, 800, 1280].includes(width)) {
         await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `settings-navigation-${width}.png`));
       }
-      assert.equal(state.entries, 6);
-      assert.equal(state.visibleLabels, width >= 768 ? 6 : 0, JSON.stringify(state));
+      assert.equal(state.entries, 7);
+      assert.equal(state.visibleLabels, width >= 768 ? 7 : 0, JSON.stringify(state));
       assert.ok(Math.abs(state.sidebar - (width >= 1024 ? 224 : width >= 768 ? 160 : 64)) < 1, JSON.stringify(state));
       assert.equal(state.overflow, false, JSON.stringify(state));
       assert.equal(state.buttonsInside, true, JSON.stringify(state));
@@ -846,7 +846,7 @@ describe('Skill Deck desktop', () => {
     assert.equal(await browser.execute(() => document.activeElement.dataset.skillItem), rows[0].key);
     await browser.execute(() => document.activeElement.click());
     await browser.waitUntil(async () => await $('#discover-detail-fixed h2').getText() === rows[0].name);
-    await browser.execute(() => document.querySelector('#discover-detail-fixed button[aria-label]').focus());
+    await browser.execute(() => document.querySelector('#discover-detail-fixed button[aria-label="Close"]').focus());
     await browser.execute(() => document.activeElement.click());
     assert.equal(await browser.execute(() => document.activeElement.dataset.skillItem), rows[0].key);
     await browser.execute(() => document.activeElement.click());

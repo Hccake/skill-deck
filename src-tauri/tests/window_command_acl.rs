@@ -4,6 +4,46 @@ use tauri::webview::InvokeRequest;
 use tauri::{App, WebviewWindow, WebviewWindowBuilder};
 
 #[tauri::command]
+fn get_translation_settings() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn save_translation_settings() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn test_translation_service() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn begin_translation() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn translate_units() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn cancel_translation() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn get_translation_cache_info() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
+fn clear_translation_cache() -> &'static str {
+    "translation"
+}
+
+#[tauri::command]
 fn list_agents() -> &'static str {
     "list-agents"
 }
@@ -166,6 +206,14 @@ fn test_proxy_connection() -> &'static str {
 fn test_app() -> App<MockRuntime> {
     mock_builder()
         .invoke_handler(tauri::generate_handler![
+            get_translation_settings,
+            save_translation_settings,
+            test_translation_service,
+            begin_translation,
+            translate_units,
+            cancel_translation,
+            get_translation_cache_info,
+            clear_translation_cache,
             list_agents,
             save_custom_agent,
             discover_skill_source,
@@ -538,5 +586,25 @@ fn install_wizard_allows_every_shared_runtime_command_used_by_the_flow() {
             Ok(Value::from(expected)),
             "{command}"
         );
+    }
+}
+
+#[test]
+fn translation_commands_are_available_only_to_the_main_window() {
+    let app = test_app();
+    let main = window(&app, "main");
+    let wizard = window(&app, "install-wizard");
+    for name in [
+        "get_translation_settings",
+        "save_translation_settings",
+        "test_translation_service",
+        "begin_translation",
+        "translate_units",
+        "cancel_translation",
+        "get_translation_cache_info",
+        "clear_translation_cache",
+    ] {
+        assert_eq!(invoke(&main, name), Ok(Value::String("translation".into())));
+        assert_denied(invoke(&wizard, name), name);
     }
 }

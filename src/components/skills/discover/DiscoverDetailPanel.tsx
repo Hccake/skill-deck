@@ -1,3 +1,4 @@
+import { DetailTranslationProvider, TranslationActions, TranslationStatus, TranslatedBlock } from '../detail/DetailTranslation';
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
@@ -193,17 +194,23 @@ export function DiscoverDetailPanel({
   const hasExtraInfo = displayData.weeklyInstalls !== undefined || displayData.installedOn.length > 0 || Boolean(displayData.firstSeen);
 
   return (
+    <DetailTranslationProvider discoverSkill={skill} key={skill.detailUrl} documentKey={JSON.stringify([skill.detailUrl, displayData.name, displayData.description, displayData.summaryHtml, displayData.highlights, displayData.contentHtml])} context={`${displayData.name} ${displayData.description ?? ''}`}>
     <div className="discover-detail @container relative flex h-full flex-col overflow-hidden bg-surface" onClick={handleLink} onAuxClick={handleLink}>
       <div role="group" aria-label={t('skills.discover.currentSkill')} className="discover-detail-header shrink-0 border-b bg-surface">
         <div className="discover-header-identity min-w-0">
+          <div className="discover-heading-row detail-title-grid">
+          <TranslatedBlock as="div" className="detail-title-copy">
           <Tooltip>
             <TooltipTrigger asChild>
-              <h2 ref={headingRef} tabIndex={0} className="min-w-0 flex-1 line-clamp-2 rounded-sm font-heading text-xl font-semibold leading-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <h2 ref={headingRef} tabIndex={0} className="min-w-0 flex-1 truncate rounded-sm font-heading text-xl font-semibold leading-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {displayData.name}
               </h2>
             </TooltipTrigger>
             <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all">{displayData.name}</TooltipContent>
           </Tooltip>
+          </TranslatedBlock>
+          <TranslationActions />
+          </div>
           <div className="discover-header-meta">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -224,7 +231,7 @@ export function DiscoverDetailPanel({
             {displayData.stars !== undefined && <HeaderMetaItem icon={<Star className="size-3.5 text-amber-500" />} label={t('skills.discover.starsLabel')} value={formatInstalls(displayData.stars)} />}
           </div>
         </div>
-        <div className="discover-header-actions flex shrink-0 items-center gap-2">
+        <div className="discover-header-actions flex shrink-0 flex-wrap items-center gap-2">
           <Button className="h-8 shrink-0 rounded-full px-4 text-[13px] font-medium shadow-sm" onClick={() => onInstall(skill)} disabled={writeBlocked}>
             <DownloadCloud className="h-3.5 w-3.5" />{t('skills.discover.install')}
           </Button>
@@ -254,12 +261,13 @@ export function DiscoverDetailPanel({
             ) : (
               <div className="discover-detail-grid" data-has-aside={hasDecisionInfo || hasExtraInfo} data-has-decision={hasDecisionInfo}>
                 <div className="discover-reading min-w-0 space-y-6">
+                  <TranslationStatus />
                   {hasOverviewContent && <section>
                     <SectionTitle>{t('skills.discover.overview')}</SectionTitle>
                     {displayData.summaryHtml ? <DiscoverRichText html={displayData.summaryHtml} /> : (
                       <div className="skill-prose space-y-3">
-                        {displayData.description && <p>{displayData.description}</p>}
-                        {displayData.highlights.length > 0 && <ul className="list-disc space-y-1 pl-5">{displayData.highlights.map((item, index) => <li key={index}>{item}</li>)}</ul>}
+                        {displayData.description && <TranslatedBlock as="p">{displayData.description}</TranslatedBlock>}
+                        {displayData.highlights.length > 0 && <ul className="list-disc space-y-1 pl-5">{displayData.highlights.map((item, index) => <TranslatedBlock as="li" key={index}>{item}</TranslatedBlock>)}</ul>}
                       </div>
                     )}
                   </section>}
@@ -344,5 +352,6 @@ export function DiscoverDetailPanel({
         </ScrollArea>
       </div>
     </div>
+    </DetailTranslationProvider>
   );
 }

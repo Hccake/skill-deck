@@ -648,3 +648,18 @@ export async function previewCopySkillToProjects(request: CopyRequest): Promise<
 export async function copySkillToProjects(request: CopyExecutionRequest): Promise<CopyResponse> {
   return unwrap(await commands.copySkillToProjects(request));
 }
+
+
+async function translationResult<T>(result: Promise<{ status: 'ok'; data: T } | { status: 'error'; error: import('@/bindings').TranslationError }>): Promise<T> {
+  const value = await result;
+  if (value.status === 'error') throw value.error;
+  return value.data;
+}
+export const getTranslationSettings = () => translationResult(commands.getTranslationSettings());
+export const saveTranslationSettings = (draft: import('@/bindings').TranslationSettingsDraft) => translationResult(commands.saveTranslationSettings(draft));
+export const testTranslationService = (service: import('@/bindings').TranslationServiceRef, profile: import('@/bindings').TranslationProfileDraft | null) => translationResult(commands.testTranslationService(service, profile));
+export const beginTranslation = (revision: string) => translationResult(commands.beginTranslation(revision));
+export const translateUnits = (sessionId: string, units: import('@/bindings').TranslationUnit[]) => translationResult(commands.translateUnits(sessionId, units));
+export const cancelTranslation = (sessionId: string) => translationResult(commands.cancelTranslation(sessionId));
+export const getTranslationCacheInfo = () => translationResult(commands.getTranslationCacheInfo());
+export const clearTranslationCache = () => translationResult(commands.clearTranslationCache());

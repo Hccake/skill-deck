@@ -166,6 +166,10 @@ pub fn run() {
                 test_home.join("payload-sessions"),
                 test_home.join("recovery"),
             );
+            #[cfg(not(feature = "desktop-e2e"))]
+            let translation_cache_root = app.path().app_cache_dir()?.join("translations/v1");
+            #[cfg(feature = "desktop-e2e")]
+            let translation_cache_root = test_home.join("translations/v1");
             let library_root = crate::core::get_skill_library_root()?;
             #[cfg(target_os = "windows")]
             let worker_artifact_directory =
@@ -178,6 +182,7 @@ pub fn run() {
                 library_root,
                 agent_registry.clone(),
                 worker_artifact_directory,
+                translation_cache_root,
             )?;
             let environments = runtime.wsl_arc();
             let maintenance = runtime.maintenance().clone();
@@ -252,6 +257,11 @@ mod bindings_contract_tests {
         let temp = tempfile::tempdir().expect("create bindings temp directory");
         let generated = temp.path().join("bindings.ts");
         super::export_typescript_bindings(&super::specta_builder(), &generated);
+
+        // 显式指定输出路径时支持无桌面会话的绑定生成，仍执行契约比较。
+        if let Some(path) = std::env::var_os("SKILL_DECK_BINDINGS_OUT") {
+            std::fs::copy(&generated, path).expect("export requested bindings");
+        }
 
         let expected = include_str!("../../src/bindings.ts");
         let actual = std::fs::read_to_string(generated).expect("read generated bindings");

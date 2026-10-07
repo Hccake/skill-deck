@@ -1,3 +1,4 @@
+import { DetailTranslationProvider, TranslationStatus } from './detail/DetailTranslation';
 // src/components/skills/SkillDetailPanel.tsx
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -173,6 +174,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     && ['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
     && Boolean(skill.sourceUrl);
   return (
+    <DetailTranslationProvider key={JSON.stringify([context, skill.name, skill.canonicalPath])}
+      documentKey={JSON.stringify([context, skill.name, skill.canonicalPath, content, skill.description])} context={`${skill.name} ${skill.description ?? ''}`}>
     <div className="skill-detail-layout h-full flex flex-col overflow-hidden bg-surface">
       <DetailHeader name={skill.name} contentState={content ? loading ? 'refreshing' : contentError ? 'stale' : undefined : undefined}>
         {canShowUpdateAction || updateStatus ? (
@@ -240,6 +243,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
       <div className="flex-1 min-h-0 relative">
         <ScrollArea className="absolute inset-0 w-full h-full">
           <div className="skill-detail-content w-full space-y-4">
+            <TranslationStatus />
             {skill.description || skill.maintenanceError || presentation.available || updateStatus ? <div className="space-y-2">
               {skill.description ? (
                 <DetailDescription key={skill.name}>{skill.description}</DetailDescription>
@@ -388,6 +392,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
         </ScrollArea>
       </div>
     </div>
+    </DetailTranslationProvider>
   );
 });
 

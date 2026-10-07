@@ -19,7 +19,7 @@
   display: flex;
   flex: none;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px 12px;
   padding: 8px 16px 4px;
   background: var(--surface);
@@ -341,3 +341,94 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+:root {
+  --skill-translation-teal: #176b60;
+  --skill-translation-blue: #245eaa;
+  --skill-translation-purple: #7950a1;
+  --skill-translation-brown: #805632;
+  --skill-translation-gray: #62666b;
+  --skill-translation-foreground: var(--skill-translation-teal);
+}
+.dark {
+  --skill-translation-teal: #7bc7b7;
+  --skill-translation-blue: #95bbf4;
+  --skill-translation-purple: #c4a5e8;
+  --skill-translation-brown: #d3b18e;
+  --skill-translation-gray: #b0b5bc;
+  --skill-translation-foreground: var(--skill-translation-teal);
+}
+[data-translation-color='teal'] { --skill-translation-foreground: var(--skill-translation-teal); }
+[data-translation-color='blue'] { --skill-translation-foreground: var(--skill-translation-blue); }
+[data-translation-color='purple'] { --skill-translation-foreground: var(--skill-translation-purple); }
+[data-translation-color='brown'] { --skill-translation-foreground: var(--skill-translation-brown); }
+[data-translation-color='gray'] { --skill-translation-foreground: var(--skill-translation-gray); }
+.translation-color-swatch { background: var(--skill-translation-foreground); }
+[data-translation-color='inherit'] { --skill-translation-foreground: currentColor; }
+
+.skill-translation {
+  display: block;
+  margin-top: 8px;
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--skill-translation-foreground);
+  font: inherit;
+  font-style: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.skill-description > .skill-translation {
+  font-size: 14px;
+  line-height: 22px;
+}
+.skill-prose p[data-translation-source]:has(> .skill-translation:not([hidden])) {
+  margin-bottom: 18px;
+}
+.skill-prose :is(li, td, th) .skill-translation {
+  margin-top: 4px;
+}
+.skill-prose :is(li, td, th) p[data-translation-source]:has(> .skill-translation:not([hidden])) {
+  margin-bottom: 4px;
+}
+.skill-prose :is(h1, h2, h3, h4, h5, h6) .skill-translation {
+  font-weight: 500;
+}
+.skill-translation a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.skill-description[data-collapsed='true'] > .skill-translation {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 原名与操作共享首行；译文只占标题列的下一行。 */
+.detail-title-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 32px;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+.detail-title-copy { display: contents; }
+.detail-title-copy > h2 { grid-column: 1; grid-row: 1; }
+.detail-title-grid > .skill-translation-toggle { grid-column: 2; grid-row: 1; }
+.detail-title-state { grid-column: 3; grid-row: 1; }
+.detail-title-copy > .skill-translation {
+  margin-top: 4px;
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.skill-translation[hidden] { display: none; }
+.skill-prose li > p { margin-bottom: 4px; }

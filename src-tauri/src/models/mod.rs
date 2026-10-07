@@ -1,6 +1,7 @@
 pub mod config;
 mod install;
 mod source;
+pub mod translation;
 
 pub use config::{
     GitProxyScope, NativeGitProxySettings, NetworkProxySettings, ProxyMode, ProxySettingsIssue,

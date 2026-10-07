@@ -1,10 +1,52 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useId, useRef } from 'react';
+import { useDetailTranslation } from '@/hooks/useDetailTranslation';
+import { collectElements, prepareElement, restoreElement } from '@/lib/translation/document';
 import { useTranslation } from 'react-i18next';
 
 /** 展示 API 已清理的 HTML，并为宽表与代码提供独立的键盘滚动区域。 */
 export function DiscoverRichText({ html }: { html: string }) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
+  const prefix = useId();
+  const translation = useDetailTranslation();
+  const register = translation?.register;
+  const prepared = useMemo(() => {
+    if (!register) return { html, units: [] as Array<{ id: string; value: ReturnType<typeof prepareElement> }> };
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    const elements = collectElements(container);
+    const units = elements.map((element, index) => {
+      const id = `${prefix}:${index}`;
+      const value = prepareElement(element);
+      element.setAttribute('data-translation-source', '');
+      const slot = document.createElement('span');
+      slot.dataset.translationSlot = id;
+      slot.dataset.translationOutput = '';
+      slot.lang = 'zh-CN'; slot.className = 'skill-translation'; slot.hidden = true;
+      element.append(slot);
+      return { id, value };
+    });
+    return { html: container.innerHTML, units };
+  }, [html, register, prefix]);
+  useLayoutEffect(() => {
+    if (!register) return;
+    const cleanups = prepared.units.map(unit => register(unit.id, unit.value));
+    return () => cleanups.forEach(cleanup => cleanup());
+  }, [prepared, register]);
+  const results = translation?.results;
+  const enabled = translation?.enabled;
+  useLayoutEffect(() => {
+    const slots = [...ref.current?.querySelectorAll<HTMLElement>('[data-translation-slot]') ?? []];
+    for (const unit of prepared.units) {
+      const slot = slots.find(slot => slot.dataset.translationSlot === unit.id);
+      if (!slot) continue;
+      const result = results?.get(unit.id);
+      const restored = enabled && result?.status === 'translated' && result.text.trim() !== unit.value.text.trim()
+        ? restoreElement(unit.value, result.text) : null;
+      slot.replaceChildren(...restored ? [...restored.childNodes] : []);
+      slot.hidden = !restored;
+    }
+  }, [prepared, results, enabled]);
 
   useEffect(() => {
     const root = ref.current;
@@ -40,7 +82,8 @@ export function DiscoverRichText({ html }: { html: string }) {
     }
     measure();
     return () => observer.disconnect();
-  }, [html, t]);
+  }, [prepared.html, t]);
 
-  return <div ref={ref} className="discover-rich-text skill-prose skill-prose-with-lists" dangerouslySetInnerHTML={{ __html: html }} />;
+  const content = useMemo(() => ({ __html: prepared.html }), [prepared.html]);
+  return <div ref={ref} className="discover-rich-text skill-prose skill-prose-with-lists" dangerouslySetInnerHTML={content} />;
 }

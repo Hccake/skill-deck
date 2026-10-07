@@ -68,6 +68,7 @@ pub(crate) mod remove_service;
 pub(crate) mod resource_service;
 pub(crate) mod skill_libraries;
 pub(crate) mod source_acquisition;
+pub(crate) mod translation;
 pub(crate) mod update_service;
 pub(crate) mod wellknown;
 pub(crate) mod wellknown_protocol;
@@ -118,6 +119,7 @@ impl RuntimeNetworkServices {
 }
 
 pub struct RuntimeServiceGraph {
+    translation: crate::application::translation::TranslationModule,
     config: Arc<ConfigStore>,
     wsl: Arc<WslRuntime>,
     agents: ManagedAgentRegistry,
@@ -162,6 +164,7 @@ impl RuntimeServiceGraph {
         library_root: std::path::PathBuf,
         agents: ManagedAgentRegistry,
         worker_artifact_directory: Option<std::path::PathBuf>,
+        translation_cache_root: std::path::PathBuf,
     ) -> Result<Self, AppError> {
         let config = Arc::new(ConfigStore::open(crate::core::get_config_path()?));
         let wsl_integration_enabled =
@@ -336,7 +339,13 @@ impl RuntimeServiceGraph {
                 update_evidence_for_credentials.clear_native_github_auth_suppression()
             }),
         );
+        let translation = crate::application::translation::TranslationModule::new(
+            config.clone(),
+            http.clone(),
+            translation_cache_root,
+        );
         Ok(Self {
+            translation,
             config,
             wsl,
             agents,
@@ -367,6 +376,10 @@ impl RuntimeServiceGraph {
             library_membership,
             connection_probe,
         })
+    }
+
+    pub(crate) fn translation(&self) -> &crate::application::translation::TranslationModule {
+        &self.translation
     }
 
     pub fn wsl(&self) -> &WslRuntime {

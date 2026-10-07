@@ -39,6 +39,7 @@
 
 - **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, Well-known URLs, raw `SKILL.md` files, and ZIP/tar archives
 - **Browse and maintain** — Read and update directly installed Skills in their actual locations, including installations found only in Agent directories. Same-name Library versions remain separately maintained. Skills without source records remain local; private GitHub sources can reuse local Git credentials for update checks
+- **Bilingual reading** — Translate names, descriptions, and documentation in Skills, Libraries, and Discover, with the original text retained. Choose Google, Microsoft, or an OpenAI-compatible service, and customize translation colors in Settings
 - **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects; use built-in agent definitions or add your own
 - **Skill Libraries** — Build reusable Skill collections, apply an ordered set to Global or Project locations, keep member changes synchronized, and reapply a location when managed links need repair
 - **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions

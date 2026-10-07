@@ -1,3 +1,4 @@
+import { getReadingReturn } from '@/lib/translation/navigation';
 import { useMemo, useCallback, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useGroupRef, type Layout } from 'react-resizable-panels';
 import { useLayoutStore } from '@/stores/layout';
@@ -98,7 +99,7 @@ export function DiscoverPage() {
   const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
 
   const [activeTab, setActiveTab] = useState<DiscoverTab>('popular');
-  const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(() => getReadingReturn()?.discoverSkill ?? null);
 
   useEffect(() => {
     void Promise.all([

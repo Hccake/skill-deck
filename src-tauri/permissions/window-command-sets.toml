@@ -16,6 +16,15 @@ permissions = [
 identifier = "main-commands"
 description = "Application commands available to the main window"
 permissions = [
+  "allow-get-translation-settings",
+  "allow-save-translation-settings",
+  "allow-test-translation-service",
+  "allow-begin-translation",
+  "allow-translate-units",
+  "allow-cancel-translation",
+  "allow-get-translation-cache-info",
+  "allow-clear-translation-cache",
+
   "shared-business-commands",
   "allow-add-environment-project",
   "allow-add-skills-to-library",

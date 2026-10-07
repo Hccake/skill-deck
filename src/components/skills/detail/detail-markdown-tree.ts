@@ -73,6 +73,21 @@ function separateLinkedImages(link: Element) {
   link.children = split(link.children);
 }
 
+function groupListText(node: Element) {
+  if (node.tagName !== 'li' || node.children.some(child => child.type === 'element' && child.tagName === 'p')) return;
+  const grouped: ElementContent[] = [];
+  let inline: ElementContent[] = [];
+  const flush = () => {
+    if (inline.some(child => child.type !== 'text' || child.value.trim())) grouped.push({ type: 'element', tagName: 'p', properties: {}, children: inline });
+    inline = [];
+  };
+  for (const child of node.children) {
+    if (child.type === 'element' && ['ul', 'ol', 'pre', 'blockquote'].includes(child.tagName)) { flush(); grouped.push(child); }
+    else inline.push(child);
+  }
+  flush(); node.children = grouped;
+}
+
 export function rehypeDetailDocument({ prefix }: { prefix: string }) {
   return (tree: Root) => {
     const slugger = new GithubSlugger();
@@ -81,6 +96,7 @@ export function rehypeDetailDocument({ prefix }: { prefix: string }) {
     const visit = (parent: Root | Element) => {
       for (const node of parent.children) {
         if (node.type !== 'element') continue;
+        groupListText(node);
         elements.push(node);
         const existingId = typeof node.properties.id === 'string' ? node.properties.id : undefined;
         const anchor = existingId ?? (/^h[1-6]$/.test(node.tagName) ? slugger.slug(textContent(node)) : undefined);

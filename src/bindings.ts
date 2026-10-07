@@ -6,6 +6,70 @@
 
 
 export const commands = {
+async getTranslationSettings() : Promise<Result<TranslationSettings, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_translation_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveTranslationSettings(draft: TranslationSettingsDraft) : Promise<Result<TranslationSettings, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_translation_settings", { draft }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async testTranslationService(service: TranslationServiceRef, profile: TranslationProfileDraft | null) : Promise<Result<string, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_translation_service", { service, profile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async beginTranslation(revision: string) : Promise<Result<string, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("begin_translation", { revision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async translateUnits(sessionId: string, units: TranslationUnit[]) : Promise<Result<TranslationResult[], TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("translate_units", { sessionId, units }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelTranslation(sessionId: string) : Promise<Result<null, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_translation", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getTranslationCacheInfo() : Promise<Result<TranslationCacheInfo, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_translation_cache_info") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearTranslationCache() : Promise<Result<TranslationCacheInfo, TranslationError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_translation_cache") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async confirmInstallAgentSelection(context: SkillLocationRef, submission: AgentSelectionSubmission, agentSelectionIntent: AgentSelectionIntent) : Promise<Result<ConfirmInstallAgentSelectionOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("confirm_install_agent_selection", { context, submission, agentSelectionIntent }) };
@@ -1133,6 +1197,16 @@ export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
 export type SourceUpdateCheckInfo = { provider?: SourceProvider | null; source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null; sourceKey?: string | null; error?: AppError | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"
 export type SuggestedActionCode = "reviewChanges" | "refresh" | "openRecoveryResource" | "saveDefaultsLater"
+export type TranslationCacheInfo = { bytes: number; entries: number }
+export type TranslationError = "invalidSettings" | "staleSettings" | "credentialUnavailable" | "authentication" | "rateLimited" | "network" | "timeout" | "unsupportedResponse" | "invalidSegments" | "cancelled" | "cacheUnavailable"
+export type TranslationKeyChange = { action: "keep" } | { action: "replace"; value: string } | { action: "clear" }
+export type TranslationProfile = { id: string; name: string; baseUrl: string; model: string; hasApiKey: boolean }
+export type TranslationProfileDraft = { id: string; name: string; baseUrl: string; model: string; key: TranslationKeyChange }
+export type TranslationResult = { status: "translated"; id: string; text: string } | { status: "failed"; id: string; code: TranslationError }
+export type TranslationServiceRef = { kind: "google" } | { kind: "microsoft" } | { kind: "openAiCompatible"; profileId: string }
+export type TranslationSettings = { revision: string; serviceRevision: string; service: TranslationServiceRef; profiles: TranslationProfile[]; autoTranslate: boolean; noticeAccepted: boolean }
+export type TranslationSettingsDraft = { expectedRevision: string; service: TranslationServiceRef; profiles: TranslationProfileDraft[]; autoTranslate: boolean; noticeAccepted: boolean }
+export type TranslationUnit = { id: string; text: string; context: string; protectedTokens: string[] }
 export type UnavailableAgentSelection = { agentId: string; reason: UnavailableAgentSelectionReason }
 export type UnavailableAgentSelectionReason = "definitionMissing" | "optionUnavailable"
 export type UpdateCapabilityReasonCode = "missingRemoteHash" | "missingSource" | "unsupportedSource"

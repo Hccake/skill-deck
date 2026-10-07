@@ -523,6 +523,13 @@ mod tests {
             .inspect(&builder.build().unwrap())
             .await;
 
+        // 枚举只返回目录事实，正文通过与生产代码相同的文档接口读取。
+        let content = runtime
+            .workspace(&distro_name)
+            .unwrap()
+            .read_optional_document(format!("{root}/demo/SKILL.md"), 4096)
+            .await;
+
         let cleanup = WslCommandRunner::run(WslCommandRequest {
             session,
             script: "set -eu\ncase $1 in /tmp/skill-deck-worker-inspection-*) rm -rf -- \"$1\" ;; *) exit 64 ;; esac\n",
@@ -543,6 +550,9 @@ mod tests {
             .find(|fact| fact.relative_path == "demo/SKILL.md")
             .expect("Skill document fact");
         assert_eq!(document.kind, FilesystemEntryKind::File);
-        assert!(document.frontmatter_bytes.starts_with(b"---\nname: demo\n"));
+        assert!(content
+            .expect("read Skill document")
+            .expect("existing Skill document")
+            .starts_with(b"---\nname: demo\n"));
     }
 }

@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { SlidersHorizontal, GitBranch, FolderOpen, Info, Bot, Network } from 'lucide-react';
+import { SlidersHorizontal, GitBranch, FolderOpen, Info, Bot, Network, Languages } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
@@ -14,7 +14,9 @@ const ProjectsTab = lazy(() => import('@/components/settings/ProjectsTab').then(
 const AgentSettingsPage = lazy(() => import('@/components/settings/AgentSettingsPage').then((module) => ({ default: module.AgentSettingsPage })));
 const ProxySettingsPage = lazy(() => import('@/components/settings/ProxySettingsPage').then((module) => ({ default: module.ProxySettingsPage })));
 
-type SettingsSectionId = 'general' | 'agents' | 'git' | 'proxy' | 'projects' | 'about';
+const TranslationSettingsPage = lazy(() => import('@/components/settings/TranslationSettingsPage').then(module => ({ default: module.TranslationSettingsPage })));
+
+type SettingsSectionId = 'translation' | 'general' | 'agents' | 'git' | 'proxy' | 'projects' | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
@@ -26,6 +28,7 @@ const SETTINGS_SECTIONS: Array<{
     icon: SlidersHorizontal,
     titleKey: 'settings.nav.general',
   },
+  { id: 'translation', icon: Languages, titleKey: 'translation.settings' },
   {
     id: 'agents',
     icon: Bot,
@@ -49,7 +52,7 @@ const SETTINGS_SECTIONS: Array<{
 ];
 
 const DEFAULT_SECTION: SettingsSectionId = 'general';
-const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'agents', 'git', 'proxy', 'projects', 'about'];
+const VALID_SECTION_IDS: SettingsSectionId[] = ['translation', 'general', 'agents', 'git', 'proxy', 'projects', 'about'];
 
 function isSettingsSection(value: string | null): value is SettingsSectionId {
   return !!value && VALID_SECTION_IDS.includes(value as SettingsSectionId);
@@ -79,6 +82,8 @@ export function SettingsPage() {
 
   const renderSection = () => {
     switch (activeSection) {
+      case 'translation':
+        return <TranslationSettingsPage />;
       case 'agents':
         return (
           <AgentSettingsPage

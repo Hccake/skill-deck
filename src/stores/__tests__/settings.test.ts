@@ -148,3 +148,27 @@ describe('useSettingsStore', () => {
     expect(mockClearGithubCredential).not.toHaveBeenCalled();
   });
 });
+
+it('译文配色可持久化恢复，旧配置与无效预设回退为青绿色', async () => {
+  useSettingsStore.getState().setTranslationColor('blue');
+  const stored = localStorage.getItem('skill-deck-settings');
+  expect(JSON.parse(stored!).state.translationColor).toBe('blue');
+  useSettingsStore.setState({ translationColor: 'teal' });
+  localStorage.setItem('skill-deck-settings', stored!);
+  await useSettingsStore.persist.rehydrate();
+  expect(useSettingsStore.getState().translationColor).toBe('blue');
+  expect(document.documentElement.dataset.translationColor).toBe('blue');
+  for (const state of [{ theme: 'light', locale: 'en' }, { translationColor: 'unknown' }]) {
+    localStorage.setItem('skill-deck-settings', JSON.stringify({ state, version: 0 }));
+    await useSettingsStore.persist.rehydrate();
+    expect(useSettingsStore.getState().translationColor).toBe('teal');
+    expect(document.documentElement.dataset.translationColor).toBe('teal');
+  }
+});
+
+it.each(['purple', 'brown', 'gray'])('恢复新增配色 %s，不回退为默认色', async color => {
+  localStorage.setItem('skill-deck-settings', JSON.stringify({ state: { translationColor: color }, version: 0 }));
+  await useSettingsStore.persist.rehydrate();
+  expect(useSettingsStore.getState().translationColor).toBe(color);
+  expect(document.documentElement.dataset.translationColor).toBe(color);
+});

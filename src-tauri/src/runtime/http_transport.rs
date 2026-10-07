@@ -6,6 +6,7 @@ use reqwest::header::HeaderMap;
 use crate::core::mutation::CancellationSignal;
 use crate::runtime::proxy_settings::{ProxySettingsError, ProxySettingsStore};
 
+#[derive(Clone)]
 pub(crate) struct HttpGetRequest {
     operation_id: String,
     target: String,
@@ -13,6 +14,7 @@ pub(crate) struct HttpGetRequest {
     headers: HeaderMap,
     max_body_bytes: Option<usize>,
     cancellation: Option<CancellationSignal>,
+    json_body: Option<Vec<u8>>,
 }
 
 impl HttpGetRequest {
@@ -36,6 +38,7 @@ impl HttpGetRequest {
             headers: HeaderMap::new(),
             max_body_bytes,
             cancellation: None,
+            json_body: None,
         }
     }
 
@@ -51,6 +54,28 @@ impl HttpGetRequest {
 
     pub(crate) fn cancellation(mut self, cancellation: CancellationSignal) -> Self {
         self.cancellation = Some(cancellation);
+        self
+    }
+
+    pub(crate) fn json_body(mut self, body: Vec<u8>) -> Self {
+        self.json_body = Some(body);
+        self
+    }
+
+    pub(crate) fn user_agent(mut self, value: &'static str) -> Self {
+        self.headers.insert(
+            reqwest::header::USER_AGENT,
+            reqwest::header::HeaderValue::from_static(value),
+        );
+        self
+    }
+
+    pub(crate) fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    pub(crate) fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 }
@@ -79,6 +104,7 @@ pub(crate) enum HttpTransportError {
 pub(crate) struct HttpTransport {
     settings: Arc<ProxySettingsStore>,
     clients: Arc<Mutex<HttpClientPool>>,
+    follow_redirects: bool,
 }
 
 #[derive(Default)]
@@ -110,6 +136,16 @@ impl HttpTransport {
         Self {
             settings,
             clients: Arc::new(Mutex::new(HttpClientPool::default())),
+            follow_redirects: true,
+        }
+    }
+
+    /// 翻译服务的凭据只发给配置的端点，独立客户端仍读取同一代理设置。
+    pub(crate) fn for_translation(&self) -> Self {
+        Self {
+            settings: self.settings.clone(),
+            clients: Arc::new(Mutex::new(HttpClientPool::default())),
+            follow_redirects: false,
         }
     }
 
@@ -215,8 +251,15 @@ impl HttpTransport {
             return Err(invalid_target());
         }
         let client = self.client_for(proxy_url)?;
-        let mut response = client
-            .get(target)
+        let builder = if let Some(body) = &request.json_body {
+            client
+                .post(target)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone())
+        } else {
+            client.get(target)
+        };
+        let mut response = builder
             .headers(request.headers.clone())
             .send()
             .await
@@ -286,6 +329,11 @@ impl HttpTransport {
                     })?,
                 ),
             };
+        let builder = if self.follow_redirects {
+            builder
+        } else {
+            builder.redirect(reqwest::redirect::Policy::none())
+        };
         let client = builder.build().map_err(|_| HttpTransportError::Request {
             stage: "prepare",
             reason: "client_build",
@@ -774,5 +822,46 @@ mod tests {
 
         worker.join().expect("origin worker");
         assert_eq!(client.cached_client_count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod translation_http_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    #[tokio::test]
+    async fn translation_post_sends_json_without_following_redirects() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut bytes = [0; 4096];
+            while !request.ends_with(b"[\"hello\"]") {
+                let size = stream.read(&mut bytes).unwrap();
+                assert!(size > 0);
+                request.extend_from_slice(&bytes[..size]);
+            }
+            assert!(request.starts_with(b"POST /translate HTTP/1.1"));
+            stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/leak\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let settings = crate::runtime::proxy_settings::ProxySettingsStore::from_config(Arc::new(
+            crate::core::app_config::ConfigStore::from_proxy_settings(
+                crate::models::NetworkProxySettings::default(),
+            ),
+        ));
+        let http = HttpTransport::new(Arc::new(settings)).for_translation();
+        let request = HttpGetRequest::new(
+            format!("http://{address}/translate"),
+            Duration::from_secs(5),
+            4096,
+        )
+        .json_body(br#"["hello"]"#.to_vec());
+        let result = http.get(request).await.unwrap();
+        assert_eq!(result.status.as_u16(), 302);
+        worker.join().unwrap();
     }
 }

@@ -23,6 +23,7 @@ describe('detail Markdown', () => {
   it.each([
     ['language fence', '```python\n  print("<tag> & value")\n\treturn 1  \n\n```', '  print("<tag> & value")\n\treturn 1  \n\n'],
     ['plain fence', '```\nC:\\Review\\skills\n```', 'C:\\Review\\skills\n'],
+    ['text fence', '```text\n┌──────┐\n│ Read │\n└──────┘\n```', '┌──────┐\n│ Read │\n└──────┘\n'],
     ['indented block', '    command --flag\n    next-step\n', 'command --flag\nnext-step\n'],
   ])('copies the parsed %s without its fence or language and keeps focus', async (_name, markdown, expected) => {
     const user = userEvent.setup();

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 mod network;
+mod translation;
 
 const MAX_CONFIG_BYTES: usize = environment_protocol::MAX_DOCUMENT_BYTES as usize;
 

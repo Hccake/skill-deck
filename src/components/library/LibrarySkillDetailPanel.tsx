@@ -1,3 +1,4 @@
+import { DetailTranslationProvider, TranslationStatus } from '@/components/skills/detail/DetailTranslation';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpCircle, Trash2, X } from 'lucide-react';
@@ -24,6 +25,8 @@ import { skillStatusPresentation } from '@/lib/skill-status-presentation';
 
 interface LibrarySkillDetailPanelProps {
   skill: LibrarySkillSummary;
+  documentKey?: string;
+  returnPath?: string;
   check?: SkillUpdateInfo;
   result?: LibraryUpdateSkillResult;
   content: string | null;
@@ -43,6 +46,8 @@ interface LibrarySkillDetailPanelProps {
  */
 export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   skill,
+  documentKey,
+  returnPath,
   check,
   result,
   content,
@@ -75,6 +80,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   const hasMetadata = Boolean(presentation.local || sourceLabel || skill.updatedAt || skill.pluginName || skill.refName);
 
   return (
+    <DetailTranslationProvider returnPath={returnPath} key={documentKey ?? skill.name} documentKey={JSON.stringify([documentKey ?? skill.name, skill.description, content])} context={`${skill.name} ${skill.description ?? ''}`}>
     <div className="skill-detail-layout flex h-full flex-col overflow-hidden bg-surface">
       <DetailHeader name={skill.name} contentState={content ? loading ? 'refreshing' : contentError ? 'stale' : undefined : undefined}>
         {canUpdate && onUpdate ? (
@@ -111,6 +117,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
       <div className="relative min-h-0 flex-1">
         <ScrollArea className="absolute inset-0 h-full w-full">
           <div className="skill-detail-content w-full space-y-4">
+            <TranslationStatus />
             {skill.description || presentation.available ? <div className="space-y-2">
               {skill.description ? (
                 <DetailDescription key={skill.name}>{skill.description}</DetailDescription>
@@ -160,5 +167,6 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
         </ScrollArea>
       </div>
     </div>
+    </DetailTranslationProvider>
   );
 });

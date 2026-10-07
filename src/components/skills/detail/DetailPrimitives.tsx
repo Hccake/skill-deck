@@ -10,6 +10,8 @@ import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { cn } from '@/lib/utils';
 import { DetailMarkdown } from './DetailMarkdown';
 import './SkillDetail.css';
+import { TranslatedBlock, TranslationActions } from './DetailTranslation';
+import { useTranslationLayout } from '@/hooks/useDetailTranslation';
 
 export function DetailHeader({ name, contentState, children }: {
   name: string;
@@ -31,7 +33,8 @@ export function DetailHeader({ name, contentState, children }: {
 
   return (
     <div className="skill-detail-header">
-      <div className="skill-detail-heading flex items-center gap-2">
+      <div className="skill-detail-heading detail-title-grid">
+        <TranslatedBlock as="div" className="detail-title-copy">
         <Tooltip>
           <TooltipTrigger asChild>
             <h2 ref={nameRef} tabIndex={truncated ? 0 : undefined}
@@ -41,10 +44,12 @@ export function DetailHeader({ name, contentState, children }: {
           </TooltipTrigger>
           {truncated ? <TooltipContent className="max-w-96 break-all text-wrap data-[state=closed]:animate-none!">{name}</TooltipContent> : null}
         </Tooltip>
+        </TranslatedBlock>
+        <TranslationActions />
         {contentState ? <Tooltip>
           <TooltipTrigger asChild>
             <span tabIndex={0} role="img" aria-label={t(contentState === 'stale' ? 'skills.detail.refreshFailed' : 'skills.detail.refreshing')}
-              className="shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="detail-title-state shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {contentState === 'stale'
                 ? <AlertTriangle className="size-3.5 text-warning" aria-hidden="true" />
                 : <RefreshCw className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />}
@@ -86,27 +91,37 @@ export function DetailDescription({ children }: { children: string }) {
   const { t } = useTranslation();
   const id = useId();
   const textRef = useRef<HTMLParagraphElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const layout = useTranslationLayout();
+  const descriptionKey = layout?.documentKey ?? children;
+  const [choice, setChoice] = useState<{ key: string; expanded: boolean } | null>(null);
+  const expanded = choice?.key === descriptionKey ? choice.expanded : layout?.expanded ?? false;
   const [overflows, setOverflows] = useState(false);
 
   useEffect(() => {
     const element = textRef.current;
     if (!element) return;
-    const measure = () => setOverflows(element.scrollHeight > (parseFloat(getComputedStyle(element).lineHeight) || 22) * 2 + 1);
+    const measure = () => {
+      const translation = element.parentElement?.querySelector<HTMLElement>('.skill-translation');
+      setOverflows(element.scrollHeight > (parseFloat(getComputedStyle(element).lineHeight) || 22) * 2 + 1
+        || Boolean(translation && translation.scrollHeight > (parseFloat(getComputedStyle(translation).lineHeight) || 22) * 2 + 1));
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    if (element.parentElement) observer.observe(element.parentElement);
     return () => observer.disconnect();
   }, [children]);
 
   return (
     <div className="flex items-start gap-1">
+      <TranslatedBlock as="div" className="skill-description min-w-0 flex-1" data-collapsed={!expanded}>
       <p ref={textRef} id={id} className={cn('min-w-0 flex-1 text-sm leading-[22px] text-foreground/80 [overflow-wrap:anywhere]', !expanded && 'line-clamp-2')}>
         {children}
       </p>
+      </TranslatedBlock>
       {overflows ? (
         <DetailAction className="size-7" label={t(expanded ? 'skills.detail.collapseDescription' : 'skills.detail.expandDescription')}
-          aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(value => !value)}>
+          aria-expanded={expanded} aria-controls={id} onClick={() => { layout?.preserve(); setChoice({ key: descriptionKey, expanded: !expanded }); }}>
           {expanded ? <ChevronUp className="size-4" aria-hidden="true" /> : <ChevronDown className="size-4" aria-hidden="true" />}
         </DetailAction>
       ) : null}

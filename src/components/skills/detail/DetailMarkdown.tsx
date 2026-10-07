@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DocumentImage, DocumentLink } from './DetailResources';
+import { TranslatedBlock } from './DetailTranslation';
 import { rehypeDetailDocument, remarkDetailTargets } from './detail-markdown-tree';
 
 function useHorizontalOverflow<T extends HTMLElement>(children: ReactNode) {
@@ -88,7 +89,12 @@ function DocumentTable({ node: _node, children, ...props }: ComponentProps<'tabl
   );
 }
 
-const components: Components = { pre: CodeBlock, table: DocumentTable, a: DocumentLink, img: DocumentImage };
+const components: Components = {
+  pre: CodeBlock, table: DocumentTable, a: DocumentLink, img: DocumentImage,
+  ...Object.fromEntries((['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'th', 'td'] as const).map(tag => [tag,
+    ({ node: _node, children, ...props }: ComponentProps<'p'> & ExtraProps) => <TranslatedBlock as={tag} {...props}>{children}</TranslatedBlock>,
+  ])),
+};
 
 export const DetailMarkdown = memo(function DetailMarkdown({ content }: { content: string }) {
   const prefix = useId();

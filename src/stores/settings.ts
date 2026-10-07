@@ -18,6 +18,8 @@ import type {
 
 export type Theme = 'light' | 'dark';
 export type Locale = 'en' | 'zh-CN';
+export const translationColors = ['teal', 'blue', 'purple', 'brown', 'gray', 'inherit'] as const;
+export type TranslationColor = typeof translationColors[number];
 
 export interface GithubCredentialSnapshot {
   status: GithubCredentialStatus | null;
@@ -29,9 +31,11 @@ export interface GithubCredentialSnapshot {
 }
 
 interface SettingsState {
-  // 主题和语言（保持 localStorage 持久化）
+  // 外观偏好保存在 localStorage。
   theme: Theme;
   locale: Locale;
+  translationColor: TranslationColor;
+  setTranslationColor: (color: TranslationColor) => void;
   setTheme: (theme: Theme) => void;
   setLocale: (locale: Locale) => void;
   toggleTheme: () => void;
@@ -49,6 +53,10 @@ export const applyPersistedAppearance = (theme: Theme) => {
   root.classList.remove('light', 'dark');
   root.classList.add(theme);
 };
+
+function applyTranslationColor(color: TranslationColor) {
+  if (typeof document !== 'undefined') document.documentElement.dataset.translationColor = color;
+}
 
 function emptyGithubCredentialSnapshot(): GithubCredentialSnapshot {
   return {
@@ -79,6 +87,11 @@ export const useSettingsStore = create<SettingsState>()(
       // ========== 主题和语言 ==========
       theme: 'light',
       locale: 'en',
+      translationColor: 'teal',
+      setTranslationColor: (translationColor) => {
+        set({ translationColor });
+        applyTranslationColor(translationColor);
+      },
 
       setTheme: (theme) => {
         applyPersistedAppearance(theme);
@@ -219,14 +232,23 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'skill-deck-settings',
-      // 只持久化 theme 和 locale。
+      // 仅持久化外观偏好，凭据状态留在内存。
       partialize: (state) => ({
         theme: state.theme,
         locale: state.locale,
+        translationColor: state.translationColor,
       }),
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<SettingsState> | undefined;
+        return { ...current, ...saved,
+          translationColor: translationColors.includes(saved?.translationColor as TranslationColor)
+            ? saved!.translationColor! : 'teal',
+        };
+      },
       onRehydrateStorage: () => (state) => {
         if (state) {
           applyPersistedAppearance(state.theme);
+          applyTranslationColor(state.translationColor);
           i18n.changeLanguage(state.locale);
         }
       },

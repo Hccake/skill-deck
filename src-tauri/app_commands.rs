@@ -1,6 +1,15 @@
 macro_rules! with_app_commands {
     ($consumer:ident) => {
         $consumer! {
+            get_translation_settings => [commands::translation::get_translation_settings],
+            save_translation_settings => [commands::translation::save_translation_settings],
+            test_translation_service => [commands::translation::test_translation_service],
+            begin_translation => [commands::translation::begin_translation],
+            translate_units => [commands::translation::translate_units],
+            cancel_translation => [commands::translation::cancel_translation],
+            get_translation_cache_info => [commands::translation::get_translation_cache_info],
+            clear_translation_cache => [commands::translation::clear_translation_cache],
+
             confirm_install_agent_selection => [commands::agent_selection::confirm_install_agent_selection],
             get_install_agent_selection => [commands::agent_selection::get_install_agent_selection],
             acquire_selected_payloads => [commands::source_acquisition::acquire_selected_payloads],
