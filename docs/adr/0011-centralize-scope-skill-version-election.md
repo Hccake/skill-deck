@@ -12,4 +12,4 @@ Skill Deck 通过 `application/scope_skill_planning` 统一生成物理目录计
 
 现有安装项缺少独立的创建者记录，因此规划模块保护无法确认归属的有效内容。这个选择优先保证兼容工具和用户已有内容的安全；需要精确区分安装项创建者，或者支持新的内容转换与目录形态时，应重新讨论所有权证据和规划输入。
 
-逐目录优先级与既有条目处理由[Skill 生命周期](../skill-lifecycle.md#库应用与版本选举)维护。模块边界见[系统架构](../architecture.md#skill-目录规划)，执行期复核和恢复协议见[执行与恢复](../execution-and-recovery.md#skill-变更如何执行)。
+逐目录优先级与既有条目处理由[Skill 生命周期](../skill-lifecycle.md#库应用与版本选举)维护。模块边界见[系统架构](../architecture.md#skill-目录规划)，执行期复核和恢复协议见[执行与恢复](../execution-and-recovery.md#skill-变更的执行流程)。

@@ -4,7 +4,9 @@
 
 [`skills` CLI](https://github.com/vercel-labs/skills) 是由 `vercel-labs/skills` 独立维护的第三方 Skill 管理工具。Skill Deck 不调用该 CLI，也不依赖 Node.js 运行；来源获取、Agent 解析、文件写入和用户工作流都由 Skill Deck 自行实现。
 
-Skill Deck 和 `skills` CLI 会读写通用目录、Agent 专用目录中的 Skill，以及 lock 中含义相同的字段。Skill Deck 根据实际位置和归属继续维护直接安装，包括 CLI 只写入专用目录的安装。兼容范围不包括完整的 lock 内容、交互流程和执行结果：使用第三方 CLI 更新 Skill 后，Skill Deck 的扩展字段可能丢失；两个工具对安装失败也有各自的处理方式。
+Skill Deck 和 `skills` CLI 会读写通用目录、Agent 专用目录中的 Skill，以及 lock 文件中共同使用的来源和版本字段。Skill Deck 根据实际位置和归属继续维护直接安装，包括 CLI 只写入专用目录的安装。
+
+兼容范围不包括完整的 lock 内容、交互流程和执行结果。CLI 重新生成某个 Skill 的记录时，Skill Deck 的扩展字段可能丢失；两个工具对安装失败也有各自的处理方式，具体差异见后文。
 
 Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两个工具共同使用的数据，并了解 Agent 生态的变化。第三方 CLI 的新功能只说明可能出现了新的用户需求，不会自动成为 Skill Deck 的产品需求；确定需要支持后，再根据桌面应用的使用方式重新设计。
 
@@ -13,8 +15,8 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 | 项目 | 当前值 |
 |---|---|
 | 参考仓库 | `vercel-labs/skills` |
-| package 版本 | `1.5.23` |
-| Git tag | `v1.5.23` |
+| npm 包版本 | `1.5.23` |
+| Git 标签 | `v1.5.23` |
 | Git 提交 | `435076e78988e1e6ec40d00b0b1d76bdbbc5419a` |
 | 开发依赖 | `skills: 1.5.23` |
 
@@ -27,10 +29,10 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 | 内容 | 两个工具共同使用的部分 | Skill Deck 独立实现的能力 |
 |---|---|---|
 | Skill 目录 | 通用目录、Agent 专用目录和目录型 Skill 内容 | 实际位置与库归属识别、内容快照、风险检查、恢复数据以及 Windows 与 WSL 之间的写入 |
-| 来源 | 简写、Git URL、本地路径、通过约定地址发现（Well-known）、`ref` 和 Skill 子路径的兼容含义 | 获取进度、信任信息、缓存和界面反馈 |
+| 来源 | 简写、Git URL、本地路径、Well-known 地址、分支或标签（`ref`）和 Skill 子路径的兼容含义 | 获取进度、信任信息、缓存和界面反馈 |
 | Agent | 当前参考版本已知的 Agent ID，以及写入 lock 的兼容选择信息 | 用户添加的 Agent 信息、检测结果、关联关系和安装选项 |
-| 全局 lock | `skills` CLI v3 路径和共同字段 | 修改 lock 时无损保留未涉及的内容 |
-| 项目 lock | `skills` CLI v1 字段、排序、内容哈希和 Eve 安装位置 | `sourceUrl`、`remoteHash`、`pluginName` 和旧路径迁移 |
+| 全局 lock | 全局格式版本 3 的路径和共同字段 | 修改 lock 时无损保留未涉及的内容 |
+| 项目 lock | 项目格式版本 1 的字段、排序、内容哈希和 Eve 安装位置 | 按来源补充定位信息、`remoteHash`、`pluginName` 和旧路径迁移 |
 | 安装与更新 | 来源、Skill 子路径、已有安装和兼容 lock 记录 | 实际目标规划、预览、批量执行、取消、恢复和具体错误反馈 |
 
 Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户添加的 Agent 信息不写入第三方 CLI 的数据格式。Skill Deck 只对两个工具都会读写的数据提供兼容保证。
@@ -53,7 +55,7 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 - 设置 `XDG_STATE_HOME` 时使用 `$XDG_STATE_HOME/skills/.skill-lock.json`；
 - 否则使用 `~/.agents/.skill-lock.json`。
 
-当前格式版本为 `3`。
+根对象中的 `version` 为 `3`，`skills` 按 Skill 名称保存记录。记录字段按来源类型和可用信息保存：
 
 | 字段 | 定义来源 | 含义 |
 |---|---|---|
@@ -63,34 +65,32 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `sourceBaseUrl` | `skills` CLI v1.5.22 Well-known 字段 | 用于定位 Well-known 索引的输入地址 |
 | `wellKnownDigest` | `skills` CLI v1.5.22 Well-known 字段 | 索引提供或根据旧版内容计算的 Skill 版本摘要 |
 | `ref` | `skills` CLI | 分支或标签 |
-| `skillPath` | `skills` CLI | 来源中指向 Skill 目录的相对路径，保留磁盘实际大小写 |
+| `skillPath` | `skills` CLI | 来源中定位 Skill 的相对路径，可以指向目录或以 `SKILL.md` 结尾，保留目录部分的实际大小写 |
 | `skillFolderHash` | `skills` CLI | 用于跟踪来源版本的哈希 |
 | `installedAt` | `skills` CLI | 首次安装时间 |
 | `updatedAt` | `skills` CLI | 最近更新时间 |
-| `pluginName` | `skills` CLI | 能够识别时记录的 plugin 名称 |
-| `lastSelectedAgents` | `skills` CLI | CLI 最近一次选择的 Agent ID |
-| `defaultTargetAgents` | 旧版 Skill Deck | 当前版本不读取、不写入且不清理；重写全局 lock 时原样保留 |
+| `pluginName` | `skills` CLI | 能够识别时记录的来源插件名称 |
 
-`lastSelectedAgents` 的写入时机、初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。该字段只保存当前参考版本能够识别的内置 Agent ID，记录最近确认的安装选择，不表示安装已经成功。
+根字段 `lastSelectedAgents` 记录 CLI 最近一次选择的 Agent ID。Skill Deck 只将当前参考版本能够识别的内置 Agent 写入该字段，记录的是最近确认的安装选择，不表示安装已经成功。写入时机、初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。
 
-旧版 `defaultTargetAgents` 在全局 lock 重写时作为未拥有字段保留。旧全局格式转换为项目 lock 时，该字段与其他全局根字段一起剥离，不进入项目格式。
+旧版 Skill Deck 的根字段 `defaultTargetAgents` 不再参与当前业务，重写全局 lock 时原样保留。旧全局格式转换为项目 lock 时，该字段与其他全局根字段一起移除，不进入项目格式。
 
 ## 项目 lock 与 Eve 安装位置
 
-项目 lock 位于 `<project>/skills-lock.json`，当前格式版本为 `1`。该文件通常会提交到项目仓库，因此 Skill Deck 保存后的字段含义和排序需要继续与 `skills` CLI 兼容。
+项目 lock 位于 `<project>/skills-lock.json`，根对象中的 `version` 为 `1`，`skills` 按 Skill 名称保存记录。该文件通常会提交到项目仓库，Skill Deck 保存后的字段含义和排序与参考 CLI 保持兼容。记录字段按来源类型和可用信息保存：
 
 | 字段 | 定义来源 | 含义 |
 |---|---|---|
 | `source` | `skills` CLI | 规范化后的来源标识 |
 | `ref` | `skills` CLI | 分支或标签 |
 | `sourceType` | `skills` CLI | 来源类型 |
-| `skillPath` | `skills` CLI | 来源中指向 Skill 目录的相对路径 |
-| `computedHash` | `skills` CLI | 当前项目 Skill 目录的内容哈希 |
+| `skillPath` | `skills` CLI | 来源中定位 Skill 的相对路径，可以指向目录或以 `SKILL.md` 结尾 |
+| `computedHash` | `skills` CLI | 安装或更新时按兼容算法计算的 Skill 内容哈希 |
 | `subagents` | `skills` CLI | Eve 根 Agent 或具名子 Agent 的安装位置 |
-| `sourceUrl` | Skill Deck 扩展；`skills` CLI v1.5.22 Well-known 字段 | Git 等来源使用完整的原始来源地址；Well-known 来源使用能够重新定位索引的输入地址 |
+| `sourceUrl` | `skills` CLI 的 Git、GitLab 和 Well-known 字段；Skill Deck 也为 GitHub 保存 | Git 来源保留获取内容所需的完整地址；Well-known 来源使用能够重新定位索引的输入地址（CLI 自 v1.5.22 支持） |
 | `wellKnownDigest` | `skills` CLI v1.5.22 Well-known 字段 | 索引提供或根据旧版内容计算的 Skill 版本摘要 |
 | `remoteHash` | Skill Deck 扩展 | 来源能够提供的远端版本标识 |
-| `pluginName` | Skill Deck 扩展 | 用于界面展示的 plugin 信息 |
+| `pluginName` | Skill Deck 扩展 | 用于界面展示的来源插件信息 |
 
 Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent。当前参考版本使用 `subagents` 记录这些位置：
 
@@ -106,7 +106,7 @@ Eve 的用户选择和目标模型见[Agent 模型](./agent-model.md#eve-专用�
 
 当前参考 CLI 可以生成 Eve 目录型和单文件型内容，并移除其中的 `name`。Skill Deck 依据项目记录识别这类内容，写入只支持目录型安装；必要目标包含单文件时保留文件并阻断整份 Skill，具体规则见[Skill 生命周期](./skill-lifecycle.md#更新)。
 
-`computedHash` 按确定顺序组合相对路径和文件内容并计算 SHA-256，同时排除 `.git`、`node_modules` 等不属于 Skill 内容的目录。Skill Deck 从本次已经固定的完整内容计算同样的哈希。
+`computedHash` 按确定顺序组合相对路径和文件内容并计算 SHA-256，同时排除 `.git`、`node_modules` 等不属于 Skill 内容的目录。Skill Deck 从本次已经固定的完整内容计算同样的哈希。该字段保存安装或更新时的内容基线，外部编辑文件不会自动改写它。
 
 项目 lock 中的 Local 来源尽可能保存相对于项目根目录的路径，并统一使用 `/` 分隔符。读取时根据当前项目根目录解析，因此项目整体移动后仍可定位同一相对来源；Windows 来源与项目不在同一盘符或来源使用 UNC 地址时保留绝对路径。
 
@@ -114,14 +114,20 @@ Skill Deck 仍可读取旧的 `<project>/.agents/.skill-lock.json`，并在下�
 
 ## 版本字段的用途
 
-| 字段 | 解决的问题 |
+| 字段 | 保存的信息 |
 |---|---|
-| 全局 `skillFolderHash` | 保存 `skills` CLI 用于跟踪来源版本的值；GitHub 来源使用 Skill 目录的 Git tree object ID，GitLab 和普通 Git 使用兼容内容哈希 |
-| 项目 `computedHash` | 判断当前项目中的 Skill 内容是否变化 |
-| Skill Deck `remoteHash` | 保存来源能够提供的远端版本标识；GitHub 来源使用 Skill 目录的 tree object ID |
+| 全局 `skillFolderHash` | 保存 `skills` CLI 用于跟踪来源版本的值；GitHub 来源使用 Skill 目录的 Git 目录树对象 ID（tree object ID），GitLab 和普通 Git 使用兼容内容哈希 |
+| 项目 `computedHash` | 安装或更新时保存的兼容内容哈希，也用于 GitLab 和普通 Git 来源的版本比较 |
+| Skill Deck `remoteHash` | 保存来源能够提供的远端版本标识；GitHub 来源使用 Skill 目录的目录树对象 ID |
 | `wellKnownDigest` | 保存 Well-known 索引提供或根据旧版内容计算的版本摘要 |
 
-这些字段不能互相替代。`computedHash` 描述当前本地内容，`skillFolderHash`、`remoteHash` 和 `wellKnownDigest` 描述安装时保存的来源版本信息。远端版本如何获取、缺少比较信息时显示什么状态，由[更新检查](./update-checking.md)说明。
+比较基线按来源类型选择：
+
+- GitHub 使用全局 `skillFolderHash` 或项目 `remoteHash` 中的目录树对象 ID；项目记录只有 `computedHash` 时仍缺少远端比较基线。
+- GitLab 和普通 Git 使用全局 `skillFolderHash`；项目中优先使用 `computedHash`，缺失时使用 `remoteHash`。
+- Well-known 使用 `wellKnownDigest`，其他哈希字段不能替代该摘要。
+
+这些字段的含义和比较方式保持独立。远端版本的获取与缺少基线时的行为见[更新检查](./update-checking.md)。
 
 ## 修改 lock 文件后的数据保留情况
 
@@ -140,7 +146,9 @@ Skill Deck 修改全局或项目 lock 时，只替换本次操作负责的根字
 
 ### 使用 `skills` CLI 修改 lock 文件
 
-当前参考版本的 `skills` CLI 会根据自身支持的字段重新生成记录，不保证保留 Skill Deck 扩展字段或未来新增的未知字段。使用 CLI 更新项目 Skill 后，`sourceUrl`、`remoteHash` 或 `pluginName` 可能丢失。Skill Deck 会继续读取其余兼容字段；依赖缺失字段的功能会显示为不可用或需要修复，应用不会猜测或编造已经丢失的值。
+当前参考版本的 CLI 在安装或重新安装某个 Skill 时，按自身支持的字段替换该 Skill 的记录。该记录中的 `remoteHash`、项目 `pluginName` 等扩展字段可能丢失；`sourceUrl` 是否写入取决于来源类型，Git、GitLab 和 Well-known 项目记录会保存该字段，GitHub 项目记录通常省略。
+
+CLI 改写全局 lock 时保留根对象中的其他字段和未涉及的 Skill 记录。改写项目 lock 时，根对象只输出 `version` 和 `skills`，未涉及的 Skill 记录继续保留。Skill Deck 读取改写后的兼容字段；依赖缺失字段的功能按实际可用信息处理，不推测丢失的值。
 
 ## 来源解析与发现
 
@@ -148,10 +156,11 @@ Skill Deck 修改全局或项目 lock 时，只替换本次操作负责的根字
 
 - 在解析 Git URL 时先提取 `#ref`，并按相同顺序处理 Skill 筛选条件和 `ref`；
 - SSH 和私有 Git 输入保留认证所需的原始写法；
-- scoped Well-known 地址只读取对应 scope 的 catalog；精确选择命名的 internal Skill 时只放行这些名称，wildcard 仍只选择公开 Skill；
-- `skillPath` 能够精确定位来源中的原 Skill，并保留磁盘实际大小写；
-- 根目录、优先目录、plugin manifest 和递归查找使用兼容的发现顺序；
-- 项目 lock 筛选、父目录遮蔽、同名去重和结果排序在应用所在系统与 WSL 中保持一致；
+- 带页面路径的 Well-known 地址只读取对应范围内的索引；
+- 明确指定名称时，可以选择同名的内部 Skill（`internal`）；通配选择仍只包含公开 Skill；
+- `skillPath` 保留来源中的目录大小写；目录路径和以 `SKILL.md` 结尾的文件路径都解析到对应 Skill 目录，根目录的 `SKILL.md` 对应来源根目录；
+- 根目录、优先目录、插件清单和递归查找使用兼容的发现顺序；
+- 项目 lock 筛选、找到 Skill 后跳过其子目录的规则、同名去重和结果排序，在应用所在系统与 WSL 中保持一致；
 - Well-known 地址、旧版索引、制品摘要和归档路径遵循当前参考版本的兼容规则；
 - 安装内容保留隐藏文件，并按兼容规则排除版本控制、缓存和工具生成的数据。
 
@@ -171,7 +180,7 @@ CLI 的最近选择字段 `lastSelectedAgents` 只保存当前参考版本能够
 
 两个工具都会根据保存的来源重新取得完整 Skill。CLI 更新重新调用安装流程，重放已记录的 Eve 目标，其 Agent 选择仍遵循 CLI 安装规则。Skill Deck 按整份 Skill 发起更新，从实际安装确定既有目标；通用目录不是更新前提，新检测到的 Agent 也不会自动加入本次更新。
 
-Skill Deck 在预览中列出实际位置、差异保留和明确授权的 Eve 恢复。预览、批量执行、取消、恢复和错误反馈属于 Skill Deck 自身的工作流；比较版本时两个已有标记不相等即有更新，不为旧算法增加校准流程。
+Skill Deck 在预览中列出实际位置、保留有差异副本的选择，以及已有项目记录明确允许恢复的 Eve 目录。预览、批量执行、取消、恢复和错误反馈属于 Skill Deck 自身的工作流。比较版本时，两个已有标记不相等即视为有更新；旧工具使用不同算法生成标记时，可能出现一次内容未变化的更新。
 
 第三方 CLI 可以从本地路径安装，并在项目 lock 中保存 `sourceType: "local"`；这类记录没有远端更新能力。Skill Deck 在复制本地来源 Skill 时保持相同含义。没有有效来源记录的 Skill 只复制实际内容，不伪造来源类型；具体规则见[Skill 生命周期](./skill-lifecycle.md#复制到项目)。
 
@@ -185,10 +194,10 @@ Skill Deck 在预览中列出实际位置、差异保留和明确授权的 Eve �
 
 | 检查项 | 需要完成的工作 |
 |---|---|
-| 参考版本 | 确认 package 版本、Git 标签、Git 提交和源码工作区状态，阅读两个固定版本之间的实际源码差异 |
+| 参考版本 | 确认 npm 包版本、Git 标签、Git 提交和源码工作区状态，阅读两个固定版本之间的实际源码差异 |
 | 仓库内版本信息 | 同步 `package.json`、lockfile、`src/constants.ts`、CLI 兼容测试中的版本断言、About 页面测试以及本节版本表 |
 | 兼容数据 | 检查通用 Skill 目录、全局 lock、项目 lock、字段类型、排序、哈希、Eve `subagents` 和未知字段行为；新增字段时，确认两个工具是否都会读写，再决定是否补充数据类型、业务规则和兼容测试 |
-| 来源与发现 | 检查简写、URL、SSH、`ref`、Skill 子路径、Well-known、plugin manifest、发现顺序和排除项 |
+| 来源与发现 | 检查简写、URL、SSH、`ref`、Skill 子路径、Well-known、插件清单、发现顺序和排除项 |
 | Agent 信息 | 比较 Agent ID、别名、读取位置和检测方式，并根据 Agent 官方资料与实际行为复核 |
 | 安装与更新 | 检查来源重新获取、符号链接与复制、失败结果、缺失元数据和 CLI 修改 lock 后的字段保留情况 |
 | 新功能 | 区分数据兼容变化和产品功能变化；产品功能按 Skill Deck 的用户场景重新评估 |

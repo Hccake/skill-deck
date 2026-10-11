@@ -1,6 +1,6 @@
-# Triage 标签
+# Issue 评估状态
 
-仓库中的工程类 Skill 使用五个固定角色。下表列出这些角色在本仓库中对应的状态值。
+普通实施 Issue 使用评估与分流状态（triage），说明信息是否充分以及后续由谁处理。工程类 Skill 中的五个 triage 角色对应以下状态值。
 
 | Skill 中的角色 | 本仓库状态值 | 含义 |
 | --- | --- | --- |
@@ -10,4 +10,4 @@
 | `ready-for-human` | `ready-for-human` | 需要人工实施 |
 | `wontfix` | `wontfix` | 确认不予处理 |
 
-当 Skill 提到某个 triage 角色时，应在 issue 的 `Status:` 中使用对应状态值。
+普通实施 Issue 在 `Status:` 中使用对应状态值。Wayfinding 子任务的 `Status:` 表示执行进度，遵循[本地 Issue 与 Spec](./issue-tracker.md#wayfinding-子任务)中的独立约定。
