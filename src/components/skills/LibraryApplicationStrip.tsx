@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import type { LibraryApplicationSummary } from '@/bindings';
 import { cn } from '@/lib/utils';
 import { LibraryIdentity } from './LibraryIdentity';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 
 interface LibraryApplicationStripProps {
   application: LibraryApplicationSummary;
@@ -16,16 +17,15 @@ function LibrarySummaryItem({
   compact?: boolean;
 }) {
   return (
-    <div
+    <OverflowTooltip content={library.name}><div tabIndex={0}
       data-testid="library-summary-item"
       className={cn(
         'inline-flex min-w-0 items-center gap-1.5 rounded-lg border border-border/50 bg-muted/50 px-2.5 text-left transition-colors hover:bg-muted/80 hover:border-border/80',
         compact ? 'h-7.5 w-full' : 'h-7.5 max-w-64 shrink-0',
       )}
-      title={library.name}
     >
       <LibraryIdentity library={library} />
-    </div>
+    </div></OverflowTooltip>
   );
 }
 

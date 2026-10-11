@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import '@/test-utils';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { InstallPath } from '../InstallPath';
@@ -28,6 +28,10 @@ describe('InstallPath', () => {
     await user.click(screen.getByRole('button', { name: 'skills.installPath.copyPath' }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith(path.nativePath));
     expect(screen.getByRole('status').textContent).toContain('skills.installPath.copied');
+    const button = screen.getByRole('button', { name: 'skills.installPath.copied' });
+    act(() => button.blur());
+    act(() => button.focus());
+    expect((await screen.findByRole('tooltip')).textContent).toBe('skills.installPath.copied');
   });
 
   it('shows the full outside address without duplicating scope badges', () => {

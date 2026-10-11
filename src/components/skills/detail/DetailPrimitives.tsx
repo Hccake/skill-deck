@@ -4,6 +4,7 @@ import { AlertTriangle, Check, ChevronDown, ChevronUp, Copy, Link2, RefreshCw } 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { toast } from 'sonner';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
@@ -300,9 +301,9 @@ export const DetailSourceLink = memo(function DetailSourceLink({
       <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
     </button>
   );
-  return <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
-    <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-all text-wrap data-[state=closed]:animate-none!">
+  return <OverflowTooltip always={Boolean(hint || (openable && openable !== label))} content={<>
       <p>{label}</p>
+      {openable && openable !== label ? <p>{openable}</p> : null}
       {hint ? <p className="mt-1">{hint}</p> : null}
-    </TooltipContent></Tooltip>;
+    </>}>{source}</OverflowTooltip>;
 });

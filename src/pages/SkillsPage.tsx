@@ -20,6 +20,7 @@ import { UpdatePlanDialogContainer } from '@/components/skills/UpdatePlanDialogC
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { openSkillRemoval } from '@/workflows/skill-remove';
 import { SkillsWorkspace } from '@/components/skills/SkillsWorkspace';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { projectDisplayName } from '@/lib/projects/presentation';
 import type { InstalledSkill, InstalledSkillLocation } from '@/bindings';
 
@@ -186,7 +187,7 @@ export function SkillsPage() {
           {navigation ? (
             <div className="flex shrink-0 items-center gap-2 border-b bg-panel px-3 py-1">
               {navigation}
-              <span className="min-w-0 truncate text-sm font-medium" title={contextLabel}>{contextLabel}</span>
+              <OverflowTooltip content={contextLabel}><span tabIndex={0} className="min-w-0 truncate text-sm font-medium">{contextLabel}</span></OverflowTooltip>
             </div>
           ) : null}
           <div className="min-h-0 flex-1">

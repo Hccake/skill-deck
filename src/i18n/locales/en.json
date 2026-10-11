@@ -69,12 +69,12 @@
     "appliedTo": "Applied to",
     "pendingAdjustment": "Application adjustment unfinished",
     "pendingAdjustmentDescription": "The last library application change did not finish, so these locations may not match the target yet.",
-    "unappliedHint": "Apply this library from the global or project area on the Skills page so Agents can read its Skills.",
+    "unappliedHint": "Apply this library on the Skills page to make its Skills available to Agents.",
     "moreUsages": "+{{count}}",
     "lockedDelete": "A library in use cannot be deleted",
-    "lockedDeleteApplied": "This Library is in use. Remove its global or project applications from the Skills page first.",
-    "lockedDeletePending": "This Library has an unfinished application adjustment. Continue it from the Skills page first.",
-    "lockedDeleteAppliedWithPending": "This Library is in use and has an unfinished application adjustment. Continue it and remove the applications from the Skills page first.",
+    "lockedDeleteApplied": "Remove this library's applications first.",
+    "lockedDeletePending": "Finish the application changes on the Skills page first.",
+    "lockedDeleteAppliedWithPending": "Finish the application changes, then remove this library's applications.",
     "deleteNamed": "Delete {{name}}",
     "create": "Create Library",
     "rename": "Rename Library",
@@ -188,7 +188,7 @@
     "targetConflictScope": "{{skill}} in the shared Skill directory cannot be managed. Resolve the entry before saving.",
     "cancelConflictingAgents": "Remove {{agents}} association",
     "priorityOrder": "Skill Library priority",
-    "priorityHelp": "Skill Libraries closer to the top have higher priority.",
+    "priorityHelp": "For same-name library versions, the first library takes priority.",
     "moveUp": "Raise priority for {{name}}",
     "moveDown": "Lower priority for {{name}}",
     "copyOnlyUnsupported": "{{names}} require copied or transformed Skills and cannot be associated with Skill Libraries.",
@@ -234,7 +234,7 @@
     "selectedTitle": "Selected",
     "removeSelected": "Deselect {{agent}}",
     "modeTitle": "Installation method",
-    "modeHelp": "Choose how to install this Skill in the selected Agent directories. Copy-only Agents are not affected.",
+    "modeHelp": "Links share content; copies are independent.",
     "link": "Link",
     "linkRecommended": "Link (recommended)",
     "copy": "Copy",
@@ -242,24 +242,24 @@
     "automatic": {
       "install": {
         "title": "Available after installation",
-        "help": "This Skill is installed in the common Skill directory. These Agents can read it directly with no additional configuration."
+        "help": "These Agents read the common Skill directory directly."
       },
       "manage": {
         "title": "Agents that read the common directory",
-        "help": "These Agents can use this Skill when it is in the common directory. This dialog manages their dedicated directory associations."
+        "help": "These Agents can use Skills in the common directory directly."
       },
       "copyToProject": {
         "title": "Available after copying",
-        "help": "This Skill is copied to the target Project's common Skill directory. These Agents can read it directly with no additional configuration."
+        "help": "These Agents read the target project's common Skill directory directly."
       },
       "libraryApplication": {
         "title": "Available without association",
-        "help": "These Agents can read the current Scope's common Skill directory directly."
+        "help": "These Agents read the current global or project Skill directory directly."
       }
     },
     "selectable": {
       "title": "Available when selected",
-      "help": "These Agents do not read the common Skill directory. Select an Agent to create a link or copy in its Skill directory."
+      "help": "Select an Agent to create a link or copy in its Skill directory."
     },
     "ownDirectory": {
       "title": "Also install in each Agent’s own Skill directory (optional)",
@@ -319,12 +319,12 @@
   "installWizardSession": {
     "startupDescription": "Preparing…",
     "writeUnavailable": "Changes temporarily unavailable",
-    "writeUnavailableDescription": "An installation flow is open in another window. Finish or close it to resume changes, or click to continue there.",
+    "writeUnavailableDescription": "Return to the installation window",
     "operationNotRun": "This action was not completed. Finish or close the installation flow in the other window first.",
     "continueOperation": "Continue",
     "focusFailed": "The installation window could not be opened. Try again.",
     "syncFailedTitle": "Status check failed",
-    "syncFailedDescription": "Skill Deck cannot confirm whether changes are available. Click to check again."
+    "syncFailedDescription": "Check installation status again"
   },
   "recovery": {
     "title": "Recovery required",
@@ -433,7 +433,10 @@
     "actions": {
       "update": "Update",
       "delete": "Delete",
-      "copyToProject": "Copy to Project"
+      "copyToProject": "Copy to Project",
+      "updateNamed": "Update \"{{name}}\"",
+      "deleteNamed": "Delete \"{{name}}\"",
+      "copyToProjectNamed": "Copy \"{{name}}\" to another project"
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -468,7 +471,6 @@
     "projectUnavailableDescription": "The current system cannot access this project. Check its location, or switch to a system where the project has been added.",
     "updateCheckIncompleteCount": "{{count}} checks incomplete",
     "card": {
-      "actionLabel": "{{action}}: {{name}}",
       "sourceIncomplete": "Source information is incomplete",
       "sourceNeedsAttention": "Cannot check for updates",
       "sourceMissingUpstream": "This Skill is no longer in the source",
@@ -482,7 +484,7 @@
       "description": "Description",
       "expandDescription": "Expand description",
       "collapseDescription": "Collapse description",
-      "retryCheckHint": "The last check did not complete. Check the source again for a new version.",
+      "retryCheckHint": "The last check did not finish. Click to retry.",
       "refreshing": "Reloading content...",
       "refreshFailed": "Reload failed. Showing the previous content.",
       "showingPreviousContent": "Showing the previously loaded content.",
@@ -922,10 +924,10 @@
       "httpConnectionMode": "HTTP request connection method",
       "httpProxyAddress": "HTTP request proxy server URL",
       "httpInfo": "View HTTP request scope",
-      "httpInfoDescription": "Used to browse online Skills, retrieve source information, and check for and download updates. Online images use the system network settings.",
+      "httpInfoDescription": "Used for online browsing, source retrieval, updates, and translation. Online images use system network settings.",
       "gitTitle": "Git operations",
       "gitInfo": "View Git operation details",
-      "gitInfoDescription": "Only affects Git operations started by the app and does not change Git configuration in any Environment.",
+      "gitInfoDescription": "Applies to Git operations started by the app. Existing Git configuration is preserved.",
       "nativeEnvironment": "Native",
       "nativeGitProxyAddress": "{{environment}} Git proxy server URL",
       "wslInfo": "View {{distro}} Git details",
@@ -1298,7 +1300,7 @@
       "dialogDescription": "After verification, the token will be stored in the system secure storage.",
       "savedTokenHidden": "The complete token will not be shown again after it is saved.",
       "environmentHelpLabel": "Other ways to provide a GitHub Token",
-      "environmentHelp": "You can also use the GH_TOKEN or GITHUB_TOKEN environment variable. A saved token takes precedence.",
+      "environmentHelp": "Also supports GITHUB_TOKEN and GH_TOKEN environment variables. A saved token takes precedence.",
       "tokenLabel": "GitHub token",
       "tokenPlaceholder": "github_pat_…",
       "verifyAndSave": "Verify and save",
@@ -1421,7 +1423,9 @@
   },
   "theme": {
     "light": "Light",
-    "dark": "Dark"
+    "dark": "Dark",
+    "switchToLight": "Switch to light theme",
+    "switchToDark": "Switch to dark theme"
   },
   "language": {
     "switchTo": "Switch to Chinese"

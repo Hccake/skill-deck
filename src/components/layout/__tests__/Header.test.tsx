@@ -1,7 +1,10 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { render as testingLibraryRender, screen } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Header } from '../Header';
@@ -72,7 +75,7 @@ describe('Header', () => {
     for (const link of screen.getAllByRole('link')) {
       expect(link.getAttribute('data-tauri-drag-region')).toBe('false');
     }
-    const tools = screen.getByRole('button', { name: 'theme.dark' }).parentElement!;
+    const tools = screen.getByRole('button', { name: 'theme.switchToDark' }).parentElement!;
     expect(['', 'true']).toContain(tools.getAttribute('data-tauri-drag-region'));
     for (const button of tools.querySelectorAll('button')) {
       expect(button.hasAttribute('data-tauri-drag-region')).toBe(false);

@@ -495,6 +495,7 @@ function CopyToProjectDialogSession({
                           <span className="min-w-0 flex-1">
                             <ProjectIdentity
                               project={project}
+                              focusable={false}
                               nameClassName="text-sm"
                               pathClassName="text-xs text-muted-foreground"
                             />

@@ -1,7 +1,10 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen, within } from '@testing-library/react';
+import { render as testingLibraryRender, screen, within } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import { describe, expect, it, vi } from 'vitest';
 import { LibraryApplicationStrip } from '../LibraryApplicationStrip';
 
@@ -26,10 +29,8 @@ describe('LibraryApplicationStrip', () => {
 
     const summary = screen.getByTestId('applied-libraries-summary');
     const libraries = within(summary).getAllByTestId('library-summary-item');
-    expect(libraries.map((library) => library.getAttribute('title'))).toEqual([
-      'First',
-      'Second',
-    ]);
+    expect(within(libraries[0]).getByText('First')).toBeTruthy();
+    expect(within(libraries[1]).getByText('Second')).toBeTruthy();
     expect(within(libraries[0]).getByText('libraries.skillCount:{"count":3}')).toBeTruthy();
     expect(within(libraries[1]).getByText('libraries.skillCount:{"count":1}')).toBeTruthy();
     expect(within(summary).queryByRole('button')).toBeNull();

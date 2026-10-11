@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -90,7 +91,7 @@ export function TranslationSettingsPage() {
             {settings.profiles.length > 0 ? <SelectGroup>
               <SelectLabel>{t('translation.languageModel')}</SelectLabel>
               {settings.profiles.map(p => <SelectItem key={p.id} value={`profile:${p.id}`} textValue={p.name}>
-                <span className="block min-w-0 max-w-64" title={p.name}><span className="block truncate">{p.name}</span><span className="block truncate text-xs text-muted-foreground">{p.model}</span></span>
+                <OverflowTooltip content={<><p>{p.name}</p><p>{p.model}</p></>}><span className="block min-w-0 max-w-64"><span className="block truncate">{p.name}</span><span className="block truncate text-xs text-muted-foreground">{p.model}</span></span></OverflowTooltip>
               </SelectItem>)}
             </SelectGroup> : null}
             <SelectGroup>
@@ -106,7 +107,7 @@ export function TranslationSettingsPage() {
         <div className="min-w-0">
           <Button variant="ghost" size="sm" className="-ml-2 h-8 font-normal" disabled={busy || writeBlocked} onClick={() => openProfile({ id: crypto.randomUUID(), name: '', baseUrl: 'https://api.openai.com/v1', model: '', key: { action: 'clear' } })}><Plus aria-hidden="true" />{t('translation.addProfile')}</Button>
           {settings.profiles.map(p => <div key={p.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-            <div className="min-w-0"><p className="truncate" title={p.name}>{p.name}</p><p className="truncate text-xs text-muted-foreground" title={p.model}>{p.model}</p></div>
+            <div className="min-w-0"><OverflowTooltip content={p.name}><p tabIndex={0} className="truncate">{p.name}</p></OverflowTooltip><OverflowTooltip content={p.model}><p tabIndex={0} className="truncate text-xs text-muted-foreground">{p.model}</p></OverflowTooltip></div>
             <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" disabled={busy || writeBlocked} onClick={() => openProfile({ id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model, key: { action: 'keep' } })}>{t('translation.edit')}</Button>
               <Button variant="ghost" size="sm" disabled={busy || writeBlocked} onClick={() => {
                 setMessage(null);

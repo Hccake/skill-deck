@@ -193,7 +193,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             <DetailAction
               className="hover:text-primary hover:bg-primary/10"
               label={t('skills.checkUpdates')}
-              hint={cooldownActive && cooldownDeadline
+              hint={isCheckingUpdates ? t('skills.checking') : cooldownActive && cooldownDeadline
                 ? t('skills.updateEvidence.retryAt', {
                     time: new Date(cooldownDeadline).toLocaleString(i18n.language),
                   })

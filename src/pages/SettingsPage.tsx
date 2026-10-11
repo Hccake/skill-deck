@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { SlidersHorizontal, GitBranch, FolderOpen, Info, Bot, Network, Languages } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { cn } from '@/lib/utils';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
@@ -134,8 +134,7 @@ export function SettingsPage() {
               const selected = section.id === activeSection;
 
               return (
-                <Tooltip key={section.id}>
-                  <TooltipTrigger asChild>
+                <OverflowTooltip key={section.id} content={t(section.titleKey)} side="right" sideOffset={8} showArrow={false}>
                     <button
                       type="button"
                       aria-label={t(section.titleKey)}
@@ -158,21 +157,16 @@ export function SettingsPage() {
                           selected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                         )}
                       />
-                      <span className="hidden truncate md:inline">
+                      <span className="hidden truncate md:inline" data-tooltip-label>
                         {t(section.titleKey)}
                       </span>
                     </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8} showArrow={false} className="md:hidden">
-                    {t(section.titleKey)}
-                  </TooltipContent>
-                </Tooltip>
+                </OverflowTooltip>
               );
             })}
           </div>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
+          <OverflowTooltip content={t('settings.nav.about')} side="right" sideOffset={8} showArrow={false}>
               <button
                 type="button"
                 aria-label={t('settings.nav.about')}
@@ -195,13 +189,9 @@ export function SettingsPage() {
                     activeSection === 'about' ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
                   )}
                 />
-                <span className="hidden truncate md:inline">{t('settings.nav.about')}</span>
+                <span className="hidden truncate md:inline" data-tooltip-label>{t('settings.nav.about')}</span>
               </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8} showArrow={false} className="md:hidden">
-              {t('settings.nav.about')}
-            </TooltipContent>
-          </Tooltip>
+          </OverflowTooltip>
         </nav>
       </aside>
 

@@ -25,12 +25,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { SkillsWorkspace } from '@/components/skills/SkillsWorkspace';
 import { useLayoutStore } from '@/stores/layout';
 import { useSkillListKeyboard } from '@/hooks/useSkillListKeyboard';
@@ -445,8 +441,7 @@ export function LibraryPage() {
   const libraryActions = (
     <div className="flex items-center gap-0.5">
       {availableUpdates.length > 0 ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
+        <OverflowTooltip content={t('libraries.updateCount', { count: availableUpdates.length })}>
             <Button
               type="button"
               variant="ghost"
@@ -457,13 +452,11 @@ export function LibraryPage() {
               aria-label={t('libraries.updateCount', { count: availableUpdates.length })}
             >
               <ArrowUpCircle className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="library-secondary-action-label">
+              <span className="library-secondary-action-label" data-tooltip-label>
                 {t('libraries.updateCount', { count: availableUpdates.length })}
               </span>
             </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('libraries.updateCount', { count: availableUpdates.length })}</TooltipContent>
-        </Tooltip>
+        </OverflowTooltip>
       ) : null}
 
       {workspace.detail?.skills.some((skill) => skill.updateCapability?.canCheckForUpdates !== false) ? (
@@ -604,8 +597,7 @@ export function LibraryPage() {
                 <span className="shrink-0 text-border" aria-hidden="true">·</span>
                 {updateSummary ? (
                   <>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
+                    <OverflowTooltip content={updateSummary}>
                         <span
                           className="library-update-summary inline-flex min-w-0 items-center gap-1 truncate rounded-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                           role="status"
@@ -634,9 +626,7 @@ export function LibraryPage() {
                             </span>
                           ))}
                         </span>
-                      </TooltipTrigger>
-                      <TooltipContent>{updateSummary}</TooltipContent>
-                    </Tooltip>
+                    </OverflowTooltip>
                     <span className="shrink-0 text-border" aria-hidden="true">·</span>
                   </>
                 ) : null}

@@ -126,7 +126,6 @@ describe('ManageAgentsDialog', () => {
   });
 
   it('places installation mode before Agent choices and exposes its help', async () => {
-    const user = userEvent.setup();
     await renderDialog();
 
     const title = screen.getByText('skills.manageAgents.title:{"name":"frontend-design"}');
@@ -140,9 +139,7 @@ describe('ManageAgentsDialog', () => {
     expect(mode.compareDocumentPosition(firstAgentGroup) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(description.parentElement).toBe(header);
 
-    const help = screen.getByRole('button', { name: 'agentSelection.modeHelp' });
-    await user.hover(help);
-    expect((await screen.findByRole('tooltip')).textContent).toContain('agentSelection.modeHelp');
+    expect(screen.getByText('agentSelection.modeHelp')).toBeTruthy();
   });
 
   it('allows choosing the mode first without treating an inactive choice as a saved change', async () => {

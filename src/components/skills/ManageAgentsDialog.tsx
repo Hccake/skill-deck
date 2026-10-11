@@ -225,7 +225,7 @@ function ManageDialogHeader({ skillName }: { skillName?: string }) {
   const title = t('skills.manageAgents.title', { name: skillName });
   return (
     <DialogHeader className="min-w-0 border-b px-6 py-4 pr-14 text-left">
-      <DialogTitle className="min-w-0 truncate" title={title}>
+      <DialogTitle className="min-w-0 break-words">
         {title}
       </DialogTitle>
       <DialogDescription className="sr-only">

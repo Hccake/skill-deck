@@ -1,6 +1,9 @@
 import '@/test-utils';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as testingLibraryRender, screen, waitFor } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import type { TranslationSettings } from '@/bindings';
 import { TranslationSettingsPage } from '../TranslationSettingsPage';
 import { useSettingsStore } from '@/stores/settings';

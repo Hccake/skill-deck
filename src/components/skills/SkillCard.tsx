@@ -29,6 +29,7 @@ import {
 } from '@/components/skills/card/SkillCardPrimitives';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import type { AgentId, InstalledSkill, InstalledSkillLocation } from '@/bindings';
 import {
   isSkillUpdateActive,
@@ -103,7 +104,6 @@ export const SkillCard = memo(function SkillCard({
     ? formatSkillCardDate(skill.updatedAt, i18n.language)
     : null;
   const activation = useCardActivation(onClick ? () => onClick(skill) : undefined);
-  const actionLabel = (key: string) => t('skills.card.actionLabel', { action: t(key), name: skill.name });
 
   const handleTitleClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -119,21 +119,13 @@ export const SkillCard = memo(function SkillCard({
       onClick={onClick ? activation.onClick : undefined}
     >
       <CardContent className="grid grid-cols-[1.5rem_minmax(0,1fr)] items-start gap-x-2.5 px-3 py-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div>
-              <SkillCardMarker icon={ScopeIcon} testId="skill-scope-marker" />
-            </div>
-          </TooltipTrigger>
-          <TooltipContent><p>{t(`skills.scopeIcon.${displayScope}`)}</p></TooltipContent>
-        </Tooltip>
+        <SkillCardMarker icon={ScopeIcon} testId="skill-scope-marker" />
 
         <div className="flex min-w-0 flex-col">
           <div className="flex min-w-0 items-start justify-between gap-2">
             <div data-testid="skill-card-title" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden pt-0.5">
               {onClick ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <OverflowTooltip content={skill.name}>
                     <button
                       type="button"
                       data-skill-open
@@ -144,21 +136,18 @@ export const SkillCard = memo(function SkillCard({
                         {skill.name}
                       </h3>
                     </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">{skill.name}</TooltipContent>
-                </Tooltip>
+                </OverflowTooltip>
               ) : (
                 <h3 className="truncate font-heading text-sm font-semibold leading-5 text-foreground">
                   {skill.name}
                 </h3>
               )}
               {skill.pluginName ? (
-                <span
-                  title={toTitleCase(skill.pluginName)}
+                <OverflowTooltip content={toTitleCase(skill.pluginName)}><span tabIndex={0}
                   className="max-w-40 min-w-0 shrink-[2] truncate text-xs text-muted-foreground"
                 >
                   {toTitleCase(skill.pluginName)}
-                </span>
+                </span></OverflowTooltip>
               ) : null}
               <CrossfadeSwap transitionKey={statusTransitionKey} className="shrink-0">
                 {activeUpdatePhase ? (
@@ -180,7 +169,7 @@ export const SkillCard = memo(function SkillCard({
               {canShowUpdateAction ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  label={actionLabel('skills.actions.update')}
+                  label={t('skills.actions.updateNamed', { name: skill.name })}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -193,7 +182,7 @@ export const SkillCard = memo(function SkillCard({
               {displayScope === 'project' && onCopyToProject ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                  label={actionLabel('skills.actions.copyToProject')}
+                  label={t('skills.actions.copyToProjectNamed', { name: skill.name })}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -206,7 +195,7 @@ export const SkillCard = memo(function SkillCard({
               {onManageAgents ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-muted hover:text-foreground"
-                  label={actionLabel('skills.manageAgents.action')}
+                  label={t('skills.manageAgents.title', { name: skill.name })}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -219,7 +208,7 @@ export const SkillCard = memo(function SkillCard({
               {onDelete ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  label={actionLabel('skills.actions.delete')}
+                  label={t('skills.actions.deleteNamed', { name: skill.name })}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();

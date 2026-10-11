@@ -3,7 +3,10 @@
 import '@/test-utils';
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render as testingLibraryRender, waitFor } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
 import type { SkillLocationRef, InstalledLibraryVersion, InstalledSkill, ProjectInfo } from '@/bindings';

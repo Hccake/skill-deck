@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 
 interface SkillCardShellProps {
   itemKey?: string;
@@ -96,11 +97,11 @@ export const SkillSourceLink = memo(function SkillSourceLink({
       <ExternalLink className="size-3 shrink-0" aria-hidden="true" />
     </button>
   );
-  return <Tooltip><TooltipTrigger asChild>{source}</TooltipTrigger>
-    <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">
+  return <OverflowTooltip always={Boolean(hint || (openable && openable !== label))} content={<>
       <p>{label}</p>
+      {openable && openable !== label ? <p>{openable}</p> : null}
       {hint ? <p className="mt-1">{hint}</p> : null}
-    </TooltipContent></Tooltip>;
+    </>}>{source}</OverflowTooltip>;
 });
 
 export function SkillCardAction({ label, className, ...props }: ComponentProps<typeof Button> & { label: string }) {
@@ -130,8 +131,7 @@ export const SkillCompactRow = memo(function SkillCompactRow({ name, source, sel
   onClick: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    <OverflowTooltip content={<><p className="font-medium">{name}</p>{source ? <p>{source}</p> : null}</>}>
         <button
           type="button"
           data-skill-open
@@ -146,12 +146,7 @@ export const SkillCompactRow = memo(function SkillCompactRow({ name, source, sel
           <div className={cn('truncate font-heading text-sm font-semibold leading-5 tracking-normal', selected ? 'text-primary' : 'text-foreground')}>{name}</div>
           <div className="mt-0.5 min-h-[18px] truncate text-xs leading-[18px] text-zinc-600 dark:text-muted-foreground">{source}</div>
         </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">
-        <p className="font-medium">{name}</p>
-        {source ? <p className="mt-1">{source}</p> : null}
-      </TooltipContent>
-    </Tooltip>
+    </OverflowTooltip>
   );
 });
 

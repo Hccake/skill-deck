@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { canConfirmSkillUpdate, canPrepareUpdateAgain, useSkillUpdateWorkflow } from '@/workflows/skill-update';
@@ -488,7 +489,9 @@ export function UpdatePlanDialog({
                       <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                         <p>{t('skills.updatePlan.skippedCopies')}</p>
                         {item.skippedCopyPaths.map((path) => <p key={path.nativePath} className="min-w-0">
-                          <span className="block truncate font-mono" title={path.nativePath}>{presentInstallPath(path, preview?.pathBase, context.scope.scope).label}</span>
+                          <OverflowTooltip content={<code>{path.nativePath}</code>} always={path.nativePath !== presentInstallPath(path, preview?.pathBase, context.scope.scope).label}>
+                            <span tabIndex={0} className="block truncate font-mono">{presentInstallPath(path, preview?.pathBase, context.scope.scope).label}</span>
+                          </OverflowTooltip>
                         </p>)}
                       </div>
                     ) : null}

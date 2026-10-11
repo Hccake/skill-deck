@@ -5,6 +5,7 @@ import { Plus, Check, ArrowUpCircle, RefreshCw, CircleAlert, SlidersHorizontal }
 import { Button } from '@/components/ui/button';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { SkillCard } from './SkillCard';
 import { LibraryApplicationStrip } from './LibraryApplicationStrip';
 import { ProjectUnavailableState } from './EmptyStates';
@@ -258,7 +259,6 @@ export const SkillsSection = memo(function SkillsSection({
               className="inline-flex h-7 min-w-0 flex-1 items-center overflow-hidden text-xs"
               aria-live="polite"
               aria-atomic="true"
-              title={visibleSummaryItems.length > 0 ? visibleSummaryItems.join(' · ') : undefined}
             >
               <CrossfadeSwap transitionKey={summaryTransitionKey} className="min-w-0 max-w-full">
                 {visibleSummaryItems.length > 0 ? (
@@ -304,14 +304,14 @@ export const SkillsSection = memo(function SkillsSection({
                             <span aria-hidden="true" className="text-border">·</span>
                           )}
                         </span>
-                        <span
+                        <OverflowTooltip content={item}><span tabIndex={0}
                           className={cn(
                             'truncate',
                             isAnyUpdating ? 'text-primary' : 'text-muted-foreground',
                           )}
                         >
                           {item}
-                        </span>
+                        </span></OverflowTooltip>
                       </span>
                     ))}
                   </span>

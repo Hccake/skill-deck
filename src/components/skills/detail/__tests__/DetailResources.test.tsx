@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import '@/test-utils';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -17,6 +17,11 @@ afterEach(() => vi.restoreAllMocks());
 const documentView = (content: string) => <TooltipProvider><div data-radix-scroll-area-viewport=""><DetailBody content={content} loading={false} /></div></TooltipProvider>;
 
 describe('detail document links', () => {
+  it('names the copy action before explaining an unsupported reference', async () => {
+    render(documentView('[Reference](references/config.md)'));
+    act(() => screen.getByRole('button', { name: 'skills.detail.copyReferenceAddress' }).focus());
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.detail.copyReferenceAddress');
+  });
   it('opens the exact external address from keyboard, modified click and middle click without navigating the app', async () => {
     const user = userEvent.setup();
     const target = 'https://example.com/guide?q=one%20two#section';
@@ -115,6 +120,12 @@ describe('detail document links', () => {
 });
 
 describe('detail document images', () => {
+  it('names the retry action in the failed image tooltip', async () => {
+    render(documentView('![Diagram](https://example.com/diagram.png)'));
+    fireEvent.error(screen.getByRole('img', { name: 'Diagram' }));
+    act(() => screen.getByRole('button', { name: 'skills.detail.retryImage' }).focus());
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.detail.retryImage');
+  });
   it('retries only the failed image with the exact URL and transfers focus when retry disappears', async () => {
     const user = userEvent.setup();
     const source = 'https://example.com/diagram.png?signature=abc%2B123';

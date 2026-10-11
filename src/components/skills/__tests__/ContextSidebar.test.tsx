@@ -2,7 +2,10 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render as testingLibraryRender, screen, waitFor, within } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import type {
   SkillLocationRef,
   EnvironmentInfo,
@@ -192,7 +195,7 @@ describe('ContextSidebar', () => {
     expect(container.querySelectorAll('[data-testid="context-sidebar-scroll"]')).toHaveLength(1);
   });
 
-  it('uses sibling buttons with full-text tooltips for project rows', () => {
+  it('keeps row actions separate and reveals a clipped project name on focus', async () => {
     mocks.projectView.projects = [project('a')];
     const { container } = render(<ContextSidebar />);
 
@@ -202,8 +205,10 @@ describe('ContextSidebar', () => {
     expect(buttons).toHaveLength(3);
     expect(buttons.every((button) => button.querySelector('button') === null)).toBe(true);
     expect(buttons[0].tagName).toBe('BUTTON');
-    expect(screen.getByText('a').getAttribute('title')).toBe('a');
-    expect(screen.getByText('C:\\Code\\a').getAttribute('title')).toBe('C:\\Code\\a');
+    const name = screen.getByText('a');
+    vi.spyOn(name, 'scrollWidth', 'get').mockReturnValue(300);
+    fireEvent.focus(name);
+    expect((await screen.findByRole('tooltip')).textContent).toBe('a');
   });
 
   it('opens a project through its backend-owned context resource', () => {

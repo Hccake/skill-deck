@@ -1,8 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { matchPath, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Sun, Moon, Package, Settings, Check, Compass, LibraryBig } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { RecoveryCenter } from '@/components/recovery/RecoveryCenter';
 import {
   DropdownMenu,
@@ -44,6 +46,7 @@ const NAV_ITEMS = [
 export function Header() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const unsavedChanges = useOptionalUnsavedChanges();
   const theme = useSettingsStore((state) => state.theme);
   const toggleTheme = useSettingsStore((state) => state.toggleTheme);
@@ -123,25 +126,26 @@ export function Header() {
           className="flex w-max shrink-0 items-center gap-1"
           data-tauri-drag-region
         >
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) => cn(getNavLinkClass({ isActive }), !showLabels && !isActive && 'gap-0')}
-              aria-label={t(label)}
-              title={t(label)}
-              data-tauri-drag-region="false"
-              onClick={(event) => guardNavigation(event, to)}
-            >
-              {({ isActive }) => <>
-                <Icon className="size-4.5 shrink-0" aria-hidden="true" />
-                <span className={cn('overflow-hidden', !showLabels && !isActive && 'w-0')} aria-hidden={!showLabels && !isActive}>
-                  <span data-nav-label className="block w-max whitespace-nowrap">{t(label)}</span>
-                </span>
-              </>}
-            </NavLink>
-          ))}
+          {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
+            const active = Boolean(matchPath({ path: to, end: to === '/' }, pathname));
+            return (
+              <OverflowTooltip key={to} content={t(label)}>
+                <NavLink
+                  to={to}
+                  end={to === '/'}
+                  className={cn(getNavLinkClass({ isActive: active }), !showLabels && !active && 'gap-0')}
+                  aria-label={t(label)}
+                  data-tauri-drag-region="false"
+                  onClick={(event) => guardNavigation(event, to)}
+                >
+                  <Icon className="size-4.5 shrink-0" aria-hidden="true" />
+                  <span className={cn('truncate', !showLabels && !active && 'w-0')} aria-hidden={!showLabels && !active}>
+                    <span data-nav-label className="block w-max whitespace-nowrap">{t(label)}</span>
+                  </span>
+                </NavLink>
+              </OverflowTooltip>
+            );
+          })}
         </nav>
       </div>
 
@@ -184,20 +188,20 @@ export function Header() {
         </DropdownMenu>
 
         {/* Theme Toggle */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="cursor-pointer text-muted-foreground hover:text-foreground shrink-0 h-7 w-7 sm:h-7.5 sm:w-7.5"
-          onClick={toggleTheme}
-          aria-label={t(`theme.${theme === 'light' ? 'dark' : 'light'}`)}
-          title={t(`theme.${theme === 'light' ? 'dark' : 'light'}`)}
-        >
-          {theme === 'light' ? (
-            <Sun className="h-3.5 w-3.5" />
-          ) : (
-            <Moon className="h-3.5 w-3.5" />
-          )}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="cursor-pointer text-muted-foreground hover:text-foreground shrink-0 h-7 w-7 sm:h-7.5 sm:w-7.5"
+              onClick={toggleTheme}
+              aria-label={t(theme === 'light' ? 'theme.switchToDark' : 'theme.switchToLight')}
+            >
+              {theme === 'light' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t(theme === 'light' ? 'theme.switchToDark' : 'theme.switchToLight')}</TooltipContent>
+        </Tooltip>
 
         {/* Window Controls (Windows only: macOS uses native traffic lights, Linux uses native window frame) */}
         {windows && <WindowControls className="ml-1" />}

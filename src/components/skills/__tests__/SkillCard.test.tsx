@@ -22,8 +22,7 @@ const toastMocks = vi.hoisted(() => ({
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, values?: { action: string; name: string }) => key === 'skills.card.actionLabel'
-      ? `${values?.action}: ${values?.name}` : key,
+    t: (key: string, values?: { name: string }) => values?.name ? `${key}: ${values.name}` : key,
     i18n: { language: 'en' },
   }),
 }));
@@ -169,13 +168,13 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    await user.click(screen.getByRole('button', { name: 'skills.actions.copyToProject: toolkit' }));
+    await user.click(screen.getByRole('button', { name: 'skills.actions.copyToProjectNamed: toolkit' }));
     expect(onCopyToProject).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
 
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.action: toolkit' }));
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.title: toolkit' }));
     expect(onManageAgents).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
 
-    await user.click(screen.getByRole('button', { name: 'skills.actions.delete: toolkit' }));
+    await user.click(screen.getByRole('button', { name: 'skills.actions.deleteNamed: toolkit' }));
     expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
     expect(onClick).not.toHaveBeenCalled();
   });
@@ -254,10 +253,10 @@ describe('SkillCard', () => {
     );
 
     for (const name of [
-      'skills.actions.update',
-      'skills.actions.copyToProject',
-      'skills.manageAgents.action',
-      'skills.actions.delete',
+      'skills.actions.updateNamed',
+      'skills.actions.copyToProjectNamed',
+      'skills.manageAgents.title',
+      'skills.actions.deleteNamed',
     ]) {
       expect((screen.getByRole('button', { name: `${name}: toolkit` }) as HTMLButtonElement).disabled).toBe(true);
     }
@@ -302,7 +301,7 @@ describe('SkillCard', () => {
     expect(screen.getByText('skills.card.sourceIncomplete')).toBeTruthy();
     expect(screen.queryByText('skills.updateStatusLabel.needsSourceInfo')).toBeNull();
     expect(screen.queryByText('skills.updateHint.missing-skill-path')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'skills.actions.update: toolkit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.actions.updateNamed: toolkit' })).toBeNull();
   });
 
   it('keeps the single skill update action as the primary action when an update is available', () => {
@@ -320,10 +319,10 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByRole('button', { name: 'skills.actions.update: toolkit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'skills.actions.updateNamed: toolkit' })).toBeTruthy();
     expect(screen.getByText('skills.updateStatusLabel.available')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'skills.actions.update: toolkit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.actions.updateNamed: toolkit' }));
     expect(onUpdate).toHaveBeenCalledWith('toolkit');
   });
 
@@ -681,7 +680,7 @@ describe('SkillCard', () => {
 
     expect(screen.queryByTestId('skill-card-attention')).toBeNull();
     expect(screen.getByText('skills.updateStatusLabel.available')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'skills.actions.update: toolkit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'skills.actions.updateNamed: toolkit' })).toBeTruthy();
     expect(screen.queryByText('must not be shown')).toBeNull();
   });
 
@@ -796,7 +795,7 @@ describe('SkillCard', () => {
     );
 
     expect(screen.getAllByRole('button', { name: /^skills\.actions\./ })).toEqual([
-      screen.getByRole('button', { name: 'skills.actions.delete: toolkit' }),
+      screen.getByRole('button', { name: 'skills.actions.deleteNamed: toolkit' }),
     ]);
   });
 
@@ -825,8 +824,8 @@ describe('SkillCard', () => {
     expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
     expect(screen.queryByText('skills.updateStatusLabel.deletedUpstream')).toBeNull();
     expect(screen.queryByText('skills.updateHint.deletedUpstream')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'skills.actions.update: toolkit' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'skills.actions.delete: toolkit' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.actions.updateNamed: toolkit' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'skills.actions.deleteNamed: toolkit' })).toBeTruthy();
   });
 
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
@@ -843,7 +842,7 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByRole('button', { name: 'skills.actions.update: toolkit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.actions.updateNamed: toolkit' })).toBeNull();
   });
 
   it('hides update action for manual-only sources when no update is available', () => {
@@ -862,7 +861,7 @@ describe('SkillCard', () => {
     );
 
     expect(screen.queryByText('skills.updateStatusLabel.autoCheckUnavailable')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'skills.actions.update: toolkit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.actions.updateNamed: toolkit' })).toBeNull();
   });
 
   it('shows local sources as local Skills without an attention warning', () => {

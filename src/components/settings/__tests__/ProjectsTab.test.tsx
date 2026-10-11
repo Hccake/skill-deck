@@ -2,7 +2,10 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as testingLibraryRender, screen, waitFor } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import type { SkillLocationRef, EnvironmentInfo, EnvironmentRef, ProjectInfo } from '@/bindings';
 import { ProjectsTab } from '../ProjectsTab';
 import { useMutationStore } from '@/stores/mutation';

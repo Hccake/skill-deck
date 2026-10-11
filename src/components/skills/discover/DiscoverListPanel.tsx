@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getDiscoverLeaderboard, searchDiscoverSkills } from '@/lib/discover/api';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
@@ -78,8 +78,7 @@ const DiscoverSkillItem = memo(function DiscoverSkillItem({
   t: TFunction;
 }) {
   return (
-    <Tooltip>
-    <TooltipTrigger asChild>
+    <OverflowTooltip content={<><p className="font-medium">{skill.name}</p><p>{skill.source}</p></>}>
     <button
       type="button"
       data-skill-item={skill.detailUrl}
@@ -124,12 +123,7 @@ const DiscoverSkillItem = memo(function DiscoverSkillItem({
         ) : null}
       </span>
     </button>
-    </TooltipTrigger>
-    <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all text-left data-[state=closed]:animate-none!">
-      <p className="font-medium">{skill.name}</p>
-      <p>{skill.source}</p>
-    </TooltipContent>
-    </Tooltip>
+    </OverflowTooltip>
   );
 });
 

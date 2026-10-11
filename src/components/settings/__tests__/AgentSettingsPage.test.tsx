@@ -521,9 +521,7 @@ describe('AgentSettingsPage', () => {
     const tooltip = await screen.findByRole('tooltip');
     expect(tooltip.textContent).not.toContain('Native');
     expect(tooltip.textContent).not.toContain('settings.agents.project.relativeHint');
-    expect(tooltip.querySelector('[data-slot="agent-path-tooltip-kind"]')).toBeNull();
-    expect(tooltip.querySelector('[data-slot="agent-path-tooltip-value"]')?.textContent)
-      .toBe('/home/me/.agents/skills');
+    expect(tooltip.textContent).toBe('/home/me/.agents/skills');
   });
 
   it('renders standard and unsupported read modes without repeating standard paths', () => {
@@ -680,17 +678,16 @@ describe('AgentSettingsPage', () => {
     const projectPath = screen.getByText('.my-agent/skills');
     fireEvent.focus(projectPath);
     const projectTooltip = await screen.findByRole('tooltip');
-    expect(projectTooltip.querySelector('[data-slot="agent-path-tooltip-kind"]')?.textContent)
-      .toBe('settings.agents.directoryKind.private');
-    expect(projectTooltip.querySelector('[data-slot="agent-path-tooltip-value"]')?.textContent)
-      .toBe('.my-agent/skills');
+    expect(projectTooltip.textContent).toContain('settings.agents.directoryKind.private');
+    expect(projectTooltip.textContent).toContain('.my-agent/skills');
     expect(projectTooltip.textContent).not.toContain('settings.agents.project.relativeHint');
 
-    fireEvent.focus(screen.getByText('~/.my-agent'));
+    fireEvent.blur(projectPath);
+    const detectionPath = screen.getByText('~/.my-agent');
+    vi.spyOn(detectionPath, 'scrollWidth', 'get').mockReturnValue(300);
+    fireEvent.focus(detectionPath);
     const detectionTooltip = await screen.findByRole('tooltip');
-    expect(detectionTooltip.querySelector('[data-slot="agent-path-tooltip-kind"]')).toBeNull();
-    expect(detectionTooltip.querySelector('[data-slot="agent-path-tooltip-value"]')?.textContent)
-      .toBe('~/.my-agent');
+    expect(detectionTooltip.textContent).toBe('~/.my-agent');
   });
 
   it('clears resolved runtime data while switching Environment', async () => {

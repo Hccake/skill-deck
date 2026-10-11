@@ -36,7 +36,7 @@ describe('LibrarySkillDetailPanel', () => {
       content="Document" loading={false} onClose={vi.fn()} onRemove={onRemove} /></TooltipProvider>);
     const remove = screen.getByRole('button', { name: 'libraries.removeSkill:{"name":"backend-utils"}' });
     act(() => remove.focus());
-    expect((await screen.findByRole('tooltip')).textContent).toBe('libraries.removeSkillTitle:{"name":"backend-utils"}');
+    expect((await screen.findByRole('tooltip')).textContent).toBe('libraries.removeSkill:{"name":"backend-utils"}');
     fireEvent.click(remove);
     expect(onRemove).toHaveBeenCalledWith('backend-utils');
   });

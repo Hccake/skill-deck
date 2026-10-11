@@ -276,7 +276,7 @@ describe('GithubCredentialSection', () => {
 
     await userEvent.hover(screen.getByRole('button', { name: 'Other ways to provide a GitHub Token' }));
     expect((await screen.findByRole('tooltip')).textContent).toContain(
-      'You can also use the GH_TOKEN or GITHUB_TOKEN environment variable. A saved token takes precedence.',
+      'Also supports GITHUB_TOKEN and GH_TOKEN environment variables. A saved token takes precedence.',
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Recheck' }));

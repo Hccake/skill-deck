@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CircleHelp, Info, Loader2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Info, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type {
   AgentInstallOptionId,
@@ -36,7 +36,6 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   createAgentSelectionSession,
   toggleInstallOption,
@@ -237,7 +236,7 @@ export function ManageLibraryApplicationDialog({
         aria-busy={loadState === 'loading' || busy}
       >
         <DialogHeader className="border-b px-6 pt-6 pb-4">
-          <DialogTitle className="min-w-0 truncate" title={title}>{title}</DialogTitle>
+          <DialogTitle className="min-w-0 break-words">{title}</DialogTitle>
           <DialogDescription className="sr-only">{t('libraries.manageDescription')}</DialogDescription>
         </DialogHeader>
 
@@ -422,20 +421,13 @@ function LibraryApplicationEditor({
         <div className="flex items-center justify-between gap-3 pb-3">
           <span className="flex items-center gap-1">
             <h2 id="applied-libraries-title" className="text-sm font-semibold">{t('libraries.appliedSection')}</h2>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={t('libraries.priorityHelp')}>
-                  <CircleHelp className="size-3.5" aria-hidden="true" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-64 text-xs">{t('libraries.priorityHelp')}</TooltipContent>
-            </Tooltip>
           </span>
           {libraries.length > 0 ? (
             <span className="text-xs text-muted-foreground">{t('libraries.selectedCount', { count: libraries.length })}</span>
           ) : null}
         </div>
         <div data-testid="library-selection-scroll" className="min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
+          <p className="text-xs leading-5 text-muted-foreground">{t('libraries.priorityHelp')}</p>
           {libraries.length > 0 ? (
             <div className="space-y-1.5" aria-label={t('libraries.priorityOrder')}>
               {libraries.map((library, index) => (

@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { AgentIcon } from '@/components/agents/AgentIcon';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { cn } from '@/lib/utils';
 import type {
   AgentDefinition,
@@ -104,8 +105,11 @@ function PathValue({
 }) {
   const tooltipValue = resolvedValue ?? value;
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    <OverflowTooltip always={Boolean(tooltipLabel || tooltipValue !== value)} side="top" sideOffset={6} showArrow={false}
+      className="max-w-[22rem] space-y-1 border bg-popover p-2.5 text-left text-popover-foreground shadow-md text-wrap" content={<>
+      {tooltipLabel ? <div className="text-[11px] leading-4 text-muted-foreground">{tooltipLabel}</div> : null}
+      <div className="font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]" translate="no">{tooltipValue}</div>
+    </>}>
         <code
           tabIndex={0}
           className={cn(
@@ -116,30 +120,7 @@ function PathValue({
         >
           {value}
         </code>
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        sideOffset={6}
-        showArrow={false}
-        className="max-w-[22rem] space-y-1 border bg-popover p-2.5 text-left text-popover-foreground shadow-md text-wrap"
-      >
-        {tooltipLabel ? (
-          <div
-            data-slot="agent-path-tooltip-kind"
-            className="text-[11px] leading-4 text-muted-foreground"
-          >
-            {tooltipLabel}
-          </div>
-        ) : null}
-        <div
-          data-slot="agent-path-tooltip-value"
-          className="font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]"
-          translate="no"
-        >
-          {tooltipValue}
-        </div>
-      </TooltipContent>
-    </Tooltip>
+    </OverflowTooltip>
   );
 }
 
@@ -335,9 +316,9 @@ function AgentCard({
         <AgentIcon agentId={item.definition.id} className="h-8 w-8 rounded-md" />
         <div data-slot="agent-card-identity" className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate text-[13px] font-semibold leading-4 text-foreground" title={item.definition.displayName}>
+            <OverflowTooltip content={item.definition.displayName}><h2 tabIndex={0} className="truncate text-[13px] font-semibold leading-4 text-foreground">
               {item.definition.displayName}
-            </h2>
+            </h2></OverflowTooltip>
             <span className="shrink-0 rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-muted-foreground">
               {t(`settings.agents.source.${item.customDefinition ? 'custom' : 'builtin'}`)}
             </span>
@@ -347,8 +328,7 @@ function AgentCard({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
+          <OverflowTooltip always={detectionHint !== t(`settings.agents.preview.detection.${detection}`)} content={detectionHint}>
               <span
                 aria-label={t(`settings.agents.preview.detection.${detection}`)}
                 className={cn(
@@ -360,9 +340,7 @@ function AgentCard({
                 {detectionIcon(detection)}
                 <span className="truncate">{t(`settings.agents.preview.detection.${detection}`)}</span>
               </span>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={4}>{detectionHint}</TooltipContent>
-          </Tooltip>
+          </OverflowTooltip>
           {item.customDefinition ? (
             <div className="flex items-center gap-0.5">
               <Tooltip>

@@ -1,7 +1,10 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { render as testingLibraryRender, screen } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import { describe, expect, it, vi } from 'vitest';
 import { LibraryUsageIdentity } from '../LibraryUsageIdentity';
 import type { LibraryUsage, RegisteredProject } from '@/bindings';

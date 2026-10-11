@@ -45,7 +45,7 @@ const check = (status: SkillUpdateInfo['status']): SkillUpdateInfo => ({
 const removeButton = () => screen.getByRole('button', {
   name: 'libraries.removeSkill:{"name":"backend-utils"}',
 });
-const updateButton = () => screen.getByRole('button', { name: 'skills.card.actionLabel:{"action":"libraries.update","name":"backend-utils"}' });
+const updateButton = () => screen.getByRole('button', { name: 'skills.actions.updateNamed:{"name":"backend-utils"}' });
 
 describe('LibrarySkillCard', () => {
   it('keeps an unfinished update retryable after its progress has ended', () => {
@@ -122,7 +122,7 @@ describe('LibrarySkillCard', () => {
     );
 
     // 库页面只有整库检查，没有单成员检查入口，所以检查前不摆一个指向不存在操作的按钮。
-    expect(screen.queryByRole('button', { name: /^skills\.card\.actionLabel:/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^skills\.actions\.updateNamed:/ })).toBeNull();
 
     rerender(
       <TooltipProvider>
@@ -135,7 +135,7 @@ describe('LibrarySkillCard', () => {
       </TooltipProvider>
     );
     // 已是最新是默认状态，既不显示标签也不摆按钮。
-    expect(screen.queryByRole('button', { name: /^skills\.card\.actionLabel:/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^skills\.actions\.updateNamed:/ })).toBeNull();
     expect(screen.queryByText('libraries.updateStatus.upToDate')).toBeNull();
 
     rerender(

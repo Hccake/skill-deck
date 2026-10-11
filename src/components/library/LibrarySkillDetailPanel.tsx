@@ -98,7 +98,6 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
           <DetailAction
             className="hover:bg-destructive/10 hover:text-destructive"
             label={t('libraries.removeSkill', { name: skill.name })}
-            hint={t('libraries.removeSkillTitle', { name: skill.name })}
             disabled={busy}
             onClick={() => onRemove(skill.name)}
           >

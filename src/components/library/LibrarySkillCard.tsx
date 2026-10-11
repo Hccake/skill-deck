@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { CardContent } from '@/components/ui/card';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import {
   SkillCardAttentionRow,
   SkillCardAction,
@@ -99,8 +100,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
           <div className="flex min-w-0 items-start justify-between gap-2">
             <div data-testid="library-skill-title" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden pt-0.5">
               {onClick ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <OverflowTooltip content={skill.name}>
                     <button
                       type="button"
                       data-skill-open
@@ -114,9 +114,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                         {skill.name}
                       </h3>
                     </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-80 break-all text-wrap data-[state=closed]:animate-none!">{skill.name}</TooltipContent>
-                </Tooltip>
+                </OverflowTooltip>
               ) : (
                 <h3 className="truncate font-heading text-sm font-semibold leading-5 text-foreground">
                   {skill.name}
@@ -124,12 +122,11 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
               )}
 
               {skill.pluginName ? (
-                <span
-                  title={skill.pluginName}
+                <OverflowTooltip content={skill.pluginName}><span tabIndex={0}
                   className="max-w-40 min-w-0 shrink-[2] truncate text-xs text-muted-foreground"
                 >
                   {skill.pluginName}
-                </span>
+                </span></OverflowTooltip>
               ) : null}
 
               <CrossfadeSwap transitionKey={statusTransitionKey} className="shrink-0">
@@ -152,7 +149,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
               {canShowUpdateAction ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  label={t('skills.card.actionLabel', { action: t('libraries.update'), name: skill.name })}
+                  label={t('skills.actions.updateNamed', { name: skill.name })}
                   disabled={busy}
                   onClick={(event) => {
                     event.stopPropagation();

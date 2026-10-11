@@ -19,12 +19,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { SkillSearch } from '@/components/skills/skill-search/SkillSearch';
 import { SourceSkillSelectionPanel } from '@/components/source-discovery/SourceSkillSelectionPanel';
 import { RedirectHostConfirmation } from '@/components/source-discovery/RedirectHostConfirmation';
@@ -134,13 +130,12 @@ function LibraryAddHeader({
         <DialogTitle className="min-w-0 flex-1 truncate text-base" translate="no">
           {t('libraries.addFlow.title', { library: target.libraryName })}
         </DialogTitle>
-        <DialogDescription
+        <OverflowTooltip content={target.environmentName}><DialogDescription tabIndex={0}
           className="max-w-[40%] shrink-0 truncate text-xs"
-          title={target.environmentName}
           translate="no"
         >
           {target.environmentName}
-        </DialogDescription>
+        </DialogDescription></OverflowTooltip>
       </div>
       <ol className="grid grid-cols-3 gap-2" aria-label={t('libraries.addFlow.steps.label')}>
         {steps.map((step, index) => {
@@ -365,14 +360,11 @@ function LibraryAddReviewStep({ flow, environment }: { flow: LibraryAddFlow; env
       <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border">
         {preview?.skills.map((skill) => (
           <li key={skill.skillName} className="flex min-w-0 items-baseline gap-3 border-b px-3 py-2.5 text-sm last:border-b-0">
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <OverflowTooltip content={skill.skillName} translate="no">
                 <span className="min-w-0 max-w-[40%] shrink-0 truncate rounded-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50" tabIndex={0} translate="no">
                   {skill.skillName}
                 </span>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-[min(560px,calc(100vw-32px))] break-all" translate="no">{skill.skillName}</TooltipContent>
-            </Tooltip>
+            </OverflowTooltip>
             <LibraryAddPath path={skill.targetPath} environment={environment} />
           </li>
         ))}
@@ -404,17 +396,12 @@ function LibraryAddPath({ path, environment }: { path: string; environment: Envi
   const split = fullPath.lastIndexOf(separator) + 1;
   return (
     <div className="min-w-0 flex-1">
-      <Tooltip>
-        <TooltipTrigger asChild>
+      <OverflowTooltip content={<code translate="no">{fullPath}</code>}>
           <code tabIndex={0} translate="no" className="flex w-fit min-w-0 max-w-full rounded-sm text-left text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
             <span className="min-w-0 truncate">{fullPath.slice(0, split)}</span>
             <span className="max-w-[65%] shrink-0 truncate">{fullPath.slice(split)}</span>
           </code>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-[min(560px,calc(100vw-32px))] break-all font-mono text-xs" translate="no">
-          {fullPath}
-        </TooltipContent>
-      </Tooltip>
+      </OverflowTooltip>
     </div>
   );
 }

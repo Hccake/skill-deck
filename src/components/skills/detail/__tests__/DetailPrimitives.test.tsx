@@ -79,7 +79,30 @@ describe('DetailDescription', () => {
 });
 
 describe('DetailSourceLink', () => {
+  it('only repeats a source when it is clipped, including after the available width changes', async () => {
+    const source = 'https://example.test/skills';
+    let width = 400;
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(200);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+    render(<TooltipProvider><DetailSourceLink label={source} url={source} /></TooltipProvider>);
+    const link = screen.getByRole('button', { name: source });
+    act(() => link.focus());
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    act(() => link.blur());
+    width = 100;
+    act(() => link.focus());
+    expect((await screen.findByRole('tooltip')).textContent).toBe(source);
+  });
+
+  it('reveals the destination when it differs from the visible source label', async () => {
+    render(<TooltipProvider><DetailSourceLink label="owner/repo" url="https://github.com/owner/repo" /></TooltipProvider>);
+    act(() => screen.getByRole('button', { name: 'owner/repo' }).focus());
+    expect((await screen.findByRole('tooltip')).textContent).toContain('https://github.com/owner/repo');
+  });
+
   it('reveals the complete source on focus without requiring a diagnostic hint', async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(160);
     const source = 'https://skills.example.test/platform/team/very-long-api-and-release-guidelines';
     render(<TooltipProvider><DetailSourceLink label={source} url={source} /></TooltipProvider>);
     const link = screen.getByRole('button', { name: source });

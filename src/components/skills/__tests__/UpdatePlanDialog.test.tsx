@@ -1,6 +1,9 @@
 /* @vitest-environment jsdom */
 import '@/test-utils';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render as testingLibraryRender, screen, waitFor, within } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UpdatePlanDialog } from '../UpdatePlanDialog';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';

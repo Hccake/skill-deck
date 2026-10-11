@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { DiscoverRichText } from './DiscoverRichText';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { getDiscoverSkillDetail } from '@/lib/discover/api';
@@ -200,20 +201,17 @@ export function DiscoverDetailPanel({
         <div className="discover-header-identity min-w-0">
           <div className="discover-heading-row detail-title-grid">
           <TranslatedBlock as="div" className="detail-title-copy">
-          <Tooltip>
-            <TooltipTrigger asChild>
+          <OverflowTooltip content={displayData.name}>
               <h2 ref={headingRef} tabIndex={0} className="min-w-0 flex-1 truncate rounded-sm font-heading text-xl font-semibold leading-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {displayData.name}
               </h2>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all">{displayData.name}</TooltipContent>
-          </Tooltip>
+          </OverflowTooltip>
           </TranslatedBlock>
           <TranslationActions />
           </div>
           <div className="discover-header-meta">
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <OverflowTooltip always={isOpenableUrl(displayData.repoUrl) && displayData.repoUrl !== displayData.source}
+              content={<><p>{displayData.source}</p>{isOpenableUrl(displayData.repoUrl) && displayData.repoUrl !== displayData.source ? <p>{displayData.repoUrl}</p> : null}</>}>
                 {isOpenableUrl(displayData.repoUrl) ? (
                   <a href={displayData.repoUrl} className="discover-source-link inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-sm text-xs leading-[18px] text-muted-foreground hover:text-foreground">
                     <Link2 className="mt-0.5 size-3.5 shrink-0" /><span className="discover-source-name">{displayData.source}</span>
@@ -223,11 +221,7 @@ export function DiscoverDetailPanel({
                     <Link2 className="mt-0.5 size-3.5 shrink-0" /><span className="discover-source-name">{displayData.source}</span>
                   </span>
                 )}
-              </TooltipTrigger>
-              <TooltipContent className="max-w-[min(32rem,90vw)] text-wrap break-all">
-                <p>{displayData.source}</p>{isOpenableUrl(displayData.repoUrl) && <p>{displayData.repoUrl}</p>}
-              </TooltipContent>
-            </Tooltip>
+            </OverflowTooltip>
             {displayData.stars !== undefined && <HeaderMetaItem icon={<Star className="size-3.5 text-amber-500" />} label={t('skills.discover.starsLabel')} value={formatInstalls(displayData.stars)} />}
           </div>
         </div>

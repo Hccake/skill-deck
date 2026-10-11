@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import type { ResourceLocator, ScopePathBase, SkillLocation } from '@/bindings';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { presentInstallPath } from '@/lib/install-path';
 import { cn } from '@/lib/utils';
 
@@ -39,8 +40,7 @@ export function InstallPath({ path, base, scope, copyable = true, className }: {
   return (
     <TooltipProvider>
     <div className={cn('flex min-w-0 max-w-full items-center gap-1 text-muted-foreground', className)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
+      <OverflowTooltip always={label !== path.nativePath} content={<code translate="no">{path.nativePath}</code>}>
           <button
             type="button"
             aria-label={t('skills.installPath.viewFullPath', { path: label })}
@@ -51,19 +51,15 @@ export function InstallPath({ path, base, scope, copyable = true, className }: {
               <span className="max-w-full shrink-0 truncate">{label.slice(split)}</span>
             </code>
           </button>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-[min(32rem,calc(100vw-3rem))] break-all text-wrap">
-          <code translate="no">{path.nativePath}</code>
-        </TooltipContent>
-      </Tooltip>
+      </OverflowTooltip>
       {copyable ? <Tooltip>
         <TooltipTrigger asChild>
             <Button variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
-              aria-label={t('skills.installPath.copyPath')} onClick={() => { void copy(); }}>
+              aria-label={t(copied ? 'skills.installPath.copied' : 'skills.installPath.copyPath')} onClick={() => { void copy(); }}>
               {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
             </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('skills.installPath.copyPath')}</TooltipContent>
+        <TooltipContent>{t(copied ? 'skills.installPath.copied' : 'skills.installPath.copyPath')}</TooltipContent>
       </Tooltip> : null}
       <span role="status" className="sr-only">{copied ? t('skills.installPath.copied') : ''}</span>
     </div>

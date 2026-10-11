@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
 import { environmentKey, useEnvironmentStore } from '@/stores/environment';
 import { useMutationStore } from '@/stores/mutation';
@@ -76,8 +76,7 @@ export function GlobalEnvironmentSwitcher() {
     <div className="flex min-w-0 items-center gap-2" data-tauri-drag-region="false">
       <div className="h-3.5 w-px bg-border/60 hidden sm:block shrink-0" />
       <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger asChild>
+        <OverflowTooltip content={selectedLabel}>
             <DropdownMenuTrigger asChild>
             <Button
               type="button"
@@ -92,7 +91,7 @@ export function GlobalEnvironmentSwitcher() {
                 environment={selectedEnvironment}
                 className="h-4 w-4 shrink-0"
               />
-              <span className="hidden min-w-0 truncate lg:inline">{selectedLabel}</span>
+              <span className="hidden min-w-0 truncate lg:inline" data-tooltip-label>{selectedLabel}</span>
               {pending ? (
                 <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
               ) : selectedConnectionError || discoveryError ? (
@@ -107,9 +106,7 @@ export function GlobalEnvironmentSwitcher() {
               ) : null}
             </Button>
           </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent className="lg:hidden">{selectedLabel}</TooltipContent>
-      </Tooltip>
+      </OverflowTooltip>
       <DropdownMenuContent
         align="end"
         className="w-max min-w-(--radix-dropdown-menu-trigger-width) max-w-[calc(100vw-1rem)] sm:max-w-72"

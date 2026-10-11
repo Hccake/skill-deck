@@ -8,12 +8,12 @@ describe('Agent selection copy', () => {
     expect(zhCN.agentSelection.copyOnly).toBe('仅支持复制');
     expect(zhCN.agentSelection.modeTitle).toBe('安装方式');
     expect(zhCN.agentSelection.modeHelp)
-      .toBe('决定如何将 Skill 安装到所选 Agent 的 Skill 目录；仅支持复制的 Agent 不受此设置影响。');
+      .toBe('链接共用内容，复制创建独立副本。');
     expect(en.agentSelection.linkRecommended).toBe('Link (recommended)');
     expect(en.agentSelection.copyOnly).toBe('Copy only');
     expect(en.agentSelection.modeTitle).toBe('Installation method');
     expect(en.agentSelection.modeHelp)
-      .toBe('Choose how to install this Skill in the selected Agent directories. Copy-only Agents are not affected.');
+      .toBe('Links share content; copies are independent.');
   });
 
   it('identifies the managed Skill in the dialog title', () => {
@@ -57,16 +57,16 @@ describe('Agent selection copy', () => {
   it('uses scenario-specific headings and guidance without changing the selection model', () => {
     expect(zhCN.agentSelection.automatic.install.title).toBe('安装后可直接使用');
     expect(zhCN.agentSelection.automatic.install.help)
-      .toBe('Skill 会安装到通用 Skill 目录，这些 Agent 可以直接从该目录读取，无需额外设置。');
+      .toBe('这些 Agent 直接读取通用 Skill 目录。');
     expect(zhCN.agentSelection.automatic.manage.title).toBe('读取通用目录的 Agent');
     expect(zhCN.agentSelection.automatic.manage.help)
-      .toBe('当前 Skill 位于通用目录时，这些 Agent 可直接使用；此处只调整专用目录中的关联。');
+      .toBe('这些 Agent 可直接使用通用目录中的 Skill。');
     expect(zhCN.agentSelection.automatic.copyToProject.title).toBe('复制后可直接使用');
     expect(zhCN.agentSelection.automatic.copyToProject.help)
-      .toBe('Skill 会复制到目标 Project 的通用 Skill 目录，这些 Agent 可以直接读取，无需额外设置。');
+      .toBe('这些 Agent 直接读取目标项目的通用 Skill 目录。');
     expect(zhCN.agentSelection.selectable.title).toBe('选择后可使用');
     expect(zhCN.agentSelection.selectable.help)
-      .toBe('这些 Agent 不读取通用 Skill 目录。选择后，Skill Deck 会在其 Skill 目录中创建链接或副本。');
+      .toBe('选择后，在 Agent 的 Skill 目录中创建链接或副本。');
     expect(zhCN.skills.copyToProject.agentSelectionDescription)
       .toBe('Agent 会按照源 Skill 的关联状态预先勾选；目标项目已有的关联会保留。');
     expect(en.skills.copyToProject.agentSelectionDescription)

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronDown, Info } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import {
   libraryUsageDisplayName,
   libraryUsageIdentityKey,
@@ -90,12 +91,11 @@ export const LibraryUsageLine = memo(function LibraryUsageLine({ usages }: Libra
           >
             <span className="library-usage-exact min-w-0 items-center gap-1">
               <span className="shrink-0">{t('libraries.appliedTo')}</span>
-              <span
+              <OverflowTooltip content={location}><span tabIndex={0}
                 className="max-w-32 truncate font-medium text-foreground/80"
-                title={location}
               >
                 {location}
-              </span>
+              </span></OverflowTooltip>
             </span>
             <span className="library-usage-compact-count tabular-nums">
               {t('libraries.usage.applied', { count: 1 })}

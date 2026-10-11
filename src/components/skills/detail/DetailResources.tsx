@@ -9,10 +9,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { originalTarget } from './detail-markdown-tree';
 
-function ResourceHint({ target, reason, children }: { target: string; reason?: string; children: ReactElement }) {
+function ResourceHint({ target, reason, action, children }: { target: string; reason?: string; action?: string; children: ReactElement }) {
   return <Tooltip><TooltipTrigger asChild>{children}</TooltipTrigger>
     <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-all text-wrap">
       <div className="max-h-48 overflow-auto">
+        {action ? <p>{action}</p> : null}
         {reason ? <p>{reason}</p> : null}
         <p>{target}</p>
       </div>
@@ -37,7 +38,7 @@ function AddressCopy({ target, label, reason }: { target: string; label: string;
     }
   };
   return <>
-    <ResourceHint target={target} reason={copied ? t('skills.detail.addressCopied') : reason}>
+    <ResourceHint target={target} action={copied ? t('skills.detail.addressCopied') : label} reason={copied ? undefined : reason}>
       <Button type="button" variant="ghost" size="icon" className="skill-resource-action size-6 text-muted-foreground hover:text-foreground"
         aria-label={label} onClick={() => void copy()}>
         {copied ? <Check className="size-3" aria-hidden="true" /> : <Copy className="size-3" aria-hidden="true" />}
@@ -80,9 +81,8 @@ export function DocumentLink({ node, href, title, target: explicitTarget, childr
     heading.focus({ preventScroll: true });
   };
 
-  return <ResourceHint target={target} reason={title}>
-    <a {...props} href={target} className="skill-document-link" onClick={activate} onAuxClick={activate}>{children}</a>
-  </ResourceHint>;
+  const link = <a {...props} href={target} className="skill-document-link" onClick={activate} onAuxClick={activate}>{children}</a>;
+  return fragment && !title ? link : <ResourceHint target={target} reason={title}>{link}</ResourceHint>;
 }
 
 function ImageResource({ source, alt, title, linkTarget, linkTitle }: { source: string; alt: string; title?: string; linkTarget?: string; linkTitle?: string }) {
@@ -119,7 +119,7 @@ function ImageResource({ source, alt, title, linkTarget, linkTitle }: { source: 
 
   return <span className="skill-document-image">
     {linkTarget ? <DocumentLink target={linkTarget} title={linkTitle}>{visual}</DocumentLink> : visual}
-    {fallback && supported ? <ResourceHint target={source} reason={`${reason} · ${label}`}>
+    {fallback && supported ? <ResourceHint target={source} action={t(phase === 'retrying' ? 'skills.detail.imageLoading' : 'skills.detail.retryImage')}>
       <Button ref={retry} type="button" variant="ghost" size="icon" className="skill-resource-action size-6 text-muted-foreground hover:text-foreground"
         aria-label={t('skills.detail.retryImage')} aria-disabled={phase === 'retrying'} onClick={() => {
           if (phase === 'retrying') return;

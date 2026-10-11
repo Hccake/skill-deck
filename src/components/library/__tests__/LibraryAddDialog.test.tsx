@@ -286,6 +286,7 @@ describe('LibraryAddDialog', () => {
     expect(Boolean(warning)).toBe(!inventoryComplete);
     expect(screen.queryByText(rawPath)).toBeNull();
     const path = screen.getByText((_, element) => element?.tagName === 'CODE' && element.textContent === 'C:\\Users\\cheng\\libraries\\ui-review');
+    vi.spyOn(path, 'scrollWidth', 'get').mockReturnValue(500);
     fireEvent.focus(path);
     const tooltip = await screen.findByRole('tooltip');
     expect(tooltip.textContent).toBe('C:\\Users\\cheng\\libraries\\ui-review');
