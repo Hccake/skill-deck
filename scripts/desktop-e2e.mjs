@@ -90,7 +90,7 @@ async function main() {
   const env = { ...process.env, ...run.env, CARGO_TARGET_DIR: paths.target, SKILL_DECK_E2E_BINARY: paths.binary };
   if (!process.argv.includes('--no-build')) {
     await runNode(path.join(repository, 'node_modules/vite/bin/vite.js'), ['build', '--config', 'e2e/vite.config.mjs', '--outDir', paths.frontend, '--emptyOutDir'], process.env);
-    const config = JSON.parse(await readFile(path.join(repository, 'e2e/tauri.conf.json'), 'utf8'));
+    const config = JSON.parse(await readFile(path.join(repository, 'e2e/tauri.e2e.conf.json'), 'utf8'));
     config.build = { beforeBuildCommand: '', frontendDist: tauriFrontendDist(paths.frontend) };
     await runNode(path.join(repository, 'node_modules/@tauri-apps/cli/tauri.js'), [
       'build', '--debug', '--no-bundle', '--features', 'desktop-e2e', '--config', JSON.stringify(config), '--', '--locked',

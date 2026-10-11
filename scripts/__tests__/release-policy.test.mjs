@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { parse } from "yaml";
@@ -27,6 +29,21 @@ const releaseVerifierUrl = new URL("../verify-release-assets.mjs", import.meta.u
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const readWorkflow = async (url) => parse(await readFile(url, "utf8"));
+
+test("release discovery finds only the production Tauri configuration", () => {
+  const files = execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    { cwd: repositoryRoot, encoding: "utf8" },
+  ).split("\0");
+  // tauri-action selects the first matching base configuration under the project root.
+  const configurations = [...new Set(files)].filter((file) =>
+    /(^|\/)(tauri\.conf\.json5?|Tauri\.toml)$/.test(file)
+    && existsSync(path.join(repositoryRoot, file)),
+  ).sort();
+
+  assert.deepEqual(configurations, ["src-tauri/tauri.conf.json"]);
+});
 
 test("Tauri package exposes only the desktop application binary", () => {
   const metadata = JSON.parse(

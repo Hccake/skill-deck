@@ -305,6 +305,8 @@ pnpm test:desktop --no-build
 
 测试通过独立 Cargo feature `desktop-e2e`、Tauri 配置和 Vite 配置启用自动化插件。正式构建默认不包含这些插件及其窗口权限。测试版使用独立应用标识、用户数据目录和 WebView 数据目录，并关闭 WSL 集成；该可执行文件仅用于本机验证，不作为发布制品。
 
+测试入口显式读取 `e2e/tauri.e2e.conf.json`，通过 `--config` 合并到正式 Tauri 配置。该覆盖配置使用独立文件名，使发布工具自动搜索主配置时只识别 `src-tauri/tauri.conf.json`；发布策略测试检查这一约束。
+
 默认桌面用例与翻译专用用例分别执行。切换用例模式、修改应用源码或测试构建配置后，应重新构建测试应用；只有构建模式与源码保持一致、仅修改用例脚本时才使用 `--no-build`。
 
 端口默认使用 `127.0.0.1:4445`，可通过 `TAURI_WEBDRIVER_PORT` 调整；端口已被占用时，入口脚本直接报错。当前锁定的服务版本可能在会话结束时记录 `Failed to clear mock store: A sessionId is required for this command`，这是上游在会话销毁后清理 mock 的警告。判断退出是否正常时，应同时检查用例结果、应用进程和端口释放情况。

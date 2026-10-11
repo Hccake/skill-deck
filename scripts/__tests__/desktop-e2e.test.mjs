@@ -39,7 +39,7 @@ test('desktop automation is opt-in and absent from production capabilities', asy
     assert.equal(app.dependencies.find((dependency) => dependency.name === name).optional, true);
   }
   const production = JSON.parse(await readFile(path.join(repository, 'src-tauri/tauri.conf.json'), 'utf8'));
-  const desktop = JSON.parse(await readFile(path.join(repository, 'e2e/tauri.conf.json'), 'utf8'));
+  const desktop = JSON.parse(await readFile(path.join(repository, 'e2e/tauri.e2e.conf.json'), 'utf8'));
   assert.notEqual(production.identifier, desktop.identifier);
   for (const name of ['main', 'install-wizard']) {
     const capability = JSON.parse(await readFile(path.join(repository, 'src-tauri/capabilities', `${name}.json`), 'utf8'));
