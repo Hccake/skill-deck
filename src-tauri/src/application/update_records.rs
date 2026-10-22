@@ -252,7 +252,10 @@ fn project_record(
     let state = match &record.projection {
         RecordProjection::Missing => UpdateRecordState::Excluded,
         RecordProjection::Available(metadata)
-            if matches!(metadata.source_type.as_str(), "local" | "download") =>
+            if matches!(
+                metadata.source_type.as_str(),
+                "local" | "download" | "node_modules"
+            ) =>
         {
             UpdateRecordState::Excluded
         }

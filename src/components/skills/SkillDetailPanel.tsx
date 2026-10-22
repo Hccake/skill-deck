@@ -263,10 +263,31 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
               <div className="skill-detail-metadata">
                 {presentation.local || presentation.sourceLabel ? (
                   <DetailField label={t('skills.detail.source')}>
-                    {presentation.local ? t('skills.updateStatusLabel.localSource') : (
+                    {presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.packageSource ? t('skills.dependency.source') : (
                       <DetailSourceLink label={presentation.sourceLabel!} url={skill.sourceUrl}
                         hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
                     )}
+                  </DetailField>
+                ) : null}
+                {skill.dependency?.packageName ? (
+                  <DetailField label={t('skills.dependency.package')}>
+                    <span className="break-all">{skill.dependency.packageName}</span>
+                  </DetailField>
+                ) : null}
+                {skill.dependency?.recordedVersion ? (
+                  <DetailField label={t('skills.dependency.recordedVersion')}>
+                    <span className="break-all">{skill.dependency.recordedVersion}</span>
+                  </DetailField>
+                ) : null}
+                {presentation.packageSource && skill.skillPath ? (
+                  <DetailField label={t('skills.dependency.packagePath')}>
+                    <span className="break-all">{skill.skillPath}</span>
+                  </DetailField>
+                ) : null}
+                {skill.dependency?.declaredBy ? (
+                  <DetailField label={t('skills.dependency.declaredBy')}>
+                    <span className="break-all">{skill.dependency.declaredBy === '.'
+                      ? t('skills.dependency.currentProject') : skill.dependency.declaredBy}</span>
                   </DetailField>
                 ) : null}
                 {skill.installedAt || skill.updatedAt ? (
@@ -293,6 +314,9 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 </DetailField>
               </div>
 
+              {presentation.packageSource ? (
+                <p className="text-sm text-muted-foreground">{t('skills.dependency.maintenanceHint')}</p>
+              ) : null}
               {notice || canConfigureCredentials || canInspectSource ? (
                 <div
                   role="status"

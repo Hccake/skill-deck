@@ -79,3 +79,39 @@ fn conditional_lock_apply_rejects_changed_selected_entry() {
         }
     );
 }
+
+#[test]
+fn project_dependency_fields_follow_the_new_installation_record() {
+    let previous = json!({
+        "source": "@example/tools", "sourceType": "node_modules",
+        "version": "1.0.0", "via": ".", "futureEntry": true
+    });
+    let current = serde_json::to_vec(&json!({"version": 1, "skills": {"demo": previous}})).unwrap();
+    for preserve_declaration in [false, true] {
+        let mut replacement =
+            json!({"source": "owner/repo", "sourceType": "git", "computedHash": "new"});
+        if preserve_declaration {
+            replacement["via"] = json!("@example/declarer");
+        }
+        let mutation = LockMutation {
+            schema: LockSchema::Project,
+            entry: EntryMutation::Replace {
+                key: "demo".into(),
+                replacement,
+            },
+            root_replacements: BTreeMap::new(),
+            expected_entries: BTreeMap::from([("demo".into(), Some(previous.clone()))]),
+            expected_roots: BTreeMap::new(),
+        };
+        let applied = apply(Some(&current), None, &mutation).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&applied.bytes).unwrap();
+        let entry = &value["skills"]["demo"];
+        assert_eq!(entry["futureEntry"], true);
+        assert!(entry.get("version").is_none());
+        if preserve_declaration {
+            assert_eq!(entry["via"], "@example/declarer");
+        } else {
+            assert!(entry.get("via").is_none());
+        }
+    }
+}

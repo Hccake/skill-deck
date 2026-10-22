@@ -2649,6 +2649,7 @@ mod update_lifecycle {
         }
 
         async fn install(&self) {
+            let clones_before = self.clone_count();
             let discovery = SourceDiscoveryService::with_git_transport(
                 self.payloads.clone(),
                 self.git_transport.clone(),
@@ -2727,7 +2728,7 @@ mod update_lifecycle {
                     .expect("execute lifecycle install");
                 assert_succeeded(&installed.units);
             }
-            assert_eq!(self.clone_count(), 1);
+            assert_eq!(self.clone_count(), clones_before + 1);
             fs::write(
                 self.project_path.join(".codebuddy/skills/alpha/SKILL.md"),
                 b"local alpha conflict\n",
@@ -3529,6 +3530,381 @@ mod update_lifecycle {
             .into();
         assert!(comparator.capture_source(&missing).await.is_err());
         assert!(comparator.compare(&source, &missing).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn native_dependency_installation_copy_manage_remove_preserves_package_content() {
+        for linked in [false, true] {
+            let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+            let context = fixture.context();
+            let package = fixture
+                .project_path
+                .join("node_modules/@example/tools/skills/alpha");
+            fs::create_dir_all(&package).unwrap();
+            let markdown = fs::read(fixture.remote.work.join("skills/alpha/SKILL.md")).unwrap();
+            fs::write(package.join("SKILL.md"), &markdown).unwrap();
+            let standard = fixture.project_path.join(".agents/skills/alpha");
+            fs::create_dir_all(standard.parent().unwrap()).unwrap();
+            if linked {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&package, &standard).unwrap();
+                #[cfg(windows)]
+                junction::create(&package, &standard).unwrap();
+            } else {
+                fs::create_dir_all(&standard).unwrap();
+                fs::write(standard.join("SKILL.md"), &markdown).unwrap();
+            }
+            let lock_path = fixture.project_path.join("skills-lock.json");
+            let record = json!({"source":"@example/tools", "sourceType":"node_modules",
+                "computedHash":"package-content", "version":"2.0.0", "via":".",
+                "skillPath":"skills/alpha/SKILL.md", "futureEntry":true});
+            write_json(&lock_path, &json!({"version":1,"skills":{"alpha":record}})).unwrap();
+
+            let facts = ScopePlanningSnapshotSource::snapshot(&fixture.facts, &context)
+                .await
+                .unwrap();
+            let read_plan = crate::application::skill_read::build_skill_read_plan(
+                &facts.resolved_context,
+                &facts.agent_runtime,
+                &[],
+            )
+            .unwrap();
+            let inspector = crate::environment::native::inspection::NativeInspector::new(
+                EnvironmentRef::Native,
+            );
+            let snapshot = crate::environment::inspection::FilesystemInspector::inspect(
+                &inspector,
+                &read_plan.read_plan,
+            )
+            .await
+            .unwrap();
+            let listed = crate::application::skill_read::project_direct_skill_snapshot(
+                &read_plan,
+                snapshot,
+                &facts.agent_runtime,
+                update_library_repository(fixture._root.path()).as_ref(),
+                &fixture.targets,
+                &inspector,
+            )
+            .await
+            .unwrap();
+            assert_eq!(listed.skills.len(), 1);
+            assert_eq!(listed.skills[0].name, "alpha");
+            let resources = ResourceService::new(
+                RuntimeResourceContextSource::new(
+                    fixture.facts.clone(),
+                    fixture.targets.clone(),
+                    update_library_repository(fixture._root.path()),
+                ),
+                fixture.targets.clone(),
+                crate::environment::opener::SystemResourceOpener,
+                RuntimeResourceReader::new(fixture.environments.clone()),
+            );
+            let identity = SkillIdentity {
+                context: context.clone(),
+                skill_name: "alpha".into(),
+            };
+            assert_eq!(
+                resources.read_skill(&identity).await.unwrap(),
+                crate::core::skill::skill_content_from_markdown(
+                    std::str::from_utf8(&markdown).unwrap()
+                )
+            );
+
+            if linked {
+                let unavailable = package.with_file_name("alpha-unavailable");
+                fs::rename(&package, &unavailable).unwrap();
+                let snapshot = crate::environment::inspection::FilesystemInspector::inspect(
+                    &inspector,
+                    &read_plan.read_plan,
+                )
+                .await
+                .unwrap();
+                let broken = crate::application::skill_read::project_direct_skill_snapshot(
+                    &read_plan,
+                    snapshot,
+                    &facts.agent_runtime,
+                    update_library_repository(fixture._root.path()).as_ref(),
+                    &fixture.targets,
+                    &inspector,
+                )
+                .await
+                .unwrap();
+                assert!(broken.skills.is_empty());
+                assert!(broken.read_status.is_some());
+                assert!(fs::symlink_metadata(&standard).is_ok());
+                assert!(resources.read_skill(&identity).await.is_err());
+                fs::rename(&unavailable, &package).unwrap();
+            }
+
+            let check = fixture
+                .check_service()
+                .check(&UpdateCheckRequest {
+                    context: context.clone(),
+                    mode: UpdateCheckMode::Force,
+                    selection: UpdateCheckSelection::Skills(vec![SkillIdentity {
+                        context: context.clone(),
+                        skill_name: "alpha".into(),
+                    }]),
+                })
+                .await
+                .unwrap();
+            assert!(check.sources.is_empty());
+            assert_eq!(fixture.clone_count(), 0);
+
+            let manage = ManageAgentsService::new(
+                fixture.facts.clone(),
+                ScopeSkillPlacementResolver::new(fixture.targets.clone()),
+                fixture.targets.clone(),
+                fixture.payloads.clone(),
+                InstalledSkillPayloadAcquirer::new(
+                    fixture.payloads.clone(),
+                    fixture.environments.clone(),
+                ),
+                fixture.executor(),
+                Arc::new(EmptyLibraryCandidateSource),
+            );
+            let snapshot = manage.selection(&context, "alpha").await.unwrap();
+            let selection = manage_submission(
+                &snapshot,
+                |option| option.agent_ids.iter().any(|id| id.as_str() == "codebuddy"),
+                InstallMode::Copy,
+            );
+            let preview = ready_manage_preview(
+                manage
+                    .preview(&ManageAgentsPreviewRequest {
+                        context: context.clone(),
+                        skill_name: "alpha".into(),
+                        agent_selection: selection.clone(),
+                    })
+                    .await
+                    .unwrap(),
+            );
+            let managed = manage
+                .execute(
+                    &ManageAgentsRequest {
+                        token: preview.token,
+                        context: context.clone(),
+                        skill_name: "alpha".into(),
+                        agent_selection: selection,
+                        confirm_entity_directories: false,
+                        original_payload: preview.original_payload,
+                    },
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_succeeded(&managed.units);
+            assert_eq!(read_json(&lock_path).unwrap()["skills"]["alpha"], record);
+            assert_eq!(fs::read(package.join("SKILL.md")).unwrap(), markdown);
+
+            let destination = fixture._root.path().join("copy-target");
+            fs::create_dir_all(&destination).unwrap();
+            write_json(&fixture._root.path().join("state/projects.json"), &json!({"schemaVersion":1,"projects":[
+                project("source", &fixture.project_path, "Source"), project("copy-target", &destination, "Target")
+            ]})).unwrap();
+            let copy = CopyService::new(
+                fixture.facts.clone(),
+                fixture.targets.clone(),
+                fixture.payloads.clone(),
+                InstalledSkillPayloadAcquirer::new(
+                    fixture.payloads.clone(),
+                    fixture.environments.clone(),
+                ),
+                fixture.executor(),
+                RuntimeCopyProjectComparator::new(fixture.environments.clone()),
+                Arc::new(EmptyLibraryCandidateSource),
+            );
+            let selection = copy.selection(&context, "alpha").await.unwrap().selection;
+            let request = CopyRequest {
+                skill_name: "alpha".into(),
+                source: context.clone(),
+                target_environment: EnvironmentRef::Native,
+                target_project_ids: vec!["copy-target".into()],
+                agent_selection: crate::application::agent_selection::AgentSelectionSubmission {
+                    revision: selection.revision,
+                    selected_option_ids: selection.baseline_selected_option_ids,
+                    requested_mode: InstallMode::Copy,
+                },
+            };
+            let CopyPreviewOutcome::Ready { preview } = copy.preview(&request).await.unwrap()
+            else {
+                panic!("copy preview")
+            };
+            if linked {
+                let mut changed = markdown.clone();
+                changed.extend_from_slice(b"\npackage changed after preview\n");
+                fs::write(package.join("SKILL.md"), changed).unwrap();
+                assert!(copy
+                    .execute(
+                        &CopyExecutionRequest {
+                            request: request.clone(),
+                            token: preview.token.clone(),
+                            payload: preview.payload.clone()
+                        },
+                        CancellationSignal::default()
+                    )
+                    .await
+                    .is_err());
+                assert!(!destination.join(".agents/skills/alpha").exists());
+                fs::write(package.join("SKILL.md"), &markdown).unwrap();
+            }
+            let copied = copy
+                .execute(
+                    &CopyExecutionRequest {
+                        request,
+                        token: preview.token,
+                        payload: preview.payload,
+                    },
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_succeeded(&copied.units);
+            assert_eq!(
+                fs::read(destination.join(".agents/skills/alpha/SKILL.md")).unwrap(),
+                markdown
+            );
+            let target_lock = read_json(&destination.join("skills-lock.json")).unwrap();
+            assert!(target_lock["skills"].get("alpha").is_none());
+
+            let remove = RemoveService::new(
+                fixture.facts.clone(),
+                fixture.targets.clone(),
+                fixture.executor(),
+                Arc::new(EmptyLibraryCandidateSource),
+            );
+            let preview = remove.preview(&context, "alpha").await.unwrap();
+            let removed = remove
+                .execute(
+                    &RemoveRequest {
+                        token: preview.token,
+                        context,
+                        skill_name: "alpha".into(),
+                        intent: RemoveIntent::FullSkill,
+                    },
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_succeeded(&removed.units);
+            assert!(!standard.exists());
+            assert_eq!(fs::read(package.join("SKILL.md")).unwrap(), markdown);
+            assert_eq!(fixture.clone_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_dependency_root_alias_cannot_remove_package_contents() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        let package_skills = fixture
+            .project_path
+            .join("node_modules/@example/tools/skills");
+        fs::create_dir_all(package_skills.join("alpha")).unwrap();
+        let markdown = fs::read(fixture.remote.work.join("skills/alpha/SKILL.md")).unwrap();
+        fs::write(package_skills.join("alpha/SKILL.md"), &markdown).unwrap();
+        let standard_root = fixture.project_path.join(".agents/skills");
+        fs::create_dir_all(standard_root.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&package_skills, &standard_root).unwrap();
+        #[cfg(windows)]
+        junction::create(&package_skills, &standard_root).unwrap();
+        write_json(
+            &fixture.project_path.join("skills-lock.json"),
+            &json!({"version":1,"skills":{"alpha":{
+                "source":"@example/tools","sourceType":"node_modules","computedHash":"content"
+            }}}),
+        )
+        .unwrap();
+        let remove = RemoveService::new(
+            fixture.facts.clone(),
+            fixture.targets.clone(),
+            fixture.executor(),
+            Arc::new(EmptyLibraryCandidateSource),
+        );
+        let preview = remove.preview(&fixture.context(), "alpha").await.unwrap();
+        assert!(matches!(remove.execute(&RemoveRequest {
+            token:preview.token, context:fixture.context(), skill_name:"alpha".into(), intent:RemoveIntent::FullSkill,
+        }, CancellationSignal::default()).await,
+            Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "dependencyContentTarget"));
+        assert_eq!(
+            fs::read(package_skills.join("alpha/SKILL.md")).unwrap(),
+            markdown
+        );
+    }
+
+    #[tokio::test]
+    async fn native_dependency_installation_replacement_preserves_package_content() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        let package = fixture
+            .project_path
+            .join("node_modules/@example/tools/skills/alpha");
+        fs::create_dir_all(&package).unwrap();
+        let markdown = fs::read(fixture.remote.work.join("skills/alpha/SKILL.md")).unwrap();
+        fs::write(package.join("SKILL.md"), &markdown).unwrap();
+        let standard = fixture.project_path.join(".agents/skills/alpha");
+        fs::create_dir_all(standard.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&package, &standard).unwrap();
+        #[cfg(windows)]
+        junction::create(&package, &standard).unwrap();
+        let lock_path = fixture.project_path.join("skills-lock.json");
+        write_json(&lock_path, &json!({"version":1,"skills":{"alpha":{
+            "source":"@example/tools","sourceType":"node_modules","computedHash":"package-content",
+            "version":"1.0.0","via":".","futureEntry":true
+        }}})).unwrap();
+        fixture.remote.publish_change("alpha");
+        fixture.install().await;
+        let lock = read_json(&lock_path).unwrap();
+        assert_eq!(lock["skills"]["alpha"]["sourceType"], "git");
+        assert!(lock["skills"]["alpha"].get("version").is_none());
+        assert!(lock["skills"]["alpha"].get("via").is_none());
+        assert_eq!(lock["skills"]["alpha"]["futureEntry"], true);
+        assert!(fs::symlink_metadata(&standard).unwrap().is_dir());
+        assert_eq!(fs::read(package.join("SKILL.md")).unwrap(), markdown);
+        assert_ne!(fs::read(standard.join("SKILL.md")).unwrap(), markdown);
+    }
+
+    #[tokio::test]
+    async fn native_dependency_declaration_survives_update_and_detaches_on_install() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        fixture.install().await;
+        let lock_path = fixture.project_path.join("skills-lock.json");
+        let mut lock = read_json(&lock_path).unwrap();
+        lock["skills"]["alpha"]["via"] = json!("@example/tools");
+        lock["skills"]["alpha"]["futureEntry"] = json!(true);
+        write_json(&lock_path, &lock).unwrap();
+        fixture.remote.publish_change("alpha");
+        let request = UpdateRequest {
+            context: fixture.context(),
+            skill_names: vec!["alpha".into()],
+        };
+        let service = fixture.update_service();
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        let selected = prepared
+            .preview
+            .skills
+            .iter()
+            .flat_map(|skill| &skill.targets)
+            .filter_map(|target| target.selectable_entry_id.clone())
+            .collect::<Vec<_>>();
+        let updated = service
+            .execute_prepared(prepared, &selected, CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(updated.outcome, UpdateOutcome::Succeeded);
+        assert_eq!(
+            read_json(&lock_path).unwrap()["skills"]["alpha"]["via"],
+            "@example/tools"
+        );
+
+        fixture.install().await;
+        let lock = read_json(&lock_path).unwrap();
+        assert!(lock["skills"]["alpha"].get("via").is_none());
+        assert_eq!(lock["skills"]["alpha"]["futureEntry"], true);
     }
 
     #[tokio::test]

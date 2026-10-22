@@ -10,6 +10,12 @@ import type { InstalledSkill, LibrarySkillSummary } from '@/bindings';
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 describe('compact Skill sources', () => {
+  it('identifies package-provided content in the compact list', () => {
+    const skill = { name: 'toolkit', scope: 'project', source: '@example/tools', updateReason: 'dependency-source' } as InstalledSkill;
+    render(<TooltipProvider><CompactSkillItem skill={skill} isSelected={false} onClick={vi.fn()} /></TooltipProvider>);
+    expect(screen.getByText('skills.dependency.cardSource')).toBeTruthy();
+    expect(screen.queryByText('skills.card.sourceIncomplete')).toBeNull();
+  });
   it('uses the local-source label for installed Skills and keeps the original selection target', () => {
     const skill = { name: 'toolkit', scope: 'global', source: '/source/toolkit', updateReason: 'local-source' } as InstalledSkill;
     const select = vi.fn();

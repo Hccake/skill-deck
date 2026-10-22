@@ -10,7 +10,7 @@ use crate::application::resources::{
     ResourceContextSource, ResourceFuture, ResourceService, SkillIdentity,
 };
 use crate::application::scope_skill_placements::{
-    observe_scope_skill_placements, representative_direct_placement,
+    observe_scope_skill_placements, representative_readable_placement,
 };
 use crate::application::skill_libraries::SkillLibraryRepository;
 use crate::environment::opener::SystemResourceOpener;
@@ -73,7 +73,7 @@ impl ResourceContextSource for RuntimeResourceContextSource {
             )
             .await?;
             let placements = observed.describe(&catalog, &libraries)?;
-            Ok(representative_direct_placement(&placements)
+            Ok(representative_readable_placement(&placements)
                 .ok_or(AppError::StaleTarget)?
                 .entry
                 .fact

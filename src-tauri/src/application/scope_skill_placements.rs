@@ -223,12 +223,19 @@ impl ResolvedScopeSkillPlacements {
     }
 }
 
-pub(crate) fn representative_direct_placement(
+pub(crate) fn representative_readable_placement(
     placements: &[ObservedSkillPlacement],
 ) -> Option<&ObservedSkillPlacement> {
     placements
         .iter()
-        .filter(|placement| placement.is_direct_directory())
+        .filter(|placement| {
+            placement.is_direct_directory()
+                || (placement.library.is_none()
+                    && matches!(
+                        placement.entry.fact.entry_kind,
+                        TargetEntryKind::Symlink | TargetEntryKind::Junction
+                    ))
+        })
         .min_by_key(|placement| {
             (
                 placement.id != DirectoryPlacementId::Standard,
@@ -641,7 +648,7 @@ mod tests {
             .await
             .unwrap();
         let placements = observed.describe(&catalog, &known).unwrap();
-        let direct = representative_direct_placement(&placements).unwrap();
+        let direct = representative_readable_placement(&placements).unwrap();
         assert_eq!(
             direct
                 .entry

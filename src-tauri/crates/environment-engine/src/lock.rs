@@ -278,6 +278,8 @@ fn merge_entry_fields(schema: LockSchema, current: Option<&Value>, replacement: 
             "subagents",
             "pluginName",
             "wellKnownDigest",
+            "version",
+            "via",
         ],
     };
     match (current.and_then(Value::as_object), replacement) {

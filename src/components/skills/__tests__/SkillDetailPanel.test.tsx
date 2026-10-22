@@ -43,6 +43,40 @@ const makeSkill = (overrides: Partial<SkillListItem> = {}): SkillListItem => ({
 });
 
 describe('SkillDetailPanel', () => {
+  it('explains dependency content and its recorded version without remote update actions', async () => {
+    await act(async () => { render(<TooltipProvider><SkillDetailPanel skill={makeSkill({
+      hasUpdate: false, canRunUpdate: false, canCheckForUpdates: false,
+      source: '@example/tools', updateReason: 'dependency-source', skillPath: 'skills/review/SKILL.md',
+      dependency: { packageName: '@example/tools', recordedVersion: '2.0.0', declaredBy: '.' },
+    })} content="Content" loading={false} agentDisplayNames={new Map()}
+      onClose={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()} onRetry={vi.fn()}
+      onManageAgents={vi.fn()} onCheckUpdates={vi.fn()} /></TooltipProvider>); });
+    expect(screen.getByText('skills.dependency.source')).toBeTruthy();
+    expect(screen.getByText('@example/tools')).toBeTruthy();
+    expect(screen.getByText('skills.dependency.recordedVersion')).toBeTruthy();
+    expect(screen.getByText('2.0.0')).toBeTruthy();
+    expect(screen.getByText('skills/review/SKILL.md')).toBeTruthy();
+    expect(screen.getByText('skills.dependency.currentProject')).toBeTruthy();
+    expect(screen.getByText('skills.dependency.maintenanceHint')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.checkUpdates' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'skills.manageAgents.action' })).toBeTruthy();
+  });
+
+  it('keeps the remote source and update action for a Git declaration', async () => {
+    await act(async () => { render(<TooltipProvider><SkillDetailPanel skill={makeSkill({
+      source: 'owner/repo', sourceUrl: 'https://github.com/owner/repo', canRunUpdate: true,
+      dependency: { packageName: null, recordedVersion: null, declaredBy: '@example/tools' },
+    })} content="Content" loading={false} agentDisplayNames={new Map()}
+      onClose={vi.fn()} onUpdate={vi.fn()} onDelete={vi.fn()} onRetry={vi.fn()}
+      onManageAgents={vi.fn()} /></TooltipProvider>); });
+    expect(screen.getByText('owner/repo')).toBeTruthy();
+    expect(screen.getByText('@example/tools')).toBeTruthy();
+    expect(screen.getByText('skills.dependency.declaredBy')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'skills.actions.update' })).toBeTruthy();
+    expect(screen.queryByText('skills.dependency.maintenanceHint')).toBeNull();
+  });
+
   it('retries an incomplete remote check through the single header action', async () => {
     const onCheckUpdates = vi.fn(async () => 'notCompleted' as const);
     render(<TooltipProvider><SkillDetailPanel

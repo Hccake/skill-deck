@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { browser, $ } from '@wdio/globals';
 
@@ -959,6 +959,54 @@ describe('Skill Deck desktop', () => {
     await writeFile(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'discover-reading.json'), JSON.stringify(records, null, 2));
     await $('header nav a[href="/"]').click();
     await $('#skills-context-navigation').waitForDisplayed();
+  });
+
+  it('shows package provenance and independent copy semantics through real project IPC', async () => {
+    const project = path.join(process.env.SKILL_DECK_E2E_HOME, 'projects', 'dependency-installations');
+    const packageSkill = path.join(project, 'node_modules', '@example', 'tools', 'skills', 'dependency-review');
+    const installed = path.join(project, '.agents', 'skills', 'dependency-review');
+    await mkdir(packageSkill, { recursive: true });
+    await mkdir(path.dirname(installed), { recursive: true });
+    await writeFile(path.join(packageSkill, 'SKILL.md'), '---\nname: dependency-review\ndescription: Review a dependency-provided Skill.\n---\n# Dependency review\n');
+    await symlink(packageSkill, installed, process.platform === 'win32' ? 'junction' : 'dir');
+    await writeFile(path.join(project, 'skills-lock.json'), JSON.stringify({ version: 1, skills: {
+      'dependency-review': { source: '@example/tools', sourceType: 'node_modules', computedHash: 'recorded',
+        skillPath: 'skills/dependency-review/SKILL.md', version: '2.3.4', via: '.' },
+    } }));
+    await invoke('add_environment_project', { environment: { kind: 'native' }, nativePath: project });
+    await browser.refresh();
+    await viewport(1280, 800);
+    await $('header nav a[href="/settings"]').waitForDisplayed();
+    await $('header nav a[href="/settings"]').click();
+    await $('button=English').waitForDisplayed();
+    await $('button=English').click();
+    await $('header nav a[href="/"]').click();
+    await $('#skills-context-navigation').$('button*=dependency-installations').waitForDisplayed();
+    await $('#skills-context-navigation').$('button*=dependency-installations').click();
+    await $('#skills-list-panel').$('button=dependency-review').waitForDisplayed();
+    await $('#skills-list-panel').$('button=dependency-review').click();
+    const detail = $('#skill-detail-panel');
+    await browser.waitUntil(async () => (await detail.getText()).includes('Provided by a project dependency'));
+    await detail.$('.skill-prose').waitForDisplayed();
+    assert.ok((await detail.$('.skill-prose').getText()).includes('Dependency review'));
+    const text = await detail.getText();
+    for (const value of ['@example/tools', 'Recorded package version', '2.3.4', 'Current project', 'skills/dependency-review/SKILL.md']) assert.ok(text.includes(value), value);
+    assert.equal(await detail.$('button[aria-label="Update"]').isExisting(), false);
+    assert.equal(await detail.$('button[aria-label="Check Updates"]').isExisting(), false);
+    await viewport(720, 600);
+    const overflow = await browser.execute(() => {
+      const detail = document.getElementById('skill-detail-panel');
+      return detail.scrollWidth > detail.clientWidth;
+    });
+    assert.equal(overflow, false);
+    await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'dependency-detail-narrow.png'));
+    await detail.$('button[aria-label="Copy to Project"]').click();
+    await $('[role="dialog"]').waitForDisplayed();
+    assert.ok((await $('[role="dialog"]').getText()).includes('independent local Skill'));
+    await settle();
+    await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'dependency-copy.png'));
+    await browser.keys('Escape');
+    assert.match(await readFile(path.join(packageSkill, 'SKILL.md'), 'utf8'), /# Dependency review/);
   });
 
 });

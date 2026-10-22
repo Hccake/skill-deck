@@ -16,7 +16,7 @@ use crate::application::planning_facts::{
 };
 use crate::application::resources::AuthorizedResourceReader;
 use crate::application::scope_skill_placements::{
-    observe_scope_skill_placements, representative_direct_placement,
+    observe_scope_skill_placements, representative_readable_placement,
 };
 use crate::application::skill_libraries::*;
 use crate::application::skill_source::{
@@ -120,6 +120,35 @@ struct FixtureFacts {
 struct FixtureLocations {
     source: FixtureFacts,
     target: FixtureFacts,
+}
+
+struct FixtureSkillResource(
+    crate::application::resources::SkillIdentity,
+    ResourceLocator,
+);
+
+impl crate::application::resources::ResourceContextSource for FixtureSkillResource {
+    fn resolve<'a>(
+        &'a self,
+        _: &'a SkillLocationRef,
+    ) -> crate::application::resources::ResourceFuture<
+        'a,
+        Result<crate::application::resources::ResolvedResourceContext, AppError>,
+    > {
+        Box::pin(async { Err(AppError::StaleContext) })
+    }
+
+    fn resolve_skill<'a>(
+        &'a self,
+        identity: &'a crate::application::resources::SkillIdentity,
+    ) -> crate::application::resources::ResourceFuture<'a, Result<ResourceLocator, AppError>> {
+        Box::pin(async move {
+            if identity != &self.0 {
+                return Err(AppError::StaleContext);
+            }
+            Ok(self.1.clone())
+        })
+    }
 }
 
 impl ScopePlanningSnapshotSource for FixtureLocations {
@@ -359,12 +388,19 @@ async fn real_wsl2_private_only_copy_manage_and_remove() {
     run_wsl_update(WslWorkflow::Adjacent).await;
 }
 
+#[tokio::test]
+#[ignore = "requires Windows, a matching Worker, and SKILL_DECK_TEST_WSL_NODE / SKILL_DECK_TEST_WSL_CLI"]
+async fn real_wsl2_dependency_copy_manage_remove_preserves_package() {
+    run_wsl_update(WslWorkflow::Dependency).await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WslWorkflow {
     PrivateUpdate,
     ScopeBoundary,
     EveUpdate,
     Adjacent,
+    Dependency,
 }
 
 async fn run_wsl_update(workflow: WslWorkflow) {
@@ -541,7 +577,7 @@ fi
             .await
             .unwrap();
     let placements = observed.describe(&catalog, &known).unwrap();
-    let selected = representative_direct_placement(&placements).unwrap();
+    let selected = representative_readable_placement(&placements).unwrap();
     assert_eq!(
         selected.entry.fact.destination.native_path,
         if eve {
@@ -941,8 +977,14 @@ fi
         .await
         .unwrap();
     }
-    if workflow == WslWorkflow::Adjacent {
-        verify_wsl_adjacent_workflows(&facts, runtime, manager.clone()).await;
+    if matches!(workflow, WslWorkflow::Adjacent | WslWorkflow::Dependency) {
+        verify_wsl_adjacent_workflows(
+            &facts,
+            runtime,
+            manager.clone(),
+            workflow == WslWorkflow::Dependency,
+        )
+        .await;
     }
     clock.store(120_000, Ordering::SeqCst);
     manager.cleanup().await.unwrap();
@@ -952,6 +994,7 @@ async fn verify_wsl_adjacent_workflows(
     source: &FixtureFacts,
     runtime: Arc<WslRuntime>,
     payloads: Arc<PayloadSessionManager>,
+    dependency: bool,
 ) {
     use crate::application::agent_selection::AgentSelectionSubmission;
     use crate::application::copy::{
@@ -983,6 +1026,20 @@ async fn verify_wsl_adjacent_workflows(
         .native_path
         .clone();
     let destination = format!("{project}-copy");
+    if dependency {
+        let node = std::env::var("SKILL_DECK_TEST_WSL_NODE").unwrap();
+        run_fixture(distro_name, r#"set -eu
+project=$1
+node=$2
+package="$project/node_modules/@example/tools/skills/alpha"
+mkdir -p "$(dirname "$package")" "$project/.agents/skills"
+mv "$project/.codebuddy/skills/alpha" "$package"
+cp "$package/SKILL.md" "$project/package-before.md"
+ln -s "$package" "$project/.agents/skills/alpha"
+ln -s "$project/.agents/skills/alpha" "$project/.codebuddy/skills/alpha"
+"$node" -e 'const fs=require("fs"); const p=process.argv[1]; const d=JSON.parse(fs.readFileSync(p)); d.skills.alpha={source:"@example/tools",sourceType:"node_modules",computedHash:d.skills.alpha.computedHash,skillPath:"skills/alpha/SKILL.md",version:"2.0.0",via:"."}; fs.writeFileSync(p,JSON.stringify(d))' "$project/skills-lock.json"
+"#, &[project.clone(), node]).await.unwrap();
+    }
     run_fixture(
         distro_name,
         "mkdir -p -- \"$1/.codebuddy\"",
@@ -990,6 +1047,51 @@ async fn verify_wsl_adjacent_workflows(
     )
     .await
     .unwrap();
+    if dependency {
+        let storage = source.workspace.payload_storage();
+        for (label, path) in [
+            (
+                "physical package",
+                format!("{project}/node_modules/@example/tools/skills/alpha"),
+            ),
+            (
+                "linked installation",
+                format!("{project}/.agents/skills/alpha"),
+            ),
+        ] {
+            let session_id = format!("dependency-source-{}", uuid::Uuid::new_v4().simple());
+            let key =
+                crate::application::payload_session::PayloadStorageKey::new(&session_id, "alpha");
+            let acquired = storage.acquire_from_path(&key, &path, None).await;
+            storage.remove_session(&session_id).await.unwrap();
+            assert!(acquired.is_ok(), "{label}: {acquired:?}");
+        }
+        let identity = crate::application::resources::SkillIdentity {
+            context: context.clone(),
+            skill_name: "alpha".into(),
+        };
+        let reader = RuntimeResourceReader::new(runtime.clone());
+        let physical = reader
+            .read_skill(ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: format!("{project}/node_modules/@example/tools/skills/alpha"),
+            })
+            .await
+            .unwrap();
+        let service = crate::application::resources::ResourceService::new(
+            FixtureSkillResource(
+                identity.clone(),
+                ResourceLocator {
+                    environment: context.environment.clone(),
+                    native_path: format!("{project}/.agents/skills/alpha"),
+                },
+            ),
+            RuntimeTargetFactResolver::new(runtime.clone()),
+            crate::environment::opener::SystemResourceOpener,
+            reader,
+        );
+        assert_eq!(service.read_skill(&identity).await.unwrap(), physical);
+    }
     let mut target = source.clone();
     target.initial.resolved_context.context.scope = SkillLocation::Project {
         project_id: "copy-target".into(),
@@ -1078,11 +1180,27 @@ async fn verify_wsl_adjacent_workflows(
     );
     run_fixture(
         distro_name,
-        "test -f \"$1/.agents/skills/alpha/SKILL.md\"\ntest ! -e \"$2/.agents/skills/alpha\"",
+        if dependency {
+            "test -f \"$1/.agents/skills/alpha/SKILL.md\"\ntest -L \"$2/.agents/skills/alpha\""
+        } else {
+            "test -f \"$1/.agents/skills/alpha/SKILL.md\"\ntest ! -e \"$2/.agents/skills/alpha\""
+        },
         &[destination.clone(), project.clone()],
     )
     .await
     .unwrap();
+
+    if dependency {
+        let lock = load_lock_document(
+            &WslAtomicDocumentIo::new(source.workspace.clone()),
+            &locations.target.initial.resolved_context.lock,
+            None,
+            LockSchema::Project,
+        )
+        .await
+        .unwrap();
+        assert!(lock.entry_snapshot("alpha").value().is_none());
+    }
 
     let manage = ManageAgentsService::new(
         locations.clone(),
@@ -1142,11 +1260,27 @@ async fn verify_wsl_adjacent_workflows(
     );
     run_fixture(
         distro_name,
-        "test -f \"$1/.minimax/skills/alpha/SKILL.md\"\ntest ! -e \"$1/.agents/skills/alpha\"",
+        if dependency {
+            "test -f \"$1/.minimax/skills/alpha/SKILL.md\"\ntest -L \"$1/.agents/skills/alpha\"\ncmp \"$1/package-before.md\" \"$1/node_modules/@example/tools/skills/alpha/SKILL.md\""
+        } else {
+            "test -f \"$1/.minimax/skills/alpha/SKILL.md\"\ntest ! -e \"$1/.agents/skills/alpha\""
+        },
         std::slice::from_ref(&project),
     )
     .await
     .unwrap();
+
+    if dependency {
+        let lock = load_lock_document(
+            &WslAtomicDocumentIo::new(source.workspace.clone()),
+            &source.initial.resolved_context.lock,
+            None,
+            LockSchema::Project,
+        )
+        .await
+        .unwrap();
+        assert_eq!(lock.entry_snapshot("alpha").value().unwrap()["via"], ".");
+    }
 
     let remove = RemoveService::new(
         locations.clone(),
@@ -1173,6 +1307,38 @@ async fn verify_wsl_adjacent_workflows(
         "{removed:#?}"
     );
     run_fixture(distro_name, "test ! -e \"$1/.codebuddy/skills/alpha\"\ntest ! -e \"$1/.minimax/skills/alpha\"\ntest ! -e \"$1/.agents/skills/alpha\"", std::slice::from_ref(&project)).await.unwrap();
+    if dependency {
+        run_fixture(
+            distro_name,
+            "cmp \"$1/package-before.md\" \"$1/node_modules/@example/tools/skills/alpha/SKILL.md\"",
+            std::slice::from_ref(&project),
+        )
+        .await
+        .unwrap();
+        run_fixture(
+            distro_name,
+            r#"set -eu
+test ! -e "$1/.agents/skills" || rmdir "$1/.agents/skills"
+mkdir -p "$1/.agents"
+ln -s "$1/node_modules/@example/tools/skills" "$1/.agents/skills"
+"#,
+            std::slice::from_ref(&project),
+        )
+        .await
+        .unwrap();
+        let preview = remove.preview(&context, "alpha").await.unwrap();
+        assert!(matches!(remove.execute(&RemoveRequest {
+            token:preview.token, context:context.clone(), skill_name:"alpha".into(), intent:RemoveIntent::FullSkill,
+        }, CancellationSignal::default()).await,
+            Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "dependencyContentTarget"));
+        run_fixture(
+            distro_name,
+            "cmp \"$1/package-before.md\" \"$1/node_modules/@example/tools/skills/alpha/SKILL.md\"",
+            std::slice::from_ref(&project),
+        )
+        .await
+        .unwrap();
+    }
 }
 
 async fn verify_wsl_copy_project_identity(source: &FixtureFacts, runtime: Arc<WslRuntime>) {

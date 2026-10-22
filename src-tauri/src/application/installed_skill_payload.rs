@@ -216,8 +216,11 @@ fn validate_standard(
     context: &SkillLocationRef,
     standard: &ResolvedTargetFact,
 ) -> Result<(), AppError> {
-    if standard.entry_kind != TargetEntryKind::Directory
-        || !same_environment_identity(&standard.destination.environment, &context.environment)
+    // 内容获取只读取已确认的直接安装；链接本身继续参与预览和执行前的身份复核。
+    if !matches!(
+        standard.entry_kind,
+        TargetEntryKind::Directory | TargetEntryKind::Symlink | TargetEntryKind::Junction
+    ) || !same_environment_identity(&standard.destination.environment, &context.environment)
     {
         return Err(AppError::StaleTarget);
     }

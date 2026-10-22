@@ -105,6 +105,8 @@ fn enrich_environment_skills_from_lock_at(
             LockKind::LegacyProject => {
                 serde_json::from_value::<SkillLockEntry>(value).map(|entry| {
                     let local = LocalSkillLockEntry {
+                        version: None,
+                        via: None,
                         source: entry.source,
                         ref_name: entry.ref_name,
                         source_type: entry.source_type,
@@ -153,6 +155,7 @@ mod environment_tests {
         agents: Vec<AgentId>,
     ) -> InstalledSkill {
         InstalledSkill {
+            dependency: None,
             name: name.to_string(),
             description: description.to_string(),
             path: canonical_path.to_string(),
@@ -274,6 +277,32 @@ mod environment_tests {
             .expect("skill");
 
         assert_eq!(skill.source, None);
+    }
+
+    #[test]
+    fn dependency_records_expose_the_package_and_declarer_without_a_git_update() {
+        let skill = installed_skill(
+            "toolkit",
+            "Toolkit",
+            "/work/app/.agents/skills/toolkit",
+            InstalledSkillLocation::Project,
+            Vec::new(),
+        );
+        let lock = br#"{"version":1,"skills":{"toolkit":{
+            "source":"@example/tools","sourceType":"node_modules","computedHash":"content",
+            "version":"2.0.0","via":".","skillPath":"skills/toolkit/SKILL.md"
+        }}}"#;
+        let skill = enrich_environment_skills_from_lock(vec![skill], Some(lock), LockKind::Project)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(skill.can_run_update, Some(false));
+        assert_eq!(skill.can_check_for_updates, Some(false));
+        assert_eq!(skill.source_url, None);
+        let json = serde_json::to_value(skill).unwrap();
+        assert_eq!(json["dependency"]["packageName"], "@example/tools");
+        assert_eq!(json["dependency"]["recordedVersion"], "2.0.0");
+        assert_eq!(json["dependency"]["declaredBy"], ".");
     }
 
     #[test]

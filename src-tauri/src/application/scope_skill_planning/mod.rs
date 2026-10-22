@@ -127,6 +127,9 @@ pub(crate) enum ScopeSkillPlanningError {
     LibraryContentTarget {
         target_path: String,
     },
+    DependencyContentTarget {
+        target_path: String,
+    },
     ExternalTarget {
         skill_name: String,
         target_path: String,
@@ -164,6 +167,10 @@ impl ScopeSkillPlanningError {
             },
             Self::LibraryContentTarget { target_path } => AppError::CapabilityUnavailable {
                 capability: "libraryContentTarget".into(),
+                path: Some(target_path),
+            },
+            Self::DependencyContentTarget { target_path } => AppError::CapabilityUnavailable {
+                capability: "dependencyContentTarget".into(),
                 path: Some(target_path),
             },
             Self::ExternalTarget {
@@ -257,7 +264,12 @@ impl ScopeSkillPlan {
         let mut candidates = Vec::new();
         for directory in &self.directories {
             if !matches!(directory.observed, ObservedVersion::Direct)
-                || directory.fact.entry_kind != TargetEntryKind::Directory
+                || !matches!(
+                    directory.fact.entry_kind,
+                    TargetEntryKind::Directory
+                        | TargetEntryKind::Symlink
+                        | TargetEntryKind::Junction
+                )
             {
                 continue;
             }
@@ -652,6 +664,13 @@ fn plan(
     })?;
     let mut directories = Vec::new();
     for directory in physical.directories() {
+        if !matches!(directory.action(), PreparedEntryAction::Keep)
+            && is_dependency_content_target(&directory.fact().destination)
+        {
+            return Err(ScopeSkillPlanningError::DependencyContentTarget {
+                target_path: display_locator(&directory.fact().destination).native_path,
+            });
+        }
         if directory.fact().entry_kind == TargetEntryKind::Directory
             && matches!(directory.observed(), ObservedVersion::Library(_))
             && !matches!(directory.action(), PreparedEntryAction::Keep)
@@ -680,6 +699,31 @@ fn plan(
         });
     }
     Ok(ScopeSkillPlan { directories })
+}
+
+// 目录事实已经解析父级链接。可以替换安装处的包链接，不能经根目录别名写入包内容。
+fn is_dependency_content_target(path: &crate::environment::types::ResourceLocator) -> bool {
+    match path.environment {
+        crate::environment::types::EnvironmentRef::Native => {
+            std::path::Path::new(&path.native_path)
+                .components()
+                .filter_map(|component| match component {
+                    std::path::Component::Normal(name) => name.to_str(),
+                    _ => None,
+                })
+                .any(|name| {
+                    if cfg!(windows) {
+                        name.eq_ignore_ascii_case("node_modules")
+                    } else {
+                        name == "node_modules"
+                    }
+                })
+        }
+        crate::environment::types::EnvironmentRef::Wsl { .. } => path
+            .native_path
+            .split('/')
+            .any(|name| name == "node_modules"),
+    }
 }
 
 fn readers_for_placement(

@@ -91,6 +91,10 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `wellKnownDigest` | `skills` CLI v1.5.22 Well-known 字段 | 索引提供或根据旧版内容计算的 Skill 版本摘要 |
 | `remoteHash` | Skill Deck 扩展 | 来源能够提供的远端版本标识 |
 | `pluginName` | Skill Deck 扩展 | 用于界面展示的来源插件信息 |
+| `version` | 新版 CLI 依赖同步字段 | 同步时记录的 npm 包版本，不作为远端更新基线 |
+| `via` | 新版 CLI 依赖声明字段 | 声明 Skill 的包名；`.` 表示当前项目 |
+
+Skill Deck 可识别外部工具写入的 `sourceType: "node_modules"` 项目记录。这类 Skill 的内容由项目依赖提供，应用展示记录信息，并按实际目录提供复制、管理 Agent 和移除；包版本升级由包管理器负责，安装关联或副本由原同步工具维护。带有 `via` 声明字段的 Git 来源继续按原 Git 来源更新。应用本身不扫描或同步项目依赖，正式 CLI 兼容参考版本仍为上表中的 1.5.23。
 
 Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent。当前参考版本使用 `subagents` 记录这些位置：
 

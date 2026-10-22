@@ -129,6 +129,16 @@ pub struct InstalledLibraryVersion {
     pub skill_name: String,
 }
 
+/// 依赖安装记录提供的出处与声明者信息。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct SkillDependencyInfo {
+    pub package_name: Option<String>,
+    pub recorded_version: Option<String>,
+    pub declared_by: Option<String>,
+}
+
 /// 已安装的直接 Skill 信息。
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +165,9 @@ pub struct InstalledSkill {
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
+    /// 项目依赖提供内容或声明来源的信息；不授予依赖同步写入权限。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency: Option<SkillDependencyInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub installed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -234,6 +247,15 @@ impl InstalledSkill {
             self.comparison_fingerprint = Some(metadata.comparison_fingerprint());
             self.source = Some(e.source.clone());
             self.source_url = metadata.source_url.clone();
+            let package_source = e.source_type == "node_modules";
+            self.dependency = (package_source || e.via.is_some()).then(|| SkillDependencyInfo {
+                package_name: package_source.then(|| e.source.clone()),
+                recorded_version: package_source.then(|| e.version.clone()).flatten(),
+                declared_by: e.via.clone(),
+            });
+            if package_source {
+                self.source_url = None;
+            }
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
             self.skill_path = e.skill_path.clone();
@@ -375,6 +397,8 @@ Content.
     #[test]
     fn test_with_local_lock_entry_prefers_explicit_source_url() {
         let entry = LocalSkillLockEntry {
+            version: None,
+            via: None,
             source: "owner/private-repo".to_string(),
             ref_name: None,
             source_type: "github".to_string(),
@@ -387,6 +411,7 @@ Content.
             plugin_name: None,
         };
         let skill = InstalledSkill {
+            dependency: None,
             name: "ssh-skill".to_string(),
             description: "SSH skill".to_string(),
             path: String::new(),
@@ -438,6 +463,8 @@ Content.
     #[test]
     fn test_with_local_lock_entry_does_not_invent_source_url_for_empty_source() {
         let entry = LocalSkillLockEntry {
+            version: None,
+            via: None,
             source: String::new(),
             ref_name: None,
             source_type: "github".to_string(),
@@ -452,6 +479,7 @@ Content.
 
         let skill = InstalledSkill {
             name: "demo".to_string(),
+            dependency: None,
             description: "Demo".to_string(),
             path: String::new(),
             canonical_path: String::new(),

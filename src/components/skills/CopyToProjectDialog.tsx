@@ -330,6 +330,10 @@ function CopyToProjectDialogSession({
           <DialogDescription className="sr-only">
             {t('skills.copyToProject.ariaDescription')}
           </DialogDescription>
+          {skill?.dependency ? (
+            <p className="text-sm text-muted-foreground">{t(skill.dependency.packageName
+              ? 'skills.dependency.copySnapshotHint' : 'skills.dependency.copyRemoteHint')}</p>
+          ) : null}
         </DialogHeader>
 
         <div
@@ -529,6 +533,7 @@ function CopyToProjectDialogSession({
                           {t('skills.copyToProject.overwriteWarning', {
                             count: selectedExistingCount,
                           })}
+                          {' '}{t('skills.dependency.copyOverwriteHint')}
                         </p>
                       </div>
                     ) : null}

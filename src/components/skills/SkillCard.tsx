@@ -98,7 +98,9 @@ export const SkillCard = memo(function SkillCard({
   ].filter((label): label is string => Boolean(label));
   const attentionTitle = notice?.error ? formatAppError(notice.error, t)
     : notice?.hintKey ? t(notice.hintKey) : undefined;
-  const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.sourceLabel;
+  const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource')
+    : presentation.packageSource ? t('skills.dependency.cardSource', { package: presentation.sourceLabel })
+    : presentation.sourceLabel;
   const sourceUrl = isOpenableUrl(skill.sourceUrl) ? skill.sourceUrl : null;
   const updatedAt = skill.updatedAt
     ? formatSkillCardDate(skill.updatedAt, i18n.language)

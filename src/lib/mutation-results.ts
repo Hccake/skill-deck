@@ -40,6 +40,7 @@ const ERROR_CODES = new Set<OperationErrorCode>([
 
 export function formatMutationError(error: ErrorReport, t: Translate): string {
   if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'libraryContentTarget') return t('mutation.result.errors.libraryContentTarget', error.parameters);
+  if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'dependencyContentTarget') return t('mutation.result.errors.dependencyContentTarget', error.parameters);
   if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'installedSkillFormat') return t('mutation.result.errors.installedSkillFormat', error.parameters);
   if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'sharedSkillLinkSource') return t('mutation.result.errors.sharedSkillLinkSource', error.parameters);
   if (error.code === 'capabilityUnavailable' && error.parameters.capability === 'eveSingleFile') return t('mutation.result.errors.eveSingleFile', error.parameters);

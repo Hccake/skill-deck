@@ -25,6 +25,7 @@ export const CompactSkillItem = memo(function CompactSkillItem({
   }, [onClick, skill]);
   const presentation = skillStatusPresentation(skill);
   const source = presentation.local ? t('skills.updateStatusLabel.localSource')
+    : presentation.packageSource ? t('skills.dependency.cardSource', { package: presentation.sourceLabel })
     : presentation.sourceLabel ?? (presentation.notice ? t(presentation.notice.labelKey) : null);
   return <SkillCompactRow itemKey={getSkillIdentityKey(getSkillIdentity(skill, projectPath))} name={skill.name} source={source} selected={isSelected} onClick={handleClick} />;
 });

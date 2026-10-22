@@ -33,6 +33,8 @@ const PROJECT_ENTRY_FIELDS: &[&str] = &[
     "subagents",
     "pluginName",
     "wellKnownDigest",
+    "version",
+    "via",
 ];
 
 #[derive(Debug, Clone, PartialEq)]

@@ -129,6 +129,7 @@ export function formatAppError(error: AppError, t: TFunction): string {
     case 'unsafeSourceLink':
       return t('addSkill.error.storageUnsupported');
     case 'capabilityUnavailable':
+      if (error.data.capability === 'dependencyContentTarget') return t('mutation.result.errors.dependencyContentTarget', { path: error.data.path });
       if (error.data.capability === 'libraryContentTarget') return t('mutation.result.errors.libraryContentTarget', { path: error.data.path });
       if (error.data.capability === 'installedSkillFormat') return t('mutation.result.errors.installedSkillFormat', { path: error.data.path });
       if (error.data.capability === 'sharedSkillLinkSource') return t('mutation.result.errors.sharedSkillLinkSource', { path: error.data.path });

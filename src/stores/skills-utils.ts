@@ -286,6 +286,9 @@ export function resolveUpdateStatusLabelI18nKey(
   if (skill.updateReason === 'local-source') {
     return 'skills.updateStatusLabel.localSource';
   }
+  if (skill.updateReason === 'dependency-source') {
+    return null;
+  }
   if (skill.updateReason === 'unsupported-source-type') {
     return 'skills.updateStatusLabel.autoCheckUnavailable';
   }

@@ -18,6 +18,12 @@ pub struct LocalSkillLockEntry {
     pub ref_name: Option<String>,
     /// 来源类型 ("github", "local" 等)
     pub source_type: String,
+    /// 依赖同步时记录的包版本，不代表当前磁盘中的包版本。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// 声明此 Skill 的包；点号表示当前项目。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
     /// 原始来源 URL（GUI 扩展，用于 SSH/private repo 保真）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
@@ -53,6 +59,8 @@ mod tests {
     #[test]
     fn test_remote_hash_skip_serialization() {
         let entry = LocalSkillLockEntry {
+            version: None,
+            via: None,
             source: "owner/repo".to_string(),
             ref_name: None,
             source_type: "github".to_string(),
@@ -93,6 +101,8 @@ mod tests {
     #[test]
     fn test_ref_name_serialization() {
         let entry = LocalSkillLockEntry {
+            version: None,
+            via: None,
             source: "owner/repo".to_string(),
             ref_name: Some("feature-branch".to_string()),
             source_type: "github".to_string(),

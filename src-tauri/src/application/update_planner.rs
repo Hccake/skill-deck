@@ -1168,6 +1168,15 @@ fn lock_mutation(
             if let Some(revision) = &metadata.upstream_revision {
                 entry.insert("remoteHash".to_string(), json!(revision));
             }
+            // 更新维持原来源的声明关系；独立安装和复制由各自流程重新建立记录。
+            if let Some(via) = facts
+                .lock_document
+                .entry_snapshot(&locked.lock_key)
+                .value()
+                .and_then(|record| record.get("via"))
+            {
+                entry.insert("via".to_string(), via.clone());
+            }
             Value::Object(entry)
         }
     };

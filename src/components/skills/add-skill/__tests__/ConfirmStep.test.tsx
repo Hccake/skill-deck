@@ -230,6 +230,15 @@ describe('ConfirmStep', () => {
     })));
   });
 
+  it('explains when installation replaces a dependency declaration', async () => {
+    const outcome = readyPreview(['/existing/demo']);
+    if (outcome.status !== 'ready') throw new Error('ready preview expected');
+    Object.assign(outcome.preview.skills[0], { replacesDependency: true });
+    preview.mockResolvedValue(outcome);
+    render(<StatefulConfirmHarness />);
+    expect(await screen.findByText('addSkill.confirm.dependencyOverrideDescription')).toBeTruthy();
+  });
+
   it('explains direct priority for a Library override', async () => {
     const outcome = readyPreview(['/existing/demo']);
     if (outcome.status !== 'ready') throw new Error('ready preview expected');

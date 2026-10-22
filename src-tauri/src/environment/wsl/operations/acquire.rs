@@ -283,7 +283,8 @@ impl WslPayloadSessionStorage {
             root,
         };
         let result = self
-            .acquire_from_bound_source(key, &source, source_root, cancellation)
+            // 本次打开的本地目录就是获取根；Worker 返回的根已经解析了目录链接。
+            .acquire_from_bound_source(key, &source, &source.root, cancellation)
             .await;
         let _ = self
             .workspace

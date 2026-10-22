@@ -171,6 +171,16 @@ function failedCopyUnit(projectId: string, retryable = true): MutationUnitResult
 }
 
 describe('CopyToProjectDialog', () => {
+  it.each([
+    [{ packageName: '@example/tools', recordedVersion: '2.0.0', declaredBy: '.' }, 'skills.dependency.copySnapshotHint'],
+    [{ packageName: null, recordedVersion: null, declaredBy: '@example/tools' }, 'skills.dependency.copyRemoteHint'],
+  ] as const)('explains the maintenance of a dependency copy', async (dependency, hint) => {
+    render(<CopyToProjectDialog {...defaultCopyProps} skill={skill({ dependency })}
+      onClose={vi.fn()} onCopy={vi.fn()} />);
+    expect(await screen.findByText(hint)).toBeTruthy();
+    await waitFor(() => expect(defaultCopyProps.loadAgentSelection).toHaveBeenCalled());
+  });
+
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
     Element.prototype.scrollIntoView = vi.fn();

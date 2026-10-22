@@ -110,22 +110,38 @@ where
     async fn resolve_directory(
         &self,
         context: &SkillLocationRef,
-        target: ResourceLocator,
+        mut target: ResourceLocator,
     ) -> Result<ResourceLocator, AppError> {
-        let mut facts = self
-            .targets
-            .resolve(context, std::slice::from_ref(&target), None)
-            .await?;
-        if facts.len() != 1 {
-            return Err(AppError::StaleTarget);
+        let mut visited = std::collections::BTreeSet::new();
+        for _ in 0..64 {
+            let mut facts = self
+                .targets
+                .resolve(context, std::slice::from_ref(&target), None)
+                .await?;
+            if facts.len() != 1 {
+                return Err(AppError::StaleTarget);
+            }
+            let fact = facts.pop().expect("one resolved resource");
+            if fact.entry_kind == TargetEntryKind::Directory {
+                return Ok(fact.destination);
+            }
+            if !matches!(
+                fact.entry_kind,
+                TargetEntryKind::Symlink | TargetEntryKind::Junction
+            ) || !visited.insert(fact.key.clone())
+            {
+                break;
+            }
+            let Some(next) = fact.link_target.as_deref().and_then(|raw| {
+                crate::environment::planning::resolved_link_target_path(&fact.destination, raw)
+            }) else {
+                break;
+            };
+            target = next;
         }
-        let fact = facts.pop().expect("one resolved resource");
-        if fact.entry_kind != TargetEntryKind::Directory {
-            return Err(AppError::PathNotFound {
-                path: target.native_path,
-            });
-        }
-        Ok(fact.destination)
+        Err(AppError::PathNotFound {
+            path: target.native_path,
+        })
     }
 }
 

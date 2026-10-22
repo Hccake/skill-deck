@@ -50,6 +50,7 @@ function isTransientCheckError(error: AppError): boolean {
 export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUpdateInfo) {
   const reason = check?.reason ?? skill.updateReason ?? skill.updateCapability?.reason;
   const status = check?.status ?? skill.updateStatus;
+  const packageSource = reason === 'dependency-source' || skill.sourceType === 'node_modules';
   const sourceLabel = skill.source?.trim() || skill.sourceUrl?.trim() || null;
   const incomplete = reason === 'missingSource' || reason === 'missing-skill-path'
     || (!sourceLabel && skill.sourceType !== undefined && skill.sourceType !== 'local');
@@ -85,5 +86,5 @@ export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUp
       ? canRunUpdate ? 'skills.updateHint.missingRemoteHashCanUpdate' : 'skills.updateHint.missingRemoteHash'
     : reason === 'unsupportedSource' || reason === 'unsupported-source-type' ? 'skills.updateHint.unsupportedSource'
     : null;
-  return { local, sourceLabel, available, notice, sourceHintKey };
+  return { local, packageSource, sourceLabel, available, notice, sourceHintKey };
 }

@@ -97,6 +97,9 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
         .map((skill) => skill.skillName)
       : [],
   );
+  const dependencyOverrides = state.preparation.status === 'ready'
+    ? state.preparation.prepared.preview.skills.filter((skill) => skill.replacesDependency && !blockedSkills.has(skill.skillName)).map((skill) => skill.skillName)
+    : [];
   const projected = selection ? projectAgentSelectionView(selection) : null;
   const directAgents = projected?.directAgents.map((agent) => agent.displayName) ?? [];
   const selectedSet = new Set(agentSelection.submission.selectedOptionIds);
@@ -151,6 +154,14 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
         <div className="border-y border-border/70 py-3 text-sm">
           <p className="font-medium">{t('addSkill.confirm.libraryOverrideTitle')}</p>
           <p className="mt-1 text-muted-foreground">{t('addSkill.confirm.libraryOverrideDescription', { count: libraryOverrideCount })}</p>
+        </div>
+      ) : null}
+
+      {dependencyOverrides.length > 0 ? (
+        <div className="border-y border-border/70 py-3 text-sm">
+          <p className="font-medium">{t('addSkill.confirm.dependencyOverrideTitle')}</p>
+          <p className="mt-1 break-words text-muted-foreground">{dependencyOverrides.join('、')}</p>
+          <p className="mt-1 text-muted-foreground">{t('addSkill.confirm.dependencyOverrideDescription')}</p>
         </div>
       ) : null}
 

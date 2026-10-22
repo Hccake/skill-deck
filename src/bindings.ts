@@ -920,7 +920,7 @@ export type InstallPreview = { token: PreviewToken; skills: InstallSkillPreview[
 export type InstallPreviewOutcome = { status: "ready"; preview: InstallPreview } | { status: "selectionStale"; snapshot: InstallAgentSelectionSnapshot }
 export type InstallRequest = { context: SkillLocationRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentSelection: AgentSelectionSubmission; acknowledgeRedirect: boolean }
 export type InstallResponse = { units: MutationUnitResult[]; warnings: SourceSuppressionWarningCode[] }
-export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadHandle; overwriteTargets: string[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[]; overridesLibrary: boolean }
+export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadHandle; overwriteTargets: string[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[]; overridesLibrary: boolean; replacesDependency: boolean }
 export type InstallWizardSessionSnapshot = { revision: number; active: boolean }
 /**
  * 当前 Scope 引用的库版本，用于定位到对应库成员。
@@ -938,7 +938,11 @@ associatedAgents: AgentId[];
 /**
  * 当前 Scope 中实际被引用的同名库版本。
  */
-libraryVersions?: InstalledLibraryVersion[] | null; maintenanceError?: AppError | null; comparisonFingerprint?: string | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+libraryVersions?: InstalledLibraryVersion[] | null; maintenanceError?: AppError | null; comparisonFingerprint?: string | null; source?: string | null; sourceUrl?: string | null;
+/**
+ * 项目依赖提供内容或声明来源的信息；不授予依赖同步写入权限。
+ */
+dependency?: SkillDependencyInfo | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
 /**
  * 是否可直接执行更新
  */
@@ -1178,6 +1182,10 @@ gitCloneTimeoutSecs?: number;
  * 是否允许 Skill Deck 发现和使用 WSL Environment
  */
 wslIntegrationEnabled?: boolean; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }>; networkProxy?: NetworkProxySettings }
+/**
+ * 依赖安装记录提供的出处与声明者信息。
+ */
+export type SkillDependencyInfo = { packageName: string | null; recordedVersion: string | null; declaredBy: string | null }
 export type SkillDirectoryAccess = "standardOnly" | "privateOnly" | "both"
 export type SkillIdentity = { context: SkillLocationRef; skillName: string }
 export type SkillLibraryDetail = { id: LibraryId; name: string; skills: LibrarySkillSummary[]; usages: LibraryUsage[] }

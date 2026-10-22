@@ -409,6 +409,19 @@
     }
   },
   "skills": {
+    "dependency": {
+      "source": "Provided by a project dependency",
+      "cardSource": "Dependency · {{package}}",
+      "package": "Package",
+      "recordedVersion": "Recorded package version",
+      "packagePath": "Path within package",
+      "declaredBy": "Declared by",
+      "currentProject": "Current project",
+      "maintenanceHint": "This Skill is provided by a project dependency. After updating the dependency, use the original sync tool to refresh its links or copies.",
+      "copySnapshotHint": "The copy will be maintained as an independent local Skill. It will not follow dependency updates in the original project.",
+      "copyRemoteHint": "The copy will keep its remote source as an independent installation, without the original project's dependency declaration.",
+      "copyOverwriteHint": "Overwriting will also detach any dependency declaration recorded at the destination."
+    },
     "noSelection": "No Skill selected",
     "resizePanels": "Resize Skill List and Details",
     "resizeSidebar": "Resize Sidebar",
@@ -1512,6 +1525,7 @@
         "installedSkillFormat": "The source Skill requires a valid name and description before copying or adding Agent associations: {{path}}",
         "sharedSkillLinkSource": "This Skill has no shared installation to link to. Select copy mode.",
         "libraryContentTarget": "This target is a library member directory. Manage it from its library: {{path}}",
+        "dependencyContentTarget": "This target is inside a dependency package. Change the Skill installation directory first; package contents are managed by the package manager: {{path}}",
         "skillPlacementTargetConflict": "The target Skill directory {{targetPath}} for {{skillName}} contains a {{targetKind}} that cannot be managed. Resolve it and try again.",
         "wellKnownScopeNotFound": "No Skills were found for {{scopePath}} on {{rootUrl}}. Check the scoped address.",
         "environmentUnavailable": "The selected environment is unavailable.",
@@ -1747,6 +1761,8 @@
       "libraryOverrideTitle": "Directly installed versions take priority",
       "libraryOverrideDescription": "{{count}} matching Skills are currently provided by Skill Libraries. The Library applications remain, while this direct installation becomes the active content.",
       "libraryOverrideBadge": "Overrides Library",
+      "dependencyOverrideTitle": "Replace with an independent installation",
+      "dependencyOverrideDescription": "These Skills will be maintained from the selected source, detached from their previous dependency sync relationships. Package contents will be preserved.",
       "directDownloadConflict": "Cannot overwrite",
       "redirectTitle": "Download redirected to another site",
       "redirectBody": "The Skill content will be downloaded from {{host}}. Continue only if you trust this site.",

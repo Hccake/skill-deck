@@ -1359,6 +1359,9 @@ fn normalize_copy_metadata(source: Option<&Value>) -> Option<NormalizedCopyMetad
     };
     let source_value = text("source")?;
     let source_type = text("sourceType")?;
+    if source_type == "node_modules" {
+        return None;
+    }
     Some(NormalizedCopyMetadata {
         source: source_value,
         source_type,
@@ -1945,6 +1948,16 @@ mod tests {
     #[test]
     fn copying_without_source_lock_metadata_removes_target_lock_entry() {
         assert!(project_lock_replacement(None, "target-computed", &[]).is_none());
+    }
+
+    #[test]
+    fn copying_dependency_content_creates_an_independent_snapshot() {
+        let source = serde_json::json!({
+            "source": "@example/tools", "sourceType": "node_modules",
+            "version": "2.0.0", "via": ".", "skillPath": "skills/demo/SKILL.md",
+            "computedHash": "source-content"
+        });
+        assert!(project_lock_replacement(Some(&source), "target-content", &[]).is_none());
     }
 
     #[test]

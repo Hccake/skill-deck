@@ -409,6 +409,19 @@
     }
   },
   "skills": {
+    "dependency": {
+      "source": "来自项目依赖",
+      "cardSource": "项目依赖 · {{package}}",
+      "package": "依赖包",
+      "recordedVersion": "记录的包版本",
+      "packagePath": "包内路径",
+      "declaredBy": "声明者",
+      "currentProject": "当前项目",
+      "maintenanceHint": "此 Skill 由项目依赖提供。更新依赖后，请通过原同步工具更新关联或副本。",
+      "copySnapshotHint": "复制后将作为独立的本地 Skill 维护，内容不会随原项目的依赖更新。",
+      "copyRemoteHint": "复制后保留原远端来源，作为独立安装维护，并解除原项目的依赖声明关系。",
+      "copyOverwriteHint": "目标中已有的依赖声明关系将随覆盖解除。"
+    },
     "noSelection": "未选择 Skill",
     "resizePanels": "调整 Skill 列表与详情宽度",
     "resizeSidebar": "调整侧栏宽度",
@@ -1512,6 +1525,7 @@
         "installedSkillFormat": "源 Skill 缺少有效的名称或描述，无法复制或新增 Agent 关联：{{path}}",
         "sharedSkillLinkSource": "当前 Skill 没有可共享的通用安装位置，请选择复制方式。",
         "libraryContentTarget": "目标实际位于 Skill 库中，请从库页面维护该成员：{{path}}",
+        "dependencyContentTarget": "目标实际位于依赖包中。请先调整 Skill 安装目录，包内容由包管理器维护：{{path}}",
         "skillPlacementTargetConflict": "「{{skillName}}」的目标 Skill 目录 {{targetPath}} 中存在无法管理的{{targetKind}}，请处理后重试。",
         "wellKnownScopeNotFound": "{{rootUrl}} 的 {{scopePath}} 下没有可用 Skill，请检查 scoped 地址。",
         "environmentUnavailable": "所选环境当前不可用。",
@@ -1747,6 +1761,8 @@
       "libraryOverrideTitle": "直接安装版本将优先使用",
       "libraryOverrideDescription": "{{count}} 个同名 Skill 当前由 Skill 库提供。安装后保留库应用关系，并由本次直接安装内容覆盖使用。",
       "libraryOverrideBadge": "覆盖库版本",
+      "dependencyOverrideTitle": "改为独立安装",
+      "dependencyOverrideDescription": "这些 Skill 将按本次来源独立维护，并解除原依赖同步关系。依赖包中的内容会保留。",
       "directDownloadConflict": "不能覆盖",
       "redirectTitle": "下载地址已跳转到其他站点",
       "redirectBody": "Skill 内容将从 {{host}} 下载。请确认你信任该站点后再继续。",

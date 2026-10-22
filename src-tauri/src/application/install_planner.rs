@@ -358,7 +358,20 @@ where
                 .map(|placement| placement.fact.clone())
                 .collect::<Vec<_>>();
             let direct_download_conflict = direct_download_conflict(payload, &direct_facts);
+            let installed =
+                crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
+                    &metadata.skill_name,
+                    &facts.lock_document,
+                )?;
+            let replaces_dependency = facts
+                .lock_document
+                .entry_snapshot(&installed.lock_key)
+                .value()
+                .is_some_and(|record| {
+                    record["sourceType"] == "node_modules" || record.get("via").is_some()
+                });
             preview_skills.push(InstallSkillPreview {
+                replaces_dependency,
                 skill_name: metadata.skill_name.clone(),
                 payload: payload.handle().clone(),
                 overwrite_targets: direct_facts

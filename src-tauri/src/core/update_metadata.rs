@@ -111,6 +111,8 @@ mod tests {
         upstream_revision: Option<&str>,
     ) -> NormalizedUpdateMetadata {
         normalize_local_lock_entry(&LocalSkillLockEntry {
+            version: None,
+            via: None,
             source: "acme/tools".into(),
             ref_name: Some("main".into()),
             source_type: source_type.into(),
@@ -175,6 +177,14 @@ mod tests {
     }
 
     #[test]
+    fn dependency_source_is_maintained_by_the_project_package() {
+        let capability = derive_update_capability(&project("node_modules", "content", None));
+        assert!(!capability.can_check_for_updates);
+        assert!(!capability.can_run_update);
+        assert_eq!(capability.reason.as_deref(), Some("dependency-source"));
+    }
+
+    #[test]
     fn well_known_capability_uses_index_and_digest_evidence_only() {
         let global = |source_base_url: Option<&str>, digest: Option<&str>| {
             normalize_global_lock_entry(&SkillLockEntry {
@@ -215,6 +225,8 @@ mod tests {
     #[test]
     fn project_well_known_source_url_is_the_index() {
         let metadata = normalize_local_lock_entry(&LocalSkillLockEntry {
+            version: None,
+            via: None,
             source: "example.com".into(),
             ref_name: None,
             source_type: "well-known".into(),
@@ -292,6 +304,13 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
 }
 
 pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCapability {
+    if metadata.source_type == "node_modules" {
+        return UpdateCapability {
+            can_check_for_updates: false,
+            can_run_update: false,
+            reason: Some("dependency-source".to_string()),
+        };
+    }
     let can_run_update = !metadata.source.is_empty() && metadata.source_type != "local";
 
     if !can_run_update {

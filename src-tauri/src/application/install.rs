@@ -71,6 +71,7 @@ pub struct InstallSkillPreview {
     pub blocking_reasons: Vec<OperationErrorCode>,
     pub fallback_forecasts: Vec<AgentTargetFallbackPreview>,
     pub overrides_library: bool,
+    pub replaces_dependency: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -493,6 +494,7 @@ mod tests {
                 preview: InstallPreview {
                     token: token.clone(),
                     skills: vec![InstallSkillPreview {
+                        replaces_dependency: false,
                         skill_name: "demo".to_string(),
                         payload: handle.clone(),
                         overwrite_targets: Vec::new(),

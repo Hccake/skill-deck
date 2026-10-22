@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { skillStatusPresentation, updateCheckFailureKey } from '../skill-status-presentation';
+import { resolveUpdateStatusLabelI18nKey } from '@/stores/skills-utils';
 
 describe('Skill status presentation', () => {
+  it('treats package content as a dependency rather than a missing or failed remote source', () => {
+    const presentation = skillStatusPresentation({ source: '@example/tools', updateReason: 'dependency-source' });
+    expect(presentation.packageSource).toBe(true);
+    expect(presentation.local).toBe(false);
+    expect(presentation.notice).toBeNull();
+    expect(resolveUpdateStatusLabelI18nKey({ canCheckForUpdates: false, canRunUpdate: false, updateReason: 'dependency-source' })).toBeNull();
+  });
   it('uses failure-specific feedback without suggesting retries for authentication or unknown errors', () => {
     expect(updateCheckFailureKey({ kind: 'gitNetworkError', data: { message: 'offline' } })).toBe('skills.checkUpdatesNetworkFailed');
     expect(updateCheckFailureKey({ kind: 'gitAuthFailed', data: { message: 'denied' } })).toBe('skills.checkUpdatesAccessFailed');

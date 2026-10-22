@@ -1371,6 +1371,7 @@ fn project_candidate(
     }
 
     InstalledSkill {
+        dependency: None,
         name,
         description: candidate.description,
         path: candidate.canonical_path.clone(),
