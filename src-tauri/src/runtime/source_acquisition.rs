@@ -386,6 +386,76 @@ mod tests {
         ))
     }
 
+    #[tokio::test]
+    async fn azure_repos_source_survives_discovery_payload_and_saved_metadata() {
+        use crate::application::source_acquisition::{
+            AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService,
+        };
+        use crate::core::local_lock::LocalSkillLockEntry;
+        use crate::core::{normalize_local_lock_entry, SourceIdentity};
+        use crate::git_fixture::{BareSkillRepo, CountingGitTransport};
+
+        let repo = BareSkillRepo::new(&["alpha", "beta"]);
+        let clone_url = "https://dev.azure.com/org/Project%20One/_git/skills";
+        let input = format!("{clone_url}?path=/skills/alpha&version=GBmain");
+        assert_eq!(parse_source(&input).unwrap().source_type, SourceType::Git);
+        let transport = Arc::new(CountingGitTransport::for_repo_with_public_source(
+            &repo, clone_url,
+        ));
+        let manager = sessions();
+        let service =
+            SourceDiscoveryService::with_git_transport(manager.clone(), transport.clone());
+        let found = service
+            .discover(EnvironmentRef::Native, input, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(names(&found), BTreeSet::from(["alpha"]));
+        assert_eq!(found.source_url, clone_url);
+        assert_eq!(found.git_ref.as_deref(), Some("refs/heads/main"));
+        let handles = SelectedPayloadAcquisitionService::new(manager.clone())
+            .acquire(AcquireSelectedPayloadsRequest {
+                discovery_session: found.discovery_session,
+                skill_paths: vec![found.skills[0].relative_path.clone()],
+            })
+            .await
+            .unwrap();
+        let lease = manager.pin_verified(&handles[0]).await.unwrap();
+        let metadata = lease.planning_metadata();
+        let entry: LocalSkillLockEntry = serde_json::from_value(serde_json::json!({
+            "source": metadata.source, "sourceType": metadata.source_type,
+            "sourceUrl": metadata.source_url, "ref": metadata.ref_name,
+            "skillPath": metadata.skill_path, "computedHash": metadata.computed_hash,
+        }))
+        .unwrap();
+        let normalized = normalize_local_lock_entry(&entry);
+        let identity = SourceIdentity::from_metadata(&normalized).unwrap();
+        assert_eq!(identity.acquisition().source(), clone_url);
+        assert_eq!(identity.acquisition().git_ref(), Some("refs/heads/main"));
+        assert_eq!(
+            normalized.computed_hash.as_deref(),
+            Some(repo.computed_hash("alpha").as_str())
+        );
+        let mut parsed = identity
+            .acquisition()
+            .parsed_source(identity.remote().provider());
+        parsed.subpath = Some(crate::core::skill_paths::normalize_skill_folder_path(
+            entry.skill_path.as_deref().unwrap(),
+        ));
+        let restored = service
+            .discover_parsed_with_visibility(
+                EnvironmentRef::Native,
+                parsed,
+                clone_url.into(),
+                InternalSkillVisibility::PublicOnly,
+                |_| {},
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(names(&restored), BTreeSet::from(["alpha"]));
+        assert_eq!(transport.clone_count(), 2);
+    }
+
     fn write_visibility_fixture(root: &Path) {
         for (name, internal) in [
             ("public", false),

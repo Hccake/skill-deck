@@ -28,6 +28,7 @@ flowchart LR
 一个来源可以提供一个或多个 Skill。Skill Deck 支持以下输入：
 
 - GitHub 简写、GitHub 或 GitLab URL，以及仓库中的 Skill 路径；
+- Azure Repos 的 clone 地址或带 `path`、`version` 参数的页面地址；
 - 带分支、标签或 Skill 筛选条件的 Git 来源；
 - SSH 和其他可以通过 Git 获取的地址；
 - 当前 Environment 中的本地目录；
@@ -36,6 +37,8 @@ flowchart LR
 - 能够解析出来源、Skill 和 Agent 选择的受支持 `skills add` 命令。
 
 应用先解析并获取来源，再列出有效 Skill。用户完成选择后，应用固定所选 Skill 的完整内容并生成预览。来源获取失败时停止当前流程；内容或预览过期后，需要重新获取并确认。来源发现只依赖 Environment，后续预览使用流程已经选定的安装位置或目标库。
+
+Azure Repos 按普通 Git 来源保存和维护。页面参数 `path` 指定仓库内目录，`version=GB…` 指定分支，`version=GT…` 指定标签；同名分支和标签保持各自的引用类型。地址中的凭据和端口保留给 Git 获取使用。`GC` 提交参数、重复的 path/version 参数和不安全路径会返回来源错误。
 
 ### 目录发现与选择
 

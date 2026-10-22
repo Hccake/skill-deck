@@ -1,6 +1,6 @@
 //! 来源解析模块
 //!
-//! 支持 11 种来源格式：
+//! 支持的来源格式：
 //! - GitHub shorthand: owner/repo
 //! - GitHub + 子路径: owner/repo/path
 //! - GitHub + @skill: owner/repo@skill-name
@@ -10,6 +10,7 @@
 //! - GitHub URL + 分支: https://github.com/owner/repo/tree/branch/path
 //! - GitLab URL: https://gitlab.com/group/repo
 //! - GitLab URL + 分支: https://gitlab.com/group/repo/-/tree/branch/path
+//! - Azure Repos clone 或带 path/version 参数的页面 URL
 //! - 本地路径: ./path, /abs/path, C:\path
 //! - Well-known: https://example.com (fallback)
 //! - Git URL: git@github.com:owner/repo.git (fallback)
@@ -71,6 +72,9 @@ fn looks_like_git_source(input: &str) -> bool {
     if let Ok(parsed) = Url::parse(input) {
         let host = parsed.host_str().unwrap_or("");
         let path = parsed.path();
+        if path.split('/').any(|segment| segment == "_git") {
+            return true;
+        }
         if host == "github.com" || host == "www.github.com" {
             return GITHUB_PATH_RE.is_match(path);
         }
@@ -275,6 +279,20 @@ fn url_has_path_traversal(url_str: &str) -> bool {
 
 /// 解析 URL
 fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
+    let raw_path = input
+        .split(['?', '#'])
+        .next()
+        .and_then(|value| value.split_once("://"))
+        .and_then(|(_, authority_and_path)| authority_and_path.split_once('/'))
+        .map(|(_, path)| path)
+        .unwrap_or_default();
+    let azure_repos = raw_path.split('/').any(|segment| segment == "_git");
+    if azure_repos {
+        // URL 解析会先归一化点路径；在此保留并检查原始路径证据。
+        for segment in raw_path.split('/').filter(|segment| !segment.is_empty()) {
+            validate_azure_path(segment, true)?;
+        }
+    }
     if url_has_path_traversal(input) {
         return Err(AppError::InvalidSource {
             value: format!("Unsafe URL: \"{}\" contains path traversal segments", input),
@@ -286,6 +304,10 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
     })?;
 
     let host = url.host_str().unwrap_or("");
+
+    if azure_repos {
+        return parse_azure_repos_url(url);
+    }
 
     if is_hosted_artifact_url(&url) {
         return Ok(ParsedSource {
@@ -319,6 +341,125 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
         subpath: None,
         local_path: None,
         git_ref: None,
+        skill_filter: None,
+    })
+}
+
+fn invalid_azure_source(reason: &str) -> AppError {
+    AppError::InvalidSource {
+        value: format!("Azure Repos: {reason}"),
+    }
+}
+
+fn validate_azure_path(value: &str, single_segment: bool) -> Result<(), AppError> {
+    let mut candidate = value.to_string();
+    // 限制嵌套编码的解析次数，同时检查解码后才出现的分隔符和路径穿越。
+    for _ in 0..4 {
+        let drive = candidate.as_bytes().get(1) == Some(&b':')
+            && candidate
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic);
+        if candidate.starts_with('/')
+            || candidate.contains('\\')
+            || candidate.chars().any(char::is_control)
+            || candidate.split('/').any(|segment| segment == "..")
+            || (single_segment && candidate.contains('/'))
+            || (!single_segment && drive)
+        {
+            return Err(invalid_azure_source("unsafe repository path"));
+        }
+        let decoded = urlencoding::decode(&candidate)
+            .map_err(|_| invalid_azure_source("invalid path encoding"))?;
+        if decoded == candidate {
+            return Ok(());
+        }
+        candidate = decoded.into_owned();
+    }
+    Err(invalid_azure_source("too many path encoding layers"))
+}
+
+fn parse_azure_repos_url(mut url: Url) -> Result<ParsedSource, AppError> {
+    let segments = url
+        .path()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let marker = segments
+        .iter()
+        .position(|segment| *segment == "_git")
+        .ok_or_else(|| invalid_azure_source("missing repository marker"))?;
+    if marker + 1 >= segments.len() {
+        return Err(invalid_azure_source("missing repository name"));
+    }
+    let mut clone_segments = segments[..=marker + 1]
+        .iter()
+        .map(|segment| urlencoding::decode(segment).map(|value| value.into_owned()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| invalid_azure_source("invalid repository encoding"))?;
+    let repository = clone_segments.last_mut().unwrap();
+    if let Some(trimmed) = repository.strip_suffix(".git") {
+        *repository = trimmed.to_string();
+    }
+    if repository.is_empty() {
+        return Err(invalid_azure_source("missing repository name"));
+    }
+
+    let mut path = None;
+    let mut version = None;
+    for (key, value) in url.query_pairs() {
+        let slot = match key.as_ref() {
+            "path" => &mut path,
+            "version" => &mut version,
+            _ => continue,
+        };
+        if slot.replace(value.into_owned()).is_some() {
+            return Err(invalid_azure_source("duplicate path or version parameter"));
+        }
+    }
+    let subpath = path
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let relative = value.strip_prefix('/').unwrap_or(&value);
+            validate_azure_path(relative, false)?;
+            Ok::<_, AppError>(relative.to_string())
+        })
+        .transpose()?
+        .filter(|value| !value.is_empty());
+    let git_ref = version
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let (kind, name) = value
+                .get(..2)
+                .zip(value.get(2..))
+                .ok_or_else(|| invalid_azure_source("unsupported version parameter"))?;
+            if name.is_empty() {
+                return Err(invalid_azure_source("missing branch or tag name"));
+            }
+            if kind.eq_ignore_ascii_case("GB") {
+                Ok(format!("refs/heads/{name}"))
+            } else if kind.eq_ignore_ascii_case("GT") {
+                Ok(format!("refs/tags/{name}"))
+            } else {
+                Err(invalid_azure_source(
+                    "only branch and tag version parameters are supported",
+                ))
+            }
+        })
+        .transpose()?;
+
+    url.path_segments_mut()
+        .map_err(|_| invalid_azure_source("invalid clone address"))?
+        .clear()
+        .extend(&clone_segments);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(ParsedSource {
+        source_type: SourceType::Git,
+        url: url.to_string(),
+        subpath,
+        local_path: None,
+        git_ref,
         skill_filter: None,
     })
 }
@@ -555,6 +696,63 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn azure_repos_pages_preserve_clone_address_ref_kind_and_subpath() {
+        for (input, expected_url, expected_ref, expected_path) in [
+            ("https://dev.azure.com/org/Project%20One/_git/repo?path=%2Fskills%2Freview&version=GBfeature%2Freview", "https://dev.azure.com/org/Project%20One/_git/repo", Some("refs/heads/feature/review"), Some("skills/review")),
+            ("https://org.visualstudio.com/project/_git/repo?version=GTrelease&path=/", "https://org.visualstudio.com/project/_git/repo", Some("refs/tags/release"), None),
+            ("http://user:secret@devops.example:8080/tfs/Collection/project/_git/repo.git?path=/Skills/Review#main@review", "http://user:secret@devops.example:8080/tfs/Collection/project/_git/repo", Some("main"), Some("Skills/Review")),
+            ("https://dev.azure.com/org/project/_git/repo", "https://dev.azure.com/org/project/_git/repo", None, None),
+        ] {
+            let parsed = parse_source(input).unwrap();
+            assert_eq!(parsed.source_type, SourceType::Git, "{input}");
+            assert_eq!(parsed.url, expected_url);
+            assert_eq!(parsed.git_ref.as_deref(), expected_ref);
+            assert_eq!(parsed.subpath.as_deref(), expected_path);
+        }
+        let parsed = parse_source(
+            "https://dev.azure.com/org/project/_git/repo?version=GTrelease#ignored@review",
+        )
+        .unwrap();
+        assert_eq!(parsed.git_ref.as_deref(), Some("refs/tags/release"));
+        assert_eq!(parsed.skill_filter.as_deref(), Some("review"));
+    }
+
+    #[test]
+    fn azure_repos_rejects_unsafe_or_ambiguous_page_parameters() {
+        for suffix in [
+            "?path=/../outside",
+            "?path=%2Fskills%2F..%2Foutside",
+            "?path=%252e%252e%252foutside",
+            "?path=%5C%5Cserver%5Cshare",
+            "?path=C%3A%5Coutside",
+            "?path=//server/share",
+            "?path=%00",
+            "?path=/one&path=/two",
+            "?version=GBmain&version=GTmain",
+            "?version=GC0123456789012345678901234567890123456789",
+            "?version=main",
+            "?version=GB",
+        ] {
+            assert!(
+                matches!(
+                    parse_source(&format!(
+                        "https://dev.azure.com/org/project/_git/repo{suffix}"
+                    )),
+                    Err(AppError::InvalidSource { .. })
+                ),
+                "{suffix}"
+            );
+        }
+        for input in [
+            "https://dev.azure.com/org/project/_git/",
+            "https://dev.azure.com/org/project/_git/%2e%2e/other",
+            "https://dev.azure.com/org/project/_git/repo%2Fother",
+        ] {
+            assert!(parse_source(input).is_err(), "{input}");
+        }
+    }
 
     #[test]
     fn test_parse_github_shorthand() {

@@ -312,12 +312,17 @@ git -C "$root" branch release
         let runtime = WslRuntime::for_wsl_test();
         let workspace = runtime.workspace(&distro).unwrap();
         let session = runtime.connect(&distro).await.unwrap();
+        let azure_source = crate::core::parse_source(
+            "https://dev.azure.com/org/project/_git/skills?version=GTrelease&path=/one/two/three/four/five/six/deep",
+        ).unwrap();
+        assert_eq!(azure_source.source_type, crate::models::SourceType::Git);
+        // 网络地址映射到本地 Git 夹具，保留真实 Worker 对引用和子路径的处理。
         let source = super::acquire_wsl_source_native(
             workspace.clone(),
             &session,
             super::WslAcquisitionSource::Git {
                 url: fixture.clone(),
-                git_ref: None,
+                git_ref: azure_source.git_ref,
             },
             std::time::Duration::from_secs(30),
             None,
@@ -345,7 +350,7 @@ git -C "$root" branch release
         )
         .await
         .unwrap();
-        assert_eq!(source.ref_revision(), Some(branch.as_str()));
+        assert_eq!(source.ref_revision(), Some(tag.as_str()));
         assert_ne!(branch, tag);
         assert!(source.managed_bytes() > 0);
         let inventory = scan(
@@ -381,7 +386,7 @@ git -C "$root" branch release
         );
         let deep = storage
             .read_source_skill_md(
-                &format!("{}/one/two/three/four/five/six/deep", source.native_root()),
+                &format!("{}/{}", source.native_root(), azure_source.subpath.unwrap()),
                 CancellationSignal::default(),
             )
             .await
