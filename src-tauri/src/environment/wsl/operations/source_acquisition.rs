@@ -290,7 +290,8 @@ mkdir -p "$root"
 git init -b main "$root"
 git -C "$root" config user.email test@example.com
 git -C "$root" config user.name 'Skill Deck Test'
-printf '%s\n' '---' 'name: worker-gate' 'description: Worker gate' '---' > "$root/SKILL.md"
+printf '\357\273\277' > "$root/SKILL.md"
+printf '%s\n' '---' 'name: worker-gate' 'description: Worker gate' '---' >> "$root/SKILL.md"
 mkdir -p "$root/one/two/three/four/five/six/deep"
 printf '%s\n' '---' 'name: deep-gate' 'description: Deep gate' '---' > "$root/one/two/three/four/five/six/deep/skill.md"
 ln -s one/two/three/four/five/six "$root/alias"
@@ -367,6 +368,17 @@ git -C "$root" branch release
             .any(|entry| entry.relative_path == "SKILL.md"));
 
         let storage = WslPayloadSessionStorage::for_source(workspace, &source);
+        let original = storage
+            .read_source_skill_md(source.native_root(), CancellationSignal::default())
+            .await
+            .unwrap();
+        assert!(original.starts_with(&[0xef, 0xbb, 0xbf]));
+        assert_eq!(
+            crate::core::skill::parse_skill_md_content(std::str::from_utf8(&original).unwrap())
+                .unwrap()
+                .name,
+            "worker-gate"
+        );
         let deep = storage
             .read_source_skill_md(
                 &format!("{}/one/two/three/four/five/six/deep", source.native_root()),
@@ -391,14 +403,13 @@ git -C "$root" branch release
             .manifest
             .entries
             .iter()
-            .find_map(|entry| entry.blob_id.as_deref())
+            .find(|entry| entry.relative_path == "SKILL.md")
+            .and_then(|entry| entry.blob_id.as_deref())
             .unwrap();
-        assert!(!storage
-            .read_blob(&key, blob_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            storage.read_blob(&key, blob_id).await.unwrap().unwrap(),
+            original
+        );
         storage.remove(&key).await.unwrap();
         storage.remove_session(key.session_id()).await.unwrap();
         crate::application::payload_session::RetainedSourceCleanup::remove(&storage)

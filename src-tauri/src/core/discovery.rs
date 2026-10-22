@@ -557,6 +557,30 @@ mod tests {
     }
 
     #[test]
+    fn bom_discovery_preserves_original_payload_bytes() {
+        let root = tempdir().unwrap();
+        let skill_dir = root.path().join("toolkit");
+        fs::create_dir(&skill_dir).unwrap();
+        let markdown =
+            "\u{feff}---\r\nname: toolkit\r\ndescription: Toolkit\r\n---\r\n# Toolkit\r\n";
+        fs::write(skill_dir.join("SKILL.md"), markdown).unwrap();
+        let before = crate::core::skill_payload::build_skill_payload(&skill_dir).unwrap();
+        let discovered = discover_skills(root.path(), None, DiscoverOptions::default()).unwrap();
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].name, "toolkit");
+        assert_eq!(
+            crate::core::skill::read_skill_content(skill_dir.to_str().unwrap()).unwrap(),
+            "# Toolkit\r\n"
+        );
+        let after = crate::core::skill_payload::build_skill_payload(&skill_dir).unwrap();
+        assert_eq!(before.payload_id, after.payload_id);
+        assert_eq!(
+            fs::read(skill_dir.join("SKILL.md")).unwrap(),
+            markdown.as_bytes()
+        );
+    }
+
+    #[test]
     fn test_discover_skills_exposes_install_dir_name() {
         let temp = tempdir().unwrap();
         let skill_dir = temp.path().join("localized-skill");

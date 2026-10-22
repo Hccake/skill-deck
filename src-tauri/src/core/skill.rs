@@ -35,6 +35,7 @@ pub struct SkillFrontmatter {
 /// Discovery selector 通过该入口共享 Native 与 WSL 的 frontmatter 语义，
 /// filesystem 访问仍由各自的 inventory collector 负责。
 pub fn parse_skill_md_content(content: &str) -> Result<SkillFrontmatter, AppError> {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     // 检查是否以 --- 开头
     if !content.starts_with("---") {
         return Err(AppError::InvalidSkillMd {
@@ -260,10 +261,13 @@ pub fn read_skill_content(canonical_path: &str) -> Result<String, AppError> {
 }
 
 pub fn skill_content_from_markdown(content: &str) -> String {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     if let Some(stripped) = content.strip_prefix("---") {
         if let Some(end) = stripped.find("---") {
             let body_start = 3 + end + 3;
-            return content[body_start..].trim_start_matches('\n').to_string();
+            return content[body_start..]
+                .trim_start_matches(['\r', '\n'])
+                .to_string();
         }
     }
 
@@ -290,6 +294,30 @@ Content here.
         let result = parse_skill_md_content(content).unwrap();
         assert_eq!(result.name, "test-skill");
         assert_eq!(result.description, "A test skill");
+    }
+
+    #[test]
+    fn bom_skill_metadata_and_body_support_both_line_endings() {
+        for prefix in ["", "\u{feff}"] {
+            for newline in ["\n", "\r\n"] {
+                let document = format!(
+                    "{prefix}---{newline}name: toolkit{newline}description: Toolkit{newline}---{newline}{newline}# Toolkit{newline}"
+                );
+                let parsed = parse_skill_md_content(&document).unwrap();
+                assert_eq!(parsed.name, "toolkit");
+                assert_eq!(
+                    skill_content_from_markdown(&document),
+                    format!("# Toolkit{newline}")
+                );
+            }
+        }
+        for invalid in [
+            "\u{feff}# Missing metadata",
+            "\u{feff}---\nname: toolkit\n---\n",
+            "\u{feff}---\ndescription: Toolkit\n---\n",
+        ] {
+            assert!(parse_skill_md_content(invalid).is_err());
+        }
     }
 
     #[test]

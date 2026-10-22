@@ -1284,6 +1284,7 @@ fn parse_skill_frontmatter(bytes: &[u8]) -> Option<SkillFrontmatter> {
 
 fn parse_skill_frontmatter_allow_missing_name(bytes: &[u8]) -> Option<SkillFrontmatter> {
     let content = std::str::from_utf8(bytes).ok()?;
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     let rest = content.strip_prefix("---")?;
     let end = rest.find("---")?;
     let frontmatter: SkillFrontmatter = serde_yaml::from_str(rest[..end].trim()).ok()?;
@@ -1882,6 +1883,25 @@ mod tests {
         assert_eq!(status.counts[0].code, "invalidFrontmatter");
         assert_eq!(status.counts[0].count, 1);
         assert_eq!(status.omitted_count, 0);
+    }
+
+    #[test]
+    fn bom_installed_metadata_preserves_the_legacy_eve_name_rule() {
+        let named = "\u{feff}---\r\nname: toolkit\r\ndescription: Toolkit\r\n---\r\n";
+        assert_eq!(
+            super::parse_skill_frontmatter(named.as_bytes())
+                .unwrap()
+                .name,
+            "toolkit"
+        );
+        let legacy = "\u{feff}---\ndescription: Legacy Eve\n---\n";
+        assert!(super::parse_skill_frontmatter(legacy.as_bytes()).is_none());
+        assert_eq!(
+            super::parse_skill_frontmatter_allow_missing_name(legacy.as_bytes())
+                .unwrap()
+                .description,
+            "Legacy Eve"
+        );
     }
 
     #[tokio::test]

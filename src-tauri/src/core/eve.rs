@@ -156,6 +156,7 @@ pub fn eve_install_targets(
 }
 
 pub fn normalize_eve_skill_md(raw: &str) -> String {
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let Some(rest) = raw.strip_prefix("---") else {
         return raw.to_string();
     };
@@ -398,6 +399,15 @@ mod tests {
         assert!(normalized.contains("keep: value"));
         assert!(!normalized.contains("skip: 1"));
         assert!(normalized.contains("# Demo"));
+    }
+
+    #[test]
+    fn bom_eve_derivation_uses_the_existing_metadata_rules() {
+        let raw = "---\r\nname: demo\r\ndescription: Demo\r\n---\r\n# Demo\r\n";
+        assert_eq!(
+            normalize_eve_skill_md(&format!("\u{feff}{raw}")),
+            normalize_eve_skill_md(raw)
+        );
     }
 
     #[test]
