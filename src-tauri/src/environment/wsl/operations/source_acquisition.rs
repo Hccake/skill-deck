@@ -295,6 +295,12 @@ printf '%s\n' '---' 'name: worker-gate' 'description: Worker gate' '---' >> "$ro
 mkdir -p "$root/one/two/three/four/five/six/deep"
 printf '%s\n' '---' 'name: deep-gate' 'description: Deep gate' '---' > "$root/one/two/three/four/five/six/deep/skill.md"
 ln -s one/two/three/four/five/six "$root/alias"
+for pair in '.factory factory-only' '.factory locked' '.kilo shared' '.kilocode shared'; do
+  set -- $pair
+  mkdir -p "$root/$1/skills/$2"
+  printf '%s\n' '---' "name: $2" 'description: Container fixture' '---' > "$root/$1/skills/$2/SKILL.md"
+done
+printf '%s\n' '{"version":1,"skills":{"locked":{"source":"owner/repo","sourceType":"github","computedHash":"fixture"}}}' > "$root/skills-lock.json"
 git -C "$root" add .
 git -C "$root" commit -m fixture
 git -C "$root" tag -a release -m release
@@ -371,6 +377,23 @@ git -C "$root" branch release
             .entries
             .iter()
             .any(|entry| entry.relative_path == "SKILL.md"));
+        let (discovered, _) = crate::runtime::wsl_source::build_wsl_discovery_catalog(
+            &inventory,
+            None,
+            &crate::application::source_acquisition::InternalSkillVisibility::PublicOnly,
+            true,
+        )
+        .unwrap();
+        assert!(discovered.iter().any(|skill| skill.name == "factory-only"));
+        assert!(!discovered.iter().any(|skill| skill.name == "locked"));
+        assert_eq!(
+            discovered
+                .iter()
+                .find(|skill| skill.name == "shared")
+                .unwrap()
+                .relative_path,
+            ".kilo/skills/shared/SKILL.md"
+        );
 
         let storage = WslPayloadSessionStorage::for_source(workspace, &source);
         let original = storage

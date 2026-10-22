@@ -49,6 +49,8 @@ Azure Repos 按普通 Git 来源保存和维护。页面参数 `path` 指定仓�
 3. 对来源根目录和插件清单声明的目录，只检查直接子目录。
 4. 优先位置没有得到可安装 Skill 时，在来源目录的五层范围内继续查找。
 
+来源搜索容器包括 `.factory/skills`、`.kilo/skills` 和 `.kilocode/skills`，项目 lock 已记录的安装项继续按既有规则过滤。同名内容按来源发现顺序去重，其中 `.kilo/skills` 先于 `.kilocode/skills`，后者先于 `.kimchi/skills`。来源搜索位置与 Agent 实际读取、安装位置分别维护；Agent 位置规则见[Agent 模型](./agent-model.md)。
+
 刷新 Git 来源证据或为更新重新获取内容时，应用按照已保存路径直接定位 Skill，不因普通发现深度或来源根目录也是 Skill 而提前结束。来源目录结构和容量限制见[更新检查](./update-checking.md#远端版本信息的获取)。
 
 普通发现和通配选择只展示公开 Skill。用户通过来源语法或命令明确指定名称，且选择中不包含通配符时，列表会额外包含同名的内部 Skill（`internal`）；其他内部 Skill 继续隐藏。Git、本地目录、直接下载和 Well-known 来源使用相同规则，后续内容获取只接受本次发现结果中的 Skill。

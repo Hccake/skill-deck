@@ -18,7 +18,7 @@ struct BuiltinAgentSpec {
     adapter: AgentAdapter,
     cli_history_eligible: bool,
     cli_aliases: Vec<&'static str>,
-    cli_project_discovery_dir: Option<CliProjectDiscoveryDir>,
+    cli_project_discovery_dirs: Vec<CliProjectDiscoveryDir>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -60,7 +60,7 @@ impl BuiltinAgentSpec {
             adapter: AgentAdapter::Standard,
             cli_history_eligible: true,
             cli_aliases: Vec::new(),
-            cli_project_discovery_dir: None,
+            cli_project_discovery_dirs: Vec::new(),
         }
     }
 
@@ -100,7 +100,8 @@ impl BuiltinAgentSpec {
     }
 
     fn with_cli_discovery_dir(mut self, priority: u8, path: &'static str) -> Self {
-        self.cli_project_discovery_dir = Some(CliProjectDiscoveryDir { priority, path });
+        self.cli_project_discovery_dirs
+            .push(CliProjectDiscoveryDir { priority, path });
         self
     }
 
@@ -133,7 +134,7 @@ static CLI_PROJECT_DISCOVERY_DIRS: LazyLock<Vec<&'static str>> = LazyLock::new(|
     directories.extend(
         BUILTIN_AGENT_CATALOG
             .iter()
-            .filter_map(|spec| spec.cli_project_discovery_dir),
+            .flat_map(|spec| spec.cli_project_discovery_dirs.iter().copied()),
     );
     directories.sort_by_key(|directory| directory.priority);
     directories
@@ -344,7 +345,8 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             "Droid",
             ".factory/skills",
             Some(home(".factory/skills")),
-        ),
+        )
+        .with_cli_discovery_dir(7, ".factory/skills"),
         agent(EVE_AGENT_ID_VALUE, "Eve", "agent/skills", None)
             .with_detection(vec![project("agent"), project("package.json")])
             .with_adapter(AgentAdapter::Eve)
@@ -376,14 +378,14 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             Some(home(".copilot/skills")),
         )
         .reads_standard_globally()
-        .with_cli_discovery_dir(7, ".github/skills"),
+        .with_cli_discovery_dir(8, ".github/skills"),
         agent(
             "goose",
             "Goose",
             ".goose/skills",
             Some(config_home("goose/skills")),
         )
-        .with_cli_discovery_dir(8, ".goose/skills"),
+        .with_cli_discovery_dir(9, ".goose/skills"),
         agent(
             "grok",
             "Grok Build",
@@ -391,7 +393,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             Some(environment_skills_path("GROK_HOME", ".grok/skills")),
         )
         .reads_standard_globally()
-        .with_cli_discovery_dir(9, ".grok/skills"),
+        .with_cli_discovery_dir(10, ".grok/skills"),
         agent(
             "hermes-agent",
             "Hermes Agent",
@@ -404,21 +406,22 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".iflow/skills",
             Some(home(".iflow/skills")),
         )
-        .with_cli_discovery_dir(10, ".iflow/skills"),
+        .with_cli_discovery_dir(11, ".iflow/skills"),
         agent(
             "junie",
             "Junie",
             ".junie/skills",
             Some(home(".junie/skills")),
         )
-        .with_cli_discovery_dir(11, ".junie/skills"),
+        .with_cli_discovery_dir(12, ".junie/skills"),
         agent(
             "kilo",
             "Kilo Code",
             ".kilocode/skills",
             Some(home(".kilocode/skills")),
         )
-        .with_cli_discovery_dir(13, ".kilocode/skills"),
+        .with_cli_discovery_dir(13, ".kilo/skills")
+        .with_cli_discovery_dir(14, ".kilocode/skills"),
         agent(
             "kimchi",
             "Kimchi",
@@ -428,7 +431,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         .reads_standard_globally()
         .reads_standard_in_projects()
         .with_detection(vec![home(".config/kimchi")])
-        .with_cli_discovery_dir(12, ".kimchi/skills"),
+        .with_cli_discovery_dir(15, ".kimchi/skills"),
         agent(
             "kimi-code-cli",
             "Kimi Code CLI",
@@ -443,7 +446,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".kiro/skills",
             Some(home(".kiro/skills")),
         )
-        .with_cli_discovery_dir(14, ".kiro/skills"),
+        .with_cli_discovery_dir(16, ".kiro/skills"),
         agent("kode", "Kode", ".kode/skills", Some(home(".kode/skills"))),
         agent(
             "inference-sh",
@@ -482,7 +485,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".minimax",
             "/Applications/MiniMax Code.app",
         ))
-        .with_cli_discovery_dir(15, ".minimax/skills"),
+        .with_cli_discovery_dir(17, ".minimax/skills"),
         agent(
             "mistral-vibe",
             "Mistral Vibe",
@@ -496,14 +499,14 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             Some(home(".moxby/skills")),
         ),
         agent("mux", "Mux", ".mux/skills", Some(home(".mux/skills")))
-            .with_cli_discovery_dir(16, ".mux/skills"),
+            .with_cli_discovery_dir(18, ".mux/skills"),
         agent(
             "neovate",
             "Neovate",
             ".neovate/skills",
             Some(home(".neovate/skills")),
         )
-        .with_cli_discovery_dir(17, ".neovate/skills"),
+        .with_cli_discovery_dir(19, ".neovate/skills"),
         agent("ona", "Ona", ".ona/skills", Some(home(".ona/skills"))),
         agent(
             "opencode",
@@ -513,16 +516,16 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         )
         .reads_standard_globally()
         .with_detection(vec![config_home("opencode")])
-        .with_cli_discovery_dir(18, ".opencode/skills"),
+        .with_cli_discovery_dir(20, ".opencode/skills"),
         agent(
             "openhands",
             "OpenHands",
             ".openhands/skills",
             Some(home(".openhands/skills")),
         )
-        .with_cli_discovery_dir(19, ".openhands/skills"),
+        .with_cli_discovery_dir(21, ".openhands/skills"),
         agent("pi", "Pi", ".pi/skills", Some(home(".pi/agent/skills")))
-            .with_cli_discovery_dir(20, ".pi/skills"),
+            .with_cli_discovery_dir(22, ".pi/skills"),
         agent(
             "posit-assistant",
             "Posit Assistant",
@@ -532,7 +535,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         .reads_standard_globally()
         .reads_standard_in_projects()
         .with_detection(vec![home(".posit/assistant"), home(".positai")])
-        .with_cli_discovery_dir(21, ".posit/assistant/skills"),
+        .with_cli_discovery_dir(23, ".posit/assistant/skills"),
         agent("promptscript", "PromptScript", ".agents/skills", None)
             .with_detection(vec![project(".promptscript"), project("promptscript.yaml")]),
         agent(
@@ -541,7 +544,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".qoder/skills",
             Some(home(".qoder/skills")),
         )
-        .with_cli_discovery_dir(22, ".qoder/skills"),
+        .with_cli_discovery_dir(24, ".qoder/skills"),
         agent(
             "qoder-cn",
             "Qoder CN",
@@ -574,7 +577,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             Some(home(".rovodev/skills")),
         ),
         agent("roo", "Roo Code", ".roo/skills", Some(home(".roo/skills")))
-            .with_cli_discovery_dir(23, ".roo/skills"),
+            .with_cli_discovery_dir(25, ".roo/skills"),
         agent(
             "tabnine-cli",
             "Tabnine CLI",
@@ -583,7 +586,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         )
         .with_detection(vec![home(".tabnine")]),
         agent("trae", "Trae", ".trae/skills", Some(home(".trae/skills")))
-            .with_cli_discovery_dir(24, ".trae/skills"),
+            .with_cli_discovery_dir(26, ".trae/skills"),
         agent(
             "trae-cn",
             "Trae CN",
@@ -603,7 +606,7 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".windsurf/skills",
             Some(home(".codeium/windsurf/skills")),
         )
-        .with_cli_discovery_dir(25, ".windsurf/skills"),
+        .with_cli_discovery_dir(27, ".windsurf/skills"),
         agent("zed", "Zed", ".agents/skills", Some(home(".agents/skills"))).with_detection(vec![
             config_home("zed"),
             environment_path("APPDATA", "Zed", config_home("zed")),
@@ -619,14 +622,14 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".zcode",
             "/Applications/ZCode.app",
         ))
-        .with_cli_discovery_dir(26, ".zcode/skills"),
+        .with_cli_discovery_dir(28, ".zcode/skills"),
         agent(
             "zencoder",
             "Zencoder",
             ".zencoder/skills",
             Some(home(".zencoder/skills")),
         )
-        .with_cli_discovery_dir(27, ".zencoder/skills"),
+        .with_cli_discovery_dir(29, ".zencoder/skills"),
         agent(
             "zenflow",
             "Zenflow",
@@ -822,13 +825,15 @@ mod tests {
                 ".codex/skills",
                 ".commandcode/skills",
                 ".continue/skills",
+                ".factory/skills",
                 ".github/skills",
                 ".goose/skills",
                 ".grok/skills",
                 ".iflow/skills",
                 ".junie/skills",
-                ".kimchi/skills",
+                ".kilo/skills",
                 ".kilocode/skills",
+                ".kimchi/skills",
                 ".kiro/skills",
                 ".minimax/skills",
                 ".mux/skills",

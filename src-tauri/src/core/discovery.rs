@@ -733,6 +733,85 @@ mod tests {
     }
 
     #[test]
+    fn new_agent_source_containers_preserve_priority_depth_and_boundaries() {
+        let root = tempdir().unwrap();
+        for (parts, name) in [
+            (vec!["skills", "anchor"], "anchor"),
+            (
+                vec![".factory", "skills", "group", "nested", "factory"],
+                "factory",
+            ),
+            (vec![".kilo", "skills", "shared"], "shared"),
+            (vec![".kilocode", "skills", "shared"], "shared"),
+            (vec![".kimchi", "skills", "shared"], "shared"),
+            (vec![".kilocode", "skills", "legacy"], "legacy"),
+            (vec![".factory", "skills", "bundle"], "bundle"),
+            (
+                vec![".factory", "skills", "bundle", "nested"],
+                "hidden-child",
+            ),
+            (vec![".kilo", "skills", "a", "b", "c", "deep"], "too-deep"),
+        ] {
+            let path = parts
+                .iter()
+                .fold(root.path().to_path_buf(), |path, part| path.join(part));
+            fs::create_dir_all(&path).unwrap();
+            fs::write(
+                path.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: Fixture\n---\n"),
+            )
+            .unwrap();
+        }
+        let found = discover_skills(root.path(), None, DiscoverOptions::default()).unwrap();
+        let paths = found
+            .iter()
+            .map(|skill| (skill.name.as_str(), skill.relative_path.as_str()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(paths.len(), 5, "{paths:?}");
+        assert_eq!(
+            paths["factory"],
+            ".factory/skills/group/nested/factory/SKILL.md"
+        );
+        assert_eq!(paths["shared"], ".kilo/skills/shared/SKILL.md");
+        assert_eq!(paths["legacy"], ".kilocode/skills/legacy/SKILL.md");
+        assert!(!paths.contains_key("hidden-child"));
+        assert!(!paths.contains_key("too-deep"));
+    }
+
+    #[test]
+    fn new_agent_source_containers_filter_locked_installs_including_direct_subpaths() {
+        for container in [".factory", ".kilo", ".kilocode"] {
+            let root = tempdir().unwrap();
+            fs::write(root.path().join("skills-lock.json"), r#"{"version":1,"skills":{"locked":{"source":"owner/repo","sourceType":"github","computedHash":"fixture"}}}"#).unwrap();
+            for name in ["locked", "free"] {
+                let path = root.path().join(container).join("skills").join(name);
+                fs::create_dir_all(&path).unwrap();
+                fs::write(
+                    path.join("SKILL.md"),
+                    format!("---\nname: {name}\ndescription: Fixture\n---\n"),
+                )
+                .unwrap();
+            }
+            let found = discover_skills(root.path(), None, DiscoverOptions::default()).unwrap();
+            assert_eq!(
+                found
+                    .iter()
+                    .map(|skill| skill.name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["free"],
+                "{container}"
+            );
+            let locked = discover_skills(
+                root.path(),
+                Some(&format!("{container}/skills/locked")),
+                DiscoverOptions::default(),
+            )
+            .unwrap();
+            assert!(locked.is_empty(), "{container}");
+        }
+    }
+
+    #[test]
     fn test_discover_skills_depth_one_skill_shadows_nested_skill() {
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join("skills/demo/inner")).unwrap();
