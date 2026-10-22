@@ -228,6 +228,8 @@
     }
   },
   "agentSelection": {
+    "currentDirectory": "{{agent}} · Current directory",
+    "compatibleDirectory": "{{agent}} · Compatibility directory",
     "title": "Linked Agents",
     "installTitle": "Select Agents",
     "copyTitle": "Associated Agents",

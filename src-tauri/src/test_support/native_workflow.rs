@@ -3795,6 +3795,275 @@ mod update_lifecycle {
     }
 
     #[tokio::test]
+    async fn native_agent_compatibility_reads_current_legacy_and_standard_directories() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        let home = fixture._root.path().join("home");
+        for directory in [".factory", ".pi/agent", ".kilo", ".kilocode"] {
+            fs::create_dir_all(home.join(directory)).unwrap();
+        }
+        let registry = AgentRegistry::build(
+            ["codex", "droid", "kilo", "pi"]
+                .into_iter()
+                .map(builtin_definition)
+                .collect(),
+            vec![],
+        )
+        .snapshot()
+        .clone();
+        let facts = RuntimePlanningFactSource::with_native_snapshot(
+            Arc::new(StaticRegistry(Arc::new(registry))),
+            fixture.environments.clone(),
+            NativeRuntimeSnapshot {
+                home: home.clone(),
+                config_home: fixture._root.path().join("config"),
+                projects_path: fixture._root.path().join("state/projects.json"),
+                global_lock_path: fixture._root.path().join("state/global-lock.json"),
+                environment_variables: BTreeMap::new(),
+            },
+        );
+        for (context, root) in [
+            (fixture.context(), fixture.project_path.clone()),
+            (
+                SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: SkillLocation::Global,
+                },
+                home.clone(),
+            ),
+        ] {
+            for (container, name) in [
+                (".agents/skills", "shared"),
+                (".kilo/skills", "current"),
+                (".kilocode/skills", "legacy"),
+            ] {
+                let directory = root.join(container).join(name);
+                fs::create_dir_all(&directory).unwrap();
+                fs::write(
+                    directory.join("SKILL.md"),
+                    format!("---\nname: {name}\ndescription: {name}\n---\n# {name}\n"),
+                )
+                .unwrap();
+            }
+            let snapshot = ScopePlanningSnapshotSource::snapshot(&facts, &context)
+                .await
+                .unwrap();
+            let read_plan = crate::application::skill_read::build_skill_read_plan(
+                &snapshot.resolved_context,
+                &snapshot.agent_runtime,
+                &[],
+            )
+            .unwrap();
+            let inspector = crate::environment::native::inspection::NativeInspector::new(
+                EnvironmentRef::Native,
+            );
+            let inventory = crate::environment::inspection::FilesystemInspector::inspect(
+                &inspector,
+                &read_plan.read_plan,
+            )
+            .await
+            .unwrap();
+            let listed = crate::application::skill_read::project_direct_skill_snapshot(
+                &read_plan,
+                inventory,
+                &snapshot.agent_runtime,
+                update_library_repository(fixture._root.path()).as_ref(),
+                &fixture.targets,
+                &inspector,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                listed
+                    .skills
+                    .iter()
+                    .map(|skill| skill.name.as_str())
+                    .collect::<BTreeSet<_>>(),
+                BTreeSet::from(["current", "legacy", "shared"])
+            );
+            let shared = listed
+                .skills
+                .iter()
+                .find(|skill| skill.name == "shared")
+                .unwrap();
+            for agent in ["droid", "kilo", "pi"] {
+                assert!(
+                    shared.agents.iter().any(|id| id.as_str() == agent),
+                    "{agent} must read the standard directory"
+                );
+            }
+            let legacy = listed
+                .skills
+                .iter()
+                .find(|skill| skill.name == "legacy")
+                .unwrap();
+            assert!(legacy.agents.iter().any(|id| id.as_str() == "kilo"));
+            let catalog = build_agent_selection_catalog(
+                &context,
+                &snapshot.agent_runtime,
+                &[],
+                &snapshot.resolved_context.skill_root,
+                &fixture.targets,
+            )
+            .await
+            .unwrap();
+            let kilo = catalog
+                .snapshot()
+                .agents
+                .iter()
+                .find(|agent| agent.id.as_str() == "kilo")
+                .unwrap();
+            let primary = catalog
+                .option(kilo.install_option_id.as_ref().unwrap())
+                .unwrap();
+            assert_eq!(
+                fs::canonicalize(&primary.placement.root.native_path).unwrap(),
+                fs::canonicalize(root.join(".kilo/skills")).unwrap()
+            );
+            assert_eq!(
+                catalog
+                    .options()
+                    .filter(|option| option
+                        .public
+                        .agent_ids
+                        .iter()
+                        .any(|id| id.as_str() == "kilo"))
+                    .count(),
+                2
+            );
+            let copied_selection =
+                crate::application::agent_selection::map_agent_intents_to_submission(
+                    &catalog,
+                    &[crate::application::agent_intent::AgentWriteIntent {
+                        agent_id: AgentId::parse("kilo").unwrap(),
+                        own_directory_selected: true,
+                        adapter_targets: vec![],
+                    }],
+                    InstallMode::Copy,
+                );
+            assert_eq!(
+                copied_selection.selected_option_ids,
+                vec![primary.public.id.clone()]
+            );
+
+            let remove = RemoveService::new(
+                facts.clone(),
+                fixture.targets.clone(),
+                executor(&fixture.execution, &fixture.environments, &facts),
+                Arc::new(EmptyLibraryCandidateSource),
+            );
+            let preview = remove.preview(&context, "legacy").await.unwrap();
+            let result = remove
+                .execute(
+                    &RemoveRequest {
+                        token: preview.token,
+                        context,
+                        skill_name: "legacy".into(),
+                        intent: RemoveIntent::FullSkill,
+                    },
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_succeeded(&result.units);
+            assert!(!root.join(".kilocode/skills/legacy").exists());
+            assert!(root.join(".kilo/skills/current/SKILL.md").exists());
+            assert!(root.join(".agents/skills/shared/SKILL.md").exists());
+
+            let compatible_root = root.join(".kilocode/skills");
+            fs::remove_dir(&compatible_root).unwrap();
+            for target in [root.join(".kilo/skills"), root.join(".agents/skills")] {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&target, &compatible_root).unwrap();
+                #[cfg(windows)]
+                junction::create(&target, &compatible_root).unwrap();
+                let context = snapshot.resolved_context.context.clone();
+                let snapshot = ScopePlanningSnapshotSource::snapshot(&facts, &context)
+                    .await
+                    .unwrap();
+                let catalog = build_agent_selection_catalog(
+                    &context,
+                    &snapshot.agent_runtime,
+                    &[],
+                    &snapshot.resolved_context.skill_root,
+                    &fixture.targets,
+                )
+                .await
+                .unwrap();
+                let options = catalog
+                    .options()
+                    .filter(|option| {
+                        option
+                            .public
+                            .agent_ids
+                            .iter()
+                            .any(|id| id.as_str() == "kilo")
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(options.len(), 1);
+                assert_eq!(
+                    options[0].public.agent_ids,
+                    vec![AgentId::parse("kilo").unwrap()]
+                );
+                assert_eq!(
+                    catalog
+                        .snapshot()
+                        .agents
+                        .iter()
+                        .find(|agent| agent.id.as_str() == "kilo")
+                        .unwrap()
+                        .directory_access,
+                    Some(crate::application::agent_selection::SkillDirectoryAccess::Both)
+                );
+                #[cfg(unix)]
+                fs::remove_file(&compatible_root).unwrap();
+                #[cfg(windows)]
+                {
+                    junction::delete(&compatible_root).unwrap();
+                    fs::remove_dir(&compatible_root).unwrap();
+                }
+            }
+            // 当前专用目录已经指向通用目录时，复制不应退而写入兼容目录。
+            let current_root = root.join(".kilo/skills");
+            fs::rename(&current_root, root.join(".kilo/previous-content")).unwrap();
+            fs::create_dir_all(&compatible_root).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(root.join(".agents/skills"), &current_root).unwrap();
+            #[cfg(windows)]
+            junction::create(root.join(".agents/skills"), &current_root).unwrap();
+            let context = snapshot.resolved_context.context.clone();
+            let snapshot = ScopePlanningSnapshotSource::snapshot(&facts, &context)
+                .await
+                .unwrap();
+            let catalog = build_agent_selection_catalog(
+                &context,
+                &snapshot.agent_runtime,
+                &[],
+                &snapshot.resolved_context.skill_root,
+                &fixture.targets,
+            )
+            .await
+            .unwrap();
+            let kilo = catalog
+                .snapshot()
+                .agents
+                .iter()
+                .find(|agent| agent.id.as_str() == "kilo")
+                .unwrap();
+            assert!(kilo.install_option_id.is_none());
+            let copied = crate::application::agent_selection::map_agent_intents_to_submission(
+                &catalog,
+                &[crate::application::agent_intent::AgentWriteIntent {
+                    agent_id: AgentId::parse("kilo").unwrap(),
+                    own_directory_selected: true,
+                    adapter_targets: vec![],
+                }],
+                InstallMode::Copy,
+            );
+            assert!(copied.selected_option_ids.is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn native_dependency_root_alias_cannot_remove_package_contents() {
         let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
         let package_skills = fixture

@@ -346,6 +346,8 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             ".factory/skills",
             Some(home(".factory/skills")),
         )
+        .reads_standard_globally()
+        .reads_standard_in_projects()
         .with_cli_discovery_dir(7, ".factory/skills"),
         agent(EVE_AGENT_ID_VALUE, "Eve", "agent/skills", None)
             .with_detection(vec![project("agent"), project("package.json")])
@@ -417,9 +419,24 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         agent(
             "kilo",
             "Kilo Code",
-            ".kilocode/skills",
-            Some(home(".kilocode/skills")),
+            ".kilo/skills",
+            Some(home(".kilo/skills")),
         )
+        .reads_standard_globally()
+        .reads_standard_in_projects()
+        .with_detection(vec![home(".kilo"), home(".kilocode")])
+        .with_legacy_path(LegacyPath {
+            scope: LegacyPathScope::Global,
+            path: home(".kilocode/skills"),
+            behavior: LegacyPathBehavior::ReadAndMaintain,
+            migration_target: LegacyMigrationTarget::CurrentPrivate,
+        })
+        .with_legacy_path(LegacyPath {
+            scope: LegacyPathScope::Project,
+            path: project(".kilocode/skills"),
+            behavior: LegacyPathBehavior::ReadAndMaintain,
+            migration_target: LegacyMigrationTarget::CurrentPrivate,
+        })
         .with_cli_discovery_dir(13, ".kilo/skills")
         .with_cli_discovery_dir(14, ".kilocode/skills"),
         agent(
@@ -525,6 +542,8 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         )
         .with_cli_discovery_dir(21, ".openhands/skills"),
         agent("pi", "Pi", ".pi/skills", Some(home(".pi/agent/skills")))
+            .reads_standard_globally()
+            .reads_standard_in_projects()
             .with_cli_discovery_dir(22, ".pi/skills"),
         agent(
             "posit-assistant",

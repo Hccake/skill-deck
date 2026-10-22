@@ -406,16 +406,24 @@ pub(crate) fn map_agent_intents_to_submission(
         .iter()
         .map(|agent| (&agent.id, agent.directory_access))
         .collect::<BTreeMap<_, _>>();
+    let primary_options = catalog
+        .snapshot
+        .agents
+        .iter()
+        .map(|agent| (&agent.id, agent.install_option_id.as_ref()))
+        .collect::<BTreeMap<_, _>>();
     let selected_option_ids = catalog
         .resolved_options
         .values()
         .filter(|option| option.public.selectable)
         .filter(|option| match option.public.kind {
             AgentInstallOptionKind::StandardDirectory => option.public.agent_ids.iter().any(|id| {
-                intents_by_agent.get(id).is_some_and(|intent| {
-                    intent.own_directory_selected
-                        || access_by_agent.get(id) == Some(&Some(SkillDirectoryAccess::PrivateOnly))
-                })
+                primary_options.get(id) == Some(&Some(&option.public.id))
+                    && intents_by_agent.get(id).is_some_and(|intent| {
+                        intent.own_directory_selected
+                            || access_by_agent.get(id)
+                                == Some(&Some(SkillDirectoryAccess::PrivateOnly))
+                    })
             }),
             AgentInstallOptionKind::GroupLocation => option.public.agent_ids.iter().any(|id| {
                 intents_by_agent.get(id).is_some_and(|intent| {
@@ -631,6 +639,7 @@ struct CatalogCandidate {
     agent_id: AgentId,
     display_name: String,
     destination: ResourceLocator,
+    primary: bool,
 }
 
 pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
@@ -681,14 +690,21 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         let Some(path) = scope.private_path.clone() else {
             continue;
         };
-        candidates.push(CatalogCandidate {
-            agent_id: agent_id.clone(),
-            display_name: agent.definition.display_name.clone(),
-            destination: ResourceLocator {
-                environment: context.environment.clone(),
-                native_path: path,
-            },
-        });
+        for candidate_path in
+            std::iter::once(&path).chain(scope.read_paths.iter().filter(|candidate| {
+                *candidate != &path && scope.standard_path.as_ref() != Some(*candidate)
+            }))
+        {
+            candidates.push(CatalogCandidate {
+                agent_id: agent_id.clone(),
+                display_name: agent.definition.display_name.clone(),
+                destination: ResourceLocator {
+                    environment: context.environment.clone(),
+                    native_path: candidate_path.clone(),
+                },
+                primary: candidate_path == &path,
+            });
+        }
     }
 
     let destinations = std::iter::once(standard_root.clone())
@@ -698,7 +714,7 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
                 .map(|candidate| candidate.destination.clone()),
         )
         .collect::<Vec<_>>();
-    let mut facts = targets.resolve(context, &destinations, None).await?;
+    let mut facts = resolve_selection_directories(targets, context, &destinations).await?;
     if facts.len() != destinations.len() {
         return Err(AppError::StaleTarget);
     }
@@ -706,15 +722,11 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
 
     let mut by_physical_key =
         BTreeMap::<PhysicalTargetKey, Vec<(CatalogCandidate, ResolvedTargetFact)>>::new();
+    let mut standard_alias_agents = BTreeSet::new();
     for (candidate, fact) in candidates.into_iter().zip(facts) {
         let duplicates_standard = standard_fact.key == fact.key;
         if duplicates_standard {
-            if let Some(agent) = agents
-                .iter_mut()
-                .find(|agent| agent.id == candidate.agent_id)
-            {
-                agent.directory_access = Some(SkillDirectoryAccess::StandardOnly);
-            }
+            standard_alias_agents.insert(candidate.agent_id);
             continue;
         }
         by_physical_key
@@ -722,15 +734,35 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             .or_default()
             .push((candidate, fact));
     }
+    for agent in agents
+        .iter_mut()
+        .filter(|agent| standard_alias_agents.contains(&agent.id))
+    {
+        let has_private = by_physical_key
+            .values()
+            .flatten()
+            .any(|(candidate, _)| candidate.agent_id == agent.id);
+        agent.directory_access = Some(if has_private {
+            SkillDirectoryAccess::Both
+        } else {
+            SkillDirectoryAccess::StandardOnly
+        });
+    }
 
     let mut install_options = Vec::new();
     let mut resolved_options = BTreeMap::new();
     for (physical_key, mut members) in by_physical_key {
-        members.sort_by(|left, right| left.0.agent_id.cmp(&right.0.agent_id));
-        let agent_ids = members
+        members.sort_by(|left, right| {
+            left.0
+                .agent_id
+                .cmp(&right.0.agent_id)
+                .then_with(|| right.0.primary.cmp(&left.0.primary))
+        });
+        let mut agent_ids = members
             .iter()
             .map(|(candidate, _)| candidate.agent_id.clone())
             .collect::<Vec<_>>();
+        agent_ids.dedup();
         let id = AgentInstallOptionId(stable_digest(&(
             "agent-install-option-v2",
             context,
@@ -740,7 +772,12 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         ))?);
         for agent_id in &agent_ids {
             if let Some(agent) = agents.iter_mut().find(|agent| &agent.id == agent_id) {
-                agent.install_option_id = Some(id.clone());
+                if members
+                    .iter()
+                    .any(|(candidate, _)| &candidate.agent_id == agent_id && candidate.primary)
+                {
+                    agent.install_option_id = Some(id.clone());
+                }
             }
         }
         let display_name = members[0].0.display_name.clone();
@@ -935,12 +972,63 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         resolved_options,
         standard_placement: ResolvedDirectoryPlacement {
             id: DirectoryPlacementId::Standard,
-            root: standard_fact.destination,
+            root: standard_root.clone(),
             physical_key: standard_fact.key,
             storage_access: standard_fact.storage_access,
             content: DirectoryContentKind::Original,
         },
     })
+}
+
+// 目录分组使用最终目录的物理身份；后续读写仍保留各自的目录入口及链接复核。
+async fn resolve_selection_directories<T: TargetFactResolver>(
+    targets: &T,
+    context: &SkillLocationRef,
+    destinations: &[ResourceLocator],
+) -> Result<Vec<ResolvedTargetFact>, AppError> {
+    let mut facts = targets.resolve(context, destinations, None).await?;
+    if facts.len() != destinations.len() {
+        return Err(AppError::StaleTarget);
+    }
+    let mut visited = vec![BTreeSet::new(); facts.len()];
+    loop {
+        let mut indices = Vec::new();
+        let mut links = Vec::new();
+        for (index, fact) in facts.iter().enumerate() {
+            if !matches!(
+                fact.entry_kind,
+                crate::environment::planning::TargetEntryKind::Symlink
+                    | crate::environment::planning::TargetEntryKind::Junction
+            ) {
+                continue;
+            }
+            if visited[index].len() >= 64 || !visited[index].insert(fact.key.clone()) {
+                return Err(AppError::StaleTarget);
+            }
+            let target = fact
+                .link_target
+                .as_deref()
+                .and_then(|target| {
+                    crate::environment::planning::resolved_link_target_path(
+                        &fact.destination,
+                        target,
+                    )
+                })
+                .ok_or(AppError::StaleTarget)?;
+            indices.push(index);
+            links.push(target);
+        }
+        if links.is_empty() {
+            return Ok(facts);
+        }
+        let resolved = targets.resolve(context, &links, None).await?;
+        if resolved.len() != indices.len() {
+            return Err(AppError::StaleTarget);
+        }
+        for (index, fact) in indices.into_iter().zip(resolved) {
+            facts[index] = fact;
+        }
+    }
 }
 
 fn selected_scope<'a>(

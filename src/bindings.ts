@@ -1006,7 +1006,11 @@ export type InstalledSkillLocation = "global" | "project"
 export type InvalidCustomAgentRecord = { index: number; raw: unknown; errors: AgentFieldError[] }
 export type LegacyMigrationTarget = "currentPrivate" | "standardCanonical"
 export type LegacyPath = { scope: LegacyPathScope; path: PathSpec; behavior: LegacyPathBehavior; migrationTarget: LegacyMigrationTarget }
-export type LegacyPathBehavior = "detectOnly" | "offerMigration"
+export type LegacyPathBehavior = "detectOnly" | "offerMigration" |
+/**
+ * Agent 仍读取该位置；已有目录继续参与 Skill 读取与维护。
+ */
+"readAndMaintain"
 export type LegacyPathScope = "global" | "project"
 export type LibraryAddPreview = { token: LibraryAddPreviewToken; skills: LibraryAddSkillPreview[]; redirectedDownloadHost: string | null; membership: LibraryMembershipPreview }
 export type LibraryAddPreviewToken = { generation: string; contextRevision: string; skillRevisions: LibraryAddSkillRevision[]; redirectedDownloadHost: string | null }

@@ -2155,6 +2155,12 @@ mod tests {
                                 TargetEntryKind::Directory,
                                 None,
                             )
+                        } else if destination.native_path == TEST_SKILL_ROOT {
+                            (
+                                "canonical-root".to_string(),
+                                TargetEntryKind::Directory,
+                                None,
+                            )
                         } else if destination.native_path == TEST_AGENT_ROOT {
                             ("agent-root".to_string(), TargetEntryKind::Directory, None)
                         } else if parent == Some(std::path::Path::new(TEST_AGENT_ROOT))

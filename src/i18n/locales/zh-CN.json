@@ -228,6 +228,8 @@
     }
   },
   "agentSelection": {
+    "currentDirectory": "{{agent}} · 当前目录",
+    "compatibleDirectory": "{{agent}} · 兼容目录",
     "title": "关联 Agent",
     "installTitle": "选择 Agent",
     "copyTitle": "关联 Agent",

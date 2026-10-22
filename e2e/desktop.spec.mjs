@@ -1009,4 +1009,32 @@ describe('Skill Deck desktop', () => {
     assert.match(await readFile(path.join(packageSkill, 'SKILL.md'), 'utf8'), /# Dependency review/);
   });
 
+  it('distinguishes current and compatibility directories in the real Agent selector', async () => {
+    const home = process.env.SKILL_DECK_E2E_HOME;
+    const project = path.join(home, 'projects', 'dependency-installations');
+    await mkdir(path.join(home, '.kilo'), { recursive: true });
+    for (const [container, name] of [['.kilo', 'current-review'], ['.kilocode', 'legacy-review']]) {
+      const directory = path.join(project, container, 'skills', name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'SKILL.md'), `---\nname: ${name}\ndescription: Directory compatibility.\n---\n# ${name}\n`);
+    }
+    await browser.refresh();
+    await viewport(1280, 800);
+    await $('#skills-context-navigation').$('button*=dependency-installations').waitForDisplayed();
+    await $('#skills-context-navigation').$('button*=dependency-installations').click();
+    await $('#skills-list-panel').$('button=dependency-review').waitForDisplayed();
+    await $('#skills-list-panel').$('button=dependency-review').click();
+    await $('#skill-detail-panel button[aria-label="Manage linked Agents"]').click();
+    const dialog = $('[role="dialog"]');
+    await dialog.waitForDisplayed();
+    await dialog.$('button*=Also install in each Agent').click();
+    await dialog.$('[role="checkbox"][aria-label="Kilo Code · Current directory"]').waitForDisplayed();
+    await dialog.$('[role="checkbox"][aria-label="Kilo Code · Compatibility directory"]').waitForDisplayed();
+    await viewport(720, 600);
+    await settle();
+    await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'agent-compatible-directories.png'));
+    await browser.keys('Escape');
+    assert.match(await readFile(path.join(project, '.kilocode', 'skills', 'legacy-review', 'SKILL.md'), 'utf8'), /# legacy-review/);
+  });
+
 });

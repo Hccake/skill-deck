@@ -268,6 +268,8 @@ pub enum LegacyPathScope {
 pub enum LegacyPathBehavior {
     DetectOnly,
     OfferMigration,
+    /// Agent 仍读取该位置；已有目录继续参与 Skill 读取与维护。
+    ReadAndMaintain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]

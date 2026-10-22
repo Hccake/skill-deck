@@ -74,6 +74,22 @@ Agent 分别声明是否支持全局和项目范围，并在支持的范围内�
 
 随应用提供的信息可以包含旧版路径、别名和专用适配信息。用户添加的信息使用前述通用读取位置、路径和检测条件。
 
+### 已有 Agent 的通用目录与兼容目录
+
+Droid、Pi 和 Kilo Code 在全局及项目范围中都可读取通用 Skill 目录，原有专用目录继续参与维护。Codex 保留已有的通用目录支持及 CODEX_HOME 专用位置。
+
+| Agent | 当前专用位置 | 兼容处理 |
+|---|---|---|
+| Droid | 项目 `.factory/skills`，全局 `~/.factory/skills` | 与通用目录同时读取 |
+| Pi | 项目 `.pi/skills`，全局 `~/.pi/agent/skills` | 与通用目录同时读取 |
+| Kilo Code | 项目 `.kilo/skills`，全局 `~/.kilo/skills` | 已存在的 `.kilocode/skills` 继续读取和维护；检测兼容 `.kilo` 与 `.kilocode` |
+
+Kilo 的新旧目录并存时，安装及管理 Agent 的原有选择区分别显示“当前目录”和“兼容目录”，并保留完整路径提示与已有选择。多个路径实际指向同一目录时合并为一个选项和一项写入。跨项目复制按目标项目的当前安装目录建立新关联，目标原有的其他关联继续保留。应用不会因注册表升级自动搬迁旧内容。
+
+仍被 Agent 读取的旧位置使用 `ReadAndMaintain` 规则，只有实际存在的目录进入读取与维护范围。仅用于检测或迁移提示的旧位置继续使用原有规则，不自动进入安装选择。
+
+读取规则依据：[Droid 官方目录说明](https://docs.factory.com/harness/skills#where-skills-live)、[Kilo 官方目录说明](https://kilo.ai/docs/customize/skills)、[Kilo 新旧目录扫描实现](https://github.com/Kilo-Org/kilocode/blob/e08cc5429ae10c2e9ee106c1274edf627e02644d/packages/opencode/src/kilocode/paths.ts)、[Pi 官方说明](https://github.com/badlogic/pi-mono/blob/be14d9732f98fcc33929cf103a92b96afaa6523e/packages/coding-agent/docs/skills.md)。这些规则覆盖表中位置；Agent 自行配置的其他路径仍需按实际配置另行添加。
+
 ## 检测、目录状态与关联
 
 ### 检测

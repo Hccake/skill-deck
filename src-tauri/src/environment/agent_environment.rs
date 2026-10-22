@@ -853,6 +853,16 @@ impl AgentEnvironmentResolver {
                     DirectoryPresenceState::Present => DirectoryPresenceState::LegacyPath,
                     other => other,
                 };
+                if legacy.behavior
+                    == crate::core::agent_definition::LegacyPathBehavior::ReadAndMaintain
+                    && presence == DirectoryPresenceState::LegacyPath
+                {
+                    if let Some(path) = resolution.path() {
+                        if !read_paths.iter().any(|existing| existing == path) {
+                            read_paths.push(path.to_string());
+                        }
+                    }
+                }
                 ResolvedPathPresence {
                     path: resolution.path().map(ToString::to_string),
                     presence,

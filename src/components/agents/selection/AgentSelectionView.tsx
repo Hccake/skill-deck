@@ -572,9 +572,16 @@ function SelectionRow({ item: option, snapshot, session, states, disabled, onOpt
   const members = option.agentIds.flatMap((id) => snapshot.agents.filter((agent) => agent.id === id));
   const detected = members.filter((agent) => agent.detection === 'detected').length;
   const readOnly = !option.selectable || (state !== undefined && state.allowedResults !== 'both');
-  const displayName = members.length > 1
+  const baseName = members.length > 1
     ? mergedAgentNames(members, i18n?.resolvedLanguage ?? i18n?.language, t)
     : option.displayName;
+  const membersWithMultipleDirectories = members.filter((member) => snapshot.installOptions.some((candidate) => (
+    candidate.id !== option.id && candidate.kind === 'standardDirectory' && candidate.agentIds.includes(member.id)
+  )));
+  const displayName = membersWithMultipleDirectories.length > 0
+    ? t(membersWithMultipleDirectories.every((member) => member.installOptionId === option.id)
+      ? 'agentSelection.currentDirectory' : 'agentSelection.compatibleDirectory', { agent: baseName })
+    : baseName;
   return (
     <div data-slot="agent-selection-row" className={cn('grid min-h-11 items-center gap-2 rounded-md px-2', ROW_GRID, !readOnly && 'hover:bg-muted/50')}>
       <SelectionCheckbox

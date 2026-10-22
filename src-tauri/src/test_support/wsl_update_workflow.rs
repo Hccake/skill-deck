@@ -191,7 +191,7 @@ impl ScopePlanningSnapshotSource for FixtureFacts {
                 &WslAtomicDocumentIo::new(self.workspace.clone()),
                 &snapshot.resolved_context.lock,
                 None,
-                LockSchema::Project,
+                snapshot.lock_schema,
             )
             .await?;
             if let Some(project) = &snapshot.resolved_context.project {
@@ -394,6 +394,12 @@ async fn real_wsl2_dependency_copy_manage_remove_preserves_package() {
     run_wsl_update(WslWorkflow::Dependency).await;
 }
 
+#[tokio::test]
+#[ignore = "requires Windows, a matching Worker, and SKILL_DECK_TEST_WSL_NODE / SKILL_DECK_TEST_WSL_CLI"]
+async fn real_wsl2_agent_compatibility_preserves_current_and_legacy_installations() {
+    run_wsl_update(WslWorkflow::AgentCompatibility).await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WslWorkflow {
     PrivateUpdate,
@@ -401,6 +407,7 @@ enum WslWorkflow {
     EveUpdate,
     Adjacent,
     Dependency,
+    AgentCompatibility,
 }
 
 async fn run_wsl_update(workflow: WslWorkflow) {
@@ -510,6 +517,10 @@ fi
         },
         workspace: workspace.clone(),
     };
+    if workflow == WslWorkflow::AgentCompatibility {
+        verify_wsl_agent_directories(&facts, runtime).await;
+        return;
+    }
     let libraries: Arc<dyn SkillLibraryRepository> = Arc::new(EmptyLibraries);
     let targets = RuntimeTargetFactResolver::new(runtime.clone());
     if workflow == WslWorkflow::PrivateUpdate {
@@ -988,6 +999,187 @@ fi
     }
     clock.store(120_000, Ordering::SeqCst);
     manager.cleanup().await.unwrap();
+}
+
+async fn verify_wsl_agent_directories(initial: &FixtureFacts, runtime: Arc<WslRuntime>) {
+    use crate::application::library_candidates::EmptyLibraryCandidateSource;
+    use crate::application::remove::{RemoveIntent, RemoveRequest, RemoveService};
+    let environment = initial.initial.resolved_context.context.environment.clone();
+    let EnvironmentRef::Wsl { distro_name } = &environment else {
+        panic!("WSL fixture")
+    };
+    let home = initial.initial.resolved_context.home.native_path.clone();
+    let project = initial
+        .initial
+        .resolved_context
+        .project
+        .as_ref()
+        .unwrap()
+        .native_path
+        .clone();
+    run_fixture(
+        distro_name,
+        r##"set -eu
+mkdir -p "$1/.factory" "$1/.pi/agent" "$1/.kilo" "$1/.kilocode"
+for root in "$1" "$2"; do
+  for pair in '.agents shared' '.kilo current' '.kilocode legacy'; do
+    set -- $pair
+    mkdir -p "$root/$1/skills/$2"
+    printf '%s\n' '---' "name: $2" "description: $2" '---' "# $2" > "$root/$1/skills/$2/SKILL.md"
+  done
+done
+"##,
+        &[home.clone(), project.clone()],
+    )
+    .await
+    .unwrap();
+    let definitions = crate::core::builtin_agent_catalog::builtin_agent_definitions()
+        .into_iter()
+        .filter(|agent| matches!(agent.id.as_str(), "codex" | "droid" | "kilo" | "pi"))
+        .collect();
+    let registry = crate::core::agent_registry::AgentRegistry::build(definitions, vec![])
+        .snapshot()
+        .clone();
+    let targets = RuntimeTargetFactResolver::new(runtime.clone());
+    for global in [false, true] {
+        let mut facts = initial.clone();
+        let root = if global { &home } else { &project };
+        if global {
+            facts.initial.resolved_context.context.scope = SkillLocation::Global;
+            facts.initial.resolved_context.project = None;
+            facts.initial.resolved_context.skill_root.native_path =
+                format!("{home}/.agents/skills");
+            facts.initial.resolved_context.lock.native_path =
+                format!("{home}/.agents/.skill-lock.json");
+            facts.initial.lock_schema = LockSchema::Global;
+        }
+        facts.initial.agent_runtime =
+            AgentEnvironmentResolver::from_environment(EnvironmentContext {
+                environment: environment.clone(),
+                home: home.clone(),
+                config_home: format!("{home}/.config"),
+                environment_variables: BTreeMap::new(),
+                availability: EnvironmentStatus::Available,
+                revision: initial.initial.revisions.environment.clone(),
+                wsl_workspace: Some(initial.workspace.clone()),
+            })
+            .resolve_registry(&registry, (!global).then_some(project.as_str()))
+            .await
+            .unwrap();
+        let context = facts.initial.resolved_context.context.clone();
+        let read_plan = crate::application::skill_read::build_skill_read_plan(
+            &facts.initial.resolved_context,
+            &facts.initial.agent_runtime,
+            &[],
+        )
+        .unwrap();
+        let inspector = WslInspector::new(initial.workspace.clone());
+        let inventory = inspector.inspect(&read_plan.read_plan).await.unwrap();
+        let listed = crate::application::skill_read::project_direct_skill_snapshot(
+            &read_plan,
+            inventory,
+            &facts.initial.agent_runtime,
+            &EmptyLibraries,
+            &targets,
+            &inspector,
+        )
+        .await
+        .unwrap();
+        for name in ["shared", "current", "legacy"] {
+            assert!(
+                listed.skills.iter().any(|skill| skill.name == name),
+                "missing {name}, global={global}"
+            );
+        }
+        let shared = listed
+            .skills
+            .iter()
+            .find(|skill| skill.name == "shared")
+            .unwrap();
+        for agent in ["droid", "kilo", "pi"] {
+            assert!(shared.agents.iter().any(|id| id.as_str() == agent));
+        }
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &facts.initial.agent_runtime,
+            &[],
+            &facts.initial.resolved_context.skill_root,
+            &targets,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            catalog
+                .options()
+                .filter(|option| option
+                    .public
+                    .agent_ids
+                    .iter()
+                    .any(|id| id.as_str() == "kilo"))
+                .count(),
+            2
+        );
+        let recovery = tempfile::tempdir().unwrap();
+        let executor = RuntimePlanExecutor::new(
+            runtime.clone(),
+            Arc::new(NativeRecoveryMarkerStore::new(recovery.path()).unwrap()),
+            Arc::new(RuntimeLockCommitter::new()),
+            Arc::new(facts.clone()),
+        );
+        let remove = RemoveService::new(
+            facts.clone(),
+            targets.clone(),
+            executor,
+            Arc::new(EmptyLibraryCandidateSource),
+        );
+        let preview = remove.preview(&context, "legacy").await.unwrap();
+        let removed = remove
+            .execute(
+                &RemoveRequest {
+                    token: preview.token,
+                    context: context.clone(),
+                    skill_name: "legacy".into(),
+                    intent: RemoveIntent::FullSkill,
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            removed.units.iter().all(|unit| unit.status
+                == crate::application::mutation::result::MutationUnitStatus::Succeeded),
+            "{removed:?}"
+        );
+        run_fixture(distro_name, "test ! -e \"$1/.kilocode/skills/legacy\"\ntest -f \"$1/.kilo/skills/current/SKILL.md\"\ntest -f \"$1/.agents/skills/shared/SKILL.md\"", std::slice::from_ref(root)).await.unwrap();
+        run_fixture(
+            distro_name,
+            "rmdir \"$1/.kilocode/skills\"\nln -s \"$1/.kilo/skills\" \"$1/.kilocode/skills\"",
+            std::slice::from_ref(root),
+        )
+        .await
+        .unwrap();
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &facts.initial.agent_runtime,
+            &[],
+            &facts.initial.resolved_context.skill_root,
+            &targets,
+        )
+        .await
+        .unwrap();
+        let options = catalog
+            .options()
+            .filter(|option| {
+                option
+                    .public
+                    .agent_ids
+                    .iter()
+                    .any(|id| id.as_str() == "kilo")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].public.agent_ids.len(), 1);
+    }
 }
 
 async fn verify_wsl_adjacent_workflows(

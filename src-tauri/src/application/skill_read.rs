@@ -327,15 +327,21 @@ pub fn build_skill_read_plan(
                 Some(agent_id.clone()),
             )?;
         } else {
-            add_owned_root(
-                &mut builder,
-                context,
-                &mut owners,
-                private_root,
-                ReadRootPurpose::Private,
-                SkillReadOwner::Agent(agent_id.clone()),
-                Some(agent_id.clone()),
-            )?;
+            for root in std::iter::once(private_root).chain(
+                scope.read_paths.iter().map(String::as_str).filter(|path| {
+                    *path != private_root && scope.standard_path.as_deref() != Some(*path)
+                }),
+            ) {
+                add_owned_root(
+                    &mut builder,
+                    context,
+                    &mut owners,
+                    root,
+                    ReadRootPurpose::Private,
+                    SkillReadOwner::Agent(agent_id.clone()),
+                    Some(agent_id.clone()),
+                )?;
+            }
         }
     }
     for target in eve_targets {
