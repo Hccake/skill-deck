@@ -1480,7 +1480,7 @@ mod tests {
         fs::create_dir_all(&canonical_root).unwrap();
         fs::write(
             source.join("SKILL.md"),
-            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+            "---\nname: demo\ndescription: Demo\nallowed-tools: Bash\n---\n# Demo\n",
         )
         .unwrap();
         fs::write(source.join("scripts/run.sh"), "#!/bin/sh\necho demo\n").unwrap();
@@ -1637,7 +1637,9 @@ mod tests {
             .await
             .unwrap();
         assert!(payload_skill_md(&original_payload).contains("name: demo"));
-        assert!(!payload_skill_md(&eve_payload).contains("name: demo"));
+        assert!(payload_skill_md(&eve_payload).contains("name: demo"));
+        assert!(payload_skill_md(&original_payload).contains("allowed-tools: Bash"));
+        assert!(!payload_skill_md(&eve_payload).contains("allowed-tools:"));
         let lock = unit.lock_mutation.as_ref().unwrap();
         assert_eq!(
             lock.replacement().unwrap()["computedHash"],

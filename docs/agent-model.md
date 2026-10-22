@@ -185,6 +185,8 @@ Eve 使用专用目标模型。在识别为 Eve 的项目中，用户可以选�
 
 Eve 目标沿用 Eve 的 Agent ID，并将根 Agent 或子 Agent 作为本次操作的具体位置。安装内容从已准备的 Skill 内容派生，项目 lock 保存目标位置。后续读取依据明确记录匹配实际位置，可以在不修改文件的情况下识别缺少 `name` 的 Eve 内容；无记录或匹配有歧义时保留诊断。
 
+派生内容保留字符串 `name`、`description`、`license`，字符串或数字 `version`，以及 `compatibility` 和对象类型的 `metadata`，其中 metadata 的嵌套结构保持原样。Eve 按自身规则消费字段；[当前官方实现](https://github.com/vercel/eve/blob/f5b36b3da5e84c233eccc2fa7151a4472cdd6934/packages/eve/src/internal/helpers/markdown.ts)会忽略未消费的字段，metadata 含非字符串值时忽略整个 metadata 字段。旧版 CLI 安装中缺失 name 的内容继续按明确项目记录读取。
+
 Eve 维护支持目录型安装。明确记录的 Skill 目录缺失时的恢复条件和入口由更新流程负责，见[Skill 生命周期](./skill-lifecycle.md#更新)；恢复不重建 Agent 定义。单文件安装的限制和更新范围同样见该文档。
 
 全局安装使用普通 Agent 目标。兼容字段的编码规则见[skills CLI 参考与兼容](./skills-cli-reference.md)。

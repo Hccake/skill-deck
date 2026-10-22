@@ -3354,9 +3354,13 @@ mod update_lifecycle {
             .unwrap();
         assert_eq!(result.outcome, UpdateOutcome::Succeeded, "{result:#?}");
         for path in [&research, &writer] {
-            assert!(!fs::read_to_string(path.join("SKILL.md"))
-                .unwrap()
-                .contains("name:"));
+            let markdown = fs::read_to_string(path.join("SKILL.md")).unwrap();
+            assert_eq!(
+                crate::core::skill::parse_skill_md_content(&markdown)
+                    .unwrap()
+                    .name,
+                "alpha"
+            );
             assert_eq!(
                 fs::read(path.join("references/guide.md")).unwrap(),
                 fs::read(fixture.remote.work.join("skills/alpha/references/guide.md")).unwrap()

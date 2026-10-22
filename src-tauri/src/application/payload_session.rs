@@ -2970,7 +2970,7 @@ mod tests {
         let temp = tempdir().unwrap();
         fs::write(
             temp.path().join("SKILL.md"),
-            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+            "---\nname: demo\ndescription: Demo\nallowed-tools: Bash\n---\n# Demo\n",
         )
         .unwrap();
         let original_payload = build_skill_payload(temp.path()).unwrap();

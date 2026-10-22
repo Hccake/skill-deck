@@ -177,7 +177,7 @@ pub fn normalize_eve_skill_md(raw: &str) -> String {
     };
 
     let mut kept = serde_yaml::Mapping::new();
-    for key in ["description", "license"] {
+    for key in ["name", "description", "license"] {
         if let Some(value) = mapping
             .get(serde_yaml::Value::String(key.to_string()))
             .and_then(|value| value.as_str())
@@ -189,22 +189,30 @@ pub fn normalize_eve_skill_md(raw: &str) -> String {
         }
     }
 
+    if let Some(value) = mapping.get(serde_yaml::Value::String("compatibility".to_string())) {
+        kept.insert(
+            serde_yaml::Value::String("compatibility".to_string()),
+            value.clone(),
+        );
+    }
+    if let Some(value) = mapping
+        .get(serde_yaml::Value::String("version".to_string()))
+        .filter(|value| value.is_string() || value.is_number())
+    {
+        kept.insert(
+            serde_yaml::Value::String("version".to_string()),
+            value.clone(),
+        );
+    }
+
     if let Some(metadata) = mapping
         .get(serde_yaml::Value::String("metadata".to_string()))
         .and_then(|value| value.as_mapping())
     {
-        let mut meta = serde_yaml::Mapping::new();
-        for (key, value) in metadata {
-            if key.as_str().is_some() && value.as_str().is_some() {
-                meta.insert(key.clone(), value.clone());
-            }
-        }
-        if !meta.is_empty() {
-            kept.insert(
-                serde_yaml::Value::String("metadata".to_string()),
-                serde_yaml::Value::Mapping(meta),
-            );
-        }
+        kept.insert(
+            serde_yaml::Value::String("metadata".to_string()),
+            serde_yaml::Value::Mapping(metadata.clone()),
+        );
     }
 
     if kept.is_empty() {
@@ -389,16 +397,38 @@ mod tests {
     }
 
     #[test]
-    fn eve_skill_md_normalizer_removes_unsupported_name_field() {
-        let raw = "---\nname: demo\ndescription: Demo\nlicense: MIT\nmetadata:\n  keep: value\n  skip: 1\n---\n# Demo\n";
+    fn eve_skill_md_normalizer_preserves_portable_metadata() {
+        let raw = "---\nname: demo\ndescription: Demo\nlicense: MIT\nversion: 2\ncompatibility: [eve, cli]\nmetadata:\n  keep: value\n  nested:\n    enabled: true\n  count: 1\nallowed-tools: Bash\n---\n# Demo\n";
         let normalized = normalize_eve_skill_md(raw);
-
-        assert!(!normalized.contains("name:"));
-        assert!(normalized.contains("description: Demo"));
-        assert!(normalized.contains("license: MIT"));
-        assert!(normalized.contains("keep: value"));
-        assert!(!normalized.contains("skip: 1"));
-        assert!(normalized.contains("# Demo"));
+        let yaml = normalized
+            .strip_prefix("---\n")
+            .unwrap()
+            .split("\n---")
+            .next()
+            .unwrap();
+        let metadata: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(metadata["name"].as_str(), Some("demo"));
+        assert_eq!(metadata["description"].as_str(), Some("Demo"));
+        assert_eq!(metadata["license"].as_str(), Some("MIT"));
+        assert_eq!(metadata["version"].as_i64(), Some(2));
+        assert_eq!(metadata["compatibility"][0].as_str(), Some("eve"));
+        assert_eq!(
+            metadata["metadata"]["nested"]["enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(metadata["metadata"]["count"].as_i64(), Some(1));
+        assert!(metadata["allowed-tools"].is_null());
+        assert!(normalized.ends_with("# Demo\n"));
+        let legacy = normalize_eve_skill_md("---\ndescription: Legacy\nversion: '2.0'\n---\nBody");
+        let yaml = legacy
+            .strip_prefix("---\n")
+            .unwrap()
+            .split("\n---")
+            .next()
+            .unwrap();
+        let metadata: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(metadata["version"].as_str(), Some("2.0"));
+        assert!(metadata["name"].is_null());
     }
 
     #[test]
@@ -416,7 +446,7 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("scripts")).unwrap();
         std::fs::write(
             temp.path().join("SKILL.md"),
-            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+            "---\nname: demo\ndescription: Demo\nallowed-tools: Bash\n---\n# Demo\n",
         )
         .unwrap();
         std::fs::write(temp.path().join("scripts/run.sh"), "#!/bin/sh\necho demo\n").unwrap();
@@ -439,7 +469,12 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert!(!skill_md.contains("name:"));
+        assert_eq!(
+            crate::core::skill::parse_skill_md_content(skill_md)
+                .unwrap()
+                .name,
+            "demo"
+        );
         assert!(skill_md.contains("description: Demo"));
         let script_entry = derived
             .entries

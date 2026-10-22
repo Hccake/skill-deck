@@ -840,8 +840,8 @@ test ! -e "$1/.agents/skills/alpha"
 test ! -e "$1/.minimax/skills/alpha"
 test ! -e "$1/.custom/skills/alpha"
 if [ "$2" = eve ]; then
-  ! grep -q '^name:' "$1/agent/subagents/research/skills/alpha/SKILL.md"
-  ! grep -q '^name:' "$1/agent/subagents/writer/skills/alpha/SKILL.md"
+  grep -q '^name: alpha$' "$1/agent/subagents/research/skills/alpha/SKILL.md"
+  grep -q '^name: alpha$' "$1/agent/subagents/writer/skills/alpha/SKILL.md"
   cmp "$1/agent/subagents/research/skills/alpha/references/guide.md" "$1/agent/subagents/writer/skills/alpha/references/guide.md"
   cat "$1/agent/subagents/research/skills/alpha/references/guide.md"
 else
@@ -881,9 +881,16 @@ fi
                 runtime.clone(),
             )
             .acquire(&context, "alpha", &selected.entry.fact)
-            .await;
-        assert!(
-            matches!(acquired, Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "installedSkillFormat")
+            .await
+            .expect("updated Eve directory has ordinary skill metadata");
+        assert_eq!(
+            manager
+                .pin_verified(&acquired)
+                .await
+                .unwrap()
+                .planning_metadata()
+                .skill_name,
+            "alpha"
         );
         run_fixture(
             &distro,
