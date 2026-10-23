@@ -233,6 +233,13 @@ impl InstalledSkill {
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
             self.ref_kind = e.ref_kind;
+            if self.ref_kind.is_none() {
+                if let Some(reference) = &self.git_ref {
+                    let (value, kind) = crate::models::GitRefKind::from_transport(reference);
+                    self.git_ref = Some(value);
+                    self.ref_kind = kind;
+                }
+            }
             self.skill_path = e.skill_path.clone();
 
             let capability = derive_update_capability(&normalize_global_lock_entry(e));
@@ -262,6 +269,13 @@ impl InstalledSkill {
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
             self.ref_kind = e.ref_kind;
+            if self.ref_kind.is_none() {
+                if let Some(reference) = &self.git_ref {
+                    let (value, kind) = crate::models::GitRefKind::from_transport(reference);
+                    self.git_ref = Some(value);
+                    self.ref_kind = kind;
+                }
+            }
             self.skill_path = e.skill_path.clone();
 
             let capability = derive_update_capability(&metadata);

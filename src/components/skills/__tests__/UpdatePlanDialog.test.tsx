@@ -310,7 +310,8 @@ describe('UpdatePlanDialog', () => {
       onOpenChange={vi.fn()}
     />);
 
-    expect(screen.getByText('skills.updatePlan.source github.com/backend/repo · release')).toBeTruthy();
+    expect(document.querySelector('.update-source-heading')?.textContent).toContain('github.com/backend/repo');
+    expect(screen.getByText('release')).toBeTruthy();
     expect(screen.getByText('/actual/agent/skills/toolkit')).toBeTruthy();
     expect(screen.getByText('/independent/skills/toolkit')).toBeTruthy();
     expect(screen.getAllByRole('checkbox').every((item) => (item as HTMLButtonElement).disabled)).toBe(true);

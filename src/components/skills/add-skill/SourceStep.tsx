@@ -1,3 +1,5 @@
+import { GitReference } from '../GitReference';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 // src/components/skills/add-skill/SourceStep.tsx
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -94,6 +96,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         : discoverySelection.selectedSkillNames,
       skillFilter: discoveryResult.skillFilter,
       gitRef: discoveryResult.gitRef ?? null,
+      refKind: discoveryResult.refKind ?? null,
       discoverySession: discoveryResult.discoverySession,
       preparation: { status: 'idle' },
       redirectedDownloadHost: discoveryResult.redirectedDownloadHost ?? null,
@@ -141,6 +144,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       fetchStatus: 'idle',
       fetchError: null,
       gitRef: null,
+      refKind: null,
       availableSkills: [],
       selectedSkills: [],
       skillFilter: null,
@@ -264,15 +268,15 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
               </div>
 
               <div className="flex items-center gap-2 mt-4 ml-1 text-xs text-muted-foreground/70">
-                <Info className="h-4 w-4 shrink-0" />
+                <OverflowTooltip always content={t('addSkill.source.commitHelp')}>
+                  <button type="button" aria-label={t('addSkill.source.commitHelpLabel')} className="shrink-0 rounded-sm focus-visible:ring-2 focus-visible:ring-ring"><Info className="h-4 w-4" aria-hidden="true" /></button>
+                </OverflowTooltip>
                 <p>{t('addSkill.source.hint')}</p>
               </div>
 
               {state.gitRef ? (
                 <div className="flex items-center gap-2 mt-4 ml-1">
-                  <Badge variant="secondary" className="bg-secondary/50 font-medium">
-                    {t('addSkill.source.badges.ref', { ref: state.gitRef })}
-                  </Badge>
+                  <GitReference value={state.gitRef} kind={state.refKind} />
                   {state.skillFilter ? (
                     <Badge variant="outline" className="border-primary/20 font-medium">
                       {t('addSkill.source.badges.skillFilter', { filter: state.skillFilter })}

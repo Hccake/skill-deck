@@ -617,13 +617,15 @@ fn source_info(group: &UpdateCheckGroup, result: &EvidenceCheckResult) -> Source
         ))
         .then(|| match group.identity.normalized_ref() {
             NormalizedRef::Default => "HEAD".to_string(),
-            NormalizedRef::Named(value) => value.clone(),
+            NormalizedRef::Named(value) => crate::models::GitRefKind::from_transport(value).0,
         }),
         resolved_ref: evidence
             .filter(|_| {
                 group.identity.remote().provider() != &crate::core::SourceProvider::WellKnown
             })
-            .map(|entry| entry.snapshot_id.resolved_ref.clone()),
+            .map(|entry| {
+                crate::models::GitRefKind::from_transport(&entry.snapshot_id.resolved_ref).0
+            }),
         ref_revision: evidence.map(|entry| entry.snapshot_id.commit_revision.clone()),
         checked_at_epoch_ms: evidence.map(|entry| entry.checked_at_epoch_ms),
         expires_at_epoch_ms: evidence.map(|entry| entry.expires_at_epoch_ms),

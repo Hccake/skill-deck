@@ -2,9 +2,11 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render as testingRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { StrictMode, useState } from 'react';
+import { StrictMode, useState, type ReactNode } from 'react';
+import { TooltipProvider } from '@/components/ui/tooltip';
+const render = (ui: ReactNode) => testingRender(ui, { wrapper: TooltipProvider });
 import type { WizardState } from '../types';
 import { SourceStep } from '../SourceStep';
 import type { SearchSkill } from '../../skill-search/SkillSearch';

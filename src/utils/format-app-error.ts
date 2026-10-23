@@ -29,6 +29,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.source.error.notFound');
     case 'gitRefNotFound':
       return t('addSkill.source.error.refNotFound');
+    case 'gitCommitUnavailable':
+      return t('addSkill.source.error.commitUnavailable', { commit: error.data.commit });
     case 'gitCloneFailed':
       return t('addSkill.source.error.gitFailed', {
         details: summarizeGitErrorDetails(error.data.message),

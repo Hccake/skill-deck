@@ -46,6 +46,7 @@ pub enum OperationErrorCode {
     UpstreamSkillNameChanged,
     UpstreamSkillDeleted,
     UpstreamSkillAmbiguous,
+    GitCommitUnavailable,
     MutationCancelled,
     ExecutionFailed,
     RestoreFailed,
@@ -444,6 +445,9 @@ impl ErrorReport {
             }
             AppError::GitRefNotFound { ref_name } => {
                 Self::with_details(OperationErrorCode::ExecutionFailed, false, ref_name)
+            }
+            AppError::GitCommitUnavailable { commit } => {
+                Self::with_details(OperationErrorCode::GitCommitUnavailable, false, commit)
             }
             AppError::PathNotFound { path } => {
                 Self::with_details(OperationErrorCode::ExecutionFailed, false, path)

@@ -1,3 +1,4 @@
+import { GitReference } from '@/components/skills/GitReference';
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatAppError } from '@/utils/format-app-error';
@@ -241,11 +242,7 @@ export const SkillCard = memo(function SkillCard({
                 </span>
               ) : null}
               {skill.gitRef ? (
-                <span className="inline-flex items-center">
-                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
-                    {t('skills.refBadge', { ref: skill.gitRef })}
-                  </Badge>
-                </span>
+                <GitReference value={skill.gitRef} kind={skill.refKind} />
               ) : null}
               {updatedAt ? (
                 <span className="inline-flex items-center">

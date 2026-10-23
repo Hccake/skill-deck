@@ -1,3 +1,4 @@
+import { GitReferenceField } from '@/components/skills/GitReference';
 import { DetailTranslationProvider, TranslationStatus } from '@/components/skills/detail/DetailTranslation';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -146,9 +147,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
                   </DetailField>
                 ) : null}
                 {skill.refName ? (
-                  <DetailField label={t('libraries.refName')}>
-                    <span className="block font-mono">{skill.refName}</span>
-                  </DetailField>
+                  <GitReferenceField value={skill.refName} kind={skill.refKind} />
                 ) : null}
               </div>
             ) : null}

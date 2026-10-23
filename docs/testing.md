@@ -106,6 +106,8 @@ HTTP 测试使用成熟的本地服务器库，Git 测试使用可控仓库或�
 
 Git 进程夹具分别向标准输出和标准错误写入超过管道容量的数据，确认两条管道持续排空且诊断有界。进程超时和取消测试确认终止与回收；WSL 常驻 Worker 则按事务阶段验证取消、终态等待和会话关闭。需要真实 Git 行为时使用本地仓库或 `file://` 传输，只检查应用决策时使用可控传输。
 
+固定提交回归包括完整 SHA、十六进制分支、显式标签、提交不可获取、引用类型保存与复制、库成员更新以及分支前进后仍获取原提交。定向入口为 `pinned_`，GitHub 对象一致性测试位于 `runtime::github_client`；真实 WSL 的来源流程同时验证 Azure GC 和 Worker 返回的引用类型，`real_wsl2_update_pinned_commit_preserves_content_and_persists_reference_kind` 验证 Worker 获取旧提交、保持原内容并将引用类型写回项目 lock。前端 `GitReference` 测试检查旧记录不被推断为固定提交、短显示的完整值提示及详情复制。
+
 ## 跨平台测试
 
 ### 本机路径与 POSIX 路径

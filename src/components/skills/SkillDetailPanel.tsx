@@ -1,3 +1,4 @@
+import { GitReferenceField } from './GitReference';
 import { DetailTranslationProvider, TranslationStatus } from './detail/DetailTranslation';
 // src/components/skills/SkillDetailPanel.tsx
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
@@ -269,6 +270,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     )}
                   </DetailField>
                 ) : null}
+                {skill.gitRef ? <GitReferenceField value={skill.gitRef} kind={skill.refKind} /> : null}
                 {skill.dependency?.packageName ? (
                   <DetailField label={t('skills.dependency.package')}>
                     <span className="break-all">{skill.dependency.packageName}</span>

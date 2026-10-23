@@ -38,6 +38,17 @@ struct TreeEntry {
     sha: String,
 }
 
+#[derive(Deserialize)]
+struct GitCommitResponse {
+    sha: String,
+    tree: GitObjectId,
+}
+
+#[derive(Deserialize)]
+struct GitObjectId {
+    sha: String,
+}
+
 struct EnvironmentGithubTokenProvider;
 
 impl GithubTokenProvider for EnvironmentGithubTokenProvider {
@@ -120,13 +131,50 @@ impl GithubApiClient {
         git_ref: &str,
         validation: Option<&str>,
     ) -> GithubTreeFetchOutcome {
+        let token = self.token_provider.token();
+        let pinned = environment_engine::git_ref::is_full_commit(git_ref);
+        let expected_tree = if pinned {
+            let commit_url = format!(
+                "{}/repos/{repository}/git/commits/{}",
+                self.api_base.trim_end_matches('/'),
+                git_ref.to_ascii_lowercase()
+            );
+            let mut response = match self.send_request(&commit_url, None, token.as_deref()).await {
+                Ok(response) => response,
+                Err(error) => return github_transport_failure(error),
+            };
+            if response.status == reqwest::StatusCode::UNAUTHORIZED && token.is_some() {
+                response = match self.send_request(&commit_url, None, None).await {
+                    Ok(response) => response,
+                    Err(error) => return github_transport_failure(error),
+                };
+            }
+            if is_rate_limited(response.status, &response.headers, &response.body) {
+                return GithubTreeFetchOutcome::RateLimited {
+                    retry_at_epoch_ms: retry_at_epoch_ms(&response.headers),
+                };
+            }
+            if let Some(failure) = response_failure(response.status) {
+                return failure;
+            }
+            let Ok(commit) = serde_json::from_slice::<GitCommitResponse>(&response.body) else {
+                return GithubTreeFetchOutcome::Failed(GithubTreeFailure::SourceUnavailable);
+            };
+            if !commit.sha.eq_ignore_ascii_case(git_ref)
+                || !environment_engine::git_ref::is_full_commit(&commit.tree.sha)
+            {
+                return GithubTreeFetchOutcome::Failed(GithubTreeFailure::SourceUnavailable);
+            }
+            Some(commit.tree.sha.to_ascii_lowercase())
+        } else {
+            None
+        };
         let url = format!(
             "{}/repos/{}/git/trees/{}?recursive=1",
             self.api_base.trim_end_matches('/'),
             repository,
-            urlencoding::encode(git_ref)
+            urlencoding::encode(expected_tree.as_deref().unwrap_or(git_ref))
         );
-        let token = self.token_provider.token();
         let mut response = match self.send_request(&url, validation, token.as_deref()).await {
             Ok(response) => response,
             Err(error) => return github_transport_failure(error),
@@ -160,10 +208,18 @@ impl GithubApiClient {
         if body.truncated {
             return GithubTreeFetchOutcome::Incomplete;
         }
-        if body.sha.is_empty() {
+        if body.sha.is_empty()
+            || expected_tree
+                .as_ref()
+                .is_some_and(|expected| !expected.eq_ignore_ascii_case(&body.sha))
+        {
             return GithubTreeFetchOutcome::Failed(GithubTreeFailure::SourceUnavailable);
         }
-        let source_revision = body.sha.clone();
+        let source_revision = if pinned {
+            git_ref.to_ascii_lowercase()
+        } else {
+            body.sha.clone()
+        };
         GithubTreeFetchOutcome::Modified(GithubTreeSnapshot {
             ref_revision: source_revision,
             root_tree_revision: body.sha,
@@ -474,6 +530,60 @@ mod tests {
             if let Some(worker) = self.worker.take() {
                 let _ = worker.join();
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_commit_tree_keeps_commit_and_tree_ids_distinct() {
+        let fixture = HttpFixture::new(vec![
+            HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: r#"{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tree":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"#,
+            },
+            HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: r#"{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","truncated":false,"tree":[]}"#,
+            },
+        ]);
+        let client = GithubApiClient::with_base_url(fixture.base_url());
+        let outcome = client.fetch_tree("owner/repo", &"a".repeat(40), None).await;
+        let GithubTreeFetchOutcome::Modified(snapshot) = outcome else {
+            panic!("expected pinned tree, got {outcome:?}")
+        };
+        assert_eq!(snapshot.ref_revision, "a".repeat(40));
+        assert_eq!(snapshot.root_tree_revision, "b".repeat(40));
+        assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn pinned_commit_rejects_mismatched_commit_or_tree_objects() {
+        for responses in [
+            vec![HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: r#"{"sha":"cccccccccccccccccccccccccccccccccccccccc","tree":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"#,
+            }],
+            vec![
+                HttpResponse {
+                    status: 200,
+                    headers: vec![],
+                    body: r#"{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tree":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"#,
+                },
+                HttpResponse {
+                    status: 200,
+                    headers: vec![],
+                    body: r#"{"sha":"cccccccccccccccccccccccccccccccccccccccc","truncated":false,"tree":[]}"#,
+                },
+            ],
+        ] {
+            let fixture = HttpFixture::new(responses);
+            let client = GithubApiClient::with_base_url(fixture.base_url());
+            assert_eq!(
+                client.fetch_tree("owner/repo", &"a".repeat(40), None).await,
+                GithubTreeFetchOutcome::Failed(GithubTreeFailure::SourceUnavailable)
+            );
         }
     }
 

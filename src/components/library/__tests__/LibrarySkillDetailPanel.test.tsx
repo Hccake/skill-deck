@@ -77,7 +77,7 @@ describe('LibrarySkillDetailPanel', () => {
     expect(screen.getByText('skills.detail.source')).toBeTruthy();
     expect(screen.getByText('libraries.pluginName')).toBeTruthy();
     expect(screen.getByText('hccake/skills')).toBeTruthy();
-    expect(screen.getByText('libraries.refName')).toBeTruthy();
+    expect(screen.getByText('skills.reference.unknown')).toBeTruthy();
     expect(screen.getByText('main')).toBeTruthy();
     expect(screen.getByText('skills.detail.updated')).toBeTruthy();
   });

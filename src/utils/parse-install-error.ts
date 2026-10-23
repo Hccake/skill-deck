@@ -127,6 +127,13 @@ export function parseInstallError(
         ],
       };
 
+    case 'gitCommitUnavailable':
+      return {
+        message: t('addSkill.source.error.commitUnavailable', { commit: error.data.commit }),
+        details: error.data.commit,
+        suggestions: [t('addSkill.error.suggestion.checkAccess')],
+      };
+
     case 'gitTimeout':
       return {
         message: t('addSkill.error.cloneTimeout'),

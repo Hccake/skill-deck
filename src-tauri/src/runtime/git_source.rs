@@ -201,4 +201,21 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn pinned_commit_unavailable_is_distinct_from_a_missing_branch() {
+        let remote = BareSkillRepo::new(&["alpha"]);
+        let transport = ProcessGitTransport::preserving_existing_config();
+        let commit = "f".repeat(40);
+        let error = transport
+            .clone_source(
+                &remote.local_source(),
+                Some(&format!("commit:{commit}")),
+                &|_| {},
+                CancellationSignal::default(),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error, AppError::GitCommitUnavailable { commit });
+    }
 }

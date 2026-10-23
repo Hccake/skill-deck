@@ -112,7 +112,21 @@ impl RuntimeSourceEvidenceDetector {
         previous: Option<RemoteEvidenceEntry>,
         cancellation: CancellationSignal,
     ) -> Result<EvidenceDetectionOutcome, AppError> {
-        let requested_ref = resolved_ref(&request.key.normalized_ref);
+        let saved_ref = resolved_ref(&request.key.normalized_ref);
+        // 未分类的十六进制名称必须由 Git 先区分真实分支与提交。
+        if environment_engine::git_ref::is_full_commit(&saved_ref) {
+            return self
+                .detect_github_by_clone(request, previous, cancellation)
+                .await;
+        }
+        let pinned = environment_engine::git_ref::pinned_commit(&saved_ref);
+        let requested_ref = match (&request.key.normalized_ref, pinned) {
+            (_, Some(commit)) => commit.to_string(),
+            (NormalizedRef::Named(name), None) if !name.starts_with("refs/") => {
+                format!("refs/heads/{name}")
+            }
+            _ => saved_ref.clone(),
+        };
         let validation = previous
             .as_ref()
             .filter(|entry| evidence_covers_requested_paths(entry, &request.requested_skill_paths))
@@ -129,6 +143,12 @@ impl RuntimeSourceEvidenceDetector {
         }
         match outcome {
             GithubTreeFetchOutcome::Modified(snapshot) => {
+                if pinned.is_some_and(|commit| !commit.eq_ignore_ascii_case(&snapshot.ref_revision))
+                {
+                    return self
+                        .detect_github_by_clone(request, previous, cancellation)
+                        .await;
+                }
                 let catalog = snapshot
                     .entries
                     .iter()
@@ -943,6 +963,67 @@ mod tests {
         }
     }
 
+    struct PinnedGithubAccess {
+        commit: String,
+    }
+
+    impl GithubTreeAccess for PinnedGithubAccess {
+        fn fetch_tree<'a>(
+            &'a self,
+            _repository: &'a str,
+            git_ref: &'a str,
+            _validation: Option<&'a str>,
+        ) -> crate::application::github_access::GithubTreeFuture<'a> {
+            Box::pin(async move {
+                assert_eq!(
+                    git_ref, self.commit,
+                    "GitHub must receive the actual commit ID"
+                );
+                GithubTreeFetchOutcome::Modified(crate::core::GithubTreeSnapshot {
+                    ref_revision: self.commit.clone(),
+                    root_tree_revision: "root-tree".into(),
+                    validation: None,
+                    entries: vec![crate::core::github_api::GithubTreeSnapshotEntry {
+                        path: "skills/alpha".into(),
+                        entry_type: "tree".into(),
+                        revision: "tree-alpha".into(),
+                    }],
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn github_pinned_evidence_queries_the_exact_commit() {
+        let commit = "a".repeat(40);
+        let mut parsed = parse_source(&format!("https://github.com/acme/tools#{commit}")).unwrap();
+        parsed.ref_kind = Some(crate::models::GitRefKind::Commit);
+        let identity = SourceIdentity::from_parsed(&parsed).unwrap();
+        let request = EvidenceDetectionRequest {
+            environment: EnvironmentRef::Native,
+            key: RemoteEvidenceKey::from_identity(&identity),
+            requested_skill_paths: BTreeSet::new(),
+            acquisition: Arc::new(identity.acquisition().clone()),
+            acquisition_transport_identity: identity.acquisition_transport().clone(),
+        };
+        let detector = RuntimeSourceEvidenceDetector::with_github_and_git_access(
+            payloads(),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+            Arc::new(PinnedGithubAccess {
+                commit: commit.clone(),
+            }),
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
+        );
+        let EvidenceDetectionOutcome::Modified(evidence) = detector
+            .detect(request, None, CancellationSignal::default())
+            .await
+            .unwrap()
+        else {
+            panic!("expected evidence")
+        };
+        assert_eq!(evidence.snapshot_id.commit_revision, commit);
+    }
+
     fn github_detector_with_git_fallback(
         outcome: GithubTreeFetchOutcome,
         cancellation: Option<CancellationSignal>,
@@ -1223,7 +1304,7 @@ mod tests {
         assert!(!facts.skill_revisions.contains_key("skills/beta"));
         let requests = fixture.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].contains("/repos/acme/tools/git/trees/main?recursive=1"));
+        assert!(requests[0].contains("/repos/acme/tools/git/trees/refs%2Fheads%2Fmain?recursive=1"));
         assert!(!requests[0].to_ascii_lowercase().contains("if-none-match"));
     }
 
@@ -1442,8 +1523,8 @@ mod tests {
         assert_eq!(detector.calls(), 2);
         let requests = fixture.requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
-        assert!(requests[0].contains("/git/trees/main?recursive=1"));
-        assert!(requests[1].contains("/git/trees/release?recursive=1"));
+        assert!(requests[0].contains("/git/trees/refs%2Fheads%2Fmain?recursive=1"));
+        assert!(requests[1].contains("/git/trees/refs%2Fheads%2Frelease?recursive=1"));
     }
 
     #[tokio::test]

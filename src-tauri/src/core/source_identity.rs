@@ -267,6 +267,13 @@ impl SourceIdentity {
         &self.normalized_ref
     }
 
+    pub fn reference_display(&self) -> (String, Option<crate::models::GitRefKind>) {
+        match &self.normalized_ref {
+            NormalizedRef::Default => (String::new(), None),
+            NormalizedRef::Named(value) => crate::models::GitRefKind::from_transport(value),
+        }
+    }
+
     pub fn acquisition(&self) -> &AcquisitionDescriptor {
         &self.acquisition
     }
@@ -396,6 +403,27 @@ fn invalid_identity(reason: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pinned_and_named_sources_have_separate_evidence_and_round_trip_targets() {
+        let sha = "a".repeat(40);
+        let mut parsed = crate::core::parse_source(&format!("owner/repo#{sha}")).unwrap();
+        let legacy = SourceIdentity::from_parsed(&parsed).unwrap();
+        parsed.ref_kind = Some(crate::models::GitRefKind::Commit);
+        let pinned = SourceIdentity::from_parsed(&parsed).unwrap();
+        parsed.ref_kind = Some(crate::models::GitRefKind::Branch);
+        let branch = SourceIdentity::from_parsed(&parsed).unwrap();
+        assert_ne!(pinned.key(), legacy.key());
+        assert_ne!(pinned.key(), branch.key());
+        let restored = pinned
+            .acquisition()
+            .parsed_source(pinned.remote().provider());
+        assert_eq!(restored.git_ref.as_deref(), Some(sha.as_str()));
+        assert_eq!(restored.ref_kind, Some(crate::models::GitRefKind::Commit));
+        assert_eq!(
+            pinned.reference_display(),
+            (sha, Some(crate::models::GitRefKind::Commit))
+        );
+    }
     use super::*;
     use crate::core::parse_source;
 

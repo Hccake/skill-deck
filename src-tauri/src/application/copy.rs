@@ -1466,6 +1466,17 @@ fn project_lock_replacement_at(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn copying_a_pinned_source_preserves_the_commit_without_dependency_ownership() {
+        let source = serde_json::json!({ "source": "owner/repo", "sourceType": "github",
+            "sourceUrl": "https://github.com/owner/repo", "ref": "a".repeat(40), "refKind": "commit",
+            "skillPath": "skills/demo/SKILL.md", "remoteHash": "tree", "via": "dependency" });
+        let copied = super::project_lock_replacement(Some(&source), "snapshot-hash", &[]).unwrap();
+        assert_eq!(copied["ref"], source["ref"]);
+        assert_eq!(copied["refKind"], "commit");
+        assert_eq!(copied["computedHash"], "snapshot-hash");
+        assert!(copied.get("via").is_none());
+    }
     use std::collections::HashMap;
     use std::fs;
     use std::sync::Mutex;

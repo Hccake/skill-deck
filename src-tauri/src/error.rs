@@ -268,6 +268,9 @@ pub enum AppError {
         ref_name: String,
     },
 
+    #[error("Git commit is unavailable: {commit}")]
+    GitCommitUnavailable { commit: String },
+
     #[error("Git operation timed out after {timeout_secs} seconds")]
     GitTimeout {
         #[serde(rename = "timeoutSecs")]

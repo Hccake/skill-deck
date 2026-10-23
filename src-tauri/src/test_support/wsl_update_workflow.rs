@@ -219,7 +219,7 @@ impl RuntimeRevisionSource for FixtureFacts {
 
 // 来源由受控 Git 夹具提供，完整内容通过正式存储接口传给 WSL。
 struct FixtureSource {
-    relocation_source: Option<(
+    worker_git_source: Option<(
         crate::environment::wsl::WslWorkspace,
         crate::environment::wsl::WslSession,
         String,
@@ -239,7 +239,7 @@ impl SkillSourceModule for FixtureSource {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let mut results = Vec::new();
             for group in groups {
-                let discovery = if let Some((workspace, session, remote)) = &self.relocation_source
+                let discovery = if let Some((workspace, session, remote)) = &self.worker_git_source
                 {
                     use crate::application::payload_session::{
                         DiscoverySourceDescriptor, DiscoverySourceLocation, RetainedDiscoverySource,
@@ -247,18 +247,24 @@ impl SkillSourceModule for FixtureSource {
                     use crate::environment::wsl::operations::source_acquisition::{
                         acquire_wsl_source_native, WslAcquisitionSource,
                     };
+                    let identity =
+                        crate::core::SourceIdentity::from_metadata(&group.skills[0].metadata)?;
+                    let mut parsed = identity
+                        .acquisition()
+                        .parsed_source(identity.remote().provider());
                     let native = acquire_wsl_source_native(
                         workspace.clone(),
                         session,
                         WslAcquisitionSource::Git {
                             url: remote.clone(),
-                            git_ref: group.skills[0].metadata.ref_name.clone(),
+                            git_ref: parsed.transport_ref(),
                         },
                         std::time::Duration::from_secs(30),
                         None,
                         cancellation.clone(),
                     )
                     .await?;
+                    parsed.apply_resolved_ref(native.resolved_ref());
                     let storage = Arc::new(crate::environment::wsl::operations::acquire::WslPayloadSessionStorage::for_source(workspace.clone(), &native));
                     let retained = RetainedDiscoverySource::new(
                         DiscoverySourceLocation::WslNative {
@@ -270,8 +276,8 @@ impl SkillSourceModule for FixtureSource {
                             source: group.skills[0].metadata.source.clone(),
                             source_type: "git".into(),
                             source_url: group.skills[0].metadata.source_url.clone(),
-                            ref_name: group.skills[0].metadata.ref_name.clone(),
-                            ref_kind: None,
+                            ref_name: parsed.git_ref.clone(),
+                            ref_kind: parsed.ref_kind,
                             redirected_download_host: None,
                         },
                         BTreeMap::new(),
@@ -299,7 +305,7 @@ impl SkillSourceModule for FixtureSource {
                     if cancellation.is_cancelled() {
                         return Err(AppError::MutationCancelled);
                     }
-                    if self.relocation_source.is_some() {
+                    if self.worker_git_source.is_some() {
                         let selected = crate::application::source_acquisition::SelectedPayloadAcquisitionService::new(self.payloads.clone());
                         let path = selected
                             .resolve_saved_skill_path(
@@ -475,6 +481,12 @@ async fn real_wsl2_update_relocation_uses_worker_candidates_and_commits_new_path
     run_wsl_update(WslWorkflow::Relocation).await;
 }
 
+#[tokio::test]
+#[ignore = "requires Windows, WSL 2, and the skills CLI fixture"]
+async fn real_wsl2_update_pinned_commit_preserves_content_and_persists_reference_kind() {
+    run_wsl_update(WslWorkflow::PinnedCommit).await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WslWorkflow {
     PrivateUpdate,
@@ -484,6 +496,7 @@ enum WslWorkflow {
     Dependency,
     AgentCompatibility,
     Relocation,
+    PinnedCommit,
 }
 
 async fn run_wsl_update(workflow: WslWorkflow) {
@@ -508,6 +521,7 @@ async fn run_wsl_update(workflow: WslWorkflow) {
         root: root.clone(),
     };
     let remote = BareSkillRepo::new(&["alpha"]);
+    let original_commit = crate::core::compute_local_ref_revision(&remote.work).unwrap();
     let native_remote = url::Url::parse(&remote.local_source())
         .unwrap()
         .to_file_path()
@@ -534,6 +548,13 @@ else
   HOME="$root/home" USERPROFILE="$root/home" GIT_CONFIG_GLOBAL="$root/home/gitconfig" GIT_CONFIG_NOSYSTEM=1 DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 "$node" "$cli" add "$public" --skill alpha --agent codebuddy --yes
 fi
 "#, &[root.clone(), node, cli, mapped.clone(), remote.source(), if eve { "eve".into() } else { "private".into() }]).await.unwrap();
+
+    if workflow == WslWorkflow::PinnedCommit {
+        run_fixture(&distro, r#"set -eu
+cp "$1/project/.codebuddy/skills/alpha/SKILL.md" "$1/pinned-content.md"
+"$2" -e 'const fs=require("fs"); const p=process.argv[1]; const d=JSON.parse(fs.readFileSync(p,"utf8")); d.skills.alpha.ref=process.argv[2]; delete d.skills.alpha.refKind; fs.writeFileSync(p,JSON.stringify(d));' "$1/project/skills-lock.json" "$3"
+"#, &[root.clone(), std::env::var("SKILL_DECK_TEST_WSL_NODE").unwrap(), original_commit.clone()]).await.unwrap();
+    }
 
     let environment = EnvironmentRef::Wsl {
         distro_name: distro.clone(),
@@ -755,8 +776,11 @@ fi
             || "2026-09-14T00:00:00Z".into(),
         ),
         FixtureSource {
-            relocation_source: (workflow == WslWorkflow::Relocation)
-                .then(|| (workspace.clone(), session.clone(), mapped.clone())),
+            worker_git_source: matches!(
+                workflow,
+                WslWorkflow::Relocation | WslWorkflow::PinnedCommit
+            )
+            .then(|| (workspace.clone(), session.clone(), mapped.clone())),
             root: remote.work.clone(),
             payloads: manager.clone(),
             calls: source_calls.clone(),
@@ -767,7 +791,10 @@ fi
         context: context.clone(),
         skill_names: vec!["alpha".into()],
     };
-    if workflow == WslWorkflow::Relocation {
+    if matches!(
+        workflow,
+        WslWorkflow::Relocation | WslWorkflow::PinnedCommit
+    ) {
         let prepared = service
             .prepare(&request, CancellationSignal::default())
             .await
@@ -777,14 +804,23 @@ fi
             "{:?}",
             prepared.preview
         );
-        assert_eq!(
-            prepared.preview.skills[0]
-                .path_change
-                .as_ref()
-                .unwrap()
-                .next_path,
-            "tools/alpha"
-        );
+        if workflow == WslWorkflow::PinnedCommit {
+            assert!(prepared.preview.skills[0].path_change.is_none());
+            assert_eq!(
+                prepared.preview.skills[0].ref_kind,
+                Some(crate::models::GitRefKind::Commit)
+            );
+            assert_eq!(prepared.preview.skills[0].ref_display, original_commit);
+        } else {
+            assert_eq!(
+                prepared.preview.skills[0]
+                    .path_change
+                    .as_ref()
+                    .unwrap()
+                    .next_path,
+                "tools/alpha"
+            );
+        }
         let selected = prepared
             .preview
             .skills
@@ -800,25 +836,27 @@ fi
         let latest = ScopePlanningSnapshotSource::snapshot(&facts, &context)
             .await
             .unwrap();
-        assert_eq!(
-            latest
-                .lock_document
-                .entry_snapshot("alpha")
-                .value()
-                .unwrap()["skillPath"],
-            "tools/alpha/SKILL.md"
-        );
-        let expected = workspace
-            .map_host_path(
-                remote
-                    .work
-                    .join("tools/alpha/SKILL.md")
-                    .to_string_lossy()
-                    .into_owned(),
-                None,
-            )
-            .await
-            .unwrap();
+        let stored = latest.lock_document.entry_snapshot("alpha");
+        let stored = stored.value().unwrap();
+        let expected = if workflow == WslWorkflow::PinnedCommit {
+            assert_eq!(stored["ref"], original_commit);
+            assert_eq!(stored["refKind"], "commit");
+            assert_eq!(stored["skillPath"], "skills/alpha/SKILL.md");
+            format!("{root}/pinned-content.md")
+        } else {
+            assert_eq!(stored["skillPath"], "tools/alpha/SKILL.md");
+            workspace
+                .map_host_path(
+                    remote
+                        .work
+                        .join("tools/alpha/SKILL.md")
+                        .to_string_lossy()
+                        .into_owned(),
+                    None,
+                )
+                .await
+                .unwrap()
+        };
         run_fixture(
             &distro,
             "cmp \"$1\" \"$2\"",

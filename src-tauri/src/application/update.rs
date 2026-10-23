@@ -29,7 +29,7 @@ use crate::application::update_planner::LocalUpdateInspection;
 #[cfg(test)]
 use crate::application::update_planner::LockedUpdateSkill;
 use crate::core::mutation::CancellationSignal;
-use crate::core::source_identity::{NormalizedRef, SourceIdentity};
+use crate::core::source_identity::SourceIdentity;
 use crate::environment::runtime::ObservedEntryId;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
@@ -251,6 +251,8 @@ pub struct UpdateSourcePreview {
     pub source_key: String,
     pub source_display: String,
     pub ref_display: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     pub skill_names: Vec<String>,
     pub error: Option<AppError>,
 }
@@ -328,6 +330,8 @@ pub struct UpdateSkillPreview {
     pub skill_name: String,
     pub source_display: String,
     pub ref_display: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     pub adapter_targets: Vec<ObservedEntryReader>,
     pub capability: CheckUpdateCapability,
     pub clean_copy_count: usize,
@@ -595,16 +599,15 @@ where
                         .iter()
                         .any(|skill| source.skill_names.contains(&skill.name))
                 });
+                let (ref_display, ref_kind) = identity.reference_display();
                 Ok(UpdateSourcePreview {
                     source_key: acquired.map_or_else(
                         || group.source_result_id.clone(),
                         |source| source.source_result_id.clone(),
                     ),
                     source_display: group.source.clone(),
-                    ref_display: match identity.normalized_ref() {
-                        NormalizedRef::Named(value) => value.clone(),
-                        NormalizedRef::Default => String::new(),
-                    },
+                    ref_display,
+                    ref_kind,
                     skill_names: group
                         .skills
                         .iter()
@@ -696,6 +699,23 @@ where
                 let payload = content
                     .validate_member(self.payloads.as_ref(), &request.context.environment, &name)
                     .await?;
+                if let Some(kind) = payload.planning_metadata().ref_kind {
+                    preview.ref_kind = Some(kind);
+                    preview.ref_display = payload
+                        .planning_metadata()
+                        .ref_name
+                        .clone()
+                        .unwrap_or_default();
+                    if let Some(group) = prepared
+                        .preview
+                        .sources
+                        .iter_mut()
+                        .find(|group| Some(&group.source_key) == preview.source_key.as_ref())
+                    {
+                        group.ref_kind = Some(kind);
+                        group.ref_display = preview.ref_display.clone();
+                    }
+                }
                 let previous_path = inspection
                     .source_candidates
                     .iter()
@@ -1083,21 +1103,14 @@ fn previews_from_inspection(
         .iter()
         .map(|skill| {
             let identity = SourceIdentity::from_metadata(&skill.metadata())?;
-            let ref_display = match identity.normalized_ref() {
-                _ if identity.remote().provider()
-                    == &crate::core::source_identity::SourceProvider::WellKnown =>
-                {
-                    String::new()
-                }
-                NormalizedRef::Default => String::new(),
-                NormalizedRef::Named(value) => value.clone(),
-            };
+            let (ref_display, ref_kind) = identity.reference_display();
             Ok((
                 skill.name.clone(),
                 (
                     skill.capability(),
                     identity.sanitized_display().to_string(),
                     ref_display,
+                    ref_kind,
                     identity.key(),
                 ),
             ))
@@ -1107,7 +1120,7 @@ fn previews_from_inspection(
         .skills
         .into_iter()
         .map(|skill| {
-            let (capability, source_display, ref_display, source_key) = display_by_name
+            let (capability, source_display, ref_display, ref_kind, source_key) = display_by_name
                 .get(&skill.skill_name)
                 .cloned()
                 .ok_or(AppError::StaleContext)?;
@@ -1145,6 +1158,7 @@ fn previews_from_inspection(
                 capability,
                 source_display,
                 ref_display,
+                ref_kind,
                 adapter_targets: skill.adapter_targets,
                 skill_name: skill.skill_name,
                 clean_copy_count: skill.clean_copies.len(),

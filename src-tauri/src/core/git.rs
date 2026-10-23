@@ -773,6 +773,17 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         };
     }
 
+    if stderr_lower.contains("not our ref") || stderr_lower.contains("couldn't find remote ref") {
+        if let Some(commit) = stderr
+            .split_whitespace()
+            .find(|value| environment_engine::git_ref::is_full_commit(value))
+        {
+            return AppError::GitCommitUnavailable {
+                commit: commit.to_ascii_lowercase(),
+            };
+        }
+    }
+
     // 分支/tag 不存在（必须在 "repository not found" 检查之前）
     if stderr_lower.contains("remote branch")
         || stderr_lower.contains("did not match any")

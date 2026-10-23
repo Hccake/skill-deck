@@ -60,6 +60,7 @@ export interface WizardState {
   fetchStatus: 'idle' | 'loading' | 'error' | 'success';
   fetchError: AppError | null;
   gitRef: string | null;
+  refKind?: import('@/bindings').GitRefKind | null;
   discoverySession?: DiscoverySessionHandle;
   redirectedDownloadHost?: string | null;
   redirectAcknowledged?: boolean;

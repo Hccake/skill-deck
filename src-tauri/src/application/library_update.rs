@@ -886,6 +886,15 @@ mod tests {
 
     #[tokio::test]
     async fn library_update_relocation_keeps_member_identity_and_commits_the_new_path() {
+        verify_library_reference_update(false).await;
+    }
+
+    #[tokio::test]
+    async fn library_pinned_update_keeps_original_commit_after_branch_advances() {
+        verify_library_reference_update(true).await;
+    }
+
+    async fn verify_library_reference_update(pinned: bool) {
         use crate::application::source_evidence::SourceEvidenceCoordinator;
         use crate::application::source_evidence_provider::RuntimeSourceEvidenceDetector;
         use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
@@ -899,7 +908,19 @@ mod tests {
             ..
         } = fixture(&["alpha"], None).await;
         let remote = BareSkillRepo::new(&["alpha"]);
-        remote.relocate_skill("skills/alpha", "tools/alpha");
+        let commit = crate::core::compute_local_ref_revision(&remote.work).unwrap();
+        if pinned {
+            let mut stored = repository.load(&EnvironmentRef::Native).await.unwrap();
+            stored.libraries[0].skills[0].source_record["refName"] = serde_json::json!(commit);
+            stored.libraries[0].skills[0].source_record["refKind"] = serde_json::json!("commit");
+            repository
+                .save(&EnvironmentRef::Native, &stored)
+                .await
+                .unwrap();
+            remote.publish_change("alpha");
+        } else {
+            remote.relocate_skill("skills/alpha", "tools/alpha");
+        }
         let transport = Arc::new(CountingGitTransport::for_repo_with_public_source(
             &remote,
             "https://example.com/repo.git",
@@ -941,11 +962,15 @@ mod tests {
             prepared.preview
         );
         let preview = serde_json::to_value(&prepared.preview).unwrap();
-        assert_eq!(preview["pathChanges"][0]["skillName"], "alpha");
-        assert_eq!(
-            preview["pathChanges"][0]["change"]["nextPath"],
-            "tools/alpha"
-        );
+        if pinned {
+            assert!(prepared.preview.path_changes.is_none());
+        } else {
+            assert_eq!(preview["pathChanges"][0]["skillName"], "alpha");
+            assert_eq!(
+                preview["pathChanges"][0]["change"]["nextPath"],
+                "tools/alpha"
+            );
+        }
         assert_eq!(
             serde_json::to_value(repository.load(&EnvironmentRef::Native).await.unwrap()).unwrap(),
             serde_json::to_value(before).unwrap()
@@ -964,7 +989,19 @@ mod tests {
         assert_eq!(library.skills[0].name, "alpha");
         let source: LibrarySkillSourceRecord =
             serde_json::from_value(library.skills[0].source_record.clone()).unwrap();
-        assert_eq!(source.skill_path.as_deref(), Some("tools/alpha/SKILL.md"));
+        assert_eq!(
+            source.skill_path.as_deref(),
+            Some(if pinned {
+                "skills/alpha/SKILL.md"
+            } else {
+                "tools/alpha/SKILL.md"
+            })
+        );
+        if pinned {
+            assert_eq!(source.ref_name.as_deref(), Some(commit.as_str()));
+            assert_eq!(source.ref_kind, Some(crate::models::GitRefKind::Commit));
+            assert_eq!(library.skills[0].description, "v1 test skill");
+        }
         let check = crate::application::update_check::LibraryUpdateCheckService::new(
             crate::application::update_records::LibraryUpdateRecordProvider::new(repository),
             evidence,

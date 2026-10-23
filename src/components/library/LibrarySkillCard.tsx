@@ -1,3 +1,4 @@
+import { GitReference } from '@/components/skills/GitReference';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatAppError } from '@/utils/format-app-error';
@@ -190,11 +191,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                 </span>
               ) : null}
               {skill.refName ? (
-                <span className="inline-flex items-center">
-                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
-                    {t('skills.refBadge', { ref: skill.refName })}
-                  </Badge>
-                </span>
+                <GitReference value={skill.refName} kind={skill.refKind} />
               ) : null}
               {updatedAt ? (
                 <span className="inline-flex items-center">

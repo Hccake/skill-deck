@@ -143,7 +143,7 @@
     },
     "source": "Skill 来源",
     "pluginName": "Plugin",
-    "refName": "分支",
+    "refName": "引用",
     "sourcePlaceholder": "Git 仓库、本地目录或 URL…",
     "empty": "当前库还没有 Skill。",
     "noLibraries": "创建一个库以开始整理 Skill。",
@@ -444,7 +444,7 @@
     "update": "个可更新",
     "updates": "个可更新",
     "updated": "更新于 {{time}}",
-    "refBadge": "分支: {{ref}}",
+    "refBadge": "引用: {{ref}}",
     "actions": {
       "update": "更新",
       "delete": "删除",
@@ -875,7 +875,15 @@
       "copyPath": "复制路径"
     },
     "checkUpdatesNetworkFailed": "无法连接来源，请稍后重试。",
-    "checkUpdatesAccessFailed": "无法访问来源，请检查访问权限。"
+    "checkUpdatesAccessFailed": "无法访问来源，请检查访问权限。",
+    "reference": {
+      "branch": "分支",
+      "tag": "标签",
+      "commit": "固定提交",
+      "unknown": "引用",
+      "copy": "复制完整引用",
+      "copyFailed": "复制失败，请重试"
+    }
   },
   "settings": {
     "title": "设置",
@@ -1553,7 +1561,8 @@
         "configurationCorrupted": "无法安全读取配置。",
         "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。",
         "configurationWriteUnconfirmed": "配置的保存结果尚未确认。应用继续使用原设置，请重新读取配置后检查。",
-        "upstreamSkillAmbiguous": "来源中存在多个同名 Skill，无法确定新路径，现有内容已保留。"
+        "upstreamSkillAmbiguous": "来源中存在多个同名 Skill，无法确定新路径，现有内容已保留。",
+        "gitCommitUnavailable": "无法获取固定提交，现有内容已保留。请检查提交和仓库访问权限。"
       },
       "fallbacks": {
         "symlinkUnavailable": "由于符号链接不可用，已改为复制。",
@@ -1613,7 +1622,7 @@
         "cloneDone": "来源已读取"
       },
       "badges": {
-        "ref": "分支: {{ref}}",
+        "ref": "引用: {{ref}}",
         "skillFilter": "Skill: {{filter}}"
       },
       "error": {
@@ -1624,7 +1633,7 @@
         "gitFailed": "Git 无法读取该仓库：{{details}}",
         "timeout": "在 {{timeout}} 秒内未完成克隆。仓库可能过大，或当前网络较慢。",
         "auth": "认证失败。请检查凭据或仓库访问权限。",
-        "refNotFound": "未找到指定的分支或标签",
+        "refNotFound": "未找到指定引用；提交需使用完整 40 位 SHA。",
         "invalidSource": "无效的来源格式: {{value}}",
         "scopeNotFound": "{{rootUrl}} 的 {{scopePath}} 下没有可用 Skill。请检查 scoped 地址；Skill Deck 未使用站点根目录 catalog。",
         "acquisitionFailed": "无法读取该来源。Well-known 读取失败：{{wellKnownReason}}；直接下载失败：{{downloadReason}}",
@@ -1650,8 +1659,11 @@
           "invalidContent": "下载内容不是有效的 SKILL.md、ZIP、tar 或 tar.gz 来源。",
           "emptyContent": "下载内容为空。"
         },
-        "downloadConflict": "目标目录已有同名 Skill，直接下载无法覆盖：{{target}}"
-      }
+        "downloadConflict": "目标目录已有同名 Skill，直接下载无法覆盖：{{target}}",
+        "commitUnavailable": "无法获取固定提交 {{commit}}。请检查提交是否仍可访问及仓库权限。"
+      },
+      "commitHelpLabel": "来源与固定提交用法",
+      "commitHelp": "固定提交示例：owner/repo#完整40位SHA。短 SHA 仅作为分支或标签名解析。"
     },
     "skills": {
       "title": "选择 Skill",

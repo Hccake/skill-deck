@@ -94,7 +94,8 @@ describe('LibrarySkillCard', () => {
     );
 
     expect(screen.getByText('hccake/skills')).toBeTruthy();
-    expect(screen.getByText('skills.refBadge:{"ref":"main"}')).toBeTruthy();
+    expect(screen.getByText('skills.reference.unknown')).toBeTruthy();
+    expect(screen.getByText('main')).toBeTruthy();
   });
 
   it('allows an applied Library member to enter the retirement flow', () => {

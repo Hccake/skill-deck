@@ -1,3 +1,4 @@
+import { GitReference } from './GitReference';
 import { useEffect, useId, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, CircleAlert, CircleStop, Files, Link2, LoaderCircle } from 'lucide-react';
@@ -276,7 +277,7 @@ export function UpdatePlanDialog({
       const key = skill.sourceKey ?? skill.skillName;
       let group = groups.find((candidate) => candidate.sourceKey === key);
       if (!group) {
-        group = { sourceKey: key, sourceDisplay: skill.sourceDisplay, refDisplay: skill.refDisplay, skillNames: [], error: null };
+        group = { sourceKey: key, sourceDisplay: skill.sourceDisplay, refDisplay: skill.refDisplay, refKind: skill.refKind, skillNames: [], error: null };
         groups.push(group);
       }
       group.skillNames.push(skill.skillName);
@@ -388,7 +389,7 @@ export function UpdatePlanDialog({
               {executionError ? <p className="text-sm text-warning" role="alert">{formatAppError(executionError, t)}</p> : null}
               {previewGroups.map((group) => (
                 <section key={group.sourceKey} className="update-source-group">
-                  <p className="update-source-heading">{t('skills.updatePlan.source')} {group.sourceDisplay}{group.refDisplay ? <> · {group.refDisplay}</> : null}</p>
+                  <p className="update-source-heading">{t('skills.updatePlan.source')} {group.sourceDisplay}{group.refDisplay ? <> · <GitReference value={group.refDisplay} kind={group.refKind} /></> : null}</p>
                   {group.error ? <p className="text-xs text-destructive" role="alert">{formatAppError(group.error, t)}</p> : null}
                   <div className="update-source-skills">
                     {group.skillNames.map((name) => {
