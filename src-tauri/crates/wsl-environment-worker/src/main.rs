@@ -1018,6 +1018,7 @@ async fn execute_business_request(
                     source_id: source.id,
                     root: source.root.to_string_lossy().into_owned(),
                     revision: source.revision,
+                    resolved_ref: source.resolved_ref,
                     managed_bytes: source.managed_bytes,
                 }),
             )
@@ -1032,6 +1033,7 @@ async fn execute_business_request(
                     source_id: source.id,
                     root: source.root.to_string_lossy().into_owned(),
                     revision: source.revision,
+                    resolved_ref: source.resolved_ref,
                     managed_bytes: source.managed_bytes,
                 }),
             )

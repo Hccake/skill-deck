@@ -690,6 +690,7 @@ mod tests {
             source_type: "github".to_string(),
             source_url: Some("https://github.com/acme/tools.git".to_string()),
             ref_name: Some("main".to_string()),
+            ref_kind: None,
             skill_path: "skills/demo".to_string(),
             plugin_name: None,
             computed_hash: "cli-hash".to_string(),

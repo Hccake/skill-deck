@@ -16,6 +16,8 @@ pub struct LocalSkillLockEntry {
     /// Branch or tag ref used for installation
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
     pub ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     /// 来源类型 ("github", "local" 等)
     pub source_type: String,
     /// 依赖同步时记录的包版本，不代表当前磁盘中的包版本。
@@ -63,6 +65,7 @@ mod tests {
             via: None,
             source: "owner/repo".to_string(),
             ref_name: None,
+            ref_kind: None,
             source_type: "github".to_string(),
             source_url: None,
             well_known_digest: None,
@@ -105,6 +108,7 @@ mod tests {
             via: None,
             source: "owner/repo".to_string(),
             ref_name: Some("feature-branch".to_string()),
+            ref_kind: None,
             source_type: "github".to_string(),
             source_url: None,
             well_known_digest: None,
@@ -122,6 +126,7 @@ mod tests {
 
         let entry_no_ref = LocalSkillLockEntry {
             ref_name: None,
+            ref_kind: None,
             ..entry.clone()
         };
         let json_no_ref = serde_json::to_string(&entry_no_ref).unwrap();

@@ -109,6 +109,7 @@ fn enrich_environment_skills_from_lock_at(
                         via: None,
                         source: entry.source,
                         ref_name: entry.ref_name,
+                        ref_kind: entry.ref_kind,
                         source_type: entry.source_type,
                         source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
                         well_known_digest: entry.well_known_digest,
@@ -184,6 +185,7 @@ mod environment_tests {
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            ref_kind: None,
             skill_path: None,
         }
     }

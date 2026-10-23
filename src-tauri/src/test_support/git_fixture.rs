@@ -141,6 +141,7 @@ impl GitSourceTransport for DeterministicGitTransport {
             message: None,
         });
         Ok(CloneResult {
+            resolved_ref: _git_ref.map(str::to_string),
             repo_path: temp_dir.path().to_path_buf(),
             ref_revision: Some(self.revision()),
             _temp_dir: temp_dir,

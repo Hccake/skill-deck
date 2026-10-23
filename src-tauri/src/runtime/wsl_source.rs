@@ -366,6 +366,7 @@ impl RuntimeWslSourceAccess {
                         source_url: prepared.source_url,
                         redirected_download_host: None,
                         git_ref: prepared.git_ref,
+                        ref_kind: prepared.ref_kind,
                         skill_filter: prepared.skill_filter,
                         skills: prepared.skills,
                     })
@@ -382,6 +383,7 @@ struct PreparedWslDiscovery {
     source_type: String,
     source_url: String,
     git_ref: Option<String>,
+    ref_kind: Option<crate::models::GitRefKind>,
     skill_filter: Option<String>,
     skills: Vec<AvailableSkill>,
 }
@@ -463,11 +465,14 @@ async fn prepare_native_wsl_source(
         skill.source_metadata_fingerprint =
             storage.source_metadata_fingerprint(&source_root).await?;
     }
+    let mut parsed = parsed;
+    parsed.apply_resolved_ref(native.resolved_ref());
     let descriptor = DiscoverySourceDescriptor {
         source: source_identifier(&parsed, &requested_source),
         source_type: parsed.source_type.to_string(),
         source_url: (!parsed.url.is_empty()).then(|| parsed.url.clone()),
         ref_name: parsed.git_ref.clone(),
+        ref_kind: parsed.ref_kind,
         redirected_download_host: None,
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
@@ -490,6 +495,7 @@ async fn prepare_native_wsl_source(
         source_type: parsed.source_type.to_string(),
         source_url: parsed.url,
         git_ref: parsed.git_ref,
+        ref_kind: parsed.ref_kind,
         skill_filter: parsed.skill_filter,
         skills: discovered.into_iter().map(AvailableSkill::from).collect(),
     })
@@ -656,7 +662,7 @@ pub(crate) fn wsl_acquisition_source(
         SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
             Ok(WslAcquisitionSource::Git {
                 url: parsed.url.clone(),
-                git_ref: parsed.git_ref.clone(),
+                git_ref: parsed.transport_ref(),
             })
         }
         SourceType::WellKnown | SourceType::Download => {

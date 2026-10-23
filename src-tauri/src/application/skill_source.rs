@@ -220,6 +220,7 @@ mod tests {
                 source_type: "github".to_string(),
                 source_url: Some("https://github.com/acme/tools.git".to_string()),
                 ref_name: Some(ref_name.to_string()),
+                ref_kind: None,
                 skill_path: Some(format!("skills/{name}")),
                 remote_hash: Some(format!("tree-{name}")),
                 computed_hash: None,

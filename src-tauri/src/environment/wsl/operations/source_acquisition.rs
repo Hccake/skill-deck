@@ -29,10 +29,14 @@ pub struct WslNativeSource {
     native_root: String,
     managed_owner_registered: bool,
     ref_revision: Option<String>,
+    resolved_ref: Option<String>,
     managed_bytes: u64,
 }
 
 impl WslNativeSource {
+    pub fn resolved_ref(&self) -> Option<&str> {
+        self.resolved_ref.as_deref()
+    }
     pub fn native_root(&self) -> &str {
         &self.native_root
     }
@@ -105,13 +109,14 @@ pub async fn acquire_wsl_source_native(
         )
         .await
         .map_err(|error| map_transport_timeout(error, git_timeout))?;
-    let (id, native_root, ref_revision, managed_bytes) = match response {
+    let (id, native_root, ref_revision, resolved_ref, managed_bytes) = match response {
         environment_protocol::Message::SourceOpened {
             source_id,
             root,
             revision,
+            resolved_ref,
             managed_bytes,
-        } => (source_id, root, revision, managed_bytes),
+        } => (source_id, root, revision, resolved_ref, managed_bytes),
         environment_protocol::Message::Error {
             code,
             phase,
@@ -140,6 +145,7 @@ pub async fn acquire_wsl_source_native(
         native_root,
         managed_owner_registered: true,
         ref_revision,
+        resolved_ref,
         managed_bytes,
     })
 }
@@ -359,6 +365,29 @@ git -C "$root" branch release
         .unwrap();
         assert_eq!(source.ref_revision(), Some(tag.as_str()));
         assert_ne!(branch, tag);
+        let pinned = crate::core::parse_source(&format!(
+            "https://dev.azure.com/org/project/_git/skills?version=GC{tag}"
+        ))
+        .unwrap();
+        let pinned_source = super::acquire_wsl_source_native(
+            workspace.clone(),
+            &session,
+            super::WslAcquisitionSource::Git {
+                url: fixture.clone(),
+                git_ref: pinned.transport_ref(),
+            },
+            Duration::from_secs(30),
+            None,
+            CancellationSignal::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pinned_source.ref_revision(), Some(tag.as_str()));
+        assert_eq!(
+            pinned_source.resolved_ref(),
+            Some(format!("commit:{tag}").as_str())
+        );
+        drop(pinned_source);
         assert!(source.managed_bytes() > 0);
         let complete: environment_protocol::SourceScanResponse = workspace
             .request_worker_payload_for_generation(

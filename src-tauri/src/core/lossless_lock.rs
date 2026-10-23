@@ -13,6 +13,7 @@ const GLOBAL_ENTRY_FIELDS: &[&str] = &[
     "sourceType",
     "sourceUrl",
     "ref",
+    "refKind",
     "skillPath",
     "skillFolderHash",
     "installedAt",
@@ -25,6 +26,7 @@ const GLOBAL_ENTRY_FIELDS: &[&str] = &[
 const PROJECT_ENTRY_FIELDS: &[&str] = &[
     "source",
     "ref",
+    "refKind",
     "sourceType",
     "sourceUrl",
     "computedHash",
@@ -208,6 +210,7 @@ pub fn convert_legacy_project_document(
         for field in [
             "source",
             "ref",
+            "refKind",
             "sourceType",
             "sourceUrl",
             "skillPath",

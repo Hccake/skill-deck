@@ -64,6 +64,8 @@ pub struct FetchResult {
     /// Git ref（branch/tag）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     /// @skill 语法提取的名称（用于预选）
     pub skill_filter: Option<String>,
     /// 可用的 skills 列表
@@ -152,7 +154,7 @@ impl GitSourceDiscovery {
     pub(crate) async fn discover<P>(
         &self,
         environment: EnvironmentRef,
-        parsed: ParsedSource,
+        mut parsed: ParsedSource,
         requested_source: String,
         policy: SourceDiscoveryPolicy,
         on_progress: P,
@@ -170,7 +172,7 @@ impl GitSourceDiscovery {
         match &environment {
             EnvironmentRef::Native => {
                 let clone_url = parsed.url.clone();
-                let clone_ref = parsed.git_ref.clone();
+                let clone_ref = parsed.transport_ref();
                 let clone_cancellation = cancellation.clone();
                 let git_transport = Arc::clone(&self.git_transport);
                 let clone_progress = on_progress.clone();
@@ -189,6 +191,7 @@ impl GitSourceDiscovery {
                 })??;
                 let root = cloned.repo_path.clone();
                 let ref_revision = cloned.ref_revision.clone();
+                parsed.apply_resolved_ref(cloned.resolved_ref.as_deref());
                 retain_discovered_source(
                     self.sessions.clone(),
                     environment.clone(),
@@ -374,6 +377,7 @@ where
         source_type: parsed.source_type.to_string(),
         source_url: (!parsed.url.is_empty()).then(|| parsed.url.clone()),
         ref_name: parsed.git_ref.clone(),
+        ref_kind: parsed.ref_kind,
         redirected_download_host: redirected_download_host.clone(),
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
@@ -409,6 +413,7 @@ where
         source_url: parsed.url.clone(),
         redirected_download_host,
         git_ref: parsed.git_ref.clone(),
+        ref_kind: parsed.ref_kind,
         skill_filter: parsed.skill_filter.clone(),
         skills,
     })
@@ -489,6 +494,10 @@ pub(crate) fn snapshot_fingerprint(
             .unwrap_or_default(),
     ] {
         hasher.update(value.as_bytes());
+        hasher.update([0]);
+    }
+    if let Some(kind) = descriptor.ref_kind {
+        hasher.update(serde_json::to_vec(&kind).expect("reference kind serializes"));
         hasher.update([0]);
     }
     for (path, skill) in catalog {
@@ -1068,6 +1077,7 @@ fn planning_metadata(
         source_type: source.source_type.clone(),
         source_url: source.source_url.clone(),
         ref_name: source.ref_name.clone(),
+        ref_kind: source.ref_kind,
         skill_path: skill.relative_path.clone(),
         plugin_name: skill.plugin_name.clone(),
         computed_hash,
@@ -1330,6 +1340,7 @@ mod tests {
                         source_type: "git".into(),
                         source_url: None,
                         ref_name: None,
+                        ref_kind: None,
                         redirected_download_host: None,
                     },
                     BTreeMap::from([(
@@ -1395,6 +1406,7 @@ mod tests {
                         source_type: "git".into(),
                         source_url: Some("https://example.com/tools.git".into()),
                         ref_name: None,
+                        ref_kind: None,
                         redirected_download_host: None,
                     },
                     BTreeMap::new(),
@@ -1854,6 +1866,7 @@ mod tests {
                 source_type: "github".to_string(),
                 source_url: Some("https://github.com/owner/repo.git".to_string()),
                 ref_name: None,
+                ref_kind: None,
                 redirected_download_host: None,
             },
             &DiscoverySkillSnapshot {
@@ -1880,6 +1893,7 @@ mod tests {
                 source_type: "git".to_string(),
                 source_url: Some("https://example.com/owner/repo.git".to_string()),
                 ref_name: Some("main".to_string()),
+                ref_kind: None,
                 redirected_download_host: None,
             },
             &DiscoverySkillSnapshot {
@@ -2350,6 +2364,7 @@ mod tests {
                         source_type: "github".to_string(),
                         source_url: Some("https://github.com/owner/repo.git".to_string()),
                         ref_name: Some("main".to_string()),
+                        ref_kind: None,
                         redirected_download_host: None,
                     },
                     skills,
@@ -2440,6 +2455,7 @@ mod tests {
                         source_type: "github".to_string(),
                         source_url: Some("git@github.com:owner/repo.git".to_string()),
                         ref_name: None,
+                        ref_kind: None,
                         redirected_download_host: None,
                     },
                     skills,
@@ -2525,6 +2541,7 @@ mod tests {
                         source_type: "git".to_string(),
                         source_url: None,
                         ref_name: None,
+                        ref_kind: None,
                         redirected_download_host: None,
                     },
                     BTreeMap::from([(
@@ -2618,6 +2635,7 @@ mod tests {
                         source_type: "download".to_string(),
                         source_url: Some("https://example.com/SKILL.md".to_string()),
                         ref_name: None,
+                        ref_kind: None,
                         redirected_download_host: None,
                     },
                     BTreeMap::from([(

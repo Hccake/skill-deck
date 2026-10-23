@@ -217,6 +217,7 @@ fn source_evidence_key(source: &str) -> Result<Option<RemoteEvidenceKey>, AppErr
         source_type: parsed.source_type.to_string(),
         source_url: Some(parsed.url),
         ref_name: parsed.git_ref,
+        ref_kind: parsed.ref_kind,
         skill_path: None,
         remote_hash: None,
         computed_hash: None,

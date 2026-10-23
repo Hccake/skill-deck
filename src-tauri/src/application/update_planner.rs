@@ -66,6 +66,7 @@ pub struct LockedUpdateSkill {
     pub source_type: String,
     pub source_url: Option<String>,
     pub ref_name: Option<String>,
+    pub ref_kind: Option<crate::models::GitRefKind>,
     pub skill_path: String,
     pub remote_hash: Option<String>,
     pub computed_hash: Option<String>,
@@ -112,6 +113,7 @@ impl LockedUpdateSkill {
             source_type: self.source_type.clone(),
             source_url: self.source_url.clone(),
             ref_name: self.ref_name.clone(),
+            ref_kind: self.ref_kind,
             skill_path: Some(self.skill_path.clone()),
             remote_hash: self.remote_hash.clone(),
             computed_hash: self.computed_hash.clone(),
@@ -803,6 +805,12 @@ fn locked_skill(
         source_type,
         source_url,
         ref_name: string_field(object, "ref"),
+        ref_kind: object
+            .get("refKind")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?
+            .flatten(),
         skill_path,
         remote_hash,
         computed_hash: (schema == LockSchema::Project)
@@ -1129,6 +1137,7 @@ fn lock_mutation(
             "sourceBaseUrl": metadata.well_known.as_ref().and(metadata.source_url.clone()),
             "wellKnownDigest": metadata.well_known.as_ref().map(|value| value.digest.clone()),
             "ref": metadata.ref_name,
+                "refKind": metadata.ref_kind,
             "skillPath": metadata.skill_path,
             "skillFolderHash": metadata.global_skill_folder_hash(),
             "installedAt": locked.installed_at.clone().unwrap_or_else(|| now.clone()),
@@ -1159,6 +1168,7 @@ fn lock_mutation(
                 entry.insert("wellKnownDigest".to_string(), json!(well_known.digest));
             }
             entry.insert("ref".to_string(), json!(metadata.ref_name));
+            entry.insert("refKind".to_string(), json!(metadata.ref_kind));
             entry.insert("skillPath".to_string(), json!(metadata.skill_path));
             entry.insert("computedHash".to_string(), json!(metadata.computed_hash));
             entry.insert("pluginName".to_string(), json!(metadata.plugin_name));
@@ -1475,6 +1485,7 @@ mod tests {
                         source_type: "github".to_string(),
                         source_url: Some("https://github.com/owner/repo.git".to_string()),
                         ref_name: Some("main".to_string()),
+                        ref_kind: None,
                         skill_path: "skills/demo".to_string(),
                         plugin_name: None,
                         computed_hash: "new-computed".to_string(),
@@ -1970,6 +1981,7 @@ mod tests {
             source_type: "github".to_string(),
             source_url: Some("https://github.com/owner/repo".to_string()),
             ref_name: None,
+            ref_kind: None,
             skill_path: "skills/demo".to_string(),
             remote_hash: Some("old".to_string()),
             computed_hash: None,
@@ -2045,6 +2057,7 @@ mod tests {
             source_type: "github".to_string(),
             source_url: Some("https://github.com/owner/repo".to_string()),
             ref_name: None,
+            ref_kind: None,
             skill_path: "skills/demo".to_string(),
             remote_hash: Some("old".to_string()),
             computed_hash: Some("old".to_string()),
@@ -2122,6 +2135,7 @@ mod tests {
             source_type: "gitlab".to_string(),
             source_url: Some("https://gitlab.com/owner/repo".to_string()),
             ref_name: None,
+            ref_kind: None,
             skill_path: "skills/demo".to_string(),
             remote_hash: Some("tree".to_string()),
             computed_hash: Some("content-v1".to_string()),

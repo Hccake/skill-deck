@@ -929,6 +929,7 @@ pub struct NormalizedCopyMetadata {
     pub source_type: String,
     pub source_url: Option<String>,
     pub ref_name: Option<String>,
+    pub ref_kind: Option<crate::models::GitRefKind>,
     pub skill_path: Option<String>,
     pub upstream_revision: Option<String>,
     pub plugin_name: Option<String>,
@@ -1367,6 +1368,13 @@ fn normalize_copy_metadata(source: Option<&Value>) -> Option<NormalizedCopyMetad
         source_type,
         source_url: text("sourceUrl"),
         ref_name: text("ref"),
+        ref_kind: source
+            .get("refKind")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .ok()?
+            .flatten(),
         skill_path: text("skillPath"),
         upstream_revision: text("remoteHash").or_else(|| {
             matches!(
@@ -1423,6 +1431,7 @@ fn project_lock_replacement_at(
         }),
     );
     entry.insert("ref".to_string(), serde_json::json!(metadata.ref_name));
+    entry.insert("refKind".to_string(), serde_json::json!(metadata.ref_kind));
     entry.insert(
         "skillPath".to_string(),
         serde_json::json!(metadata.skill_path),

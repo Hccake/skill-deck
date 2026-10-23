@@ -7,6 +7,8 @@ pub struct NormalizedUpdateMetadata {
     pub source_type: String,
     pub source_url: Option<String>,
     pub ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     pub skill_path: Option<String>,
     pub remote_hash: Option<String>,
     pub computed_hash: Option<String>,
@@ -97,6 +99,7 @@ mod tests {
             source_base_url: None,
             well_known_digest: None,
             ref_name: Some("main".into()),
+            ref_kind: None,
             skill_path: Some("skills/demo".into()),
             skill_folder_hash: baseline.into(),
             installed_at: String::new(),
@@ -115,6 +118,7 @@ mod tests {
             via: None,
             source: "acme/tools".into(),
             ref_name: Some("main".into()),
+            ref_kind: None,
             source_type: source_type.into(),
             source_url: Some(format!("https://example.com/acme/tools-{source_type}.git")),
             well_known_digest: None,
@@ -194,6 +198,7 @@ mod tests {
                 source_base_url: source_base_url.map(str::to_string),
                 well_known_digest: digest.map(str::to_string),
                 ref_name: None,
+                ref_kind: None,
                 skill_path: None,
                 skill_folder_hash: String::new(),
                 installed_at: String::new(),
@@ -229,6 +234,7 @@ mod tests {
             via: None,
             source: "example.com".into(),
             ref_name: None,
+            ref_kind: None,
             source_type: "well-known".into(),
             source_url: Some("https://example.com/catalog/index.json".into()),
             well_known_digest: Some("sha256:v2".into()),
@@ -266,6 +272,7 @@ pub fn normalize_global_lock_entry(entry: &SkillLockEntry) -> NormalizedUpdateMe
             )
         },
         ref_name: entry.ref_name.clone(),
+        ref_kind: entry.ref_kind,
         skill_path: entry.skill_path.clone(),
         remote_hash: if entry.skill_folder_hash.is_empty() {
             None
@@ -296,6 +303,7 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
             )
         },
         ref_name: entry.ref_name.clone(),
+        ref_kind: entry.ref_kind,
         skill_path: entry.skill_path.clone(),
         remote_hash: entry.remote_hash.clone(),
         computed_hash: (!entry.computed_hash.is_empty()).then(|| entry.computed_hash.clone()),

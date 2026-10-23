@@ -895,7 +895,7 @@ redirectedDownloadHost?: string | null;
 /**
  * Git ref（branch/tag）
  */
-gitRef?: string | null;
+gitRef?: string | null; refKind?: GitRefKind | null;
 /**
  * @skill 语法提取的名称（用于预选）
  */
@@ -905,6 +905,10 @@ skillFilter: string | null;
  */
 skills: AvailableSkill[] }
 export type GitProxyScope = "githubOnly" | "allHttpHttps"
+/**
+ * 已验证的 Git 跟踪目标类型；缺失时按旧版未分类引用处理。
+ */
+export type GitRefKind = "branch" | "tag" | "commit"
 export type GithubCredentialClearResult = { cleared: boolean; status: GithubCredentialStatus; warnings: SourceSuppressionWarningCode[] }
 export type GithubCredentialSaveResult = { saved: boolean; status: GithubCredentialStatus; warnings: SourceSuppressionWarningCode[] }
 export type GithubCredentialSource = "keyring" | "githubTokenEnv" | "ghTokenEnv" | "none"
@@ -962,7 +966,7 @@ pluginName?: string | null;
 /**
  * Git ref（branch/tag）
  */
-gitRef?: string | null;
+gitRef?: string | null; refKind?: GitRefKind | null;
 /**
  * 来源仓库内的 Skill 相对路径，用于更新检查会话身份指纹
  */
@@ -1042,7 +1046,7 @@ pluginName: string | null;
 /**
  * 来源记录中保存的分支或标签。
  */
-refName: string | null;
+refName: string | null; refKind?: GitRefKind | null;
 /**
  * Skill Deck 最近一次成功提交该成员本地内容的时间，不表示上游发布时间。
  * 旧成员在下一次成功写入前为 `None`。
@@ -1202,7 +1206,7 @@ export type SkillReadIssue = { code: string; path: ResourceLocator; agentIds: Ag
 export type SkillReadIssueCount = { code: string; count: number }
 export type SkillReadStatus = { complete: boolean; issues: SkillReadIssue[]; counts: SkillReadIssueCount[]; omittedCount: number }
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
-export type SkillUpdateInfo = { pathChange?: SourcePathChange | null; name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness; comparisonFingerprint?: string | null; sourceKey?: string | null; error?: AppError | null }
+export type SkillUpdateInfo = { pathChange?: SourcePathChange | null; name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; refKind?: GitRefKind | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness; comparisonFingerprint?: string | null; sourceKey?: string | null; error?: AppError | null }
 export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "directoryLinksUnsupported" | "unavailable"
 export type SourcePathChange = { previousPath: string; nextPath: string }
 export type SourceProvider = "github" | "gitlab" | "git" | "wellKnown"

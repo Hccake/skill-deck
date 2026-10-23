@@ -189,6 +189,8 @@ pub struct InstalledSkill {
     /// Git ref（branch/tag）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     /// 来源仓库内的 Skill 相对路径，用于更新检查会话身份指纹
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,
@@ -230,6 +232,7 @@ impl InstalledSkill {
             self.updated_at = Some(e.updated_at.clone());
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
+            self.ref_kind = e.ref_kind;
             self.skill_path = e.skill_path.clone();
 
             let capability = derive_update_capability(&normalize_global_lock_entry(e));
@@ -258,6 +261,7 @@ impl InstalledSkill {
             }
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
+            self.ref_kind = e.ref_kind;
             self.skill_path = e.skill_path.clone();
 
             let capability = derive_update_capability(&metadata);
@@ -401,6 +405,7 @@ Content.
             via: None,
             source: "owner/private-repo".to_string(),
             ref_name: None,
+            ref_kind: None,
             source_type: "github".to_string(),
             source_url: Some("git@github.com:owner/private-repo.git".to_string()),
             well_known_digest: None,
@@ -432,6 +437,7 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            ref_kind: None,
             skill_path: None,
             default_available_agent_count: None,
             private_adapted_agent_count: None,
@@ -467,6 +473,7 @@ Content.
             via: None,
             source: String::new(),
             ref_name: None,
+            ref_kind: None,
             source_type: "github".to_string(),
             source_url: None,
             well_known_digest: None,
@@ -499,6 +506,7 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            ref_kind: None,
             skill_path: None,
             default_available_agent_count: None,
             private_adapted_agent_count: None,

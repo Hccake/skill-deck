@@ -411,7 +411,8 @@ mod tests {
             .unwrap();
         assert_eq!(names(&found), BTreeSet::from(["alpha"]));
         assert_eq!(found.source_url, clone_url);
-        assert_eq!(found.git_ref.as_deref(), Some("refs/heads/main"));
+        assert_eq!(found.git_ref.as_deref(), Some("main"));
+        assert_eq!(found.ref_kind, Some(crate::models::GitRefKind::Branch));
         let handles = SelectedPayloadAcquisitionService::new(manager.clone())
             .acquire(AcquireSelectedPayloadsRequest {
                 discovery_session: found.discovery_session,
@@ -423,7 +424,7 @@ mod tests {
         let metadata = lease.planning_metadata();
         let entry: LocalSkillLockEntry = serde_json::from_value(serde_json::json!({
             "source": metadata.source, "sourceType": metadata.source_type,
-            "sourceUrl": metadata.source_url, "ref": metadata.ref_name,
+            "sourceUrl": metadata.source_url, "ref": metadata.ref_name, "refKind": metadata.ref_kind,
             "skillPath": metadata.skill_path, "computedHash": metadata.computed_hash,
         }))
         .unwrap();
@@ -637,6 +638,7 @@ mod tests {
                     subpath: None,
                     local_path: None,
                     git_ref: None,
+                    ref_kind: None,
                     skill_filter: None,
                 },
                 url,

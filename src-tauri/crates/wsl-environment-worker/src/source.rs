@@ -36,6 +36,7 @@ pub struct OpenedSource {
     pub id: u64,
     pub root: PathBuf,
     pub revision: Option<String>,
+    pub resolved_ref: Option<String>,
     pub managed_bytes: u64,
 }
 
@@ -243,69 +244,19 @@ impl SourceManager {
         std::fs::create_dir(&managed_root)?;
         std::fs::write(managed_root.join(".skill-deck-owner"), b"1\n")?;
         let repository = managed_root.join("repo");
-        let clone_result = run_git(
-            git_clone_arguments(&options, &repository),
-            options.proxy.as_deref(),
-            options.deadline,
-            Arc::clone(&cancelled),
-        )
-        .await;
-        if let Err(error) = clone_result {
-            let _ = std::fs::remove_dir_all(&managed_root);
-            return Err(error);
-        }
-        if let Some(reference) = options
-            .git_ref
-            .as_deref()
-            .filter(|reference| reference.starts_with("refs/"))
-        {
-            for arguments in [
-                vec!["fetch", "--depth", "1", "origin", reference],
-                vec!["checkout", "--detach", "FETCH_HEAD"],
-            ] {
-                let arguments = [
-                    vec!["-C".to_string(), repository.to_string_lossy().into_owned()],
-                    arguments.into_iter().map(str::to_string).collect(),
-                ]
-                .concat();
-                if let Err(error) = run_git(
-                    arguments,
-                    options.proxy.as_deref(),
-                    options.deadline,
-                    cancelled.clone(),
-                )
-                .await
-                {
+        let (revision, resolved_ref) =
+            match acquire_git_repository(&options, &repository, cancelled).await {
+                Ok(result) => result,
+                Err(error) => {
                     let _ = std::fs::remove_dir_all(&managed_root);
                     return Err(error);
                 }
-            }
-        }
-        let revision = run_git(
-            vec![
-                "-C".to_string(),
-                repository.to_string_lossy().into_owned(),
-                "rev-parse".to_string(),
-                "--verify".to_string(),
-                "HEAD".to_string(),
-            ],
-            None,
-            options.deadline,
-            cancelled,
-        )
-        .await
-        .and_then(|output| parse_revision(&output.stdout));
-        let revision = match revision {
-            Ok(revision) => revision,
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&managed_root);
-                return Err(error);
-            }
-        };
+            };
         let opened = OpenedSource {
             id,
             root: repository.clone(),
             revision: Some(revision.clone()),
+            resolved_ref,
             managed_bytes: match environment_engine::directory::size_no_follow(&managed_root) {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -421,6 +372,7 @@ impl SourceManager {
             id,
             root,
             revision,
+            resolved_ref: None,
             managed_bytes,
         }
     }
@@ -454,13 +406,47 @@ pub async fn probe_git(
     arguments.extend(environment_engine::git_ref::remote_ref_patterns(
         options.git_ref.as_deref(),
     ));
-    let output = run_git(
-        arguments,
-        options.proxy.as_deref(),
-        options.deadline,
-        cancelled,
-    )
-    .await?;
+    let started = std::time::Instant::now();
+    let explicit_commit = options
+        .git_ref
+        .as_deref()
+        .and_then(environment_engine::git_ref::pinned_commit)
+        .is_some();
+    let output = if explicit_commit {
+        None
+    } else {
+        match run_git(
+            arguments,
+            options.proxy.as_deref(),
+            options.deadline,
+            cancelled.clone(),
+        )
+        .await
+        {
+            Ok(output) => Some(output),
+            Err(SourceError::GitFailed {
+                exit_code: Some(2), ..
+            }) if options
+                .git_ref
+                .as_deref()
+                .is_some_and(environment_engine::git_ref::is_full_commit) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    let Some(output) = output else {
+        let temp = tempfile::tempdir()?;
+        let mut options = options;
+        options.deadline = options.deadline.saturating_sub(started.elapsed());
+        let (revision, _) =
+            acquire_git_repository(&options, &temp.path().join("repo"), cancelled).await?;
+        return Ok(revision);
+    };
+    if output.stdout.len() >= GIT_STDOUT_LIMIT {
+        return Err(SourceError::InvalidInventory);
+    }
     environment_engine::git_ref::resolve_remote_revision(
         &String::from_utf8_lossy(&output.stdout),
         options.git_ref.as_deref(),
@@ -485,25 +471,86 @@ struct GitOutput {
     stdout: Vec<u8>,
 }
 
-fn git_clone_arguments(options: &GitSourceOptions, repository: &Path) -> Vec<String> {
-    let mut arguments = vec![
-        "clone".to_string(),
-        "--depth".to_string(),
-        "1".to_string(),
-        "--progress".to_string(),
-    ];
-    if let Some(git_ref) = &options.git_ref {
-        arguments.extend([
-            "--branch".to_string(),
-            environment_engine::git_ref::clone_branch(git_ref).to_string(),
-        ]);
+async fn acquire_git_repository(
+    options: &GitSourceOptions,
+    repository: &Path,
+    cancelled: Arc<AtomicBool>,
+) -> Result<(String, Option<String>), SourceError> {
+    use environment_engine::git_ref::{pinned_commit, remote_ref_patterns, resolve_reference};
+    let started = std::time::Instant::now();
+    let remaining = || options.deadline.saturating_sub(started.elapsed());
+    let requested = options.git_ref.as_deref();
+    let resolved = if requested.and_then(pinned_commit).is_some() {
+        resolve_reference("", requested)
+    } else {
+        let mut args = vec!["ls-remote".into(), "--".into(), options.url.clone()];
+        args.extend(remote_ref_patterns(requested));
+        let output = run_git(
+            args,
+            options.proxy.as_deref(),
+            remaining(),
+            cancelled.clone(),
+        )
+        .await?;
+        if output.stdout.len() >= GIT_STDOUT_LIMIT {
+            return Err(SourceError::InvalidInventory);
+        }
+        resolve_reference(&String::from_utf8_lossy(&output.stdout), requested)
     }
-    arguments.extend([
-        "--".to_string(),
-        options.url.clone(),
-        repository.to_string_lossy().into_owned(),
-    ]);
-    arguments
+    .ok_or_else(|| SourceError::GitFailed {
+        exit_code: Some(2),
+        stderr: "requested ref not found".into(),
+    })?;
+    let target = pinned_commit(&resolved.reference).unwrap_or(&resolved.reference);
+    run_git(
+        vec![
+            "init".into(),
+            "--quiet".into(),
+            repository.to_string_lossy().into_owned(),
+        ],
+        options.proxy.as_deref(),
+        remaining(),
+        cancelled.clone(),
+    )
+    .await?;
+    for arguments in [
+        vec!["remote", "add", "origin", options.url.as_str()],
+        vec!["fetch", "--depth", "1", "--progress", "origin", target],
+        vec!["checkout", "--detach", "FETCH_HEAD"],
+    ] {
+        let mut args = vec!["-C".into(), repository.to_string_lossy().into_owned()];
+        args.extend(arguments.into_iter().map(str::to_string));
+        run_git(
+            args,
+            options.proxy.as_deref(),
+            remaining(),
+            cancelled.clone(),
+        )
+        .await?;
+    }
+    let output = run_git(
+        vec![
+            "-C".into(),
+            repository.to_string_lossy().into_owned(),
+            "rev-parse".into(),
+            "--verify".into(),
+            "HEAD^{commit}".into(),
+        ],
+        options.proxy.as_deref(),
+        remaining(),
+        cancelled,
+    )
+    .await?;
+    let revision = parse_revision(&output.stdout)?;
+    if pinned_commit(&resolved.reference)
+        .is_some_and(|commit| !commit.eq_ignore_ascii_case(&revision))
+    {
+        return Err(SourceError::GitFailed {
+            exit_code: None,
+            stderr: "fetched commit does not match requested commit".into(),
+        });
+    }
+    Ok((revision, requested.map(|_| resolved.reference)))
 }
 
 fn normalized_git_path(path: &Path) -> Result<String, SourceError> {
@@ -537,6 +584,12 @@ async fn run_git(
     deadline: Duration,
     cancelled: Arc<AtomicBool>,
 ) -> Result<GitOutput, SourceError> {
+    if deadline.is_zero() {
+        return Err(SourceError::DeadlineExceeded);
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err(SourceError::Cancelled);
+    }
     let mut command = Command::new("git");
     command
         .env("LC_ALL", "C")

@@ -259,6 +259,7 @@ fn merge_entry_fields(schema: LockSchema, current: Option<&Value>, replacement: 
             "sourceType",
             "sourceUrl",
             "ref",
+            "refKind",
             "skillPath",
             "skillFolderHash",
             "installedAt",
@@ -270,6 +271,7 @@ fn merge_entry_fields(schema: LockSchema, current: Option<&Value>, replacement: 
         LockSchema::Project => &[
             "source",
             "ref",
+            "refKind",
             "sourceType",
             "sourceUrl",
             "computedHash",
@@ -320,6 +322,7 @@ fn convert_legacy_project(document: Document) -> Result<Document, LockError> {
         for field in [
             "source",
             "ref",
+            "refKind",
             "sourceType",
             "sourceUrl",
             "skillPath",

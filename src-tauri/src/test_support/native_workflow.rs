@@ -1289,6 +1289,7 @@ fn metadata(computed_hash: &str, remote_hash: &str) -> PayloadPlanningMetadata {
         source_type: "github".to_string(),
         source_url: Some("https://github.com/reader/repo.git".to_string()),
         ref_name: Some("main".to_string()),
+        ref_kind: None,
         skill_path: "skills/demo".to_string(),
         plugin_name: Some("integration".to_string()),
         computed_hash: computed_hash.to_string(),
@@ -2650,6 +2651,10 @@ mod update_lifecycle {
         }
 
         async fn install(&self) {
+            self.install_ref("main").await;
+        }
+
+        async fn install_ref(&self, reference: &str) {
             let clones_before = self.clone_count();
             let discovery = SourceDiscoveryService::with_git_transport(
                 self.payloads.clone(),
@@ -2662,7 +2667,8 @@ mod update_lifecycle {
                     url: self.remote.source(),
                     subpath: None,
                     local_path: None,
-                    git_ref: Some("main".to_string()),
+                    git_ref: Some(reference.to_string()),
+                    ref_kind: None,
                     skill_filter: None,
                 },
                 self.remote.source(),
@@ -4181,6 +4187,65 @@ mod update_lifecycle {
         assert_eq!(
             fs::read(package_skills.join("alpha/SKILL.md")).unwrap(),
             markdown
+        );
+    }
+
+    #[tokio::test]
+    async fn native_pinned_installation_persists_reference_and_reacquires_original_commit() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        let commit = crate::core::compute_local_ref_revision(&fixture.remote.work).unwrap();
+        fixture.install_ref(&commit).await;
+        let lock_path = fixture.project_path.join("skills-lock.json");
+        let before = read_json(&lock_path).unwrap();
+        assert_eq!(before["skills"]["alpha"]["ref"], commit);
+        assert_eq!(before["skills"]["alpha"]["refKind"], "commit");
+        fixture.remote.publish_change("skills/alpha");
+        let request = UpdateCheckRequest {
+            context: fixture.context(),
+            mode: UpdateCheckMode::Force,
+            selection: UpdateCheckSelection::Skills(vec![SkillIdentity {
+                context: fixture.context(),
+                skill_name: "alpha".into(),
+            }]),
+        };
+        let checked = fixture.check_service().check(&request).await.unwrap();
+        assert_eq!(
+            checked.skills[0].status,
+            SkillUpdateCheckStatus::UpToDate,
+            "{checked:?}"
+        );
+        let service = fixture.update_service();
+        let prepared = service
+            .prepare(
+                &UpdateRequest {
+                    context: fixture.context(),
+                    skill_names: vec!["alpha".into()],
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let selected = prepared
+            .preview
+            .skills
+            .iter()
+            .flat_map(|skill| &skill.targets)
+            .filter_map(|target| target.selectable_entry_id.clone())
+            .collect::<Vec<_>>();
+        let result = service
+            .execute_prepared(prepared, &selected, CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert!(
+            result.skills[0].mutation.as_ref().unwrap().error.is_none(),
+            "{result:?}"
+        );
+        let after = read_json(&lock_path).unwrap();
+        assert_eq!(after["skills"]["alpha"]["ref"], commit);
+        assert_eq!(after["skills"]["alpha"]["refKind"], "commit");
+        assert_eq!(
+            after["skills"]["alpha"]["computedHash"],
+            before["skills"]["alpha"]["computedHash"]
         );
     }
 

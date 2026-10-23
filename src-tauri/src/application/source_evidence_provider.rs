@@ -1634,6 +1634,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: Some("main".to_string()),
+            ref_kind: None,
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
@@ -1696,6 +1697,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: Some("main".to_string()),
+            ref_kind: None,
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
@@ -1739,6 +1741,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: Some("main".to_string()),
+            ref_kind: None,
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
@@ -1792,6 +1795,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: Some("main".to_string()),
+            ref_kind: None,
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
@@ -1842,6 +1846,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: Some("main".to_string()),
+            ref_kind: None,
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
@@ -1890,6 +1895,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: Some("main".to_string()),
+            ref_kind: None,
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();

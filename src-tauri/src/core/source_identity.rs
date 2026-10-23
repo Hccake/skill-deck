@@ -123,7 +123,7 @@ impl AcquisitionDescriptor {
     }
 
     pub fn parsed_source(&self, provider: &SourceProvider) -> ParsedSource {
-        ParsedSource {
+        let mut parsed = ParsedSource {
             source_type: match provider {
                 SourceProvider::Github => SourceType::GitHub,
                 SourceProvider::Gitlab => SourceType::GitLab,
@@ -134,8 +134,11 @@ impl AcquisitionDescriptor {
             subpath: None,
             local_path: None,
             git_ref: self.git_ref.clone(),
+            ref_kind: None,
             skill_filter: None,
-        }
+        };
+        parsed.apply_resolved_ref(self.git_ref.as_deref());
+        parsed
     }
 }
 
@@ -164,7 +167,7 @@ impl SourceIdentity {
         Self::build(
             parsed.source_type.clone(),
             parsed.url.clone(),
-            parsed.git_ref.clone(),
+            parsed.transport_ref(),
         )
     }
 
@@ -183,7 +186,19 @@ impl SourceIdentity {
         } else {
             source
         };
-        Self::build(source_type, source, metadata.ref_name.clone())
+        if metadata.ref_kind == Some(crate::models::GitRefKind::Commit)
+            && !metadata
+                .ref_name
+                .as_deref()
+                .is_some_and(environment_engine::git_ref::is_full_commit)
+        {
+            return Err(invalid_identity("invalid pinned commit"));
+        }
+        Self::build(
+            source_type,
+            source,
+            crate::models::GitRefKind::transport(metadata.ref_name.as_deref(), metadata.ref_kind),
+        )
     }
 
     fn build(
@@ -476,6 +491,7 @@ mod tests {
             source_type: "git".into(),
             source_url: Some("git://127.0.0.1:9418/tools.git".into()),
             ref_name: Some("release/v1".into()),
+            ref_kind: None,
             skill_path: Some("skills/demo/SKILL.md".into()),
             remote_hash: None,
             computed_hash: Some("installed-hash".into()),
@@ -499,6 +515,7 @@ mod tests {
             source_type: "git".into(),
             source_url: Some("https://alice:secret@example.com/acme/tools.git?token=hidden".into()),
             ref_name: None,
+            ref_kind: None,
             skill_path: Some("skills/demo".into()),
             remote_hash: Some("old".into()),
             computed_hash: None,

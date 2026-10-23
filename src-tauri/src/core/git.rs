@@ -18,7 +18,7 @@ use crate::error::AppError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 /// Git 克隆默认超时时间（秒）
@@ -67,6 +67,7 @@ pub struct CloneResult {
     /// clone 完成时捕获的 HEAD revision。transport 将其传递给后续 source workflow，
     /// 避免 consumer 再次依赖系统 Git 读取同一份 metadata。
     pub ref_revision: Option<String>,
+    pub resolved_ref: Option<String>,
 }
 
 pub(crate) fn clone_repo_with_progress_options<F>(
@@ -82,6 +83,17 @@ where
     F: Fn(CloneProgress),
 {
     let started_at = std::time::Instant::now();
+    if let Some(commit) = git_ref.and_then(environment_engine::git_ref::pinned_commit) {
+        return fetch_commit(
+            url,
+            commit,
+            &on_progress,
+            &cancellation,
+            proxy,
+            timeout,
+            display_timeout_secs,
+        );
+    }
 
     // 发送连接中状态
     on_progress(CloneProgress {
@@ -152,14 +164,60 @@ where
                     message: None,
                 });
                 let ref_revision = compute_local_ref_revision(&repo_path);
+                let resolved_ref = if let Some(reference) =
+                    git_ref.filter(|reference| reference.starts_with("refs/"))
+                {
+                    Some(reference.to_string())
+                } else if let Some(reference) = git_ref {
+                    let mut command = std_command("git");
+                    command
+                        .arg("-C")
+                        .arg(&repo_path)
+                        .args(["symbolic-ref", "--quiet", "HEAD"]);
+                    let remaining = timeout.saturating_sub(started_at.elapsed());
+                    let output = execute_with_timeout_and_progress(
+                        &mut command,
+                        remaining,
+                        &on_progress,
+                        &cancellation,
+                    )?;
+                    if output.success {
+                        Some(output.stdout.trim().to_string())
+                    } else if output.status_code == Some(1) {
+                        Some(format!(
+                            "refs/tags/{}",
+                            environment_engine::git_ref::clone_branch(reference)
+                        ))
+                    } else {
+                        return Err(classify_git_command_error(&output, url, "resolve ref"));
+                    }
+                } else {
+                    None
+                };
                 Ok(CloneResult {
                     _temp_dir: temp_dir,
                     repo_path,
                     ref_revision,
+                    resolved_ref,
                 })
             } else {
                 // 分类错误
                 let error = classify_git_command_error(&output, url, "clone");
+                if matches!(error, AppError::GitRefNotFound { .. }) {
+                    if let Some(commit) =
+                        git_ref.filter(|value| environment_engine::git_ref::is_full_commit(value))
+                    {
+                        return fetch_commit(
+                            url,
+                            commit,
+                            &on_progress,
+                            &cancellation,
+                            proxy,
+                            timeout.saturating_sub(started_at.elapsed()),
+                            display_timeout_secs,
+                        );
+                    }
+                }
                 on_progress(CloneProgress {
                     phase: ClonePhase::Error,
                     elapsed_secs: output.elapsed_secs,
@@ -174,6 +232,64 @@ where
             Err(e)
         }
     }
+}
+
+fn fetch_commit<F: Fn(CloneProgress)>(
+    url: &str,
+    commit: &str,
+    progress: &F,
+    cancellation: &CancellationSignal,
+    proxy: Option<&str>,
+    timeout: Duration,
+    display_timeout_secs: u64,
+) -> Result<CloneResult, AppError> {
+    let started = Instant::now();
+    let temp = TempDir::new()?;
+    let commit = commit.to_ascii_lowercase();
+    for arguments in [
+        vec!["init", "--quiet"],
+        vec!["remote", "add", "origin", url],
+        vec!["fetch", "--depth", "1", "--progress", "origin", &commit],
+        vec!["checkout", "--detach", "FETCH_HEAD"],
+    ] {
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(AppError::GitTimeout {
+                timeout_secs: display_timeout_secs.try_into().unwrap_or(u32::MAX),
+            });
+        }
+        let mut command = std_command("git");
+        apply_proxy_override(&mut command, proxy);
+        apply_clone_env(&mut command);
+        command.arg("-C").arg(temp.path()).args(arguments);
+        let output =
+            execute_with_timeout_and_progress(&mut command, remaining, progress, cancellation)?;
+        if !output.success {
+            return Err(classify_git_command_error(&output, url, "fetch commit"));
+        }
+    }
+    let mut command = std_command("git");
+    command
+        .arg("-C")
+        .arg(temp.path())
+        .args(["rev-parse", "--verify", "HEAD^{commit}"]);
+    let output = execute_with_timeout_and_progress(
+        &mut command,
+        timeout.saturating_sub(started.elapsed()),
+        progress,
+        cancellation,
+    )?;
+    if !output.success || output.stdout.trim() != commit {
+        return Err(AppError::GitCloneFailed {
+            message: "The fetched object does not match the requested commit".into(),
+        });
+    }
+    Ok(CloneResult {
+        repo_path: temp.path().to_path_buf(),
+        _temp_dir: temp,
+        ref_revision: Some(commit.clone()),
+        resolved_ref: Some(format!("commit:{commit}")),
+    })
 }
 
 fn build_error_progress(
@@ -549,6 +665,22 @@ pub(crate) fn probe_remote_ref_revision_options(
     proxy: Option<&str>,
     timeout: Duration,
 ) -> Result<String, AppError> {
+    let started = Instant::now();
+    if let Some(commit) = git_ref.and_then(environment_engine::git_ref::pinned_commit) {
+        return fetch_commit(
+            url,
+            commit,
+            &|_| {},
+            &cancellation,
+            proxy,
+            timeout,
+            timeout.as_secs(),
+        )?
+        .ref_revision
+        .ok_or_else(|| AppError::GitCloneFailed {
+            message: "Missing fetched commit".into(),
+        });
+    }
     let mut cmd = std_command("git");
     apply_proxy_override(&mut cmd, proxy);
     cmd.arg("ls-remote")
@@ -561,11 +693,34 @@ pub(crate) fn probe_remote_ref_revision_options(
     let output = execute_with_timeout_and_progress(&mut cmd, timeout, &|_| {}, &cancellation)?;
     if !output.success {
         if output.status_code == Some(2) {
+            if let Some(commit) =
+                git_ref.filter(|value| environment_engine::git_ref::is_full_commit(value))
+            {
+                return fetch_commit(
+                    url,
+                    commit,
+                    &|_| {},
+                    &cancellation,
+                    proxy,
+                    timeout.saturating_sub(started.elapsed()),
+                    timeout.as_secs(),
+                )?
+                .ref_revision
+                .ok_or_else(|| AppError::GitCloneFailed {
+                    message: "Missing fetched commit".into(),
+                });
+            }
             return Err(AppError::GitRefNotFound {
                 ref_name: git_ref.unwrap_or("HEAD").to_string(),
             });
         }
         return Err(classify_git_command_error(&output, url, "probe ref"));
+    }
+
+    if output.stdout_truncated {
+        return Err(AppError::GitCloneFailed {
+            message: "Remote reference response is incomplete".into(),
+        });
     }
 
     let revision = environment_engine::git_ref::resolve_remote_revision(&output.stdout, git_ref)

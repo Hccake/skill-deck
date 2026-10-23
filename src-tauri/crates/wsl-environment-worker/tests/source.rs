@@ -47,6 +47,7 @@ async fn saved_ref_probe_and_checkout_agree_for_branch_tag_name_collisions() {
         (Some("release"), &branch),
         (Some("refs/heads/release"), &branch),
         (Some("refs/tags/release"), &tag),
+        (Some(tag.as_str()), &tag),
     ] {
         let options = || GitSourceOptions {
             url: repository.to_string_lossy().into_owned(),
@@ -64,6 +65,26 @@ async fn saved_ref_probe_and_checkout_agree_for_branch_tag_name_collisions() {
             .unwrap();
         assert_eq!(&probed, expected, "{reference:?}");
         assert_eq!(acquired.revision.as_ref(), Some(expected), "{reference:?}");
+        manager.release(acquired.id).unwrap();
+    }
+    git(&repository, &["branch", &tag]);
+    for (reference, expected) in [
+        (tag.clone(), branch.clone()),
+        (format!("commit:{tag}"), tag.clone()),
+    ] {
+        let acquired = manager
+            .acquire_git(
+                GitSourceOptions {
+                    url: repository.to_string_lossy().into_owned(),
+                    git_ref: Some(reference),
+                    proxy: None,
+                    deadline: Duration::from_secs(30),
+                },
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(acquired.revision.as_deref(), Some(expected.as_str()));
         manager.release(acquired.id).unwrap();
     }
 }

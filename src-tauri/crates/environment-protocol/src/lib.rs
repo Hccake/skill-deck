@@ -774,6 +774,7 @@ pub enum Message {
         source_id: u64,
         root: String,
         revision: Option<String>,
+        resolved_ref: Option<String>,
         managed_bytes: u64,
     },
     ReleaseSource {

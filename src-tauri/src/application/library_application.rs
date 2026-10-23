@@ -4244,6 +4244,7 @@ mod tests {
                 source: "source".to_string(),
                 reacquisition_url: None,
                 ref_name: None,
+                ref_kind: None,
                 skill_path: Some(name.to_string()),
                 installed_revision: None,
                 computed_hash: Some("hash".to_string()),

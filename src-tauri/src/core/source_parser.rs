@@ -316,6 +316,7 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
             subpath: None,
             local_path: None,
             git_ref: None,
+            ref_kind: None,
             skill_filter: None,
         });
     }
@@ -341,6 +342,7 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
         subpath: None,
         local_path: None,
         git_ref: None,
+        ref_kind: None,
         skill_filter: None,
     })
 }
@@ -440,9 +442,13 @@ fn parse_azure_repos_url(mut url: Url) -> Result<ParsedSource, AppError> {
                 Ok(format!("refs/heads/{name}"))
             } else if kind.eq_ignore_ascii_case("GT") {
                 Ok(format!("refs/tags/{name}"))
+            } else if kind.eq_ignore_ascii_case("GC")
+                && environment_engine::git_ref::is_full_commit(name)
+            {
+                Ok(format!("commit:{}", name.to_ascii_lowercase()))
             } else {
                 Err(invalid_azure_source(
-                    "only branch and tag version parameters are supported",
+                    "version must specify a branch, tag, or complete 40-character commit SHA",
                 ))
             }
         })
@@ -454,12 +460,23 @@ fn parse_azure_repos_url(mut url: Url) -> Result<ParsedSource, AppError> {
         .extend(&clone_segments);
     url.set_query(None);
     url.set_fragment(None);
+    let ref_kind = git_ref
+        .as_deref()
+        .and_then(environment_engine::git_ref::pinned_commit)
+        .map(|_| crate::models::GitRefKind::Commit);
+    let git_ref = git_ref.map(|reference| {
+        reference
+            .strip_prefix("commit:")
+            .unwrap_or(&reference)
+            .to_string()
+    });
     Ok(ParsedSource {
         source_type: SourceType::Git,
         url: url.to_string(),
         subpath,
         local_path: None,
         git_ref,
+        ref_kind,
         skill_filter: None,
     })
 }
@@ -493,6 +510,7 @@ fn parse_git_url(input: &str) -> Result<ParsedSource, AppError> {
         subpath: None,
         local_path: None,
         git_ref: None,
+        ref_kind: None,
         skill_filter: None,
     })
 }
@@ -547,6 +565,7 @@ fn parse_gitlab_url(input: &str, url: &Url) -> Result<ParsedSource, AppError> {
             subpath: None,
             local_path: None,
             git_ref: None,
+            ref_kind: None,
             skill_filter: None,
         };
 
@@ -568,6 +587,7 @@ fn parse_gitlab_url(input: &str, url: &Url) -> Result<ParsedSource, AppError> {
         subpath: None,
         local_path: None,
         git_ref: None,
+        ref_kind: None,
         skill_filter: None,
     })
 }
@@ -695,6 +715,17 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn azure_complete_commit_is_an_explicit_pin() {
+        let sha = "a".repeat(40);
+        let parsed = super::parse_source(&format!(
+            "https://dev.azure.com/org/project/_git/repo?version=GC{sha}&path=/skills/demo"
+        ))
+        .unwrap();
+        assert_eq!(parsed.git_ref.as_deref(), Some(sha.as_str()));
+        assert_eq!(parsed.ref_kind, Some(crate::models::GitRefKind::Commit));
+        assert_eq!(parsed.subpath.as_deref(), Some("skills/demo"));
+    }
     use super::*;
 
     #[test]
@@ -731,7 +762,8 @@ mod tests {
             "?path=%00",
             "?path=/one&path=/two",
             "?version=GBmain&version=GTmain",
-            "?version=GC0123456789012345678901234567890123456789",
+            "?version=GC01234567",
+            "?version=GCzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
             "?version=main",
             "?version=GB",
         ] {
@@ -1055,6 +1087,7 @@ mod tests {
             subpath: None,
             local_path: None,
             git_ref: None,
+            ref_kind: None,
             skill_filter: None,
         };
         assert_eq!(get_owner_repo(&parsed), None);

@@ -168,4 +168,37 @@ mod tests {
             .expect("probe changed revision");
         assert_ne!(changed_revision, initial_revision);
     }
+
+    #[test]
+    fn pinned_commit_acquisition_keeps_old_content_after_branch_advances() {
+        let remote = BareSkillRepo::new(&["skills/alpha"]);
+        let transport = ProcessGitTransport::preserving_existing_config();
+        let source = remote.local_source();
+        let original = transport
+            .probe_ref_revision(&source, Some("main"), CancellationSignal::default())
+            .unwrap();
+        remote.publish_change("skills/alpha");
+        for reference in [original.clone(), format!("commit:{original}")] {
+            let cloned = transport
+                .clone_source(
+                    &source,
+                    Some(&reference),
+                    &|_| {},
+                    CancellationSignal::default(),
+                )
+                .unwrap();
+            assert_eq!(cloned.ref_revision.as_deref(), Some(original.as_str()));
+            assert!(
+                std::fs::read_to_string(cloned.repo_path.join("skills/alpha/SKILL.md"))
+                    .unwrap()
+                    .contains("v1 test skill")
+            );
+            assert_eq!(
+                transport
+                    .probe_ref_revision(&source, Some(&reference), CancellationSignal::default())
+                    .unwrap(),
+                original
+            );
+        }
+    }
 }

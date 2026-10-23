@@ -204,6 +204,7 @@ mod tests {
                                     "https://github.com/owner/repo".to_string(),
                                 ),
                                 ref_name: Some("main".to_string()),
+                                ref_kind: None,
                                 skill_path: Some("skills/demo".to_string()),
                                 installed_revision: Some("tree-old".to_string()),
                                 computed_hash: None,

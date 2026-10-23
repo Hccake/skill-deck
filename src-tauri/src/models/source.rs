@@ -4,6 +4,45 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
 
+/// 已验证的 Git 跟踪目标类型；缺失时按旧版未分类引用处理。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum GitRefKind {
+    Branch,
+    Tag,
+    Commit,
+}
+
+impl GitRefKind {
+    pub fn from_transport(reference: &str) -> (String, Option<Self>) {
+        for (prefix, kind) in [
+            ("refs/heads/", Self::Branch),
+            ("refs/tags/", Self::Tag),
+            ("commit:", Self::Commit),
+        ] {
+            if let Some(value) = reference.strip_prefix(prefix) {
+                return (value.to_string(), Some(kind));
+            }
+        }
+        (reference.to_string(), None)
+    }
+
+    pub fn transport(reference: Option<&str>, kind: Option<Self>) -> Option<String> {
+        reference.map(|reference| match kind {
+            Some(Self::Branch) => format!(
+                "refs/heads/{}",
+                reference.strip_prefix("refs/heads/").unwrap_or(reference)
+            ),
+            Some(Self::Tag) => format!(
+                "refs/tags/{}",
+                reference.strip_prefix("refs/tags/").unwrap_or(reference)
+            ),
+            Some(Self::Commit) => format!("commit:{}", reference.to_ascii_lowercase()),
+            None => reference.to_string(),
+        })
+    }
+}
+
 /// 来源类型枚举
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "lowercase")]
@@ -67,11 +106,25 @@ pub struct ParsedSource {
     pub local_path: Option<PathBuf>,
     /// Git 分支/tag
     pub git_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     /// @skill 语法提取的 skill 名称
     pub skill_filter: Option<String>,
 }
 
 impl ParsedSource {
+    pub fn transport_ref(&self) -> Option<String> {
+        GitRefKind::transport(self.git_ref.as_deref(), self.ref_kind)
+    }
+
+    pub fn apply_resolved_ref(&mut self, reference: Option<&str>) {
+        if let Some(reference) = reference {
+            let (value, kind) = GitRefKind::from_transport(reference);
+            self.git_ref = Some(value);
+            self.ref_kind = kind;
+        }
+    }
+
     /// 创建 GitHub 类型的 ParsedSource
     pub fn github(url: String) -> Self {
         Self {
@@ -80,6 +133,7 @@ impl ParsedSource {
             subpath: None,
             local_path: None,
             git_ref: None,
+            ref_kind: None,
             skill_filter: None,
         }
     }
@@ -92,6 +146,7 @@ impl ParsedSource {
             subpath: None,
             local_path: Some(path),
             git_ref: None,
+            ref_kind: None,
             skill_filter: None,
         }
     }

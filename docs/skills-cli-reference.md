@@ -64,7 +64,8 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `sourceUrl` | `skills` CLI | Git 等来源需要保留时记录原始来源 URL；Well-known 来源记录具体 Skill 的制品地址 |
 | `sourceBaseUrl` | `skills` CLI v1.5.22 Well-known 字段 | 用于定位 Well-known 索引的输入地址 |
 | `wellKnownDigest` | `skills` CLI v1.5.22 Well-known 字段 | 索引提供或根据旧版内容计算的 Skill 版本摘要 |
-| `ref` | `skills` CLI | 分支或标签 |
+| `ref` | `skills` CLI | Git 引用值；Skill Deck 也可保存完整提交 SHA |
+| `refKind` | Skill Deck | 可选的分支、标签或固定提交类型；旧记录缺失时按未分类引用解析 |
 | `skillPath` | `skills` CLI | 来源中定位 Skill 的相对路径，可以指向目录或以 `SKILL.md` 结尾，保留目录部分的实际大小写 |
 | `skillFolderHash` | `skills` CLI | 用于跟踪来源版本的哈希 |
 | `installedAt` | `skills` CLI | 首次安装时间 |
@@ -82,7 +83,8 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | 字段 | 定义来源 | 含义 |
 |---|---|---|
 | `source` | `skills` CLI | 规范化后的来源标识 |
-| `ref` | `skills` CLI | 分支或标签 |
+| `ref` | `skills` CLI | Git 引用值；Skill Deck 也可保存完整提交 SHA |
+| `refKind` | Skill Deck | 可选的分支、标签或固定提交类型；旧记录缺失时按未分类引用解析 |
 | `sourceType` | `skills` CLI | 来源类型 |
 | `skillPath` | `skills` CLI | 来源中定位 Skill 的相对路径，可以指向目录或以 `SKILL.md` 结尾 |
 | `computedHash` | `skills` CLI | 安装或更新时按兼容算法计算的 Skill 内容哈希 |
@@ -95,6 +97,8 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `via` | 新版 CLI 依赖声明字段 | 声明 Skill 的包名；`.` 表示当前项目 |
 
 Skill Deck 可识别外部工具写入的 `sourceType: "node_modules"` 项目记录。这类 Skill 的内容由项目依赖提供，应用展示记录信息，并按实际目录提供复制、管理 Agent 和移除；包版本升级由包管理器负责，安装关联或副本由原同步工具维护。带有 `via` 声明字段的 Git 来源继续按原 Git 来源更新。应用本身不扫描或同步项目依赖，正式 CLI 兼容参考版本仍为上表中的 1.5.23。
+
+固定提交的持续获取由 Skill Deck 的 `refKind: "commit"` 和完整 `ref` 共同确定。当前固定 CLI 测试基线不保证能够重新获取这类安装；外部工具改写记录并移除 `refKind` 后，Skill Deck 将按未分类引用重新解析。读取和检查不会自动补写引用类型，来源类型随实际安装或更新一同提交。
 
 Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent。当前参考版本使用 `subagents` 记录这些位置：
 

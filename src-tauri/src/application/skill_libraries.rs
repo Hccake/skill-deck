@@ -89,6 +89,8 @@ pub struct LibrarySkillSummary {
     pub plugin_name: Option<String>,
     /// 来源记录中保存的分支或标签。
     pub ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     /// Skill Deck 最近一次成功提交该成员本地内容的时间，不表示上游发布时间。
     /// 旧成员在下一次成功写入前为 `None`。
     pub updated_at: Option<String>,
@@ -413,6 +415,8 @@ pub(crate) struct LibrarySkillSourceRecord {
     pub(crate) source: String,
     pub(crate) reacquisition_url: Option<String>,
     pub(crate) ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ref_kind: Option<crate::models::GitRefKind>,
     pub(crate) skill_path: Option<String>,
     pub(crate) installed_revision: Option<String>,
     pub(crate) computed_hash: Option<String>,
@@ -1464,6 +1468,7 @@ fn detail_from_record(
                     content_hash: skill.content_manifest_hash,
                     plugin_name: source.as_ref().and_then(|value| value.plugin_name.clone()),
                     ref_name: source.as_ref().and_then(|value| value.ref_name.clone()),
+                    ref_kind: source.as_ref().and_then(|value| value.ref_kind),
                     updated_at: skill.updated_at,
                     comparison_fingerprint,
                     update_capability,
@@ -1727,6 +1732,7 @@ fn library_source_record(
             .then(|| source.update.source_url.clone())
             .flatten(),
         ref_name: source.update.ref_name.clone(),
+        ref_kind: source.update.ref_kind,
         skill_path: source.update.skill_path.clone(),
         installed_revision: source.update.remote_hash.clone(),
         computed_hash: source.update.computed_hash.clone(),
@@ -2163,6 +2169,7 @@ mod tests {
                     source_type: "git".to_string(),
                     source_url: Some("https://example.com/repo".to_string()),
                     ref_name: None,
+                    ref_kind: None,
                     skill_path: skill_path.clone(),
                     plugin_name: None,
                     computed_hash: format!("hash-{name}"),
@@ -2379,6 +2386,7 @@ mod tests {
                     source_type: source_type.to_string(),
                     source_url: Some("https://example.com/reacquire".to_string()),
                     ref_name: Some("main".to_string()),
+                    ref_kind: None,
                     skill_path: Some("skills/demo".to_string()),
                     remote_hash: Some("revision-v1".to_string()),
                     computed_hash: Some("computed-v1".to_string()),
@@ -2932,6 +2940,7 @@ mod tests {
                     source_type: "git".to_string(),
                     source_url: Some("https://example.com/repo".to_string()),
                     ref_name: None,
+                    ref_kind: None,
                     skill_path: "skills/api-design".to_string(),
                     plugin_name: None,
                     computed_hash: "hash-v1".to_string(),

@@ -23,6 +23,8 @@ pub struct SkillLockEntry {
     /// Branch or tag ref used for installation
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
     pub ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<crate::models::GitRefKind>,
     /// 仓库内的子路径
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,

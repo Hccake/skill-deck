@@ -710,6 +710,7 @@ fn lock_mutation(
                 "sourceBaseUrl": well_known.and(metadata.source_url.clone()),
                 "wellKnownDigest": well_known.map(|value| value.digest.clone()),
                 "ref": metadata.ref_name,
+                "refKind": metadata.ref_kind,
                 "skillPath": metadata.skill_path,
                 "skillFolderHash": metadata.global_skill_folder_hash(),
                 "installedAt": installed_at,
@@ -741,6 +742,7 @@ fn lock_mutation(
                 entry.insert("wellKnownDigest".to_string(), json!(well_known.digest));
             }
             entry.insert("ref".to_string(), json!(metadata.ref_name));
+            entry.insert("refKind".to_string(), json!(metadata.ref_kind));
             entry.insert("skillPath".to_string(), json!(metadata.skill_path));
             entry.insert("computedHash".to_string(), json!(metadata.computed_hash));
             entry.insert("pluginName".to_string(), json!(metadata.plugin_name));
@@ -1115,6 +1117,7 @@ mod tests {
                     source_type: "local".to_string(),
                     source_url: None,
                     ref_name: None,
+                    ref_kind: None,
                     skill_path: format!("skills/{name}"),
                     plugin_name: None,
                     computed_hash: computed_hash.to_string(),
@@ -1230,6 +1233,7 @@ mod tests {
                     source_type: "github".to_string(),
                     source_url: Some("https://github.com/owner/repo.git".to_string()),
                     ref_name: Some("main".to_string()),
+                    ref_kind: None,
                     skill_path: "skills/demo".to_string(),
                     plugin_name: None,
                     computed_hash: "computed-hash".to_string(),
@@ -1366,6 +1370,7 @@ mod tests {
                         source_type: "download".to_string(),
                         source_url: Some("https://example.com/SKILL.md".to_string()),
                         ref_name: None,
+                        ref_kind: None,
                         redirected_download_host: Some("cdn.example.net".to_string()),
                     },
                     BTreeMap::new(),
@@ -1386,6 +1391,7 @@ mod tests {
                     source_type: "download".to_string(),
                     source_url: Some("https://example.com/SKILL.md".to_string()),
                     ref_name: None,
+                    ref_kind: None,
                     skill_path: "SKILL.md".to_string(),
                     plugin_name: None,
                     computed_hash: "download-computed-hash".to_string(),
@@ -1532,6 +1538,7 @@ mod tests {
                     source_type: "github".to_string(),
                     source_url: Some("https://github.com/owner/repo.git".to_string()),
                     ref_name: Some("main".to_string()),
+                    ref_kind: None,
                     skill_path: "skills/demo".to_string(),
                     plugin_name: None,
                     computed_hash: "canonical-computed-hash".to_string(),
@@ -1708,6 +1715,7 @@ mod tests {
             source_type: "github".to_string(),
             source_url: Some("https://github.com/owner/repo.git".to_string()),
             ref_name: Some("main".to_string()),
+            ref_kind: None,
             skill_path: "skills/demo".to_string(),
             plugin_name: None,
             computed_hash: "computed".to_string(),
@@ -1771,6 +1779,7 @@ mod tests {
                     source_type: "github".to_string(),
                     source_url: Some("https://github.com/owner/repo.git".to_string()),
                     ref_name: Some("main".to_string()),
+                    ref_kind: None,
                     skill_path: "skills/demo".to_string(),
                     plugin_name: None,
                     computed_hash: "computed-hash".to_string(),
@@ -1905,6 +1914,7 @@ mod tests {
             source_type: "well-known".to_string(),
             source_url: Some("https://skills.example.com/catalog".to_string()),
             ref_name: None,
+            ref_kind: None,
             skill_path: "demo".to_string(),
             plugin_name: None,
             computed_hash: "computed".to_string(),

@@ -29,7 +29,7 @@ flowchart LR
 
 - GitHub 简写、GitHub 或 GitLab URL，以及仓库中的 Skill 路径；
 - Azure Repos 的 clone 地址或带 `path`、`version` 参数的页面地址；
-- 带分支、标签或 Skill 筛选条件的 Git 来源；
+- 带分支、标签、完整 40 位提交 SHA 或 Skill 筛选条件的 Git 来源；
 - SSH 和其他可以通过 Git 获取的地址；
 - 当前 Environment 中的本地目录；
 - Well-known 地址；
@@ -38,7 +38,9 @@ flowchart LR
 
 应用先解析并获取来源，再列出有效 Skill。用户完成选择后，应用固定所选 Skill 的完整内容并生成预览。来源获取失败时停止当前流程；内容或预览过期后，需要重新获取并确认。来源发现只依赖 Environment，后续预览使用流程已经选定的安装位置或目标库。
 
-Azure Repos 按普通 Git 来源保存和维护。页面参数 `path` 指定仓库内目录，`version=GB…` 指定分支，`version=GT…` 指定标签；同名分支和标签保持各自的引用类型。地址中的凭据和端口保留给 Git 获取使用。`GC` 提交参数、重复的 path/version 参数和不安全路径会返回来源错误。
+Azure Repos 按普通 Git 来源保存和维护。页面参数 `path` 指定仓库内目录，`version=GB…` 指定分支，`version=GT…` 指定标签，`version=GC…` 指定完整 40 位提交 SHA；同名分支和标签保持各自的引用类型。地址中的凭据和端口保留给 Git 获取使用。无效提交、重复的 path/version 参数和不安全路径会返回来源错误。
+
+Git 来源可以通过 `owner/repo#<完整40位SHA>` 安装特定提交。未分类的引用先匹配分支，再匹配标签；只有同名引用不存在且输入为完整 SHA 时，才尝试获取提交。短 SHA 只作为分支或标签名称处理。获取成功后，来源记录同时保存引用值与类型，固定提交后续始终指向同一提交；分支和标签继续跟踪原命名引用。服务器不允许获取目标提交时保留现有内容并报告获取失败。
 
 ### 目录发现与选择
 
