@@ -142,6 +142,15 @@ impl RuntimeSourceEvidenceDetector {
                     })
                     .map(|entry| normalize_skill_folder_path(&entry.path))
                     .collect::<BTreeSet<_>>();
+                if request
+                    .requested_skill_paths
+                    .iter()
+                    .any(|path| !catalog.contains(path))
+                {
+                    return self
+                        .detect_github_by_clone(request, previous, cancellation)
+                        .await;
+                }
                 let requested = request.requested_skill_paths;
                 let tree_revisions = snapshot
                     .entries
@@ -167,6 +176,7 @@ impl RuntimeSourceEvidenceDetector {
                     .collect();
                 Ok(EvidenceDetectionOutcome::Modified(
                     RemoteEvidenceObservation {
+                        location_catalog: None,
                         snapshot_id: RemoteSnapshotId::new(
                             request.key.normalized_ref,
                             requested_ref,
@@ -353,6 +363,20 @@ impl RuntimeSourceEvidenceDetector {
                     );
                 }
             }
+            let location_catalog = if member_failures.values().any(|reason| *reason == crate::error::SourceAcquisitionFailureReason::NotFound) {
+                match selected.update_location_catalog(&discovery_session, cancellation.clone()).await {
+                    Ok(catalog) => Some(catalog),
+                    Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+                    Err(_) => {
+                        for failure in member_failures.values_mut() {
+                            if *failure == crate::error::SourceAcquisitionFailureReason::NotFound {
+                                *failure = crate::error::SourceAcquisitionFailureReason::Unavailable;
+                            }
+                        }
+                        None
+                    }
+                }
+            } else { None };
             let snapshot = self.payloads.source_snapshot(&discovery_session)?;
             let catalog = snapshot
                 .skills()
@@ -418,6 +442,7 @@ impl RuntimeSourceEvidenceDetector {
             );
             Ok(EvidenceDetectionOutcome::Modified(
                 RemoteEvidenceObservation {
+                location_catalog,
                     snapshot_id: snapshot_id.clone(),
                     provider_validation: None,
                     catalog_complete: false,
@@ -488,6 +513,7 @@ impl RuntimeSourceEvidenceDetector {
         ))?;
         Ok(EvidenceDetectionOutcome::Modified(
             RemoteEvidenceObservation {
+                location_catalog: None,
                 snapshot_id: RemoteSnapshotId::new(
                     NormalizedRef::Default,
                     "well-known-index",
@@ -1013,6 +1039,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn github_missing_saved_path_uses_a_complete_single_git_snapshot() {
+        let api = GithubTreeFetchOutcome::Modified(crate::core::GithubTreeSnapshot {
+            ref_revision: "api-earlier-commit".into(),
+            root_tree_revision: "api-earlier-tree".into(),
+            validation: Some("api-etag".into()),
+            entries: vec![],
+        });
+        let (detector, transport, remote) = github_detector_with_git_fallback(api, None);
+        std::fs::create_dir_all(remote.work.join("tools")).unwrap();
+        std::fs::rename(
+            remote.work.join("skills/alpha"),
+            remote.work.join("tools/alpha"),
+        )
+        .unwrap();
+        remote.publish_worktree("move alpha after the API snapshot");
+        let result = detector
+            .detect(
+                github_request("skills/alpha"),
+                None,
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let EvidenceDetectionOutcome::Modified(evidence) = result else {
+            panic!("expected complete Git evidence");
+        };
+        assert_eq!(transport.clone_count(), 1);
+        assert_eq!(
+            evidence.snapshot_id.commit_revision,
+            crate::core::compute_local_ref_revision(&remote.work).unwrap()
+        );
+        assert_eq!(
+            evidence
+                .location_catalog
+                .unwrap()
+                .resolve("alpha")
+                .unwrap()
+                .unwrap()
+                .path,
+            "tools/alpha/SKILL.md"
+        );
+        assert!(evidence.provider_validation.is_none());
+        assert!(!evidence.skill_revisions.contains_key("skills/alpha"));
+    }
+
+    #[tokio::test]
     async fn github_private_source_falls_back_to_git_for_non_authoritative_api_failures() {
         for api_outcome in [
             GithubTreeFetchOutcome::Failed(GithubTreeFailure::AuthenticationRequired),
@@ -1223,6 +1295,7 @@ mod tests {
 
     fn previous_github_evidence() -> RemoteEvidenceEntry {
         RemoteEvidenceEntry {
+            location_catalog: None,
             checked_at_epoch_ms: 1,
             expires_at_epoch_ms: 2,
             snapshot_id: RemoteSnapshotId::new(
@@ -1857,6 +1930,7 @@ mod tests {
 
     fn entry(facts: RemoteEvidenceObservation) -> RemoteEvidenceEntry {
         RemoteEvidenceEntry {
+            location_catalog: None,
             checked_at_epoch_ms: 1,
             expires_at_epoch_ms: 2,
             snapshot_id: facts.snapshot_id,

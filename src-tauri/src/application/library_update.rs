@@ -177,6 +177,7 @@ where
                 }
                 crate::core::source_identity::SourceIdentity::from_metadata(metadata)?;
                 saved.push(SavedSkillSource {
+                    allow_relocation: false,
                     name: name.clone(),
                     metadata: metadata.clone(),
                 });

@@ -30,6 +30,19 @@
   line-height: 20px;
   overflow-wrap: anywhere;
 }
+.update-plan-dialog .update-skill-heading-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.update-plan-dialog .update-skill-heading-row .update-skill-heading {
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin: 0;
+}
 .update-plan-dialog .update-skill-positions {
   padding-left: 16px;
   container-type: inline-size;

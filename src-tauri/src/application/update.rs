@@ -77,6 +77,8 @@ pub struct CheckUpdateCapability {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct SkillUpdateInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_change: Option<SourcePathChange>,
     pub name: String,
     pub source: String,
     pub has_update: bool,
@@ -289,10 +291,35 @@ impl PreparedUpdate {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct SourcePathChange {
+    pub previous_path: String,
+    pub next_path: String,
+}
+
+impl SourcePathChange {
+    pub fn between(previous: &str, next: &str) -> Option<Self> {
+        let previous = crate::core::skill_paths::normalize_skill_folder_path(previous);
+        let next = crate::core::skill_paths::normalize_skill_folder_path(next);
+        (previous != next).then(|| Self {
+            previous_path: if previous.is_empty() {
+                ".".into()
+            } else {
+                previous
+            },
+            next_path: if next.is_empty() { ".".into() } else { next },
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateSkillPreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_change: Option<SourcePathChange>,
     pub linked_targets: Vec<UpdateLinkedTargetPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_key: Option<String>,
@@ -506,6 +533,7 @@ where
             .filter_map(|(_, item)| item.as_ref().ok())
             .flat_map(|item| item.source_candidates.iter())
             .map(|skill| SavedSkillSource {
+                allow_relocation: true,
                 name: skill.name.clone(),
                 metadata: skill.metadata(),
             })
@@ -667,6 +695,15 @@ where
                 let payload = content
                     .validate_member(self.payloads.as_ref(), &request.context.environment, &name)
                     .await?;
+                let previous_path = inspection
+                    .source_candidates
+                    .iter()
+                    .find(|skill| skill.name == name)
+                    .ok_or(AppError::StaleTarget)?
+                    .skill_path
+                    .as_str();
+                preview.path_change =
+                    SourcePathChange::between(previous_path, &payload.handle().skill_path);
                 let handle = payload.handle().clone();
                 let execution = UpdateExecutionRequest {
                     request: UpdateRequest {
@@ -1101,6 +1138,7 @@ fn previews_from_inspection(
                 })
             }).collect();
             Ok(UpdateSkillPreview {
+                path_change: None,
                 linked_targets,
                 source_key: Some(source_key),
                 capability,

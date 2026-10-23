@@ -305,8 +305,12 @@ impl BareSkillRepo {
 
     fn publish(&self, skill: &str, version: &str) {
         write_skill(&self.work, skill, version).expect("write changed Skill");
+        self.publish_worktree(version);
+    }
+
+    pub(crate) fn publish_worktree(&self, message: &str) {
         run_git(&self.work, &["add", "-A"]);
-        run_git(&self.work, &["commit", "-q", "-m", version]);
+        run_git(&self.work, &["commit", "-q", "-m", message]);
         run_git(
             &self.work,
             &[
@@ -316,6 +320,13 @@ impl BareSkillRepo {
                 "main",
             ],
         );
+    }
+
+    pub(crate) fn relocate_skill(&self, previous: &str, next: &str) {
+        fs::create_dir_all(self.work.join(next).parent().unwrap()).unwrap();
+        run_git(&self.work, &["mv", previous, "relocation-intermediate"]);
+        run_git(&self.work, &["mv", "relocation-intermediate", next]);
+        self.publish_worktree("relocate skill");
     }
 }
 

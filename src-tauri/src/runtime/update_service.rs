@@ -179,27 +179,45 @@ impl RuntimeSkillSourceModule {
             }
             let selected = SelectedPayloadAcquisitionService::new(self.payloads.clone());
             let mut skill_errors = Vec::new();
+            let mut resolved_paths = BTreeMap::new();
             if provider != &SourceProvider::WellKnown {
                 for skill in &group.skills {
-                    if let Err(error) = selected
-                        .ensure_saved_path(
-                            &discovery_session,
-                            skill.skill_path(),
-                            cancellation.clone(),
-                        )
-                        .await
-                    {
-                        if error == AppError::MutationCancelled {
-                            return Err(error);
+                    let result = if skill.allow_relocation {
+                        selected
+                            .resolve_saved_skill_path(
+                                &discovery_session,
+                                &skill.name,
+                                skill.skill_path(),
+                                cancellation.clone(),
+                            )
+                            .await
+                    } else {
+                        selected
+                            .ensure_saved_path(
+                                &discovery_session,
+                                skill.skill_path(),
+                                cancellation.clone(),
+                            )
+                            .await
+                            .map(|()| skill.skill_path().to_string())
+                    };
+                    match result {
+                        Ok(path) => {
+                            resolved_paths.insert(skill.name.clone(), path);
                         }
-                        let error = if matches!(error, AppError::PathNotFound { .. }) {
-                            AppError::UpstreamSkillDeleted {
-                                skill_name: skill.name.clone(),
-                            }
-                        } else {
-                            error
-                        };
-                        skill_errors.push((skill.name.clone(), error));
+                        Err(AppError::MutationCancelled) => {
+                            return Err(AppError::MutationCancelled)
+                        }
+                        Err(error) => {
+                            let error = if matches!(error, AppError::PathNotFound { .. }) {
+                                AppError::UpstreamSkillDeleted {
+                                    skill_name: skill.name.clone(),
+                                }
+                            } else {
+                                error
+                            };
+                            skill_errors.push((skill.name.clone(), error));
+                        }
                     }
                 }
             }
@@ -221,7 +239,10 @@ impl RuntimeSkillSourceModule {
                     retained_skill_matches(
                         provider,
                         &locked.name,
-                        locked.skill_path(),
+                        resolved_paths
+                            .get(&locked.name)
+                            .map(String::as_str)
+                            .unwrap_or(locked.skill_path()),
                         &available.skill_name,
                         &available.relative_path,
                     )
@@ -274,7 +295,14 @@ impl RuntimeSkillSourceModule {
                 match acquired {
                     Ok((handle, lease, revision)) => {
                         skill_revisions.insert(
-                            snapshot_skill_key(provider, &locked.name, locked.skill_path()),
+                            snapshot_skill_key(
+                                provider,
+                                &locked.name,
+                                resolved_paths
+                                    .get(&locked.name)
+                                    .map(String::as_str)
+                                    .unwrap_or(locked.skill_path()),
+                            ),
                             revision,
                         );
                         acquired_skills.push(locked.name.clone());

@@ -368,7 +368,8 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
     fn read_source_update_candidates<'a>(
         &'a self,
         cancellation: CancellationSignal,
-    ) -> PayloadStorageFuture<'a, Result<Vec<(String, Vec<u8>)>, AppError>> {
+    ) -> PayloadStorageFuture<'a, Result<crate::core::update_locations::CandidateDocuments, AppError>>
+    {
         Box::pin(async move {
             let source = self.source_binding()?;
             let response: environment_protocol::SourceScanResponse = self

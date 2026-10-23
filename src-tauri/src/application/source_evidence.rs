@@ -127,6 +127,7 @@ impl RemoteSnapshotId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteEvidenceObservation {
+    pub location_catalog: Option<crate::core::update_locations::UpdateLocationCatalog>,
     pub snapshot_id: RemoteSnapshotId,
     pub provider_validation: Option<String>,
     pub complete_skill_path_catalog: BTreeSet<String>,
@@ -137,6 +138,7 @@ pub struct RemoteEvidenceObservation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteEvidenceEntry {
+    pub location_catalog: Option<crate::core::update_locations::UpdateLocationCatalog>,
     pub checked_at_epoch_ms: u64,
     pub expires_at_epoch_ms: u64,
     pub snapshot_id: RemoteSnapshotId,
@@ -572,6 +574,8 @@ struct PersistedRemoteSnapshotId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedRemoteEvidenceEntry {
+    #[serde(default)]
+    location_catalog: Option<crate::core::update_locations::UpdateLocationCatalog>,
     checked_at_epoch_ms: u64,
     expires_at_epoch_ms: u64,
     snapshot_id: PersistedRemoteSnapshotId,
@@ -585,6 +589,7 @@ struct PersistedRemoteEvidenceEntry {
 impl From<&RemoteEvidenceEntry> for PersistedRemoteEvidenceEntry {
     fn from(value: &RemoteEvidenceEntry) -> Self {
         Self {
+            location_catalog: value.location_catalog.clone(),
             checked_at_epoch_ms: value.checked_at_epoch_ms,
             expires_at_epoch_ms: value.expires_at_epoch_ms,
             snapshot_id: PersistedRemoteSnapshotId {
@@ -608,6 +613,7 @@ impl From<&RemoteEvidenceEntry> for PersistedRemoteEvidenceEntry {
 impl From<PersistedRemoteEvidenceEntry> for RemoteEvidenceEntry {
     fn from(value: PersistedRemoteEvidenceEntry) -> Self {
         Self {
+            location_catalog: value.location_catalog,
             checked_at_epoch_ms: value.checked_at_epoch_ms,
             expires_at_epoch_ms: value.expires_at_epoch_ms,
             snapshot_id: RemoteSnapshotId {
@@ -704,12 +710,23 @@ impl PersistedCoordinatorState {
         }
         let mut state = CoordinatorState::default();
         for entry in self.evidence {
-            insert_unique(
-                &mut state.evidence,
-                entry.key.into_runtime()?,
-                entry.value.into(),
-                "evidence",
-            )?;
+            let key = entry.key.into_runtime()?;
+            let mut value: RemoteEvidenceEntry = entry.value.into();
+            // 旧缓存没有迁移候选证明，保留正向版本信息及失败等待，重新核实缺失路径。
+            if key.remote.provider() != &crate::core::SourceProvider::WellKnown
+                && value.location_catalog.is_none()
+            {
+                if value.catalog_complete {
+                    value
+                        .skill_revisions
+                        .retain(|path, _| value.complete_skill_path_catalog.contains(path));
+                }
+                value.catalog_complete = false;
+                value.member_failures.retain(|_, reason| {
+                    *reason != crate::error::SourceAcquisitionFailureReason::NotFound
+                });
+            }
+            insert_unique(&mut state.evidence, key, value, "evidence")?;
         }
         for entry in self.last_referenced {
             insert_unique(
@@ -1059,9 +1076,15 @@ impl SourceEvidenceCoordinator {
             }
             _ => skill_revisions,
         };
+        let location_catalog = state
+            .evidence
+            .get(&key)
+            .filter(|previous| previous.snapshot_id == snapshot_id)
+            .and_then(|previous| previous.location_catalog.clone());
         state.evidence.insert(
             key.clone(),
             RemoteEvidenceEntry {
+                location_catalog,
                 checked_at_epoch_ms: checked_at,
                 expires_at_epoch_ms: checked_at.saturating_add(EVIDENCE_TTL_MS),
                 snapshot_id,
@@ -1445,6 +1468,10 @@ fn finish_detection(
                     .evidence
                     .get(key)
                     .filter(|previous| previous.snapshot_id == observation.snapshot_id);
+                let location_catalog = observation
+                    .location_catalog
+                    .clone()
+                    .or_else(|| previous.and_then(|previous| previous.location_catalog.clone()));
                 let mut skill_revisions = previous
                     .map(|previous| previous.skill_revisions.clone())
                     .unwrap_or_default();
@@ -1468,6 +1495,7 @@ fn finish_detection(
                 state.evidence.insert(
                     key.clone(),
                     RemoteEvidenceEntry {
+                        location_catalog,
                         checked_at_epoch_ms: checked_at,
                         expires_at_epoch_ms: checked_at.saturating_add(EVIDENCE_TTL_MS),
                         snapshot_id: observation.snapshot_id,
@@ -1957,6 +1985,7 @@ mod tests {
         revisions: [(&str, SkillRevision); N],
     ) -> EvidenceDetectionOutcome {
         EvidenceDetectionOutcome::Modified(RemoteEvidenceObservation {
+            location_catalog: None,
             snapshot_id: RemoteSnapshotId::new(
                 NormalizedRef::Named("main".to_string()),
                 "refs/heads/main",
@@ -1994,6 +2023,77 @@ mod tests {
             move || now.load(Ordering::SeqCst),
         )
         .expect("persistent coordinator")
+    }
+
+    #[tokio::test]
+    async fn persisted_relocation_catalog_is_reused_but_legacy_missing_paths_are_rechecked() {
+        for legacy in [false, true] {
+            let temp = tempdir().unwrap();
+            let path = temp.path().join("checks.json");
+            let EvidenceDetectionOutcome::Modified(mut observation) = modified("revision-1", [])
+            else {
+                unreachable!()
+            };
+            observation.complete_skill_path_catalog = BTreeSet::from(["tools/alpha".into()]);
+            observation.member_failures.insert(
+                "skills/alpha".into(),
+                crate::error::SourceAcquisitionFailureReason::NotFound,
+            );
+            observation.location_catalog = Some(
+                crate::core::update_locations::UpdateLocationCatalog::from_documents(vec![(
+                    "tools/alpha/SKILL.md".into(),
+                    b"---\nname: alpha\ndescription: alpha\n---\nbody".to_vec(),
+                )])
+                .unwrap(),
+            );
+            let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Modified(
+                observation,
+            )]));
+            let first = persistent_coordinator(detector, Arc::new(AtomicU64::new(1000)), &path);
+            first
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Force),
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            drop(first);
+            if legacy {
+                let mut saved: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                for entry in saved["evidence"].as_array_mut().unwrap() {
+                    entry["value"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("locationCatalog");
+                }
+                std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+            }
+            let detector = Arc::new(ScriptedDetector::new([modified(
+                "revision-2",
+                [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
+            )]));
+            let second =
+                persistent_coordinator(detector.clone(), Arc::new(AtomicU64::new(2000)), &path);
+            let result = second
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Automatic),
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(detector.calls(), usize::from(legacy));
+            if !legacy {
+                assert!(result
+                    .evidence
+                    .unwrap()
+                    .location_catalog
+                    .unwrap()
+                    .resolve("alpha")
+                    .unwrap()
+                    .is_some());
+            }
+        }
     }
 
     #[tokio::test]
@@ -3701,6 +3801,7 @@ mod tests {
                 }
                 Ok(EvidenceDetectionOutcome::Modified(
                     RemoteEvidenceObservation {
+                        location_catalog: None,
                         snapshot_id: RemoteSnapshotId::new(
                             NormalizedRef::Named("main".to_string()),
                             "refs/heads/main",
@@ -3941,6 +4042,7 @@ mod tests {
             unreachable!()
         };
         let evidence = RemoteEvidenceEntry {
+            location_catalog: None,
             checked_at_epoch_ms: 1,
             expires_at_epoch_ms: 100,
             snapshot_id: observation.snapshot_id,
@@ -3957,6 +4059,7 @@ mod tests {
     async fn path_absent_from_a_complete_catalog_completes_without_revision() {
         let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Modified(
             RemoteEvidenceObservation {
+                location_catalog: None,
                 snapshot_id: RemoteSnapshotId::new(
                     NormalizedRef::Named("main".to_string()),
                     "refs/heads/main",

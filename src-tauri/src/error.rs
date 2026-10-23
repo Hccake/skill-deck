@@ -206,6 +206,13 @@ pub enum AppError {
         actual_name: String,
     },
 
+    #[error("Upstream Skill '{skill_name}' has multiple matching locations")]
+    UpstreamSkillAmbiguous {
+        #[serde(rename = "skillName")]
+        #[specta(rename = "skillName")]
+        skill_name: String,
+    },
+
     #[error("Upstream Skill '{skill_name}' no longer exists")]
     UpstreamSkillDeleted {
         #[serde(rename = "skillName")]

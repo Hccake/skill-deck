@@ -45,6 +45,7 @@ pub enum OperationErrorCode {
     ExternalLockChanged,
     UpstreamSkillNameChanged,
     UpstreamSkillDeleted,
+    UpstreamSkillAmbiguous,
     MutationCancelled,
     ExecutionFailed,
     RestoreFailed,
@@ -349,6 +350,13 @@ impl ErrorReport {
                 report
                     .parameters
                     .insert("actualName".to_string(), actual_name);
+                report
+            }
+            AppError::UpstreamSkillAmbiguous { skill_name } => {
+                let mut report = Self::new(OperationErrorCode::UpstreamSkillAmbiguous);
+                report
+                    .parameters
+                    .insert("skillName".to_string(), skill_name);
                 report
             }
             AppError::UpstreamSkillDeleted { skill_name } => {

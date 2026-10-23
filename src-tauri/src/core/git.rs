@@ -223,6 +223,7 @@ struct CommandOutput {
     success: bool,
     status_code: Option<i32>,
     stdout: String,
+    stdout_truncated: bool,
     stderr: String,
     elapsed_secs: u64,
 }
@@ -281,7 +282,7 @@ fn receive_output_reader(
     deadline: std::time::Instant,
     stream: &str,
     cancellation: &CancellationSignal,
-) -> Result<String, AppError> {
+) -> Result<(String, bool), AppError> {
     let retained = loop {
         if cancellation.is_cancelled() {
             return Err(AppError::MutationCancelled);
@@ -305,7 +306,8 @@ fn receive_output_reader(
     .map_err(|error| AppError::GitCloneFailed {
         message: format!("Failed to read Git {stream}: {error}"),
     })?;
-    Ok(decode_retained_output(retained))
+    let truncated = retained.truncated;
+    Ok((decode_retained_output(retained), truncated))
 }
 
 fn decode_retained_output(mut retained: RetainedOutput) -> String {
@@ -431,14 +433,16 @@ where
 
     let status = status?;
     let drain_deadline = std::time::Instant::now() + GIT_OUTPUT_DRAIN_TIMEOUT;
-    let stdout = receive_output_reader(stdout_reader, drain_deadline, "stdout", cancellation)
-        .inspect_err(|_| terminate_std_process_tree(&mut child, &process_tree))?;
-    let stderr = receive_output_reader(stderr_reader, drain_deadline, "stderr", cancellation)
+    let (stdout, stdout_truncated) =
+        receive_output_reader(stdout_reader, drain_deadline, "stdout", cancellation)
+            .inspect_err(|_| terminate_std_process_tree(&mut child, &process_tree))?;
+    let (stderr, _) = receive_output_reader(stderr_reader, drain_deadline, "stderr", cancellation)
         .inspect_err(|_| terminate_std_process_tree(&mut child, &process_tree))?;
     Ok(CommandOutput {
         success: status.success(),
         status_code: status.code(),
         stdout,
+        stdout_truncated,
         stderr,
         elapsed_secs: start.elapsed().as_secs(),
     })
@@ -485,6 +489,57 @@ pub fn compute_local_ref_revision(repo_path: &Path) -> Option<String> {
             .trim()
             .to_ascii_lowercase()
     })
+}
+
+/// 校验实际采集没有因本机路径大小写或检出限制遗漏 Git 中的候选文档。
+pub(crate) fn validate_update_candidate_paths(
+    root: &Path,
+    paths: &std::collections::BTreeSet<String>,
+    cancellation: &CancellationSignal,
+) -> Result<(), AppError> {
+    let mut command = std_command("git");
+    command
+        .arg("-C")
+        .arg(root)
+        .args(["ls-tree", "-r", "-z", "--name-only", "HEAD"]);
+    let output = execute_with_timeout_and_progress(
+        &mut command,
+        Duration::from_secs(30),
+        &|_| {},
+        cancellation,
+    )?;
+    if !output.success || output.stdout_truncated || output.stdout.contains('\u{fffd}') {
+        return Err(crate::core::update_locations::incomplete());
+    }
+    let expected = output
+        .stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .filter(|path| {
+            !path.split('/').any(|part| {
+                matches!(
+                    part,
+                    ".git" | "node_modules" | "dist" | "build" | "__pycache__" | "__pypackages__"
+                )
+            })
+        })
+        .filter(|path| {
+            path.rsplit('/')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                || matches!(
+                    *path,
+                    "skills-lock.json"
+                        | ".claude-plugin/plugin.json"
+                        | ".claude-plugin/marketplace.json"
+                )
+        })
+        .map(str::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected != *paths {
+        return Err(crate::core::update_locations::incomplete());
+    }
+    Ok(())
 }
 
 pub(crate) fn probe_remote_ref_revision_options(
@@ -871,6 +926,7 @@ mod tests {
     #[test]
     fn test_classify_generic_error() {
         let output = CommandOutput {
+            stdout_truncated: false,
             success: false,
             status_code: Some(128),
             stdout: String::new(),

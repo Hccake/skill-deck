@@ -75,7 +75,7 @@ where
             environment,
             library_id,
         };
-        self.evidence.check(&source, mode, names).await
+        self.evidence.check(&source, mode, names, false).await
     }
 }
 
@@ -140,7 +140,9 @@ where
             provider: &self.subjects,
             context: request.context.clone(),
         };
-        self.evidence.check(&source, request.mode, selected).await
+        self.evidence
+            .check(&source, request.mode, selected, true)
+            .await
     }
 }
 
@@ -154,6 +156,7 @@ impl UpdateEvidenceModule {
         source: &S,
         mode: UpdateCheckMode,
         names: BTreeSet<String>,
+        allow_relocation: bool,
     ) -> Result<UpdateCheckResponse, AppError>
     where
         S: UpdateRecordSource,
@@ -238,7 +241,9 @@ impl UpdateEvidenceModule {
                 let unchanged =
                     initial_revisions.get(&skill.name) == latest_revisions.get(&skill.name);
                 match unchanged.then(|| checked.get(&key)).flatten() {
-                    Some(Ok(result)) => info_from_evidence(skill, result),
+                    Some(Ok(result)) => {
+                        info_from_evidence_with_relocation(skill, result, allow_relocation)
+                    }
                     Some(Err(error)) => {
                         let mut result = info(
                             skill.name,
@@ -437,6 +442,7 @@ fn unavailable_info(
     reason: UpdateCheckReasonCode,
 ) -> SkillUpdateInfo {
     SkillUpdateInfo {
+        path_change: None,
         comparison_fingerprint: None,
         source_key: None,
         error: None,
@@ -457,7 +463,16 @@ fn unavailable_info(
     }
 }
 
+#[cfg(test)]
 fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> SkillUpdateInfo {
+    info_from_evidence_with_relocation(skill, result, true)
+}
+
+fn info_from_evidence_with_relocation(
+    skill: UpdateCheckSkill,
+    result: &EvidenceCheckResult,
+    allow_relocation: bool,
+) -> SkillUpdateInfo {
     let Some(evidence) = result
         .evidence
         .as_ref()
@@ -473,6 +488,44 @@ fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> 
         );
     };
     let path = evidence_path(&skill).unwrap_or_default();
+    let missing = evidence.member_failures.get(&path)
+        == Some(&crate::error::SourceAcquisitionFailureReason::NotFound)
+        || (evidence.catalog_complete && !evidence.complete_skill_path_catalog.contains(&path));
+    if allow_relocation && missing && skill.metadata.source_type != "well-known" {
+        if let Some(catalog) = &evidence.location_catalog {
+            match catalog.resolve(&skill.name) {
+                Ok(Some(candidate)) => {
+                    let change = crate::application::update::SourcePathChange::between(
+                        &path,
+                        &candidate.path,
+                    );
+                    let mut result = info(
+                        skill.name,
+                        skill.metadata,
+                        true,
+                        SkillUpdateCheckStatus::UpdateAvailable,
+                        None,
+                        result.freshness,
+                    );
+                    result.path_change = change;
+                    return result;
+                }
+                Err(error) => {
+                    let mut result = info(
+                        skill.name,
+                        skill.metadata,
+                        false,
+                        SkillUpdateCheckStatus::CannotCheck,
+                        Some(UpdateCheckReasonCode::UpstreamUnavailable),
+                        result.freshness,
+                    );
+                    result.error = Some(error);
+                    return result;
+                }
+                Ok(None) => {}
+            }
+        }
+    }
     if let Some(reason) = evidence.member_failures.get(&path) {
         let well_known = skill.metadata.source_type == "well-known";
         if !well_known && *reason == crate::error::SourceAcquisitionFailureReason::NotFound {
@@ -613,6 +666,7 @@ fn info(
     freshness: EvidenceFreshness,
 ) -> SkillUpdateInfo {
     SkillUpdateInfo {
+        path_change: None,
         comparison_fingerprint: Some(metadata.comparison_fingerprint()),
         source_key: SourceIdentity::from_metadata(&metadata)
             .ok()
@@ -838,6 +892,7 @@ mod tests {
             .map(|path| (*path).to_string())
             .collect::<BTreeSet<_>>();
         EvidenceDetectionOutcome::Modified(RemoteEvidenceObservation {
+            location_catalog: None,
             snapshot_id: crate::application::source_evidence::RemoteSnapshotId::new(
                 NormalizedRef::Named("main".to_string()),
                 "main",
@@ -1353,6 +1408,7 @@ mod tests {
                       fresh: bool,
                       freshness: EvidenceFreshness| EvidenceCheckResult {
             evidence: Some(crate::application::source_evidence::RemoteEvidenceEntry {
+                location_catalog: None,
                 checked_at_epoch_ms: 1_000,
                 expires_at_epoch_ms: if fresh { 901_000 } else { 999 },
                 snapshot_id: crate::application::source_evidence::RemoteSnapshotId::new(
@@ -1451,6 +1507,7 @@ mod tests {
         };
         let evidence = |catalog: BTreeSet<String>, digest: Option<&str>| EvidenceCheckResult {
             evidence: Some(crate::application::source_evidence::RemoteEvidenceEntry {
+                location_catalog: None,
                 checked_at_epoch_ms: 1_000,
                 expires_at_epoch_ms: 901_000,
                 snapshot_id: crate::application::source_evidence::RemoteSnapshotId::new(

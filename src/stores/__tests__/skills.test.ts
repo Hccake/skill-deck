@@ -284,6 +284,19 @@ describe('skills data store', () => {
     expect(snapshot().skills[0]?.updateStatus).toBe('upToDate');
   });
 
+  it('replaces an old update conclusion when a newer snapshot proves path ambiguity', async () => {
+    setSkills([skill()]);
+    mocks.checkUpdates.mockResolvedValue(response([updateInfo('toolkit', { hasUpdate: true, status: 'updateAvailable' })], { checkedAtEpochMs: 100 }));
+    await force();
+    const error = { kind: 'upstreamSkillAmbiguous' as const, data: { skillName: 'toolkit' } };
+    mocks.checkUpdates.mockResolvedValue(response([updateInfo('toolkit', { status: 'cannotCheck', reason: 'upstreamUnavailable', error })], { checkedAtEpochMs: 200 }));
+    await force();
+    expect(snapshot().skills[0]).toMatchObject({ hasUpdate: false, updateStatus: 'cannotCheck', updateError: error });
+    mocks.checkUpdates.mockResolvedValue(response([updateInfo('toolkit', { hasUpdate: true, status: 'updateAvailable' })], { checkedAtEpochMs: 100 }));
+    await force();
+    expect(snapshot().skills[0]).toMatchObject({ hasUpdate: false, updateStatus: 'cannotCheck', updateError: error });
+  });
+
   it('invalidates the old response even when reinstalling the same version', async () => {
     setSkills([skill()]);
     const old = deferred<UpdateCheckResponse>();

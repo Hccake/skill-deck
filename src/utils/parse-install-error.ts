@@ -393,6 +393,11 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.retryOrContact')],
       };
 
+    case 'upstreamSkillAmbiguous':
+      return {
+        message: t('mutation.result.errors.upstreamSkillAmbiguous'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
     case 'upstreamSkillDeleted':
       return {
         message: t('libraries.updateStatus.deletedUpstream'),

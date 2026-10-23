@@ -44,6 +44,7 @@ import { toAppError } from '@/utils/to-app-error';
 import { projectDisplayName } from '@/lib/projects/presentation';
 import './UpdatePlanDialog.css';
 import { presentInstallPath } from '@/lib/install-path';
+import { SourcePathChange } from './SourcePathChange';
 
 const EMPTY_RESULTS: UpdateSkillResult[] = [];
 const NATIVE_ENVIRONMENT = { kind: 'native' as const };
@@ -155,7 +156,12 @@ function PreviewSkillRow({ skill, decisions, setCopySelected, agentDisplayNames,
   };
   return (
     <section className="update-skill-section" aria-labelledby={`${id}-title`}>
-      <h3 id={`${id}-title`} className="update-skill-heading">{skill.skillName}</h3>
+      {skill.pathChange ? (
+        <div className="update-skill-heading-row">
+          <h3 id={`${id}-title`} className="update-skill-heading">{skill.skillName}</h3>
+          <SourcePathChange change={skill.pathChange} />
+        </div>
+      ) : <h3 id={`${id}-title`} className="update-skill-heading">{skill.skillName}</h3>}
       {skill.blockingReasons.includes('noUpdateTargets') ? <p className="mb-2 text-xs text-muted-foreground">{t('skills.updatePlan.noUpdateLocations')}</p> : null}
       {skill.blockingReasons.filter((reason) => reason !== 'noUpdateTargets').map((reason) =>
         <p key={reason} className="text-xs text-destructive" role="alert">{formatMutationError({ code: reason, parameters: {}, field: null, severity: 'error', retryable: false, technicalDetails: null, environment: null, context: null, unitId: null, recoveryResourceId: null, displayPaths: [] }, t)}</p>)}

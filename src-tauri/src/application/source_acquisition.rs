@@ -579,6 +579,49 @@ struct PreparedNativePayload {
 }
 
 impl SelectedPayloadAcquisitionService {
+    pub async fn resolve_saved_skill_path(
+        &self,
+        discovery: &DiscoverySessionHandle,
+        name: &str,
+        path: &str,
+        cancellation: CancellationSignal,
+    ) -> Result<String, AppError> {
+        let selected_path = match self
+            .ensure_saved_path(discovery, path, cancellation.clone())
+            .await
+        {
+            Ok(()) => path.to_string(),
+            Err(AppError::PathNotFound { .. }) => {
+                let catalog = self
+                    .update_location_catalog(discovery, cancellation.clone())
+                    .await?;
+                let candidate =
+                    catalog
+                        .resolve(name)?
+                        .ok_or_else(|| AppError::UpstreamSkillDeleted {
+                            skill_name: name.into(),
+                        })?;
+                self.ensure_saved_path(discovery, &candidate.path, cancellation)
+                    .await?;
+                candidate.path.clone()
+            }
+            Err(error) => return Err(error),
+        };
+        let retained = self.sessions.source_snapshot(discovery)?;
+        let folder = normalize_skill_folder_path(&selected_path);
+        let candidate = retained
+            .skills()
+            .find(|candidate| normalize_skill_folder_path(&candidate.relative_path) == folder)
+            .ok_or(AppError::StalePayload)?;
+        if candidate.skill_name != name {
+            return Err(AppError::UpstreamSkillNameChanged {
+                expected_name: name.into(),
+                actual_name: candidate.skill_name.clone(),
+            });
+        }
+        Ok(candidate.relative_path.clone())
+    }
+
     pub async fn update_location_catalog(
         &self,
         discovery: &DiscoverySessionHandle,
@@ -589,7 +632,8 @@ impl SelectedPayloadAcquisitionService {
             return Ok(catalog.clone());
         }
         let documents = match source.location() {
-            DiscoverySourceLocation::Native { root, .. } => {
+            DiscoverySourceLocation::Native { root, ref_revision } => {
+                let is_git = ref_revision.is_some();
                 let root = root.clone();
                 let cancel = cancellation.clone();
                 tokio::task::spawn_blocking(move || {
@@ -599,7 +643,7 @@ impl SelectedPayloadAcquisitionService {
                     let inventory = environment_engine::source_candidates::scan_update_candidates(
                         &SourceInventoryRequest {
                             roots: vec![SourceRoot {
-                                path: root,
+                                path: root.clone(),
                                 stat_only: false,
                             }],
                             mode: SourceScanMode::UpdateCandidates,
@@ -617,7 +661,7 @@ impl SelectedPayloadAcquisitionService {
                             crate::core::update_locations::incomplete()
                         }
                     })?;
-                    inventory
+                    let documents = inventory
                         .entries
                         .into_iter()
                         .map(|entry| {
@@ -628,7 +672,15 @@ impl SelectedPayloadAcquisitionService {
                                 .replace('\\', "/");
                             Ok((path, entry.content_bytes))
                         })
-                        .collect::<Result<Vec<_>, AppError>>()
+                        .collect::<Result<Vec<_>, AppError>>()?;
+                    if is_git {
+                        crate::core::git::validate_update_candidate_paths(
+                            &root,
+                            &documents.iter().map(|(path, _)| path.clone()).collect(),
+                            &cancel,
+                        )?;
+                    }
+                    Ok::<_, AppError>(documents)
                 })
                 .await
                 .map_err(|_| AppError::StaleEnvironment)??
@@ -698,6 +750,19 @@ impl SelectedPayloadAcquisitionService {
                     if already_catalogued {
                         return Ok(None);
                     }
+                    let mut exact = root.clone();
+                    for part in Path::new(&relative).components() {
+                        let present = fs::read_dir(&exact)?
+                            .collect::<Result<Vec<_>, _>>()?
+                            .iter()
+                            .any(|entry| entry.file_name() == part.as_os_str());
+                        if !present {
+                            return Err(AppError::PathNotFound {
+                                path: directory.to_string_lossy().into_owned(),
+                            });
+                        }
+                        exact.push(part.as_os_str());
+                    }
                     let mut entries = fs::read_dir(&directory)?.collect::<Result<Vec<_>, _>>()?;
                     entries
                         .sort_by_key(|entry| (entry.file_name() != "SKILL.md", entry.file_name()));
@@ -762,13 +827,17 @@ impl SelectedPayloadAcquisitionService {
             crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
                 &frontmatter.name,
             )?;
+        let plugin_name = source
+            .location_catalog()
+            .and_then(|catalog| catalog.candidate_at(&relative_path))
+            .and_then(|candidate| candidate.plugin_name.clone());
         self.sessions.register_saved_source_skill(
             discovery,
             DiscoverySkillSnapshot {
                 skill_name: frontmatter.name,
                 install_dir_name,
                 relative_path,
-                plugin_name: None,
+                plugin_name,
                 source_metadata_fingerprint: fingerprint,
             },
         )

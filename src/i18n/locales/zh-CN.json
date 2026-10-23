@@ -804,7 +804,8 @@
       "linkTarget": "指向 {{path}}",
       "linkTargetUpdated": "目标内容将更新，链接保持原样。",
       "linkTargetPreserved": "目标内容与链接保持原样。",
-      "blockedCount": "{{count}} 个暂时无法更新"
+      "blockedCount": "{{count}} 个暂时无法更新",
+      "pathChange": "路径变更："
     },
     "discover": {
       "currentSkill": "当前 Skill",
@@ -1551,7 +1552,8 @@
         "configurationReadOnly": "配置版本高于当前应用，现以只读方式打开。",
         "configurationCorrupted": "无法安全读取配置。",
         "libraryRecoveryIncomplete": "Skill 库内部恢复尚未完成。请先恢复此 Environment 的访问能力，然后重试。",
-        "configurationWriteUnconfirmed": "配置的保存结果尚未确认。应用继续使用原设置，请重新读取配置后检查。"
+        "configurationWriteUnconfirmed": "配置的保存结果尚未确认。应用继续使用原设置，请重新读取配置后检查。",
+        "upstreamSkillAmbiguous": "来源中存在多个同名 Skill，无法确定新路径，现有内容已保留。"
       },
       "fallbacks": {
         "symlinkUnavailable": "由于符号链接不可用，已改为复制。",

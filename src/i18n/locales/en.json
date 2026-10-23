@@ -804,7 +804,8 @@
       "linkTarget": "Target: {{path}}",
       "linkTargetUpdated": "Target content will be updated. The link stays unchanged.",
       "linkTargetPreserved": "Target content and the link stay unchanged.",
-      "blockedCount": "{{count}} unavailable"
+      "blockedCount": "{{count}} unavailable",
+      "pathChange": "Path change:"
     },
     "discover": {
       "currentSkill": "Current Skill",
@@ -1551,7 +1552,8 @@
         "configurationReadOnly": "The configuration is newer than this app and is read-only.",
         "configurationCorrupted": "The configuration could not be read safely.",
         "libraryRecoveryIncomplete": "Skill Library recovery is incomplete. Restore access to this Environment and try again.",
-        "configurationWriteUnconfirmed": "The configuration write could not be confirmed. The application is still using its previous settings. Reload the configuration to check the result."
+        "configurationWriteUnconfirmed": "The configuration write could not be confirmed. The application is still using its previous settings. Reload the configuration to check the result.",
+        "upstreamSkillAmbiguous": "Multiple skills with the same name were found in the source. The new path is ambiguous; existing content has been preserved."
       },
       "fallbacks": {
         "symlinkUnavailable": "Copied because a symbolic link was unavailable.",

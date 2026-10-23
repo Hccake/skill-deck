@@ -43,6 +43,27 @@ describe('UpdatePlanDialog', () => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
+  it('shows source path changes only for relocated skills without changing location choices', () => {
+    const base = {
+      skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: 'main',
+      targets: [automaticTarget()], adapterTargets: [], cleanCopyCount: 0,
+      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      overwritePrivateEntries: [], linkedTargets: [], blockingReasons: [], fallbackForecasts: [],
+    };
+    useSkillUpdateWorkflow.setState({ phase: 'ready', context, skillNames: ['toolkit', 'other'],
+      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [
+        { ...base, pathChange: { previousPath: 'skills/toolkit', nextPath: 'tools/toolkit' } },
+        { ...base, skillName: 'other' },
+      ] },
+    });
+    render(<UpdatePlanDialog open context={context} skillNames={['toolkit', 'other']} onOpenChange={vi.fn()} />);
+    expect(screen.getAllByText('skills.updatePlan.pathChange')).toHaveLength(1);
+    expect(screen.getByText('skills/toolkit')).toBeTruthy();
+    expect(screen.getByText('tools/toolkit')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'skills.updatePlan.confirm' })).toBeTruthy();
+    expect((screen.getAllByRole('checkbox')[0] as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('shows every position, keeps fixed targets selected and links optional copies', () => {
     const skill = {
       skillName: 'toolkit', sourceKey: 'source-1', sourceDisplay: 'owner/repo', refDisplay: 'main',

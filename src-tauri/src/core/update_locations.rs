@@ -1,4 +1,6 @@
 use crate::error::AppError;
+
+pub type CandidateDocuments = Vec<(String, Vec<u8>)>;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -15,7 +17,16 @@ pub struct UpdateLocationCatalog {
 }
 
 impl UpdateLocationCatalog {
-    pub fn from_documents(documents: Vec<(String, Vec<u8>)>) -> Result<Self, AppError> {
+    pub fn resolve(&self, name: &str) -> Result<Option<&UpdateCandidate>, AppError> {
+        match self.candidates(name) {
+            [] => Ok(None),
+            [candidate] => Ok(Some(candidate)),
+            _ => Err(AppError::UpstreamSkillAmbiguous {
+                skill_name: name.into(),
+            }),
+        }
+    }
+    pub fn from_documents(documents: CandidateDocuments) -> Result<Self, AppError> {
         use crate::core::discovery::{
             is_in_cli_agent_project_skill_dir, is_locked_project_skill, locked_project_skill_names,
         };

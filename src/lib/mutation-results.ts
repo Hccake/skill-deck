@@ -12,6 +12,7 @@ type Translate = (
 ) => string;
 
 const ERROR_CODES = new Set<OperationErrorCode>([
+  'upstreamSkillAmbiguous',
   'validation',
   'noUpdateTargets',
   'skillPlacementTargetConflict',

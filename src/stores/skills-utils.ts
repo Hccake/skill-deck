@@ -102,7 +102,7 @@ export function mergeUpdateInfo(
     const incomplete = Boolean(update && (update.error || evidence?.error || evidence?.lastAttempt?.failure || (
       update.status === 'cannotCheck' && update.reason === 'upstreamUnavailable'
     ) || ['backingOff', 'coolingDown', 'unavailable'].includes(update.freshness)));
-    const preserve = incomplete && hasCommittedUpdateComparison(before);
+    const preserve = incomplete && update?.error?.kind !== 'upstreamSkillAmbiguous' && hasCommittedUpdateComparison(before);
     return {
       ...skill,
       skillPath: update?.skillPath ?? skill.skillPath ?? null,

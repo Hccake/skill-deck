@@ -2221,8 +2221,9 @@ mod update_lifecycle {
     use crate::application::source_evidence_provider::RuntimeSourceEvidenceDetector;
     use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
     use crate::application::update::{
-        PreparedUpdate, UpdateCheckMode, UpdateCheckRequest, UpdateCheckSelection, UpdateOutcome,
-        UpdateRequest, UpdateResponse, UpdateSourceStatus, UpdateWarningCode,
+        PreparedUpdate, SkillUpdateCheckStatus, UpdateCheckMode, UpdateCheckRequest,
+        UpdateCheckSelection, UpdateOutcome, UpdateRequest, UpdateResponse, UpdateSourceStatus,
+        UpdateWarningCode,
     };
     use crate::application::update_check::UpdateCheckService;
     use crate::application::update_records::InstalledUpdateRecordProvider;
@@ -4181,6 +4182,137 @@ mod update_lifecycle {
             fs::read(package_skills.join("alpha/SKILL.md")).unwrap(),
             markdown
         );
+    }
+
+    #[tokio::test]
+    async fn native_update_relocates_unchanged_content_and_preserves_local_copies() {
+        for new_folder in ["tools/one/two/three/four/five/six/alpha", "skills/Alpha"] {
+            let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+            fixture.install().await;
+            let lock_path = fixture.project_path.join("skills-lock.json");
+            let before = read_json(&lock_path).unwrap();
+            fixture.remote.relocate_skill("skills/alpha", new_folder);
+            let request = UpdateCheckRequest {
+                context: fixture.context(),
+                mode: UpdateCheckMode::Force,
+                selection: UpdateCheckSelection::Skills(vec![SkillIdentity {
+                    context: fixture.context(),
+                    skill_name: "alpha".into(),
+                }]),
+            };
+            let check = fixture.check_service().check(&request).await.unwrap();
+            assert!(check.skills[0].has_update, "{check:?}");
+            let service = fixture.update_service();
+            let prepared = service
+                .prepare(
+                    &UpdateRequest {
+                        context: fixture.context(),
+                        skill_names: vec!["alpha".into()],
+                    },
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert!(prepared.preview.blocked.is_empty());
+            let preview = serde_json::to_value(&prepared.preview.skills[0]).unwrap();
+            assert_eq!(preview["pathChange"]["previousPath"], "skills/alpha");
+            assert_eq!(preview["pathChange"]["nextPath"], new_folder);
+            assert_eq!(read_json(&lock_path).unwrap(), before);
+            let selected = prepared
+                .preview
+                .skills
+                .iter()
+                .flat_map(|skill| &skill.targets)
+                .filter_map(|target| target.selectable_entry_id.clone())
+                .collect::<Vec<_>>();
+            let result = service
+                .execute_prepared(prepared, &selected, CancellationSignal::default(), |_| {})
+                .await
+                .unwrap();
+            assert!(
+                result.skills[0].mutation.as_ref().unwrap().error.is_none(),
+                "{result:?}"
+            );
+            let after = read_json(&lock_path).unwrap();
+            assert_eq!(
+                after["skills"]["alpha"]["skillPath"],
+                format!("{new_folder}/SKILL.md")
+            );
+            assert_eq!(
+                after["skills"]["alpha"]["computedHash"],
+                before["skills"]["alpha"]["computedHash"]
+            );
+            assert_eq!(
+                fs::read_to_string(
+                    fixture
+                        .project_path
+                        .join(".codebuddy/skills/alpha/SKILL.md")
+                )
+                .unwrap(),
+                "local alpha conflict\n"
+            );
+            assert_eq!(
+                fs::read(fixture.project_path.join(".custom/skills/alpha/SKILL.md")).unwrap(),
+                fs::read(fixture.remote.work.join(new_folder).join("SKILL.md")).unwrap()
+            );
+            let checked_again = fixture.check_service().check(&request).await.unwrap();
+            assert_eq!(
+                checked_again.skills[0].status,
+                SkillUpdateCheckStatus::UpToDate
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn native_update_relocation_ambiguity_preserves_content_and_other_skills() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        fixture.install().await;
+        let lock_path = fixture.project_path.join("skills-lock.json");
+        let before = read_json(&lock_path).unwrap();
+        fs::create_dir_all(fixture.remote.work.join("tools")).unwrap();
+        fs::rename(
+            fixture.remote.work.join("skills/alpha"),
+            fixture.remote.work.join("tools/alpha"),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.remote.work.join("mirror/alpha")).unwrap();
+        fs::copy(
+            fixture.remote.work.join("tools/alpha/SKILL.md"),
+            fixture.remote.work.join("mirror/alpha/SKILL.md"),
+        )
+        .unwrap();
+        fixture.remote.publish_worktree("ambiguous alpha paths");
+        let check = fixture
+            .check_service()
+            .check(&UpdateCheckRequest {
+                context: fixture.context(),
+                mode: UpdateCheckMode::Force,
+                selection: UpdateCheckSelection::Skills(vec![SkillIdentity {
+                    context: fixture.context(),
+                    skill_name: "alpha".into(),
+                }]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(check.skills[0].status, SkillUpdateCheckStatus::CannotCheck);
+        let prepared = fixture
+            .update_service()
+            .prepare(
+                &UpdateRequest {
+                    context: fixture.context(),
+                    skill_names: vec!["alpha".into(), "beta".into()],
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared.preview.skills.len(), 1);
+        assert_eq!(prepared.preview.skills[0].skill_name, "beta");
+        assert_eq!(
+            serde_json::to_value(&prepared.preview.blocked[0].error).unwrap()["kind"],
+            "upstreamSkillAmbiguous"
+        );
+        assert_eq!(read_json(&lock_path).unwrap(), before);
     }
 
     #[tokio::test]

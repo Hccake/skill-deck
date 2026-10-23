@@ -373,7 +373,8 @@ pub trait PayloadSessionStorage: Send + Sync {
     fn read_source_update_candidates<'a>(
         &'a self,
         _cancellation: CancellationSignal,
-    ) -> PayloadStorageFuture<'a, Result<Vec<(String, Vec<u8>)>, AppError>> {
+    ) -> PayloadStorageFuture<'a, Result<crate::core::update_locations::CandidateDocuments, AppError>>
+    {
         Box::pin(async { Err(AppError::StalePayload) })
     }
 

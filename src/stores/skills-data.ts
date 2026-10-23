@@ -140,14 +140,18 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => {
             const observedAt = incoming?.checkedAtEpochMs ?? 0;
             const previousObservedAt = comparisonObservedAt[result.name] ?? 0;
             const newerEvidence = observedAt > previousObservedAt;
+            const definitiveAmbiguity = result.error?.kind === 'upstreamSkillAmbiguous';
             if (latestRequest > requestId && !newerEvidence) continue;
             let merged = latestRequest > requestId && previous
               ? { ...result, error: previous.error, freshness: previous.freshness }
               : result;
-            if (previous && previous.status !== 'cannotCheck' && (observedAt < previousObservedAt || result.status === 'cannotCheck')) {
-              merged = { ...merged, hasUpdate: previous.hasUpdate, status: previous.status, reason: previous.reason };
+            if (previous && (observedAt < previousObservedAt || (previous.status !== 'cannotCheck' && result.status === 'cannotCheck' && !definitiveAmbiguity))) {
+              merged = { ...merged, hasUpdate: previous.hasUpdate, status: previous.status, reason: previous.reason,
+                pathChange: previous.pathChange,
+                ...(observedAt < previousObservedAt ? { error: previous.error } : {}),
+              };
             }
-            if (result.status !== 'cannotCheck') comparisonObservedAt[result.name] = Math.max(previousObservedAt, observedAt);
+            if (result.status !== 'cannotCheck' || definitiveAmbiguity) comparisonObservedAt[result.name] = Math.max(previousObservedAt, observedAt);
             results.set(result.name, merged);
             accepted.push(merged);
             if (incoming) {
