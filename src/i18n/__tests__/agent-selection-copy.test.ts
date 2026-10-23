@@ -67,10 +67,6 @@ describe('Agent selection copy', () => {
     expect(zhCN.agentSelection.selectable.title).toBe('选择后可使用');
     expect(zhCN.agentSelection.selectable.help)
       .toBe('选择后，在 Agent 的 Skill 目录中创建链接或副本。');
-    expect(zhCN.skills.copyToProject.agentSelectionDescription)
-      .toBe('Agent 会按照源 Skill 的关联状态预先勾选；目标项目已有的关联会保留。');
-    expect(en.skills.copyToProject.agentSelectionDescription)
-      .toBe('Agents are preselected from the source Skill. Existing target-project associations are preserved.');
   });
 
   it('presents own-directory installations as an optional nested setting', () => {

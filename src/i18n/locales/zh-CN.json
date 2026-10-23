@@ -596,7 +596,6 @@
       "unknown": "未知",
       "projectsLoadError": "无法加载所选系统中的项目。",
       "agentsLoadError": "无法加载 Agent 配置。",
-      "agentSelectionDescription": "Agent 会按照源 Skill 的关联状态预先勾选；目标项目已有的关联会保留。",
       "presenceUnknown": "无法确认这些项目是否已安装当前 Skill，已有文件可能会被覆盖。",
       "copy": "复制到 {{count}} 个项目",
       "overwriteWarning": "{{count}} 个选中的项目已安装此 skill，将被覆盖",

@@ -186,6 +186,18 @@ describe('CopyToProjectDialog', () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  it('reveals installation help on keyboard focus instead of showing a permanent subtitle', async () => {
+    render(<CopyToProjectDialog {...defaultCopyProps} skill={skill()}
+      loadAgentSelection={selectableAgentState.loadAgentSelection}
+      onClose={vi.fn()} onCopy={vi.fn()} />);
+    const help = await screen.findByRole('button', { name: 'agentSelection.modeHelp' });
+    expect(screen.queryByText('agentSelection.modeHelp')).toBeNull();
+    fireEvent.focus(help);
+    expect((await screen.findByRole('tooltip')).textContent).toContain('agentSelection.modeHelp');
+    fireEvent.blur(help);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  });
+
   it('keeps project and Agent loading in independent dialog regions', async () => {
     const projectLoad = deferred<void>();
     render(
@@ -385,6 +397,28 @@ describe('CopyToProjectDialog', () => {
     });
   });
 
+  it('locks the target system and projects while the confirmed copy is running', async () => {
+    const pending = deferred<CopyOutcome>();
+    const onCopy = vi.fn(() => pending.promise);
+    render(<CopyToProjectDialog {...defaultCopyProps} skill={skill()}
+      environments={[...defaultCopyProps.environments, {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' }, displayName: 'Ubuntu',
+        status: 'available', revision: 1, error: null,
+      }]} onClose={vi.fn()} onCopy={onCopy} />);
+
+    const project = await screen.findByRole('checkbox', { name: /project-b/ });
+    fireEvent.click(project);
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+    await waitFor(() => expect(onCopy).toHaveBeenCalledOnce());
+    expect((screen.getByRole('combobox', { name: 'skills.copyToProject.targetEnvironment' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((project as HTMLButtonElement).disabled).toBe(true);
+
+    pending.resolve({ status: 'failed', unit: failedCopyUnit('project-b') });
+    await waitFor(() => expect((project as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByRole('combobox', { name: 'skills.copyToProject.targetEnvironment' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(project.getAttribute('aria-checked')).toBe('true');
+  });
+
   it('hides source runtime details when copying to another Environment', async () => {
     const onLoadProjects = vi.fn(async () => undefined);
     render(
@@ -429,7 +463,6 @@ describe('CopyToProjectDialog', () => {
       expect(onLoadProjects).toHaveBeenLastCalledWith({ kind: 'native' });
       expect(screen.queryByText('agentSelection.detection.detected')).toBeNull();
     });
-    expect(screen.getByText('skills.copyToProject.agentSelectionDescription')).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: 'Claude Code' })).toBeTruthy();
   });
 

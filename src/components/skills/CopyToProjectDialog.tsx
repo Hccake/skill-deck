@@ -1,7 +1,7 @@
 // src/components/skills/CopyToProjectDialog.tsx
 import { useState, useCallback, useMemo, useEffect, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Folder, Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -39,6 +38,8 @@ import {
   type CopyAgentSelectionSessionRequest,
 } from '@/hooks/useAgentSelectionSession';
 import { getCopyableProjects } from '@/lib/projects/copy-targets';
+import { EnvironmentPlatformIcon } from '@/components/environments/EnvironmentPlatformIcon';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 
 export interface CopyTargetSelection {
   environment: EnvironmentRef;
@@ -320,7 +321,7 @@ function CopyToProjectDialogSession({
     >
       <DialogContent
         {...dialogFocus}
-        className="grid h-[min(42rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl"
+        className="copy-to-project-dialog grid h-[min(42rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl"
         dismissible={!copying}
         closeLabel={t('common.close')}
         aria-busy={projectLoadState === 'loading' || agentSelection.status === 'loading' || copying}
@@ -380,27 +381,19 @@ function CopyToProjectDialogSession({
             ) : null}
           </div>
 
-          <div className="grid min-h-0 min-w-0 grid-rows-[minmax(10rem,0.85fr)_minmax(12rem,1.15fr)] gap-4 px-6 py-4 md:grid-cols-[minmax(16rem,0.8fr)_minmax(24rem,1.2fr)] md:grid-rows-1 md:gap-8">
+          <div className="copy-dialog-columns">
             <section
-              className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] border-b pb-4 md:border-r md:border-b-0 md:pb-0 md:pr-8"
+              className="copy-dialog-pane copy-dialog-projects"
               aria-labelledby="copy-target-projects-title"
             >
-              <div className="space-y-4 pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 id="copy-target-projects-title" className="text-sm font-semibold">
+              <div className="pb-3">
+                <div className="flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <h2 id="copy-target-projects-title" className="shrink-0 text-sm font-semibold">
                     {t('skills.copyToProject.targetProjects')}
                   </h2>
-                  {selected.size > 0 ? (
-                    <span className="text-xs text-muted-foreground">
-                      {t('skills.copyToProject.selectedProjects', { count: selected.size })}
-                    </span>
-                  ) : null}
-                </div>
-
-                {environments.length > 1 || targetEnvironmentSelection.kind === 'missing' ? (
-                  <div className="space-y-1.5">
-                    <Label>{t('skills.copyToProject.targetEnvironment')}</Label>
+                  {environments.length > 1 || targetEnvironmentSelection.kind === 'missing' ? (
                     <Select
+                      disabled={copying}
                       value={targetEnvironmentSelection.kind === 'valid'
                         ? targetEnvironmentSelection.key
                         : ''}
@@ -413,29 +406,44 @@ function CopyToProjectDialogSession({
                         setProjectLoadState('loading');
                       }}
                     >
-                      <SelectTrigger aria-label={t('skills.copyToProject.targetEnvironment')}>
-                        <SelectValue
-                          placeholder={t('skills.copyToProject.targetEnvironmentMissing')}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
+                      <OverflowTooltip content={targetEnvironmentEntry?.displayName ?? t('skills.copyToProject.targetEnvironmentMissing')}>
+                        <SelectTrigger size="sm" aria-label={t('skills.copyToProject.targetEnvironment')}
+                          className="min-w-28 max-w-40 flex-[1_1_7rem] gap-1.5 border-border/70 bg-muted/35 px-2 text-[13px] font-normal shadow-none hover:border-border hover:bg-muted/60 data-[state=open]:bg-muted/60 *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:flex-1 [&>svg:last-child]:size-3">
+                          {targetEnvironmentEntry ? <EnvironmentPlatformIcon environment={targetEnvironmentEntry.environment}
+                            className="size-4 shrink-0 text-muted-foreground" /> : null}
+                          <SelectValue placeholder={t('skills.copyToProject.targetEnvironmentMissing')}>
+                            {targetEnvironmentEntry ? <span className="min-w-0 truncate" data-tooltip-label>{targetEnvironmentEntry.displayName}</span> : undefined}
+                          </SelectValue>
+                        </SelectTrigger>
+                      </OverflowTooltip>
+                      <SelectContent position="popper" align="end" className="w-64 max-w-[calc(100vw-2rem)]">
                         {environments.map((environment) => (
                           <SelectItem
                             key={environmentKey(environment.environment)}
                             value={environmentKey(environment.environment)}
+                            textValue={environment.displayName}
+                            aria-label={environment.displayName}
+                            className="py-2"
                           >
-                            {environment.displayName}
+                            <span className="flex min-w-0 items-start gap-2">
+                              <EnvironmentPlatformIcon environment={environment.environment}
+                                className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                              <span className="min-w-0 whitespace-normal">
+                                <span className="block break-words">{environment.displayName}</span>
+                                {environment.environment.kind === 'wsl' ? <span aria-hidden="true" className="block text-xs text-muted-foreground">WSL</span> : null}
+                              </span>
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
 
               <div
                 data-testid="copy-target-projects-scroll"
-                className="min-h-0 space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
+                className="copy-dialog-scroll space-y-1"
               >
                 {!targetEnvironment ? (
                   <Alert>
@@ -488,20 +496,21 @@ function CopyToProjectDialogSession({
                       return (
                         <label
                           key={projectId}
-                          className="flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted/50"
+                          data-disabled={copying || undefined}
+                          className={`flex min-h-14 cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted/50 data-[disabled]:cursor-default data-[disabled]:opacity-60 ${selected.has(projectId) ? 'bg-primary/5' : ''}`}
                         >
                           <Checkbox
                             className="mt-0.5"
+                            disabled={copying}
                             checked={selected.has(projectId)}
                             onCheckedChange={() => toggleProject(projectId)}
                           />
-                          <Folder className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                           <span className="min-w-0 flex-1">
                             <ProjectIdentity
                               project={project}
                               focusable={false}
-                              nameClassName="text-sm"
-                              pathClassName="text-xs text-muted-foreground"
+                              nameClassName="text-sm font-medium leading-5"
+                              pathClassName="mt-0.5 text-xs leading-[18px] text-muted-foreground"
                             />
                             {failedUnit ? (
                               <span className="mt-0.5 block text-xs text-destructive">
@@ -512,7 +521,7 @@ function CopyToProjectDialogSession({
                             ) : null}
                           </span>
                           {presence === 'installed' ? (
-                            <Badge variant="outline" className="shrink-0 text-xs text-warning">
+                            <Badge variant="outline" className="mt-px shrink-0 border-[#e7e1d8] bg-[#fffdf9] px-1.5 py-0 text-[11px] leading-[18px] font-normal text-[#a56700] dark:border-[#51483a] dark:bg-[#2c2923] dark:text-[#c9ad7e]">
                               {t('skills.copyToProject.installed')}
                             </Badge>
                           ) : presenceState === 'error' && presence === 'unknown' ? (
@@ -547,15 +556,19 @@ function CopyToProjectDialogSession({
             </section>
 
             <section
-              className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]"
+              className="copy-dialog-pane"
               aria-labelledby="copy-agent-settings-title"
             >
-              <h2 id="copy-agent-settings-title" className="pb-3 text-sm font-semibold">
-                {t('agentSelection.copyTitle')}
-              </h2>
+              <div className="pb-3">
+                <div className="flex min-h-8 items-center">
+                  <h2 id="copy-agent-settings-title" className="text-sm font-semibold">
+                    {t('agentSelection.copyTitle')}
+                  </h2>
+                </div>
+              </div>
               <div
                 data-testid="copy-agent-settings-scroll"
-                className="min-h-0 space-y-6 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
+                className="copy-dialog-scroll space-y-6"
               >
                 <AgentSelectionPanel
                   usage="copyToProject"
@@ -564,11 +577,6 @@ function CopyToProjectDialogSession({
                   emptyMessage={t('agentSelection.installEmpty')}
                   modeClassName="flex-col items-start gap-2"
                   showRuntimeMetadata={!copiesAcrossEnvironments}
-                  notice={(
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      {t('skills.copyToProject.agentSelectionDescription')}
-                    </p>
-                  )}
                 />
               </div>
             </section>

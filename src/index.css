@@ -4,6 +4,72 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.copy-to-project-dialog {
+  container: copy-dialog / inline-size;
+}
+
+.copy-dialog-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem 1.5rem;
+}
+
+.copy-dialog-pane {
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.copy-dialog-projects {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1.25rem;
+}
+
+.copy-dialog-scroll {
+  min-height: 0;
+  min-width: 0;
+}
+
+@container copy-dialog (min-width: 40.5rem) {
+  .copy-dialog-columns {
+    display: grid;
+    grid-template-columns: minmax(13.5rem, 0.8fr) minmax(22.5rem, 1.2fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 1.5rem;
+    overflow: hidden;
+  }
+
+  .copy-dialog-pane {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .copy-dialog-projects {
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    padding-right: 1.5rem;
+    padding-bottom: 0;
+  }
+
+  .copy-dialog-scroll {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding-right: 0.25rem;
+  }
+}
+
+@container copy-dialog (min-width: 40.5rem) and (max-width: 48rem) {
+  .copy-dialog-projects {
+    padding-right: 1rem;
+  }
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

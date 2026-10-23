@@ -16,7 +16,7 @@ await mkdir(path.join(process.env.SKILL_DECK_E2E_HOME, '.codex'), { recursive: t
 
 export const config = {
   runner: 'local',
-  specs: [process.env.SKILL_DECK_E2E_SPEC === 'translation' ? './translation.spec.mjs' : './desktop.spec.mjs'],
+  specs: [{ translation: './translation.spec.mjs', 'copy-dialog': './copy-dialog.spec.mjs' }[process.env.SKILL_DECK_E2E_SPEC] ?? './desktop.spec.mjs'],
   maxInstances: 1,
   capabilities: [{ browserName: 'tauri' }],
   services: [['@wdio/tauri-service', {

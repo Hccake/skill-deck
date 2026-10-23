@@ -357,6 +357,20 @@ pnpm test:desktop --no-build
 
 发现页详情另外验证名称、来源和星标共同固定，安装量保持在辅助区，以及 360px 窄栏和宽栏中的阅读顺序与横向溢出。相同名称切换来源时，身份信息一起更新，旧来源星标及时清除。组件测试覆盖来源与正文链接的系统打开、修饰键和中键、失败反馈、旧详情响应隔离、重试焦点及完整路径披露；HTML 的宽表和代码仅在溢出时加入键盘滚动顺序。系统浏览器与真实连接失败后的重试由对应平台补验。
 
+### 复制弹窗布局验证
+
+复制弹窗使用实际 React 组件、受控项目及系统数据，在原生 WebView 中验证标题与系统选择器同行、平台图标、长名称菜单、项目选择、已安装标识，以及中英文和明暗主题下的 720×520、800×600 与宽窗口布局。受控数据不执行复制或连接真实 WSL；真实文件系统与跨 Environment 复制由应用流程及 Windows 与 WSL 联合测试负责。
+
+Windows 原生工作区中运行：
+
+```powershell
+$env:SKILL_DECK_E2E_SPEC = 'copy-dialog'
+pnpm test:desktop
+Remove-Item Env:SKILL_DECK_E2E_SPEC
+```
+
+专用入口只由 E2E 的 Vite 配置注入，正式构建继续使用应用入口。截图及几何测量结果保存在本次桌面测试输出目录；组件测试另外覆盖复制进行时的选择锁定和失败后的选择保留。
+
 ### 详情翻译验证
 
 将环境变量 `SKILL_DECK_E2E_SPEC` 设为 `translation`，再运行 `pnpm test:desktop`，执行[翻译专用桌面用例](../e2e/translation.spec.mjs)。该模式在构建时通过 `e2e/fixtures/translation-discovery.mjs` 替换发现页 API，使用固定公开文本；普通翻译请求仍由 Rust 真实发出。切换模式后先重新构建，后续仅修改用例时可复用同一模式的测试应用。

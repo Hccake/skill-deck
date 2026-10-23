@@ -5,6 +5,7 @@ import type { AgentSelectionSnapshot, InstallMode } from '@/bindings';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
+import { AgentSelectionHelp } from './AgentSelectionHelp';
 import {
   shouldShowInstallMode,
   type AgentSelectionSession,
@@ -37,6 +38,7 @@ export function AgentSelectionModeControl({
         <span className="text-sm font-medium text-foreground">
           {t('agentSelection.modeTitle')}
         </span>
+        <AgentSelectionHelp content={t('agentSelection.modeHelp')} />
       </span>
       <RadioGroup
         value={session.mode}
@@ -44,14 +46,13 @@ export function AgentSelectionModeControl({
         disabled={disabled}
         aria-label={t('agentSelection.modeTitle')}
         className={cn(
-          'grid w-60 max-w-full grid-cols-2 gap-1 rounded-md bg-muted p-1',
+          'grid w-max min-w-60 max-w-full grid-cols-2 gap-1 rounded-md bg-muted p-1',
           disabled && 'opacity-50',
         )}
       >
         <Mode id={`${idPrefix}-symlink`} value="symlink" icon={Link2} label={t('agentSelection.linkRecommended')} />
         <Mode id={`${idPrefix}-copy`} value="copy" icon={Copy} label={t('agentSelection.copy')} />
       </RadioGroup>
-      <p className="basis-full text-xs leading-5 text-muted-foreground">{t('agentSelection.modeHelp')}</p>
     </div>
   );
 }
@@ -70,10 +71,10 @@ function Mode({
   return (
     <Label
       htmlFor={id}
-      className="flex h-7 cursor-pointer items-center justify-center gap-1.5 rounded px-2 text-xs font-medium has-data-[state=checked]:bg-background has-data-[state=checked]:shadow-xs"
+      className="flex h-7 cursor-pointer items-center justify-center gap-1.5 rounded px-2 text-xs font-medium whitespace-nowrap has-data-[state=checked]:bg-background has-data-[state=checked]:shadow-xs"
     >
       <RadioGroupItem id={id} value={value} className="sr-only" />
-      <Icon className="size-3.5" aria-hidden="true" />
+      <Icon className="size-3.5 shrink-0" aria-hidden="true" />
       {label}
     </Label>
   );

@@ -3,7 +3,6 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
-  CircleHelp,
   Copy,
   Info,
   LibraryBig,
@@ -38,6 +37,7 @@ import {
 } from '@/lib/agent-selection-session';
 import { projectAgentSelectionView } from '@/lib/agent-selection-view';
 import type { AgentSelectionPresentation } from './useAgentSelectionPresentation';
+import { AgentSelectionHelp } from './AgentSelectionHelp';
 
 const ROW_GRID = 'grid-cols-[1rem_minmax(0,1fr)_minmax(7.5rem,auto)_6rem]';
 const DIRECT_AGENT_BADGE = 'inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-muted/30 px-2 text-xs font-medium';
@@ -343,20 +343,7 @@ function SectionHeading({ id, title, help }: { id: string; title: string; help: 
   return (
     <div className="flex items-center gap-1 px-1">
       <h3 id={id} className="text-sm font-semibold">{title}</h3>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={help}
-          >
-            <CircleHelp className="size-3.5" aria-hidden="true" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-72 text-xs leading-5">
-          {help}
-        </TooltipContent>
-      </Tooltip>
+      <AgentSelectionHelp content={help} />
     </div>
   );
 }

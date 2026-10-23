@@ -139,7 +139,8 @@ describe('ManageAgentsDialog', () => {
     expect(mode.compareDocumentPosition(firstAgentGroup) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(description.parentElement).toBe(header);
 
-    expect(screen.getByText('agentSelection.modeHelp')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'agentSelection.modeHelp' })).toBeTruthy();
+    expect(screen.queryByText('agentSelection.modeHelp')).toBeNull();
   });
 
   it('allows choosing the mode first without treating an inactive choice as a saved change', async () => {
