@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+mod dependency;
 mod election;
 
 use crate::application::agent_selection::{
@@ -65,6 +66,7 @@ pub(crate) enum DirectPlacementChange {
 pub(crate) struct ScopeSkillPlacementSet {
     context: SkillLocationRef,
     resolved: BTreeMap<DirectoryPlacementId, ResolvedTargetFact>,
+    dependency_targets: BTreeSet<PhysicalTargetKey>,
 }
 
 impl ScopeSkillPlacementSet {
@@ -72,7 +74,30 @@ impl ScopeSkillPlacementSet {
         context: SkillLocationRef,
         resolved: BTreeMap<DirectoryPlacementId, ResolvedTargetFact>,
     ) -> Self {
-        Self { context, resolved }
+        Self {
+            context,
+            resolved,
+            dependency_targets: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) async fn protect_dependency_content<
+        T: crate::environment::planning::TargetFactResolver + ?Sized,
+    >(
+        mut self,
+        skill_name: &str,
+        facts: &crate::application::planning_facts::ScopePlanningSnapshot,
+        targets: &T,
+    ) -> Result<Self, AppError> {
+        if let Some(root) = dependency::package_root(skill_name, facts, targets).await? {
+            for fact in self.resolved.values() {
+                if crate::environment::planning::is_within_resolved_root(&root, &fact.destination)?
+                {
+                    self.dependency_targets.insert(fact.key.clone());
+                }
+            }
+        }
+        Ok(self)
     }
 
     pub(crate) fn facts(&self) -> &BTreeMap<DirectoryPlacementId, ResolvedTargetFact> {
@@ -665,7 +690,10 @@ fn plan(
     let mut directories = Vec::new();
     for directory in physical.directories() {
         if !matches!(directory.action(), PreparedEntryAction::Keep)
-            && is_dependency_content_target(&directory.fact().destination)
+            && (placements
+                .dependency_targets
+                .contains(&directory.fact().key)
+                || is_dependency_content_target(&directory.fact().destination))
         {
             return Err(ScopeSkillPlanningError::DependencyContentTarget {
                 target_path: display_locator(&directory.fact().destination).native_path,

@@ -39,10 +39,10 @@ pub trait ResourceContextSource: Send + Sync {
         context: &'a SkillLocationRef,
     ) -> ResourceFuture<'a, Result<ResolvedResourceContext, AppError>>;
 
-    fn resolve_skill<'a>(
+    fn resolve_skill_candidates<'a>(
         &'a self,
         identity: &'a SkillIdentity,
-    ) -> ResourceFuture<'a, Result<ResourceLocator, AppError>>;
+    ) -> ResourceFuture<'a, Result<Vec<ResourceLocator>, AppError>>;
 }
 
 pub trait AuthorizedResourceOpener: Send + Sync {
@@ -81,16 +81,47 @@ where
 
     pub async fn open_skill(&self, identity: &SkillIdentity) -> Result<(), AppError> {
         validate_skill_name(&identity.skill_name)?;
-        let target = self.source.resolve_skill(identity).await?;
-        let target = self.resolve_directory(&identity.context, target).await?;
-        self.opener.open(target).await
+        let candidates = self.source.resolve_skill_candidates(identity).await?;
+        let mut first_error = None;
+        for candidate in candidates {
+            match self.resolve_directory(&identity.context, candidate).await {
+                Ok(target) => return self.opener.open(target).await,
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        Err(first_error.unwrap_or(AppError::StaleTarget))
     }
 
     pub async fn read_skill(&self, identity: &SkillIdentity) -> Result<String, AppError> {
         validate_skill_name(&identity.skill_name)?;
-        let target = self.source.resolve_skill(identity).await?;
-        let target = self.resolve_directory(&identity.context, target).await?;
-        self.reader.read_skill(target).await
+        self.read_first_available(identity)
+            .await
+            .map(|(_, content)| content)
+    }
+
+    async fn read_first_available(
+        &self,
+        identity: &SkillIdentity,
+    ) -> Result<(ResourceLocator, String), AppError> {
+        let candidates = self.source.resolve_skill_candidates(identity).await?;
+        let mut first_error = None;
+        for candidate in candidates {
+            let result = async {
+                let target = self.resolve_directory(&identity.context, candidate).await?;
+                let content = self.reader.read_skill(target.clone()).await?;
+                Ok((target, content))
+            }
+            .await;
+            match result {
+                Ok(read) => return Ok(read),
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        Err(first_error.unwrap_or(AppError::StaleTarget))
     }
 
     pub async fn open_config(
@@ -164,15 +195,15 @@ mod tests {
     struct StaticSource;
 
     impl ResourceContextSource for StaticSource {
-        fn resolve_skill<'a>(
+        fn resolve_skill_candidates<'a>(
             &'a self,
             identity: &'a SkillIdentity,
-        ) -> ResourceFuture<'a, Result<ResourceLocator, AppError>> {
+        ) -> ResourceFuture<'a, Result<Vec<ResourceLocator>, AppError>> {
             Box::pin(async move {
                 let context = self.resolve(&identity.context).await?;
-                Ok(context
+                Ok(vec![context
                     .canonical_skills_root
-                    .join_child(&validate_skill_name(&identity.skill_name)?))
+                    .join_child(&validate_skill_name(&identity.skill_name)?)])
             })
         }
 
@@ -296,6 +327,34 @@ mod tests {
                     .to_string_lossy()
             )]
         );
+    }
+
+    #[tokio::test]
+    async fn opening_a_skill_directory_does_not_require_readable_markdown() {
+        struct Unreadable;
+        impl AuthorizedResourceReader for Unreadable {
+            fn read_skill<'a>(
+                &'a self,
+                target: ResourceLocator,
+            ) -> ResourceFuture<'a, Result<String, AppError>> {
+                Box::pin(async move {
+                    Err(AppError::PathNotFound {
+                        path: target.native_path,
+                    })
+                })
+            }
+        }
+        let opener = RecordingOpener::default();
+        let opened = opener.0.clone();
+        let service = ResourceService::new(StaticSource, DirectoryTargets, opener, Unreadable);
+        service
+            .open_skill(&SkillIdentity {
+                context: context(),
+                skill_name: "demo".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(opened.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

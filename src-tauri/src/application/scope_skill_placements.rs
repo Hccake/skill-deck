@@ -223,10 +223,10 @@ impl ResolvedScopeSkillPlacements {
     }
 }
 
-pub(crate) fn representative_readable_placement(
+pub(crate) fn readable_placements(
     placements: &[ObservedSkillPlacement],
-) -> Option<&ObservedSkillPlacement> {
-    placements
+) -> Vec<&ObservedSkillPlacement> {
+    let mut candidates = placements
         .iter()
         .filter(|placement| {
             placement.is_direct_directory()
@@ -236,13 +236,15 @@ pub(crate) fn representative_readable_placement(
                         TargetEntryKind::Symlink | TargetEntryKind::Junction
                     ))
         })
-        .min_by_key(|placement| {
-            (
-                placement.id != DirectoryPlacementId::Standard,
-                placement.content.uses_eve_payload(),
-                placement.entry.fact.destination.native_path.as_str(),
-            )
-        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|placement| {
+        (
+            placement.id != DirectoryPlacementId::Standard,
+            placement.content.uses_eve_payload(),
+            placement.entry.fact.destination.native_path.as_str(),
+        )
+    });
+    candidates
 }
 
 pub struct ScopeSkillPlacementResolver<T> {
@@ -397,7 +399,9 @@ pub(crate) async fn observe_scope_skill_placements<T: TargetFactResolver + ?Size
     }
     Ok(ResolvedScopeSkillPlacements {
         resolved: resolved_identity,
-        placements: ScopeSkillPlacementSet::new(context.clone(), placement_facts),
+        placements: ScopeSkillPlacementSet::new(context.clone(), placement_facts)
+            .protect_dependency_content(skill_name, facts, targets)
+            .await?,
         additional_observations,
         recorded_eve_targets: recorded_eve,
     })
@@ -648,7 +652,8 @@ mod tests {
             .await
             .unwrap();
         let placements = observed.describe(&catalog, &known).unwrap();
-        let direct = representative_readable_placement(&placements).unwrap();
+        let candidates = readable_placements(&placements);
+        let direct = candidates.first().unwrap();
         assert_eq!(
             direct
                 .entry

@@ -16,7 +16,7 @@ use crate::application::planning_facts::{
 };
 use crate::application::resources::AuthorizedResourceReader;
 use crate::application::scope_skill_placements::{
-    observe_scope_skill_placements, representative_readable_placement,
+    observe_scope_skill_placements, readable_placements,
 };
 use crate::application::skill_libraries::*;
 use crate::application::skill_source::{
@@ -124,7 +124,7 @@ struct FixtureLocations {
 
 struct FixtureSkillResource(
     crate::application::resources::SkillIdentity,
-    ResourceLocator,
+    Vec<ResourceLocator>,
 );
 
 impl crate::application::resources::ResourceContextSource for FixtureSkillResource {
@@ -138,10 +138,11 @@ impl crate::application::resources::ResourceContextSource for FixtureSkillResour
         Box::pin(async { Err(AppError::StaleContext) })
     }
 
-    fn resolve_skill<'a>(
+    fn resolve_skill_candidates<'a>(
         &'a self,
         identity: &'a crate::application::resources::SkillIdentity,
-    ) -> crate::application::resources::ResourceFuture<'a, Result<ResourceLocator, AppError>> {
+    ) -> crate::application::resources::ResourceFuture<'a, Result<Vec<ResourceLocator>, AppError>>
+    {
         Box::pin(async move {
             if identity != &self.0 {
                 return Err(AppError::StaleContext);
@@ -588,7 +589,8 @@ fi
             .await
             .unwrap();
     let placements = observed.describe(&catalog, &known).unwrap();
-    let selected = representative_readable_placement(&placements).unwrap();
+    let readable = readable_placements(&placements);
+    let selected = readable.first().unwrap();
     assert_eq!(
         selected.entry.fact.destination.native_path,
         if eve {
@@ -1270,13 +1272,29 @@ ln -s "$project/.agents/skills/alpha" "$project/.codebuddy/skills/alpha"
             })
             .await
             .unwrap();
+        run_fixture(
+            distro_name,
+            r#"set -eu
+printf '%s' 'ordinary file' > "$1/not-a-directory"
+ln -s "$1/not-a-directory" "$1/unreadable-skill"
+"#,
+            std::slice::from_ref(&project),
+        )
+        .await
+        .unwrap();
         let service = crate::application::resources::ResourceService::new(
             FixtureSkillResource(
                 identity.clone(),
-                ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: format!("{project}/.agents/skills/alpha"),
-                },
+                vec![
+                    ResourceLocator {
+                        environment: context.environment.clone(),
+                        native_path: format!("{project}/unreadable-skill"),
+                    },
+                    ResourceLocator {
+                        environment: context.environment.clone(),
+                        native_path: format!("{project}/.agents/skills/alpha"),
+                    },
+                ],
             ),
             RuntimeTargetFactResolver::new(runtime.clone()),
             crate::environment::opener::SystemResourceOpener,
@@ -1526,6 +1544,25 @@ ln -s "$1/node_modules/@example/tools/skills" "$1/.agents/skills"
         run_fixture(
             distro_name,
             "cmp \"$1/package-before.md\" \"$1/node_modules/@example/tools/skills/alpha/SKILL.md\"",
+            std::slice::from_ref(&project),
+        )
+        .await
+        .unwrap();
+        run_fixture(distro_name, r#"set -eu
+project=$1
+mkdir -p "$project/../packages"
+mv "$project/node_modules/@example/tools" "$project/../packages/tools"
+ln -s "$project/../packages/tools" "$project/node_modules/@example/tools"
+printf '%s\n' '{"version":1,"skills":{"alpha":{"source":"@example/tools","sourceType":"node_modules","computedHash":"content"}}}' > "$project/skills-lock.json"
+"#, std::slice::from_ref(&project)).await.unwrap();
+        let preview = remove.preview(&context, "alpha").await.unwrap();
+        assert!(matches!(remove.execute(&RemoveRequest {
+            token:preview.token, context:context.clone(), skill_name:"alpha".into(), intent:RemoveIntent::FullSkill,
+        }, CancellationSignal::default()).await,
+            Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "dependencyContentTarget"));
+        run_fixture(
+            distro_name,
+            "cmp \"$1/package-before.md\" \"$1/../packages/tools/skills/alpha/SKILL.md\"",
             std::slice::from_ref(&project),
         )
         .await

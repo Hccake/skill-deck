@@ -4065,19 +4065,43 @@ mod update_lifecycle {
 
     #[tokio::test]
     async fn native_dependency_root_alias_cannot_remove_package_contents() {
+        verify_dependency_root_protection(false).await;
+    }
+
+    #[tokio::test]
+    async fn native_dependency_workspace_root_alias_cannot_remove_package_contents() {
+        verify_dependency_root_protection(true).await;
+    }
+
+    async fn verify_dependency_root_protection(workspace_package: bool) {
         let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
-        let package_skills = fixture
-            .project_path
-            .join("node_modules/@example/tools/skills");
+        let package = if workspace_package {
+            fixture._root.path().join("packages/tools")
+        } else {
+            fixture.project_path.join("node_modules/@example/tools")
+        };
+        let package_skills = package.join("skills");
         fs::create_dir_all(package_skills.join("alpha")).unwrap();
         let markdown = fs::read(fixture.remote.work.join("skills/alpha/SKILL.md")).unwrap();
         fs::write(package_skills.join("alpha/SKILL.md"), &markdown).unwrap();
+        let linked_skills = if workspace_package {
+            // workspace 的依赖提升到项目上一级，包本身通过链接提供。
+            let dependency = fixture._root.path().join("node_modules/@example/tools");
+            fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&package, &dependency).unwrap();
+            #[cfg(windows)]
+            junction::create(&package, &dependency).unwrap();
+            dependency.join("skills")
+        } else {
+            package_skills.clone()
+        };
         let standard_root = fixture.project_path.join(".agents/skills");
         fs::create_dir_all(standard_root.parent().unwrap()).unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&package_skills, &standard_root).unwrap();
+        std::os::unix::fs::symlink(&linked_skills, &standard_root).unwrap();
         #[cfg(windows)]
-        junction::create(&package_skills, &standard_root).unwrap();
+        junction::create(&linked_skills, &standard_root).unwrap();
         write_json(
             &fixture.project_path.join("skills-lock.json"),
             &json!({"version":1,"skills":{"alpha":{
@@ -4096,10 +4120,120 @@ mod update_lifecycle {
             token:preview.token, context:fixture.context(), skill_name:"alpha".into(), intent:RemoveIntent::FullSkill,
         }, CancellationSignal::default()).await,
             Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "dependencyContentTarget"));
+        let payload = build_skill_payload(&fixture.remote.work.join("skills/alpha")).unwrap();
+        let mut metadata = metadata(
+            &compute_cli_project_hash_from_payload(&payload).unwrap(),
+            "remote",
+        );
+        metadata.skill_name = "alpha".into();
+        metadata.install_dir_name = "alpha".into();
+        metadata.skill_path = "skills/alpha/SKILL.md".into();
+        let discovery = fixture
+            .payloads
+            .discover(EnvironmentRef::Native, "independent-install")
+            .await
+            .unwrap();
+        let handle = fixture
+            .payloads
+            .acquire_payload_with_metadata(&discovery, "skills/alpha/SKILL.md", payload, metadata)
+            .await
+            .unwrap();
+        let context = fixture.context();
+        let facts = ScopePlanningSnapshotSource::snapshot(&fixture.facts, &context)
+            .await
+            .unwrap();
+        let selection = test_submission_for_agents_and_own_directories(
+            &context,
+            &facts.agent_runtime,
+            &[],
+            &facts.resolved_context.skill_root,
+            &fixture.targets,
+            &[],
+            InstallMode::Copy,
+        )
+        .await;
+        let install = InstallService::new(
+            fixture.payloads.clone(),
+            ConcreteInstallPlanner::new(
+                fixture.facts.clone(),
+                fixture.targets.clone(),
+                fixture.payloads.clone(),
+                fixed_time,
+                Arc::new(EmptyLibraryCandidateSource),
+            ),
+            fixture.executor(),
+        );
+        let result = install
+            .preview(&InstallRequest {
+                context,
+                source: "reader/repo".into(),
+                discovery_session: discovery,
+                payloads: vec![handle],
+                skills: vec!["alpha".into()],
+                agent_selection: selection,
+                acknowledge_redirect: true,
+            })
+            .await;
+        assert!(
+            matches!(result, Err(AppError::CapabilityUnavailable { capability, .. }) if capability == "dependencyContentTarget")
+        );
         assert_eq!(
             fs::read(package_skills.join("alpha/SKILL.md")).unwrap(),
             markdown
         );
+    }
+
+    #[tokio::test]
+    async fn native_resource_read_skips_unreadable_standard_link() {
+        let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
+        let standard = fixture.project_path.join(".agents/skills/alpha");
+        let private = fixture.project_path.join(".codebuddy/skills/alpha");
+        let unreadable = fixture._root.path().join("not-a-skill");
+        fs::create_dir_all(standard.parent().unwrap()).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        let markdown = fs::read(fixture.remote.work.join("skills/alpha/SKILL.md")).unwrap();
+        fs::write(private.join("SKILL.md"), &markdown).unwrap();
+        fs::create_dir_all(&unreadable).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&unreadable, &standard).unwrap();
+        #[cfg(windows)]
+        junction::create(&unreadable, &standard).unwrap();
+        let resources = ResourceService::new(
+            RuntimeResourceContextSource::new(
+                fixture.facts.clone(),
+                fixture.targets.clone(),
+                update_library_repository(fixture._root.path()),
+            ),
+            fixture.targets.clone(),
+            crate::environment::opener::SystemResourceOpener,
+            RuntimeResourceReader::new(fixture.environments.clone()),
+        );
+        let identity = SkillIdentity {
+            context: fixture.context(),
+            skill_name: "alpha".into(),
+        };
+        assert_eq!(
+            resources.read_skill(&identity).await.unwrap(),
+            crate::core::skill::skill_content_from_markdown(
+                std::str::from_utf8(&markdown).unwrap()
+            )
+        );
+        assert!(unreadable.is_dir());
+        #[cfg(unix)]
+        {
+            fs::remove_dir(&unreadable).unwrap();
+            fs::write(&unreadable, b"ordinary file").unwrap();
+            assert_eq!(
+                resources.read_skill(&identity).await.unwrap(),
+                crate::core::skill::skill_content_from_markdown(
+                    std::str::from_utf8(&markdown).unwrap()
+                )
+            );
+            assert_eq!(fs::read(&unreadable).unwrap(), b"ordinary file");
+        }
+        fs::remove_file(private.join("SKILL.md")).unwrap();
+        assert!(resources.read_skill(&identity).await.is_err());
+        assert!(fs::symlink_metadata(&standard).is_ok());
     }
 
     #[tokio::test]

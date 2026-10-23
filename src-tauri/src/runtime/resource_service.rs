@@ -10,7 +10,7 @@ use crate::application::resources::{
     ResourceContextSource, ResourceFuture, ResourceService, SkillIdentity,
 };
 use crate::application::scope_skill_placements::{
-    observe_scope_skill_placements, representative_readable_placement,
+    observe_scope_skill_placements, readable_placements,
 };
 use crate::application::skill_libraries::SkillLibraryRepository;
 use crate::environment::opener::SystemResourceOpener;
@@ -42,10 +42,10 @@ impl RuntimeResourceContextSource {
 }
 
 impl ResourceContextSource for RuntimeResourceContextSource {
-    fn resolve_skill<'a>(
+    fn resolve_skill_candidates<'a>(
         &'a self,
         identity: &'a SkillIdentity,
-    ) -> ResourceFuture<'a, Result<ResourceLocator, AppError>> {
+    ) -> ResourceFuture<'a, Result<Vec<ResourceLocator>, AppError>> {
         Box::pin(async move {
             let facts = self.facts.snapshot(&identity.context).await?;
             let catalog = build_agent_selection_catalog(
@@ -73,12 +73,10 @@ impl ResourceContextSource for RuntimeResourceContextSource {
             )
             .await?;
             let placements = observed.describe(&catalog, &libraries)?;
-            Ok(representative_readable_placement(&placements)
-                .ok_or(AppError::StaleTarget)?
-                .entry
-                .fact
-                .destination
-                .clone())
+            Ok(readable_placements(&placements)
+                .into_iter()
+                .map(|placement| placement.entry.fact.destination.clone())
+                .collect())
         })
     }
 

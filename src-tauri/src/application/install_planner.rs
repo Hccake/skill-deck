@@ -393,10 +393,20 @@ where
                 }
                 continue;
             }
+            let placements = ScopeSkillPlacementSet::new(
+                request.context.clone(),
+                seed.placements
+                    .iter()
+                    .map(|placement| (placement.id.clone(), placement.fact.clone()))
+                    .collect(),
+            )
+            .protect_dependency_content(&metadata.skill_name, &facts, &self.targets)
+            .await?;
             let entries = plan_install_entries(
                 request,
                 &catalog,
                 seed,
+                placements,
                 library_candidates,
                 payload,
                 seed.eve_payload_index.map(|index| &derived_payloads[index]),
@@ -488,15 +498,14 @@ fn plan_install_entries(
     request: &InstallRequest,
     catalog: &AgentSelectionCatalog,
     seed: &SkillSeed,
+    placements: ScopeSkillPlacementSet,
     snapshot: &LibraryCandidateSnapshot,
     payload: &ValidatedSkillPayload,
     eve_payload: Option<&PinnedPayloadLease>,
 ) -> Result<PreparedMutationEntries, AppError> {
     let original_payload_id = payload.manifest().payload_id().clone();
-    let mut resolved = BTreeMap::new();
     let mut direct_changes = BTreeMap::new();
     for placement in &seed.placements {
-        resolved.insert(placement.id.clone(), placement.fact.clone());
         let change = if placement.direct {
             let payload_id = if placement.content.uses_eve_payload() {
                 eve_payload
@@ -529,7 +538,7 @@ fn plan_install_entries(
     ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
         skill,
         catalog,
-        placements: ScopeSkillPlacementSet::new(request.context.clone(), resolved),
+        placements,
         libraries: LibraryElectionState {
             candidates: snapshot.candidates(),
             selected_agent_ids: snapshot.selected_agent_ids(),

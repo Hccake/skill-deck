@@ -1271,7 +1271,13 @@ where
             let scope_plan = ScopeSkillPlanner::plan_library_change(LibrarySkillChangeRequest {
                 skill: group.directory_name.clone(),
                 catalog: &agent_options.catalog,
-                placements: ScopeSkillPlacementSet::new(draft.context.clone(), resolved),
+                placements: ScopeSkillPlacementSet::new(draft.context.clone(), resolved)
+                    .protect_dependency_content(
+                        group.directory_name.as_ref(),
+                        &facts,
+                        &self.targets,
+                    )
+                    .await?,
                 before: LibraryElectionState {
                     candidates: &current_candidate_set,
                     selected_agent_ids: &current_agent_ids,
