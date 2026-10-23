@@ -371,6 +371,12 @@ Remove-Item Env:SKILL_DECK_E2E_SPEC
 
 专用入口只由 E2E 的 Vite 配置注入，正式构建继续使用应用入口。截图及几何测量结果保存在本次桌面测试输出目录；组件测试另外覆盖复制进行时的选择锁定和失败后的选择保留。
 
+### 来源路径迁移验证
+
+在 Windows 原生工作区设置 `SKILL_DECK_E2E_SPEC=update-relocation`，运行 `pnpm test:desktop`。该专用入口使用真实更新预览、路径提示及 Dialog 组件和受控数据，检查中英文、窄窗口、长名称换行、原新路径同行、截断提示与原有副本选择。库页面的状态与确认流程由组件测试覆盖，原生夹具验证共享提示在库弹窗宽度下的布局。
+
+后端回归覆盖完整候选与同名歧义、内容未变但路径改变、仅大小写改变的路径、GitHub 树结果与获取期间引用变化、旧缓存恢复，以及直接安装和库成员的来源记录提交。Windows 与真实 WSL 用例通过 Worker 获取候选并提交新来源路径；布局夹具不执行文件写入。
+
 ### 详情翻译验证
 
 将环境变量 `SKILL_DECK_E2E_SPEC` 设为 `translation`，再运行 `pnpm test:desktop`，执行[翻译专用桌面用例](../e2e/translation.spec.mjs)。该模式在构建时通过 `e2e/fixtures/translation-discovery.mjs` 替换发现页 API，使用固定公开文本；普通翻译请求仍由 Rust 真实发出。切换模式后先重新构建，后续仅修改用例时可复用同一模式的测试应用。

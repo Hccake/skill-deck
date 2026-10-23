@@ -182,25 +182,14 @@ impl RuntimeSkillSourceModule {
             let mut resolved_paths = BTreeMap::new();
             if provider != &SourceProvider::WellKnown {
                 for skill in &group.skills {
-                    let result = if skill.allow_relocation {
-                        selected
-                            .resolve_saved_skill_path(
-                                &discovery_session,
-                                &skill.name,
-                                skill.skill_path(),
-                                cancellation.clone(),
-                            )
-                            .await
-                    } else {
-                        selected
-                            .ensure_saved_path(
-                                &discovery_session,
-                                skill.skill_path(),
-                                cancellation.clone(),
-                            )
-                            .await
-                            .map(|()| skill.skill_path().to_string())
-                    };
+                    let result = selected
+                        .resolve_saved_skill_path(
+                            &discovery_session,
+                            &skill.name,
+                            skill.skill_path(),
+                            cancellation.clone(),
+                        )
+                        .await;
                     match result {
                         Ok(path) => {
                             resolved_paths.insert(skill.name.clone(), path);

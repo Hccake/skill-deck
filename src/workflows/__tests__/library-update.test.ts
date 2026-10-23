@@ -46,6 +46,15 @@ const completed = () => ({
 });
 
 describe('library update workflow', () => {
+  it('replaces an earlier available update when the source becomes ambiguous', async () => {
+    useLibraryUpdateWorkflow.getState().activate(environment, 'lib-1');
+    mocks.checkLibrarySkillUpdates.mockResolvedValueOnce(checkResponse(updateInfo('updateAvailable'), 'completed'));
+    await useLibraryUpdateWorkflow.getState().check();
+    const ambiguous = { ...updateInfo('cannotCheck'), error: { kind: 'upstreamSkillAmbiguous' as const, data: { skillName: 'demo' } } };
+    mocks.checkLibrarySkillUpdates.mockResolvedValueOnce(checkResponse(ambiguous, 'notCompleted'));
+    await useLibraryUpdateWorkflow.getState().check();
+    expect(useLibraryUpdateWorkflow.getState().checks.demo).toMatchObject({ hasUpdate: false, status: 'cannotCheck', error: ambiguous.error });
+  });
   beforeEach(() => {
     useLibraryUpdateWorkflow.getState().reset();
     mocks.checkLibrarySkillUpdates.mockReset();

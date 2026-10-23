@@ -15,7 +15,6 @@ use crate::error::AppError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedSkillSource {
-    pub allow_relocation: bool,
     pub name: String,
     pub metadata: NormalizedUpdateMetadata,
 }
@@ -215,7 +214,6 @@ mod tests {
 
     fn saved(name: &str, ref_name: &str) -> SavedSkillSource {
         SavedSkillSource {
-            allow_relocation: false,
             name: name.to_string(),
             metadata: NormalizedUpdateMetadata {
                 source: "acme/tools".to_string(),

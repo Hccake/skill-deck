@@ -324,6 +324,21 @@ describe('LibraryPage maintenance', () => {
     await waitFor(() => expect(updateLibrarySkills).toHaveBeenCalledWith(expect.any(String)));
   });
 
+  it('adds only relocated member paths to the existing update confirmation', async () => {
+    vi.mocked(prepareLibrarySkillUpdates).mockResolvedValue({
+      blocked: [], redirectedDownloadHosts: [], skillNames: ['api-design'],
+      pathChanges: [{ skillName: 'api-design', change: { previousPath: 'skills/api-design', nextPath: 'tools/api-design' } }],
+    });
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.checkUpdates' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'skills.actions.updateNamed:{"name":"api-design"}' }));
+    expect(await screen.findByText('skills.updatePlan.pathChange')).toBeTruthy();
+    expect(screen.getByText('skills/api-design')).toBeTruthy();
+    expect(screen.getByText('tools/api-design')).toBeTruthy();
+    expect(screen.getByText(/libraries.confirmUpdateDescription/)).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'libraries.update' }).at(-1)).toBeTruthy();
+  });
+
   it('gives immediate feedback when a manual library check fails', async () => {
     const notification = vi.spyOn(toast, 'error');
     vi.mocked(checkLibrarySkillUpdates).mockResolvedValueOnce({ sources: [], skills: [{

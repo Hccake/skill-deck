@@ -1033,6 +1033,7 @@ export type LibraryMembershipOutcome = { scopes: MembershipScopeResult[]; cleanu
 export type LibraryMembershipPreview = { environment: EnvironmentRef; libraryId: LibraryId; scopes: SkillLocationRef[]; impacts: MembershipScopeImpact[]; inventoryComplete: boolean; inventoryToken: string; token: string }
 export type LibraryRetirePreview = { skillName: string; token: string; membership: LibraryMembershipPreview }
 export type LibraryRetireResponse = { library: SkillLibraryDetail | null; membership: LibraryMembershipOutcome }
+export type LibrarySkillPathChange = { skillName: string; change: SourcePathChange }
 export type LibrarySkillSummary = { name: string; description: string; source: string; sourceType: string; sourceUrl: string | null; skillPath: string; contentHash: string;
 /**
  * 内容所属插件。属于 Skill 自身的元数据，与 Agent 无关。
@@ -1125,7 +1126,7 @@ export type PathSpec = { kind: "home"; relativePath: string } | { kind: "configH
  */
 { kind: "absolute"; path: string }
 export type PhysicalIdentityComparison = "same" | "different" | "unknown"
-export type PreparedLibraryUpdatePreview = { skillNames: string[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
+export type PreparedLibraryUpdatePreview = { pathChanges?: LibrarySkillPathChange[] | null; skillNames: string[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
 export type PreparedUpdatePreview = { sources: UpdateSourcePreview[]; pathBase?: ScopePathBase | null; skills: UpdateSkillPreview[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
 export type PreviewAddLibrarySkillItem = { skillName: string; payload: AcquiredPayloadHandle }
 export type PreviewAddLibrarySkillsRequest = { environment: EnvironmentRef; libraryId: LibraryId; discoverySession: DiscoverySessionHandle; skills: PreviewAddLibrarySkillItem[] }

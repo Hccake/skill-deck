@@ -69,9 +69,19 @@ pub struct LibraryUpdateResponse {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct PreparedLibraryUpdatePreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_changes: Option<Vec<LibrarySkillPathChange>>,
     pub skill_names: Vec<String>,
     pub blocked: Vec<crate::application::update::UpdatePreparationIssue>,
     pub redirected_download_hosts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct LibrarySkillPathChange {
+    pub skill_name: String,
+    pub change: crate::application::update::SourcePathChange,
 }
 
 pub struct PreparedLibraryUpdate {
@@ -105,6 +115,9 @@ impl PreparedLibraryUpdate {
                 });
             false
         });
+        if let Some(changes) = &mut self.preview.path_changes {
+            changes.retain(|item| self.preview.skill_names.contains(&item.skill_name));
+        }
     }
 }
 
@@ -177,7 +190,6 @@ where
                 }
                 crate::core::source_identity::SourceIdentity::from_metadata(metadata)?;
                 saved.push(SavedSkillSource {
-                    allow_relocation: false,
                     name: name.clone(),
                     metadata: metadata.clone(),
                 });
@@ -185,6 +197,10 @@ where
             });
             inspections.push((name.clone(), snapshot));
         }
+        let saved_paths = saved
+            .iter()
+            .map(|skill| (skill.name.clone(), skill.skill_path().to_string()))
+            .collect::<BTreeMap<_, _>>();
         let acquisitions = if saved.is_empty() {
             Vec::new()
         } else {
@@ -195,6 +211,7 @@ where
         let mut prepared = PreparedLibraryUpdate {
             request: request.clone(),
             preview: PreparedLibraryUpdatePreview {
+                path_changes: None,
                 skill_names: Vec::new(),
                 blocked: Vec::new(),
                 redirected_download_hosts: Vec::new(),
@@ -277,6 +294,22 @@ where
         for item in prepared.items {
             match self.payloads.pin_verified(item.1.payload.handle()).await {
                 Ok(_) => {
+                    let name = item.1.payload.name();
+                    if let Some(change) = saved_paths.get(name).and_then(|previous| {
+                        crate::application::update::SourcePathChange::between(
+                            previous,
+                            &item.1.payload.handle().skill_path,
+                        )
+                    }) {
+                        prepared
+                            .preview
+                            .path_changes
+                            .get_or_insert_with(Vec::new)
+                            .push(LibrarySkillPathChange {
+                                skill_name: name.into(),
+                                change,
+                            });
+                    }
                     prepared
                         .preview
                         .skill_names
@@ -849,6 +882,105 @@ mod tests {
         service
             .execute_prepared(prepared, cancellation, |_| {})
             .await
+    }
+
+    #[tokio::test]
+    async fn library_update_relocation_keeps_member_identity_and_commits_the_new_path() {
+        use crate::application::source_evidence::SourceEvidenceCoordinator;
+        use crate::application::source_evidence_provider::RuntimeSourceEvidenceDetector;
+        use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
+        use crate::git_fixture::{BareSkillRepo, CountingGitTransport};
+        use crate::runtime::update_service::RuntimeSkillSourceModule;
+        let Fixture {
+            _temp,
+            repository,
+            library_id,
+            manager,
+            ..
+        } = fixture(&["alpha"], None).await;
+        let remote = BareSkillRepo::new(&["alpha"]);
+        remote.relocate_skill("skills/alpha", "tools/alpha");
+        let transport = Arc::new(CountingGitTransport::for_repo_with_public_source(
+            &remote,
+            "https://example.com/repo.git",
+        ));
+        let snapshots = Arc::new(SourceSnapshotReuseIndex::default());
+        let evidence = SourceEvidenceCoordinator::new(Arc::new(
+            RuntimeSourceEvidenceDetector::with_git_transport(
+                manager.clone(),
+                snapshots.clone(),
+                transport.clone(),
+            ),
+        ));
+        let source = RuntimeSkillSourceModule::with_git_transport(
+            manager.clone(),
+            snapshots,
+            evidence.clone(),
+            transport,
+        );
+        let service = LibraryUpdateService::new(
+            manager,
+            LibraryUpdateSubjectProvider::new(repository.clone(), targets()),
+            source,
+            targets(),
+            Arc::new(SkillLibraryModule::new(repository.clone())),
+        );
+        let request = UpdateLibrarySkillsRequest {
+            environment: EnvironmentRef::Native,
+            library_id: library_id.clone(),
+            skill_names: vec!["alpha".into()],
+        };
+        let before = repository.load(&EnvironmentRef::Native).await.unwrap();
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert!(
+            prepared.preview.blocked.is_empty(),
+            "{:?}",
+            prepared.preview
+        );
+        let preview = serde_json::to_value(&prepared.preview).unwrap();
+        assert_eq!(preview["pathChanges"][0]["skillName"], "alpha");
+        assert_eq!(
+            preview["pathChanges"][0]["change"]["nextPath"],
+            "tools/alpha"
+        );
+        assert_eq!(
+            serde_json::to_value(repository.load(&EnvironmentRef::Native).await.unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+        let result = service
+            .execute_prepared(prepared, CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            result.results[0].status,
+            LibraryUpdateSkillStatus::Succeeded
+        );
+        let after = repository.load(&EnvironmentRef::Native).await.unwrap();
+        let library = &after.libraries[0];
+        assert_eq!(library.id, library_id);
+        assert_eq!(library.skills[0].name, "alpha");
+        let source: LibrarySkillSourceRecord =
+            serde_json::from_value(library.skills[0].source_record.clone()).unwrap();
+        assert_eq!(source.skill_path.as_deref(), Some("tools/alpha/SKILL.md"));
+        let check = crate::application::update_check::LibraryUpdateCheckService::new(
+            crate::application::update_records::LibraryUpdateRecordProvider::new(repository),
+            evidence,
+        )
+        .check(
+            EnvironmentRef::Native,
+            library_id,
+            crate::application::update::UpdateCheckMode::Force,
+            BTreeSet::from(["alpha".into()]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            check.skills[0].status,
+            crate::application::update::SkillUpdateCheckStatus::UpToDate
+        );
     }
 
     #[tokio::test]

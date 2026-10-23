@@ -89,7 +89,7 @@ export const useLibraryUpdateWorkflow = create<LibraryUpdateWorkflowState>()((se
           const previous = state.checks[check.name];
           return [
             check.name,
-            check.status === 'cannotCheck' && previous && previous.status !== 'cannotCheck' && previous.comparisonFingerprint === check.comparisonFingerprint
+            check.status === 'cannotCheck' && check.error?.kind !== 'upstreamSkillAmbiguous' && previous && previous.status !== 'cannotCheck' && previous.comparisonFingerprint === check.comparisonFingerprint
               ? { ...check, hasUpdate: previous.hasUpdate, status: previous.status, reason: previous.reason }
               : check,
           ];

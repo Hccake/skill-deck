@@ -219,6 +219,11 @@ impl RuntimeRevisionSource for FixtureFacts {
 
 // 来源由受控 Git 夹具提供，完整内容通过正式存储接口传给 WSL。
 struct FixtureSource {
+    relocation_source: Option<(
+        crate::environment::wsl::WslWorkspace,
+        crate::environment::wsl::WslSession,
+        String,
+    )>,
     root: PathBuf,
     payloads: Arc<PayloadSessionManager>,
     calls: Arc<AtomicUsize>,
@@ -234,18 +239,79 @@ impl SkillSourceModule for FixtureSource {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let mut results = Vec::new();
             for group in groups {
-                let discovery = self
-                    .payloads
-                    .discover(
-                        group.environment.clone(),
-                        format!("wsl-cli-fixture-{}", uuid::Uuid::new_v4()),
+                let discovery = if let Some((workspace, session, remote)) = &self.relocation_source
+                {
+                    use crate::application::payload_session::{
+                        DiscoverySourceDescriptor, DiscoverySourceLocation, RetainedDiscoverySource,
+                    };
+                    use crate::environment::wsl::operations::source_acquisition::{
+                        acquire_wsl_source_native, WslAcquisitionSource,
+                    };
+                    let native = acquire_wsl_source_native(
+                        workspace.clone(),
+                        session,
+                        WslAcquisitionSource::Git {
+                            url: remote.clone(),
+                            git_ref: group.skills[0].metadata.ref_name.clone(),
+                        },
+                        std::time::Duration::from_secs(30),
+                        None,
+                        cancellation.clone(),
                     )
                     .await?;
+                    let storage = Arc::new(crate::environment::wsl::operations::acquire::WslPayloadSessionStorage::for_source(workspace.clone(), &native));
+                    let retained = RetainedDiscoverySource::new(
+                        DiscoverySourceLocation::WslNative {
+                            distro_name: session.distro_name.clone(),
+                            linux_root: native.native_root().into(),
+                            ref_revision: native.ref_revision().map(str::to_string),
+                        },
+                        DiscoverySourceDescriptor {
+                            source: group.skills[0].metadata.source.clone(),
+                            source_type: "git".into(),
+                            source_url: group.skills[0].metadata.source_url.clone(),
+                            ref_name: group.skills[0].metadata.ref_name.clone(),
+                            redirected_download_host: None,
+                        },
+                        BTreeMap::new(),
+                        native,
+                    );
+                    self.payloads
+                        .discover_with_source(
+                            group.environment.clone(),
+                            format!("wsl-relocation-{}", uuid::Uuid::new_v4()),
+                            storage,
+                            retained,
+                        )
+                        .await?
+                } else {
+                    self.payloads
+                        .discover(
+                            group.environment.clone(),
+                            format!("wsl-cli-fixture-{}", uuid::Uuid::new_v4()),
+                        )
+                        .await?
+                };
                 let mut handles = Vec::new();
                 let mut leases = Vec::new();
                 for skill in &group.skills {
                     if cancellation.is_cancelled() {
                         return Err(AppError::MutationCancelled);
+                    }
+                    if self.relocation_source.is_some() {
+                        let selected = crate::application::source_acquisition::SelectedPayloadAcquisitionService::new(self.payloads.clone());
+                        let path = selected
+                            .resolve_saved_skill_path(
+                                &discovery,
+                                &skill.name,
+                                skill.skill_path(),
+                                cancellation.clone(),
+                            )
+                            .await?;
+                        let handle = selected.acquire(crate::application::source_acquisition::AcquireSelectedPayloadsRequest { discovery_session: discovery.clone(), skill_paths: vec![path] }).await?.remove(0);
+                        leases.push(Arc::new(self.payloads.pin_verified(&handle).await?));
+                        handles.push((skill.name.clone(), handle));
+                        continue;
                     }
                     let path =
                         crate::core::skill_paths::normalize_skill_folder_path(skill.skill_path());
@@ -401,6 +467,12 @@ async fn real_wsl2_agent_compatibility_preserves_current_and_legacy_installation
     run_wsl_update(WslWorkflow::AgentCompatibility).await;
 }
 
+#[tokio::test]
+#[ignore = "requires Windows, WSL 2, and the skills CLI fixture"]
+async fn real_wsl2_update_relocation_uses_worker_candidates_and_commits_new_path() {
+    run_wsl_update(WslWorkflow::Relocation).await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WslWorkflow {
     PrivateUpdate,
@@ -409,6 +481,7 @@ enum WslWorkflow {
     Adjacent,
     Dependency,
     AgentCompatibility,
+    Relocation,
 }
 
 async fn run_wsl_update(workflow: WslWorkflow) {
@@ -458,7 +531,7 @@ if [ "$6" = eve ]; then
 else
   HOME="$root/home" USERPROFILE="$root/home" GIT_CONFIG_GLOBAL="$root/home/gitconfig" GIT_CONFIG_NOSYSTEM=1 DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 "$node" "$cli" add "$public" --skill alpha --agent codebuddy --yes
 fi
-"#, &[root.clone(), node, cli, mapped, remote.source(), if eve { "eve".into() } else { "private".into() }]).await.unwrap();
+"#, &[root.clone(), node, cli, mapped.clone(), remote.source(), if eve { "eve".into() } else { "private".into() }]).await.unwrap();
 
     let environment = EnvironmentRef::Wsl {
         distro_name: distro.clone(),
@@ -648,6 +721,9 @@ fi
     }
 
     remote.publish_change("alpha");
+    if workflow == WslWorkflow::Relocation {
+        remote.relocate_skill("skills/alpha", "tools/alpha");
+    }
     let clock = Arc::new(AtomicU64::new(1_000));
     let read_clock = clock.clone();
     let manager = Arc::new(PayloadSessionManager::new(
@@ -677,6 +753,8 @@ fi
             || "2026-09-14T00:00:00Z".into(),
         ),
         FixtureSource {
+            relocation_source: (workflow == WslWorkflow::Relocation)
+                .then(|| (workspace.clone(), session.clone(), mapped.clone())),
             root: remote.work.clone(),
             payloads: manager.clone(),
             calls: source_calls.clone(),
@@ -687,6 +765,73 @@ fi
         context: context.clone(),
         skill_names: vec!["alpha".into()],
     };
+    if workflow == WslWorkflow::Relocation {
+        let prepared = service
+            .prepare(&request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert!(
+            prepared.preview.blocked.is_empty(),
+            "{:?}",
+            prepared.preview
+        );
+        assert_eq!(
+            prepared.preview.skills[0]
+                .path_change
+                .as_ref()
+                .unwrap()
+                .next_path,
+            "tools/alpha"
+        );
+        let selected = prepared
+            .preview
+            .skills
+            .iter()
+            .flat_map(|skill| &skill.targets)
+            .filter_map(|target| target.selectable_entry_id.clone())
+            .collect::<Vec<_>>();
+        let response = service
+            .execute_prepared(prepared, &selected, CancellationSignal::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(response.outcome, UpdateOutcome::Succeeded, "{response:?}");
+        let latest = ScopePlanningSnapshotSource::snapshot(&facts, &context)
+            .await
+            .unwrap();
+        assert_eq!(
+            latest
+                .lock_document
+                .entry_snapshot("alpha")
+                .value()
+                .unwrap()["skillPath"],
+            "tools/alpha/SKILL.md"
+        );
+        let expected = workspace
+            .map_host_path(
+                remote
+                    .work
+                    .join("tools/alpha/SKILL.md")
+                    .to_string_lossy()
+                    .into_owned(),
+                None,
+            )
+            .await
+            .unwrap();
+        run_fixture(
+            &distro,
+            "cmp \"$1\" \"$2\"",
+            &[
+                expected,
+                format!("{project}/.codebuddy/skills/alpha/SKILL.md"),
+            ],
+        )
+        .await
+        .unwrap();
+        drop(service);
+        clock.store(120_000, Ordering::SeqCst);
+        manager.cleanup().await.unwrap();
+        return;
+    }
     if workflow == WslWorkflow::ScopeBoundary {
         use crate::application::mutation::result::OperationErrorCode;
         use crate::application::update::UpdateCoverage;

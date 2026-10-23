@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { SourcePathChange } from '@/components/skills/SourcePathChange';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -905,6 +906,12 @@ export function LibraryPage() {
             ) : null}
           </DialogHeader>
           <div className="max-h-80 space-y-3 overflow-y-auto">
+            {pendingUpdate?.pathChanges?.map((item) => (
+              <div key={item.skillName} className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h3 className="max-w-full shrink-0 break-words text-sm font-semibold">{item.skillName}</h3>
+                <SourcePathChange change={item.change} />
+              </div>
+            ))}
             {updateAppError ? <p className="text-sm text-destructive" role="alert">{formatAppError(updateAppError, t)}</p> : null}
             {pendingUpdate?.blocked.map((issue) => <div key={issue.skillName} className="text-sm" role="alert"><p className="font-medium">{issue.skillName}</p><p className="text-destructive">{formatAppError(issue.error, t)}</p></div>)}
           </div>

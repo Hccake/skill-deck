@@ -14,8 +14,8 @@ export default mergeConfig(base, {
     transformIndexHtml: {
       order: 'pre',
       handler: html => ({
-        html: process.env.SKILL_DECK_E2E_SPEC === 'copy-dialog'
-          ? html.replace('/src/main.tsx', '/e2e/fixtures/copy-dialog.tsx') : html,
+        html: ['copy-dialog', 'update-relocation'].includes(process.env.SKILL_DECK_E2E_SPEC)
+          ? html.replace('/src/main.tsx', `/e2e/fixtures/${process.env.SKILL_DECK_E2E_SPEC}.tsx`) : html,
         tags: [{ tag: 'script', attrs: { type: 'module' }, children: "import '@wdio/tauri-plugin';", injectTo: 'head' }],
       }),
     },

@@ -533,7 +533,6 @@ where
             .filter_map(|(_, item)| item.as_ref().ok())
             .flat_map(|item| item.source_candidates.iter())
             .map(|skill| SavedSkillSource {
-                allow_relocation: true,
                 name: skill.name.clone(),
                 metadata: skill.metadata(),
             })
