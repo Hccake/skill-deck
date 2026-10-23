@@ -77,7 +77,11 @@ where
         .map(|root| {
             let relative = PathBuf::from(OsString::from_vec(root.relative_path));
             let path = manager.resolve(request.source_id, &relative)?;
-            if request.mode == environment_protocol::SourceScanMode::SkillMetadata {
+            if matches!(
+                request.mode,
+                environment_protocol::SourceScanMode::SkillMetadata
+                    | environment_protocol::SourceScanMode::UpdateCandidates
+            ) {
                 match environment_engine::directory::plain_descendant_directory(
                     manager.root(request.source_id)?,
                     &relative,
@@ -101,6 +105,9 @@ where
             roots,
             mode: match request.mode {
                 environment_protocol::SourceScanMode::Recursive => EngineScanMode::Recursive,
+                environment_protocol::SourceScanMode::UpdateCandidates => {
+                    EngineScanMode::UpdateCandidates
+                }
                 environment_protocol::SourceScanMode::PriorityDirectories => {
                     EngineScanMode::PriorityDirectories
                 }

@@ -431,6 +431,7 @@ pub enum SourceScanMode {
     Recursive,
     PriorityDirectories,
     SkillMetadata,
+    UpdateCandidates,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

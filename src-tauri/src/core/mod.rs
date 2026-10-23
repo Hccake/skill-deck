@@ -24,6 +24,7 @@ pub mod skill_paths;
 pub mod skill_payload;
 pub mod source_identity;
 pub mod source_parser;
+pub mod update_locations;
 pub mod update_metadata;
 
 pub use app_config::*;

@@ -579,6 +579,77 @@ struct PreparedNativePayload {
 }
 
 impl SelectedPayloadAcquisitionService {
+    pub async fn update_location_catalog(
+        &self,
+        discovery: &DiscoverySessionHandle,
+        cancellation: CancellationSignal,
+    ) -> Result<crate::core::update_locations::UpdateLocationCatalog, AppError> {
+        let source = self.sessions.source_snapshot(discovery)?;
+        if let Some(catalog) = source.location_catalog() {
+            return Ok(catalog.clone());
+        }
+        let documents = match source.location() {
+            DiscoverySourceLocation::Native { root, .. } => {
+                let root = root.clone();
+                let cancel = cancellation.clone();
+                tokio::task::spawn_blocking(move || {
+                    use environment_engine::source_inventory::{
+                        SourceInventoryRequest, SourceRoot, SourceScanMode,
+                    };
+                    let inventory = environment_engine::source_candidates::scan_update_candidates(
+                        &SourceInventoryRequest {
+                            roots: vec![SourceRoot {
+                                path: root,
+                                stat_only: false,
+                            }],
+                            mode: SourceScanMode::UpdateCandidates,
+                            per_file_limit: 256 * 1024,
+                            aggregate_limit: 8 * 1024 * 1024,
+                        },
+                        || cancel.is_cancelled(),
+                    )
+                    .map_err(|error| {
+                        if error
+                            == environment_engine::source_inventory::SourceInventoryError::Cancelled
+                        {
+                            AppError::MutationCancelled
+                        } else {
+                            crate::core::update_locations::incomplete()
+                        }
+                    })?;
+                    inventory
+                        .entries
+                        .into_iter()
+                        .map(|entry| {
+                            let path = entry
+                                .relative_path
+                                .to_str()
+                                .ok_or_else(crate::core::update_locations::incomplete)?
+                                .replace('\\', "/");
+                            Ok((path, entry.content_bytes))
+                        })
+                        .collect::<Result<Vec<_>, AppError>>()
+                })
+                .await
+                .map_err(|_| AppError::StaleEnvironment)??
+            }
+            DiscoverySourceLocation::WslNative { .. } => {
+                self.sessions
+                    .storage_for_discovery(discovery)?
+                    .read_source_update_candidates(cancellation.clone())
+                    .await?
+            }
+        };
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        let catalog =
+            crate::core::update_locations::UpdateLocationCatalog::from_documents(documents)?;
+        self.sessions
+            .register_location_catalog(discovery, catalog.clone())?;
+        Ok(catalog)
+    }
+
     pub fn new(sessions: Arc<PayloadSessionManager>) -> Self {
         Self { sessions }
     }

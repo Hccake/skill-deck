@@ -266,6 +266,7 @@ fn protocol_error(message: &str) -> AppError {
 )]
 mod windows_wsl2_tests {
     use std::process::Stdio;
+    use std::time::Duration;
 
     use crate::application::payload_session::{PayloadSessionStorage, PayloadStorageKey};
     use crate::core::mutation::CancellationSignal;
@@ -359,6 +360,45 @@ git -C "$root" branch release
         assert_eq!(source.ref_revision(), Some(tag.as_str()));
         assert_ne!(branch, tag);
         assert!(source.managed_bytes() > 0);
+        let complete: environment_protocol::SourceScanResponse = workspace
+            .request_worker_payload_for_generation(
+                source.handle().generation,
+                environment_protocol::Message::ScanSource {
+                    request: environment_protocol::SourceScanRequest {
+                        source_id: source.handle().id,
+                        roots: vec![environment_protocol::SourceScanRoot {
+                            relative_path: vec![],
+                            stat_only: false,
+                        }],
+                        mode: environment_protocol::SourceScanMode::UpdateCandidates,
+                        per_file_limit: 256 * 1024,
+                        aggregate_limit: 8 * 1024 * 1024,
+                        deadline_millis: 30_000,
+                    },
+                },
+                12 * 1024 * 1024,
+                Some(CancellationSignal::default()),
+                Duration::from_secs(35),
+            )
+            .await
+            .unwrap();
+        let catalog = crate::core::update_locations::UpdateLocationCatalog::from_documents(
+            complete
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    assert!(!entry.truncated && entry.error_code.is_none());
+                    (
+                        String::from_utf8(entry.relative_path).unwrap(),
+                        entry.content_bytes,
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(catalog.candidates("shared").len(), 2);
+        assert_eq!(catalog.candidates("deep-gate").len(), 1);
+        assert!(catalog.candidates("locked").is_empty());
         let inventory = scan(
             &workspace,
             &source,

@@ -471,7 +471,7 @@ impl<'a> DiscoverySelector<'a> {
     }
 }
 
-fn locked_project_skill_names(document: Option<&str>) -> HashSet<String> {
+pub(crate) fn locked_project_skill_names(document: Option<&str>) -> HashSet<String> {
     let Some(document) = document else {
         return HashSet::new();
     };
@@ -494,7 +494,7 @@ fn normalize_skill_name_for_lock_match(name: &str) -> String {
         .join("-")
 }
 
-fn is_locked_project_skill(
+pub(crate) fn is_locked_project_skill(
     skill_name: &str,
     relative_directory: &Path,
     locked_names: &HashSet<String>,
@@ -507,7 +507,7 @@ fn is_locked_project_skill(
             .unwrap_or(false)
 }
 
-fn is_in_cli_agent_project_skill_dir(relative_path: &Path) -> bool {
+pub(crate) fn is_in_cli_agent_project_skill_dir(relative_path: &Path) -> bool {
     cli_project_discovery_dirs()
         .iter()
         .any(|agent_dir| relative_path.starts_with(agent_dir))

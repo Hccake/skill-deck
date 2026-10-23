@@ -365,6 +365,54 @@ impl crate::application::payload_session::RetainedSourceCleanup for WslPayloadSe
 }
 
 impl PayloadSessionStorage for WslPayloadSessionStorage {
+    fn read_source_update_candidates<'a>(
+        &'a self,
+        cancellation: CancellationSignal,
+    ) -> PayloadStorageFuture<'a, Result<Vec<(String, Vec<u8>)>, AppError>> {
+        Box::pin(async move {
+            let source = self.source_binding()?;
+            let response: environment_protocol::SourceScanResponse = self
+                .workspace
+                .request_worker_payload_for_generation(
+                    source.handle.generation,
+                    environment_protocol::Message::ScanSource {
+                        request: environment_protocol::SourceScanRequest {
+                            source_id: source.handle.id,
+                            roots: vec![environment_protocol::SourceScanRoot {
+                                relative_path: vec![],
+                                stat_only: false,
+                            }],
+                            mode: environment_protocol::SourceScanMode::UpdateCandidates,
+                            per_file_limit: 256 * 1024,
+                            aggregate_limit: 8 * 1024 * 1024,
+                            deadline_millis: 30_000,
+                        },
+                    },
+                    12 * 1024 * 1024,
+                    Some(cancellation),
+                    Duration::from_secs(35),
+                )
+                .await?;
+            response
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    if entry.error_code.is_some()
+                        || entry.truncated
+                        || entry.kind != environment_protocol::SourceEntryKind::File
+                    {
+                        return Err(crate::core::update_locations::incomplete());
+                    }
+                    Ok((
+                        String::from_utf8(entry.relative_path)
+                            .map_err(|_| crate::core::update_locations::incomplete())?,
+                        entry.content_bytes,
+                    ))
+                })
+                .collect()
+        })
+    }
+
     fn read_source_skill_md<'a>(
         &'a self,
         source_root: &'a str,

@@ -30,6 +30,7 @@ pub enum SourceScanMode {
     Recursive,
     PriorityDirectories,
     SkillMetadata,
+    UpdateCandidates,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +103,9 @@ where
     {
         return Err(SourceInventoryError::InvalidRequest);
     }
+    if request.mode == SourceScanMode::UpdateCandidates {
+        return crate::source_candidates::scan_update_candidates(request, is_cancelled);
+    }
     scan_platform(request, &is_cancelled)
 }
 
@@ -140,6 +144,9 @@ fn scan_platform(
             continue;
         }
         let visit_result = match request.mode {
+            SourceScanMode::UpdateCandidates => {
+                unreachable!("handled by the complete candidate collector")
+            }
             SourceScanMode::Recursive => visit_recursive(
                 &root.path,
                 Path::new(""),

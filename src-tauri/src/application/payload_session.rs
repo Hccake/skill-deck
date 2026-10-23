@@ -58,6 +58,7 @@ pub struct DiscoverySkillSnapshot {
 
 #[derive(Clone)]
 pub struct RetainedDiscoverySource {
+    location_catalog: Option<crate::core::update_locations::UpdateLocationCatalog>,
     location: DiscoverySourceLocation,
     descriptor: DiscoverySourceDescriptor,
     skills: BTreeMap<String, DiscoverySkillSnapshot>,
@@ -76,6 +77,11 @@ pub trait RetainedSourceCleanup: Send + Sync {
 }
 
 impl RetainedDiscoverySource {
+    pub(crate) fn location_catalog(
+        &self,
+    ) -> Option<&crate::core::update_locations::UpdateLocationCatalog> {
+        self.location_catalog.as_ref()
+    }
     pub fn new(
         location: DiscoverySourceLocation,
         descriptor: DiscoverySourceDescriptor,
@@ -86,6 +92,7 @@ impl RetainedDiscoverySource {
             location,
             descriptor,
             skills,
+            location_catalog: None,
             well_known_metadata: HashMap::new(),
             member_failures: BTreeMap::new(),
             redirected_download_hosts: Vec::new(),
@@ -363,6 +370,13 @@ pub(crate) struct StoredPayload {
 }
 
 pub trait PayloadSessionStorage: Send + Sync {
+    fn read_source_update_candidates<'a>(
+        &'a self,
+        _cancellation: CancellationSignal,
+    ) -> PayloadStorageFuture<'a, Result<Vec<(String, Vec<u8>)>, AppError>> {
+        Box::pin(async { Err(AppError::StalePayload) })
+    }
+
     fn read_source_skill_md<'a>(
         &'a self,
         _source_root: &'a str,
@@ -894,6 +908,20 @@ impl PayloadSessionManager {
             session.source_optional = true;
         }
         self.enforce_capacity(Some(&discovery.session_id)).await
+    }
+
+    pub(crate) fn register_location_catalog(
+        &self,
+        discovery: &DiscoverySessionHandle,
+        catalog: crate::core::update_locations::UpdateLocationCatalog,
+    ) -> Result<(), AppError> {
+        let mut sessions = lock(&self.inner.sessions)?;
+        let source = valid_discovery_session(&mut sessions, discovery, (self.inner.now)())?
+            .retained_source
+            .as_mut()
+            .ok_or(AppError::StalePayload)?;
+        source.location_catalog = Some(catalog);
+        Ok(())
     }
 
     pub(crate) fn register_saved_source_skill(
