@@ -476,7 +476,17 @@
       "noMatchingAgents": "没有匹配的 Agent",
       "emptyAgent": "没有可供 {{name}} 使用的 Skill",
       "emptySearch": "没有匹配“{{query}}”的 Skill",
-      "emptyCombined": "没有符合当前条件的 Skill"
+      "emptyCombined": "没有符合当前条件的 Skill",
+      "sourceLabel": "按来源筛选",
+      "allSources": "全部来源",
+      "sourceShort": "来源",
+      "searchSources": "搜索来源…",
+      "noMatchingSources": "没有匹配的来源",
+      "clearSource": "清除来源筛选",
+      "incompleteSource": "来源信息不完整",
+      "dependencySource": "项目依赖",
+      "dependencyPackage": "项目依赖 · {{name}}",
+      "sourceNumber": "来源 {{count}}"
     },
     "scopeIcon": {
       "project": "项目 Skill",

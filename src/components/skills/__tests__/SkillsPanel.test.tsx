@@ -15,6 +15,7 @@ import type {
   SkillReadStatus,
 } from '@/bindings';
 import type { ReactNode } from 'react';
+import type { SourceFilterOption } from '@/lib/skills/filter';
 
 const nativeGlobal: SkillLocationRef = {
   environment: { kind: 'native' },
@@ -164,6 +165,9 @@ vi.mock('../SkillsToolbar', () => ({
     selectedAgent,
     onAgentChange,
     filterableAgents,
+    sourceOptions = [],
+    onSourceChange,
+    selectedSource,
     onSync,
   }: {
     compact?: boolean;
@@ -172,12 +176,17 @@ vi.mock('../SkillsToolbar', () => ({
     selectedAgent: AgentId | null;
     onAgentChange: (agentId: AgentId | null) => void;
     filterableAgents: ResolvedAgent[];
+    sourceOptions?: SourceFilterOption[];
+    selectedSource?: SourceFilterOption | null;
+    onSourceChange?: (option: SourceFilterOption | null) => void;
     onSync: () => void;
   }) => (
     <div>
       <span data-testid="toolbar-mode">{compact ? 'compact' : 'full'}</span>
       <span data-testid="search-query">{searchQuery}</span>
       <span data-testid="selected-agent">{selectedAgent ?? 'no-agent'}</span>
+      <span data-testid="selected-source">{selectedSource?.key ?? 'all-sources'}</span>
+      {sourceOptions.map(option => <button key={option.key} data-testid={`source:${option.key}`} onClick={() => onSourceChange?.(option)}>{option.label}</button>)}
       <span data-testid="filterable-agents">
         {filterableAgents.map((agent) => agent.definition.id).join(',')}
       </span>
@@ -776,6 +785,26 @@ describe('SkillsPanel', () => {
       kind: 'skills',
       skills: [{ context: nativeGlobal, skillName: 'codex-skill' }],
     });
+  });
+
+  it('filters both sections by source while keeping each check bound to its own scope', async () => {
+    const sourceFilter = { key: 'repo-a', kind: 'git' as const, label: 'acme/tools', detail: 'github.com' };
+    mocks.workspaceContextState.selectedContext = ubuntuProject;
+    mocks.skillsDataState.snapshots = {
+      'wsl:ubuntu/global': snapshot([{ ...makeSkill('global-a'), sourceFilter }, { ...makeSkill('global-b'), sourceFilter: { ...sourceFilter, key: 'repo-b' } }]),
+      'wsl:ubuntu/project:project-a': snapshot([{ ...makeSkill('project-a', 'project'), sourceFilter }]),
+    };
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('source:repo-a'));
+    expect(screen.queryByTestId('phase:global:global-b')).toBeNull();
+    fireEvent.click(screen.getByTestId('check:project'));
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(ubuntuProject, { kind: 'skills', skills: [{ context: ubuntuProject, skillName: 'project-a' }] });
+    fireEvent.click(screen.getByTestId('check:global'));
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(ubuntuGlobal, { kind: 'skills', skills: [{ context: ubuntuGlobal, skillName: 'global-a' }] });
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+    expect(screen.getByTestId('selected-source').textContent).toBe('all-sources');
+    expect(screen.getByTestId('phase:global:global-b')).toBeTruthy();
   });
 
   it('runs toolbar refresh as a passive sync so discovered source changes can be targeted', async () => {

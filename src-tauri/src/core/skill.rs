@@ -164,6 +164,8 @@ pub struct InstalledSkill {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<crate::core::source_filter::SourceFilterInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     /// 项目依赖提供内容或声明来源的信息；不授予依赖同步写入权限。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,6 +226,9 @@ impl InstalledSkill {
     /// 从 global lock entry 填充元数据
     pub fn with_lock_entry(mut self, entry: Option<&SkillLockEntry>) -> Self {
         if let Some(e) = entry {
+            self.source_filter = Some(crate::core::source_filter::SourceFilterInfo::from_metadata(
+                &normalize_global_lock_entry(e),
+            ));
             self.comparison_fingerprint =
                 Some(normalize_global_lock_entry(e).comparison_fingerprint());
             self.source = Some(e.source.clone());
@@ -254,6 +259,9 @@ impl InstalledSkill {
     pub fn with_local_lock_entry(mut self, entry: Option<&LocalSkillLockEntry>) -> Self {
         if let Some(e) = entry {
             let metadata = normalize_local_lock_entry(e);
+            self.source_filter = Some(crate::core::source_filter::SourceFilterInfo::from_metadata(
+                &metadata,
+            ));
             self.comparison_fingerprint = Some(metadata.comparison_fingerprint());
             self.source = Some(e.source.clone());
             self.source_url = metadata.source_url.clone();
@@ -442,6 +450,7 @@ Content.
             maintenance_error: None,
             comparison_fingerprint: None,
             source: None,
+            source_filter: None,
             source_url: None,
             installed_at: None,
             updated_at: None,
@@ -511,6 +520,7 @@ Content.
             maintenance_error: None,
             comparison_fingerprint: None,
             source: None,
+            source_filter: None,
             source_url: None,
             installed_at: None,
             updated_at: None,

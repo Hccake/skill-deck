@@ -8,6 +8,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, Filter, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { agentDisplayName, agentId } from '@/lib/agents';
 import type { AgentId, ResolvedAgent } from '@/bindings';
@@ -19,6 +20,7 @@ interface AgentFilterComboboxProps {
   matchCounts: ReadonlyMap<AgentId, number>;
   totalSkillCount: number;
   compact?: boolean;
+  shortAllLabel?: boolean;
 }
 
 interface AgentFilterOption {
@@ -34,9 +36,9 @@ export function AgentFilterCombobox({
   matchCounts,
   totalSkillCount,
   compact = false,
+  shortAllLabel = false,
 }: AgentFilterComboboxProps) {
   const { t } = useTranslation();
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
@@ -76,13 +78,6 @@ export function AgentFilterCombobox({
     if (!open) return;
     searchRef.current?.focus();
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [open]);
 
   const safeActiveIndex = Math.min(activeIndex, Math.max(options.length - 1, 0));
@@ -130,16 +125,12 @@ export function AgentFilterCombobox({
       event.preventDefault();
       event.stopPropagation();
       closeList();
-    } else if (event.key === 'Tab') {
-      setOpen(false);
     }
   };
 
   return (
-    <div
-      ref={rootRef}
-      className={cn('relative flex shrink-0 items-center', compact && 'w-full')}
-    >
+    <Popover open={open} onOpenChange={next => next ? openList() : setOpen(false)}>
+      <PopoverTrigger asChild>
       <button
         ref={triggerRef}
         type="button"
@@ -150,22 +141,21 @@ export function AgentFilterCombobox({
         className={cn(
           'flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-muted px-2.5 text-sm text-foreground shadow-none outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50',
           selectedAgent !== null && 'bg-primary/10 text-primary hover:bg-primary/15',
-          compact ? 'w-full' : 'min-w-[140px] max-w-56',
+          compact ? 'w-full text-xs' : 'min-w-[140px] max-w-56',
         )}
-        onClick={() => open ? closeList() : openList()}
       >
         <Filter className="size-3.5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate text-left">
-          {selectedAgentName ?? selectedAgent ?? t('skills.filter.allAgents')}
+          {selectedAgentName ?? selectedAgent ?? (shortAllLabel ? 'Agents' : t('skills.filter.allAgents'))}
         </span>
         <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
       </button>
+      </PopoverTrigger>
 
       {open && (
-        <div className={cn(
-          'absolute top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md',
-          compact ? 'inset-x-0' : 'right-0 w-64',
-        )}>
+        <PopoverContent align="start" className="w-64 max-w-[calc(100vw-2rem)] overflow-hidden p-0"
+          onOpenAutoFocus={event => { event.preventDefault(); searchRef.current?.focus(); }}
+          onEscapeKeyDown={event => event.stopPropagation()}>
           <div className="relative border-b border-border p-2">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input
@@ -222,8 +212,8 @@ export function AgentFilterCombobox({
               );
             })}
           </div>
-        </div>
+        </PopoverContent>
       )}
-    </div>
+    </Popover>
   );
 }

@@ -161,9 +161,10 @@ describe('DiscoverPage', () => {
     close.addEventListener('keydown', event => event.preventDefault(), { once: true });
     fireEvent.keyDown(close, { key: 'Escape' });
     expect(screen.getByRole('heading', { name: 'alpha' })).toBeTruthy();
+    const restoredEntry = await screen.findByRole('button', { name: /alpha/ });
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('heading', { name: 'alpha' })).toBeNull();
-    expect(document.activeElement).toBe(search);
+    expect(document.activeElement).toBe(restoredEntry);
   });
 
   it('keeps the same detail mounted but gives a newly selected skill a fresh reading viewport', async () => {

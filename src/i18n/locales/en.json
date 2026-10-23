@@ -476,7 +476,17 @@
       "noMatchingAgents": "No matching Agents",
       "emptyAgent": "No Skills available to {{name}}",
       "emptySearch": "No Skills match “{{query}}”",
-      "emptyCombined": "No Skills match the current filters"
+      "emptyCombined": "No Skills match the current filters",
+      "sourceLabel": "Filter by source",
+      "allSources": "All sources",
+      "sourceShort": "Source",
+      "searchSources": "Search sources…",
+      "noMatchingSources": "No matching sources",
+      "clearSource": "Clear source filter",
+      "incompleteSource": "Incomplete source",
+      "dependencySource": "Project dependencies",
+      "dependencyPackage": "Dependency · {{name}}",
+      "sourceNumber": "Source {{count}}"
     },
     "scopeIcon": {
       "project": "Project skill",

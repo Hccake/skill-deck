@@ -55,6 +55,7 @@ fn enrich_environment_skills_from_lock_at(
         skill.can_run_update = Some(false);
         skill.can_check_for_updates = Some(false);
         skill.update_reason = Some("local-source".to_string());
+        skill.source_filter = Some(crate::core::source_filter::SourceFilterInfo::local());
     }
     let Some(bytes) = bytes else {
         return Ok(skills);
@@ -130,6 +131,8 @@ fn enrich_environment_skills_from_lock_at(
                 skill.can_run_update = Some(false);
                 skill.can_check_for_updates = Some(false);
                 skill.update_reason = Some("missingSource".to_string());
+                skill.source_filter =
+                    Some(crate::core::source_filter::SourceFilterInfo::incomplete());
             }
         }
     }
@@ -176,6 +179,7 @@ mod environment_tests {
             private_copy_agents: Some(Vec::new()),
             agents,
             source: None,
+            source_filter: None,
             source_url: None,
             installed_at: None,
             updated_at: None,

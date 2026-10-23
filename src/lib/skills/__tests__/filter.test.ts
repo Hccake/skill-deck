@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { makeResolvedAgent } from '@/test-utils';
 import {
   filterSkills,
+  getSourceFilterOptions,
   getAgentFilterOptions,
   getSkillAssociatedAgentIds,
 } from '../filter';
@@ -24,6 +25,15 @@ function makeSkill(
 }
 
 describe('Skill filters', () => {
+  it('combines exact backend source keys with search and Agent conditions', () => {
+    const sourceFilter = { key: 'repo-a', kind: 'git' as const, label: 'acme/tools', detail: 'github.com' };
+    const main = makeSkill('review', { sourceFilter, gitRef: 'main', associatedAgents: ['codex'] });
+    const pinned = makeSkill('release', { sourceFilter, gitRef: 'a'.repeat(40), refKind: 'commit', associatedAgents: ['cursor'] });
+    const other = makeSkill('review-other', { sourceFilter: { ...sourceFilter, key: 'repo-b' }, associatedAgents: ['codex'] });
+    expect(filterSkills([main, pinned, other], '', null, 'repo-a')).toEqual([main, pinned]);
+    expect(filterSkills([main, pinned, other], 'review', 'codex', 'repo-a')).toEqual([main]);
+    expect(getSourceFilterOptions([main, pinned, other]).find(option => option.key === 'repo-a')?.count).toBe(2);
+  });
   it('uses the Backend associated Agent projection as the authority', () => {
     const skill = {
       ...makeSkill('toolkit', {

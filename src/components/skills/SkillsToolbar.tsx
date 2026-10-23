@@ -6,9 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { AgentFilterCombobox } from './AgentFilterCombobox';
+import { SourceFilterCombobox } from './SourceFilterCombobox';
+import type { SourceFilterOption } from '@/lib/skills/filter';
 import type { AgentId, ResolvedAgent } from '@/bindings';
 
 interface SkillsToolbarProps {
+  sourceOptions?: SourceFilterOption[];
+  selectedSource?: SourceFilterOption | null;
+  onSourceChange?: (source: SourceFilterOption | null) => void;
   /** 紧凑模式 */
   compact?: boolean;
   /** 搜索关键词 */
@@ -33,6 +38,9 @@ interface SkillsToolbarProps {
 
 export function SkillsToolbar({
   compact = false,
+  sourceOptions,
+  selectedSource = null,
+  onSourceChange,
   searchQuery,
   onSearchChange,
   selectedAgent,
@@ -64,7 +72,7 @@ export function SkillsToolbar({
       compact ? 'gap-2' : 'gap-2.5',
     )}>
       {/* Search Input */}
-      <div className="relative min-w-40 flex-1">
+      <div className={cn('relative min-w-40 flex-1', compact && 'basis-full')}>
         <Search className={cn(
           'pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground',
           compact ? 'size-3.5 opacity-70' : 'size-4',
@@ -88,8 +96,9 @@ export function SkillsToolbar({
         />
       </div>
 
-      {/* Agent Filter */}
+      <div className={cn('flex min-w-0 gap-2', compact && 'w-full')}>
       {(filterableAgents.length > 0 || selectedAgent !== null) && (
+        <div className={cn('min-w-0', compact && 'flex-1')}>
         <AgentFilterCombobox
           agents={filterableAgents}
           selectedAgent={selectedAgent}
@@ -97,8 +106,16 @@ export function SkillsToolbar({
           matchCounts={agentMatchCounts}
           totalSkillCount={totalSkillCount}
           compact={compact}
+          shortAllLabel={compact && Boolean(sourceOptions?.length || selectedSource)}
         />
+        </div>
       )}
+      {onSourceChange && (sourceOptions?.length || selectedSource) ? (
+        <div className={cn('min-w-0', compact && 'flex-1')}>
+          <SourceFilterCombobox options={sourceOptions ?? []} selected={selectedSource} onChange={onSourceChange} totalCount={totalSkillCount} compact={compact} />
+        </div>
+      ) : null}
+      </div>
 
       {/* Sync Button */}
       {!compact && <Button

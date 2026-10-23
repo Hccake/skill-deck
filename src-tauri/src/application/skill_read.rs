@@ -1393,6 +1393,7 @@ fn project_candidate(
         maintenance_error: None,
         comparison_fingerprint: None,
         source: None,
+        source_filter: None,
         source_url: None,
         installed_at: None,
         updated_at: None,

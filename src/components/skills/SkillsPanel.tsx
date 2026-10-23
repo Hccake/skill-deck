@@ -5,6 +5,7 @@ import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { useSkillListKeyboard } from '@/hooks/useSkillListKeyboard';
+import { useSkillSourceFilter } from '@/hooks/useSkillSourceFilter';
 import {
   useSkillsDataStore,
   type ContextSkillSnapshot,
@@ -31,6 +32,7 @@ import {
   countSkillsByAgent,
   filterSkills,
   getAgentFilterOptions,
+  getSourceFilterOptions,
 } from '@/lib/skills/filter';
 import {
   hasCommittedUpdateComparison,
@@ -150,6 +152,10 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
   const deferredQuery = useDeferredValue(searchQuery);
+  const currentSources = useMemo(() => getSourceFilterOptions([...globalSkills, ...projectSkills]), [globalSkills, projectSkills]);
+  const sourceFilter = useSkillSourceFilter(selectedContextKey, currentSources,
+    globalSnapshot.loading || (isProjectSelected && projectSnapshot.loading) || incompleteReadStatuses.length > 0 || Boolean(error));
+  const selectedSourceKey = sourceFilter.selected?.key ?? null;
 
   useLayoutEffect(() => {
     if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
@@ -257,17 +263,17 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
   // 使用 deferredQuery 而非 searchQuery，列表过滤作为低优先级更新
   const filteredGlobalSkills = useMemo(
-    () => filterSkills(globalSkills, deferredQuery, activeAgentFilter),
-    [activeAgentFilter, deferredQuery, globalSkills]
+    () => filterSkills(globalSkills, deferredQuery, activeAgentFilter, selectedSourceKey),
+    [activeAgentFilter, deferredQuery, globalSkills, selectedSourceKey]
   );
 
   const filteredProjectSkills = useMemo(
-    () => filterSkills(projectSkills, deferredQuery, activeAgentFilter),
-    [activeAgentFilter, deferredQuery, projectSkills]
+    () => filterSkills(projectSkills, deferredQuery, activeAgentFilter, selectedSourceKey),
+    [activeAgentFilter, deferredQuery, projectSkills, selectedSourceKey]
   );
 
   const totalSkillCount = globalSkills.length + projectSkills.length;
-  const hasActiveFilters = Boolean(deferredQuery.trim()) || activeAgentFilter !== null;
+  const hasActiveFilters = Boolean(deferredQuery.trim()) || activeAgentFilter !== null || selectedSourceKey !== null;
 
   const selectedAgentName = activeAgentFilter
     ? agentDisplayNames.get(activeAgentFilter) ?? activeAgentFilter
@@ -341,6 +347,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const projectFilterEmptyState = hasActiveFilters && projectSkills.length > 0 && filteredProjectSkills.length === 0
     ? (
       <SkillFilterEmptyState
+        onClearSource={selectedSourceKey ? () => sourceFilter.select(null) : undefined}
         agentName={selectedAgentName}
         searchQuery={deferredQuery}
       />
@@ -349,6 +356,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const globalFilterEmptyState = hasActiveFilters && globalSkills.length > 0 && filteredGlobalSkills.length === 0
     ? (
       <SkillFilterEmptyState
+        onClearSource={selectedSourceKey ? () => sourceFilter.select(null) : undefined}
         agentName={selectedAgentName}
         searchQuery={deferredQuery}
       />
@@ -442,6 +450,9 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           onSearchChange={setSearchQuery}
           selectedAgent={activeAgentFilter}
           onAgentChange={setSelectedAgentFilter}
+          sourceOptions={sourceFilter.options}
+          selectedSource={sourceFilter.selected}
+          onSourceChange={sourceFilter.select}
           filterableAgents={filterableAgents}
           agentMatchCounts={agentMatchCounts}
           totalSkillCount={totalSkillCount}

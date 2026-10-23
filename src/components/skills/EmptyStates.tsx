@@ -75,15 +75,17 @@ export function ProjectEmptyState({ onAdd }: ProjectEmptyStateProps) {
 interface SkillFilterEmptyStateProps {
   agentName?: string;
   searchQuery?: string;
+  onClearSource?: () => void;
 }
 
 export function SkillFilterEmptyState({
   agentName,
   searchQuery,
+  onClearSource,
 }: SkillFilterEmptyStateProps) {
   const { t } = useTranslation();
   const query = searchQuery?.trim();
-  const message = agentName && query
+  const message = onClearSource || (agentName && query)
     ? t('skills.filter.emptyCombined')
     : agentName
       ? t('skills.filter.emptyAgent', { name: agentName })
@@ -95,9 +97,10 @@ export function SkillFilterEmptyState({
     <div
       role="status"
       data-testid="skill-filter-empty-state"
-      className="flex min-h-20 items-center justify-center px-3 py-5 text-center"
+      className="flex min-h-20 flex-col items-center justify-center gap-2 px-3 py-5 text-center"
     >
       <p className="text-xs leading-relaxed text-muted-foreground">{message}</p>
+      {onClearSource ? <button type="button" className="rounded-sm text-xs text-primary underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring" onClick={onClearSource}>{t('skills.filter.clearSource')}</button> : null}
     </div>
   );
 }
