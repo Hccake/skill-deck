@@ -137,10 +137,22 @@ static CLI_PROJECT_DISCOVERY_DIRS: LazyLock<Vec<&'static str>> = LazyLock::new(|
             .flat_map(|spec| spec.cli_project_discovery_dirs.iter().copied()),
     );
     directories.sort_by_key(|directory| directory.priority);
-    directories
+    let mut result = directories
         .into_iter()
         .map(|directory| directory.path)
-        .collect()
+        .collect::<Vec<_>>();
+    let additional = BUILTIN_AGENT_CATALOG
+        .iter()
+        .filter_map(|agent| match &agent.project.private_path {
+            Some(PathSpec::Project { relative_path }) if relative_path != "skills" => {
+                Some(relative_path.as_str())
+            }
+            _ => None,
+        })
+        .filter(|path| !result.contains(path))
+        .collect::<std::collections::BTreeSet<_>>();
+    result.extend(additional);
+    result
 });
 
 pub fn builtin_agent_definitions() -> Vec<AgentDefinition> {
@@ -832,10 +844,10 @@ mod tests {
     }
 
     #[test]
-    fn catalog_projects_only_cli_priority_discovery_directories() {
+    fn catalog_preserves_priority_before_appending_registered_source_directories() {
         let directories = cli_project_discovery_dirs();
         assert_eq!(
-            directories,
+            &directories[..30],
             [
                 ".agents/skills",
                 ".claude/skills",
@@ -869,6 +881,12 @@ mod tests {
                 ".zencoder/skills",
             ]
         );
+        assert_eq!(directories.len(), 60);
+        assert!(directories.contains(&".reasonix/skills"));
+        assert!(directories.contains(&".tabnine/agent/skills"));
+        assert!(directories.contains(&"agent/skills"));
+        assert!(directories.contains(&"data/skills"));
+        assert!(!directories.contains(&"skills"));
     }
 
     #[test]

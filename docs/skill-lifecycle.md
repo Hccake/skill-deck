@@ -53,6 +53,8 @@ Git 来源可以通过 `owner/repo#<完整40位SHA>` 安装特定提交。未分
 
 来源搜索容器包括 `.factory/skills`、`.kilo/skills` 和 `.kilocode/skills`，项目 lock 已记录的安装项继续按既有规则过滤。同名内容按来源发现顺序去重，其中 `.kilo/skills` 先于 `.kilocode/skills`，后者先于 `.kimchi/skills`。来源搜索位置与 Agent 实际读取、安装位置分别维护；Agent 位置规则见[Agent 模型](./agent-model.md)。
 
+来源发现同时补充内置 Agent 的其他项目目录，包括 `.reasonix/skills`、`agent/skills` 和 `data/skills`，追加目录保持稳定顺序。搜索根中的 `skills.sh.json` 可以通过 `paths` 声明额外容器，例如 `{"paths":["./tools/skills","./dist/skills"]}`；指定来源子路径时，读取该子路径中的配置。声明容器沿用三层搜索，根目录自身不作为额外候选；更新定位的完整采集也包含这些容器。无效配置或路径条目被忽略，读取失败、超限及目录链接越界会阻止使用不完整结果。
+
 刷新 Git 来源证据或为更新重新获取内容时，应用按照已保存路径直接定位 Skill，不因普通发现深度或来源根目录也是 Skill 而提前结束。来源目录结构和容量限制见[更新检查](./update-checking.md#远端版本信息的获取)。
 
 普通发现和通配选择只展示公开 Skill。用户通过来源语法或命令明确指定名称，且选择中不包含通配符时，列表会额外包含同名的内部 Skill（`internal`）；其他内部 Skill 继续隐藏。Git、本地目录、直接下载和 Well-known 来源使用相同规则，后续内容获取只接受本次发现结果中的 Skill。

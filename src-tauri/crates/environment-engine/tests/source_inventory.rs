@@ -5,6 +5,45 @@ use environment_engine::source_inventory::{
 };
 
 #[test]
+fn recursive_inventory_includes_declared_containers_without_double_counting() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("dist/tools/review")).unwrap();
+    std::fs::create_dir_all(root.path().join("skills/demo")).unwrap();
+    let config = br#"{"paths":["./dist/tools","./skills"]}"#;
+    std::fs::write(root.path().join("skills.sh.json"), config).unwrap();
+    std::fs::write(root.path().join("dist/tools/review/SKILL.md"), b"review").unwrap();
+    std::fs::write(root.path().join("skills/demo/SKILL.md"), b"demo").unwrap();
+    let response = scan_source(&SourceInventoryRequest {
+        roots: vec![SourceRoot {
+            path: root.path().to_path_buf(),
+            stat_only: false,
+        }],
+        mode: SourceScanMode::Recursive,
+        per_file_limit: 128,
+        aggregate_limit: 256,
+    })
+    .unwrap();
+    assert!(response.entries.iter().all(|entry| entry.error.is_none()));
+    assert_eq!(response.total_content_bytes as usize, config.len() + 6 + 4);
+    assert!(response.entries.iter().any(|entry| entry.relative_path
+        == std::path::Path::new("dist/tools/review/SKILL.md")
+        && entry.content_bytes == b"review"));
+    std::fs::remove_file(root.path().join("skills.sh.json")).unwrap();
+    std::fs::create_dir(root.path().join("skills.sh.json")).unwrap();
+    let failed = scan_source(&SourceInventoryRequest {
+        roots: vec![SourceRoot {
+            path: root.path().to_path_buf(),
+            stat_only: false,
+        }],
+        mode: SourceScanMode::Recursive,
+        per_file_limit: 128,
+        aggregate_limit: 256,
+    })
+    .unwrap();
+    assert!(failed.entries[0].error.is_some());
+}
+
+#[test]
 fn saved_skill_metadata_reads_only_its_root_and_prefers_the_exact_name() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("one/two/three/four/five/six/seven");

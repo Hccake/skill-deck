@@ -143,6 +143,18 @@ fn scan_platform(
         if root.stat_only || !root_is_directory {
             continue;
         }
+        let declared_config = if request.mode == SourceScanMode::Recursive {
+            match crate::source_config::read_document(&root.path) {
+                Ok(document) => document,
+                Err(_) => {
+                    entries.last_mut().expect("root entry").error =
+                        Some(SourceEntryError::ReadFailed);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         let visit_result = match request.mode {
             SourceScanMode::UpdateCandidates => {
                 unreachable!("handled by the complete candidate collector")
@@ -194,6 +206,43 @@ fn scan_platform(
                 Ok(())
             }
         };
+        let visit_result = visit_result.and_then(|()| {
+            if request.mode != SourceScanMode::Recursive {
+                return Ok(());
+            }
+            let Some(config) = declared_config.as_deref() else {
+                return Ok(());
+            };
+            let documents = crate::source_config::collect_documents(
+                &root.path,
+                config,
+                request.per_file_limit,
+                request.aggregate_limit,
+                is_cancelled,
+            )?;
+            for (relative_path, content_bytes) in documents {
+                if entries.iter().any(|entry| {
+                    entry.root_index == root_index as u32 && entry.relative_path == relative_path
+                }) {
+                    continue;
+                }
+                let next_total = total_content_bytes + content_bytes.len();
+                if next_total > request.aggregate_limit as usize {
+                    return Err(SourceInventoryError::InvalidRequest);
+                }
+                total_content_bytes = next_total;
+                entries.push(SourceEntry {
+                    root_index: root_index as u32,
+                    relative_path,
+                    kind: SourceEntryKind::File,
+                    link_target: None,
+                    content_bytes,
+                    truncated: false,
+                    error: None,
+                });
+            }
+            Ok(())
+        });
         if let Err(error) = visit_result {
             if error == SourceInventoryError::Cancelled {
                 return Err(error);
@@ -336,6 +385,7 @@ fn relevant_document(relative_path: &Path) -> bool {
     if relative_path == Path::new(".claude-plugin/marketplace.json")
         || relative_path == Path::new(".claude-plugin/plugin.json")
         || relative_path == Path::new("skills-lock.json")
+        || relative_path == Path::new(crate::source_config::CONFIG_FILE)
     {
         return true;
     }

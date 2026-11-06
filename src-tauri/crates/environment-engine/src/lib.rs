@@ -16,4 +16,5 @@ pub mod path;
 pub mod payload;
 pub mod projection;
 pub mod source_candidates;
+pub mod source_config;
 pub mod source_inventory;

@@ -38,10 +38,24 @@ pub fn scan_update_candidates(
     let root = &request.roots[0].path;
     crate::directory::plain_descendant_directory(root, Path::new("")).map_err(invalid)?;
     let mut pending = vec![PathBuf::new()];
+    if let Some(document) = crate::source_config::read_document(root).map_err(invalid)? {
+        for path in crate::source_config::parse_paths(&document) {
+            let relative = PathBuf::from(path);
+            match crate::directory::plain_descendant_directory(root, &relative) {
+                Ok(_) => pending.push(relative),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(invalid(error)),
+            }
+        }
+    }
+    let mut visited_directories = std::collections::BTreeSet::new();
     let mut entries = Vec::new();
     let mut total = 0u32;
     let mut visited = 0usize;
     while let Some(relative) = pending.pop() {
+        if !visited_directories.insert(relative.clone()) {
+            continue;
+        }
         if is_cancelled() {
             return Err(SourceInventoryError::Cancelled);
         }
@@ -84,6 +98,7 @@ pub fn scan_update_candidates(
             let relative_path = relative.join(name);
             let relevant = name.eq_ignore_ascii_case("SKILL.md")
                 || relative_path == Path::new("skills-lock.json")
+                || relative_path == Path::new(crate::source_config::CONFIG_FILE)
                 || relative_path == Path::new(".claude-plugin/marketplace.json")
                 || relative_path == Path::new(".claude-plugin/plugin.json");
             if !relevant {

@@ -307,6 +307,9 @@ for pair in '.factory factory-only' '.factory locked' '.kilo shared' '.kilocode 
   mkdir -p "$root/$1/skills/$2"
   printf '%s\n' '---' "name: $2" 'description: Container fixture' '---' > "$root/$1/skills/$2/SKILL.md"
 done
+mkdir -p "$root/dist/declared/review"
+printf '%s\n' '{"paths":["./dist/declared"]}' > "$root/skills.sh.json"
+printf '%s\n' '---' 'name: declared-worker' 'description: Declared worker container' '---' > "$root/dist/declared/review/SKILL.md"
 printf '%s\n' '{"version":1,"skills":{"locked":{"source":"owner/repo","sourceType":"github","computedHash":"fixture"}}}' > "$root/skills-lock.json"
 git -C "$root" add .
 git -C "$root" commit -m fixture
@@ -427,6 +430,7 @@ git -C "$root" branch release
         .unwrap();
         assert_eq!(catalog.candidates("shared").len(), 2);
         assert_eq!(catalog.candidates("deep-gate").len(), 1);
+        assert_eq!(catalog.candidates("declared-worker").len(), 1);
         assert!(catalog.candidates("locked").is_empty());
         let inventory = scan(
             &workspace,
@@ -454,6 +458,9 @@ git -C "$root" branch release
         )
         .unwrap();
         assert!(discovered.iter().any(|skill| skill.name == "factory-only"));
+        assert!(discovered
+            .iter()
+            .any(|skill| skill.name == "declared-worker"));
         assert!(!discovered.iter().any(|skill| skill.name == "locked"));
         assert_eq!(
             discovered

@@ -66,6 +66,7 @@ pub struct DiscoveryInventory {
     pub marketplace_document: Option<String>,
     pub plugin_document: Option<String>,
     pub local_lock_document: Option<String>,
+    pub skills_sh_document: Option<String>,
 }
 
 struct PrioritySearchDir {
@@ -171,6 +172,7 @@ pub fn collect_discovery_inventory(
     let plugin_document =
         std::fs::read_to_string(search_path.join(".claude-plugin/plugin.json")).ok();
     let local_lock_document = std::fs::read_to_string(base_path.join("skills-lock.json")).ok();
+    let skills_sh_document = environment_engine::source_config::read_document(&search_path)?;
     let mut documents = BTreeMap::new();
 
     let walker = WalkDir::new(&search_path)
@@ -226,12 +228,35 @@ pub fn collect_discovery_inventory(
         }
     }
 
+    if let Some(config) = &skills_sh_document {
+        let declared = environment_engine::source_config::collect_documents(
+            &search_path,
+            config,
+            256 * 1024,
+            16 * 1024 * 1024,
+            || false,
+        )
+        .map_err(|error| AppError::InvalidSource {
+            value: format!("Cannot read declared Skill containers: {error}"),
+        })?;
+        for (path, content) in declared {
+            let relative_path = path.to_string_lossy().replace('\\', "/");
+            documents.insert(
+                relative_path.clone(),
+                DiscoveryDocument {
+                    relative_path,
+                    content,
+                },
+            );
+        }
+    }
     Ok(DiscoveryInventory {
         search_prefix,
         skill_documents: documents.into_values().collect(),
         marketplace_document,
         plugin_document,
         local_lock_document,
+        skills_sh_document,
     })
 }
 
@@ -372,6 +397,18 @@ impl<'a> DiscoverySelector<'a> {
                 .iter()
                 .cloned()
                 .map(|path| PrioritySearchDir { path, max_depth: 1 }),
+        );
+        priority_dirs.extend(
+            self.inventory
+                .skills_sh_document
+                .as_deref()
+                .map(environment_engine::source_config::parse_paths)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| PrioritySearchDir {
+                    path: PathBuf::from(path),
+                    max_depth: DEFAULT_SKILL_CONTAINER_DEPTH,
+                }),
         );
         for priority in priority_dirs {
             self.walk_priority_dir(&priority.path, priority.max_depth, 1);
@@ -534,6 +571,71 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn declared_containers_discover_bounded_children_in_excluded_directories() {
+        let temp = tempdir().unwrap();
+        for (path, name) in [
+            ("skills/usual", "usual"),
+            ("dist/bundled", "container-itself"),
+            ("dist/bundled/one", "declared-one"),
+            ("dist/bundled/category/nested/three", "declared-three"),
+            ("dist/bundled/category/deeper/nested/four", "too-deep"),
+            (".reasonix/skills/group/review", "reasonix-source"),
+        ] {
+            let directory = temp.path().join(path);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: fixture\n---\n"),
+            )
+            .unwrap();
+        }
+        fs::write(temp.path().join("skills.sh.json"), r#"{"paths":["./dist/bundled","./dist/bundled/","../outside","./","./a/../../outside"]}"#).unwrap();
+        let found = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+        let names = found
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            ["usual", "reasonix-source", "declared-three", "declared-one"]
+        );
+    }
+
+    #[test]
+    fn declared_container_config_is_scoped_to_the_requested_subpath() {
+        let temp = tempdir().unwrap();
+        let nested = temp.path().join("package");
+        fs::create_dir_all(nested.join("dist/tools/review")).unwrap();
+        fs::write(
+            nested.join("dist/tools/review/SKILL.md"),
+            "---\nname: review\ndescription: fixture\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("skills.sh.json"),
+            r#"{"paths":["./wrong"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            nested.join("skills.sh.json"),
+            r#"{"paths":["./dist/tools"]}"#,
+        )
+        .unwrap();
+        let found =
+            discover_skills(temp.path(), Some("package"), DiscoverOptions::default()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "review");
+        assert_eq!(found[0].relative_path, "package/dist/tools/review/SKILL.md");
+    }
+
+    #[test]
+    fn declared_configuration_read_failure_is_not_an_empty_catalog() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("skills.sh.json")).unwrap();
+        assert!(discover_skills(root.path(), None, DiscoverOptions::default()).is_err());
+    }
 
     #[test]
     fn test_discover_skills_in_simple_dir() {
@@ -719,6 +821,7 @@ mod tests {
                 r#"{"name":"demo","skills":["./plugins/catalog/direct"]}"#.to_string(),
             ),
             local_lock_document: None,
+            skills_sh_document: None,
         };
 
         let skills = select_discovered_skills(&inventory, DiscoverOptions::default()).unwrap();

@@ -578,6 +578,14 @@ pub(crate) fn build_wsl_discovery_catalog(
     ),
     AppError,
 > {
+    if response.entries.iter().any(|entry| {
+        (entry.relative_path.is_empty() || entry.relative_path == "skills.sh.json")
+            && (entry.truncated || entry.error_code.is_some())
+    }) {
+        return Err(AppError::InvalidSource {
+            value: "Source discovery did not finish reading its declared containers".into(),
+        });
+    }
     let skill_documents = response
         .entries
         .iter()
@@ -620,6 +628,7 @@ pub(crate) fn build_wsl_discovery_catalog(
             .map(str::to_owned),
         plugin_document: wsl_document(response, ".claude-plugin/plugin.json").map(str::to_owned),
         local_lock_document,
+        skills_sh_document: wsl_document(response, "skills.sh.json").map(str::to_owned),
     };
     let discovered = select_discovered_skills(
         &inventory,
