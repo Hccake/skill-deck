@@ -61,6 +61,13 @@ const makeSkill = (
 });
 
 describe('SkillsSection', () => {
+  it('does not count a downloaded source as a failed check or an available update', () => {
+    render(<SkillsSection title="Project" scope="project" updatingSkills={new Map()}
+      skills={[makeSkill('project', { sourceType: 'download', canRunUpdate: false, canCheckForUpdates: false, updateReason: 'download-source' })]}
+      onSkillClick={vi.fn()} onPrepareUpdate={vi.fn(async () => true)} onDelete={vi.fn()} onAdd={vi.fn()} />);
+    expect(screen.getByTestId('update-summary-slot').textContent).toBe('');
+    expect(screen.queryByText('skills.uncheckableUpdateCount')).toBeNull();
+  });
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });

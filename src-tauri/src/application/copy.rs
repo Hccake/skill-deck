@@ -1369,7 +1369,7 @@ fn normalize_copy_metadata(source: Option<&Value>) -> Option<NormalizedCopyMetad
     };
     let source_value = text("source")?;
     let source_type = text("sourceType")?;
-    if source_type == "node_modules" {
+    if matches!(source_type.as_str(), "node_modules" | "download") {
         return None;
     }
     Some(NormalizedCopyMetadata {
@@ -1475,6 +1475,13 @@ fn project_lock_replacement_at(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn downloaded_sources_copy_as_independent_content_without_remote_credentials() {
+        let source = serde_json::json!({ "source": "https://example.com/review.zip?token=secret", "sourceType": "download",
+            "sourceUrl": "https://example.com/review.zip?token=secret", "skillPath": "review/SKILL.md", "computedHash": "content" });
+        assert!(project_lock_replacement(Some(&source), "copied-content", &[]).is_none());
+    }
+
     #[test]
     fn copying_a_pinned_source_preserves_the_commit_without_dependency_ownership() {
         let source = serde_json::json!({ "source": "owner/repo", "sourceType": "github",

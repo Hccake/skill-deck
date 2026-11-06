@@ -166,6 +166,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
   const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
   const presentation = skillStatusPresentation(skill);
+  const sourceLabel = presentation.sourceLabelKey ? t(presentation.sourceLabelKey) : presentation.sourceLabel;
   const notice = presentation.notice;
   const noticeDescription = notice?.error ? formatAppError(notice.error, t)
     : notice?.hintKey ? t(notice.hintKey) : undefined;
@@ -262,10 +263,10 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
             <div className="space-y-3">
               <div className="skill-detail-metadata">
-                {presentation.local || presentation.sourceLabel ? (
+                {presentation.local || sourceLabel ? (
                   <DetailField label={t('skills.detail.source')}>
                     {presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.packageSource ? t('skills.dependency.source') : (
-                      <DetailSourceLink label={presentation.sourceLabel!} url={skill.sourceUrl}
+                      <DetailSourceLink label={sourceLabel!} url={skill.sourceUrl}
                         hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
                     )}
                   </DetailField>

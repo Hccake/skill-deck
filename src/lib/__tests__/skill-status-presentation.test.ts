@@ -3,6 +3,17 @@ import { skillStatusPresentation, updateCheckFailureKey } from '../skill-status-
 import { resolveUpdateStatusLabelI18nKey } from '@/stores/skills-utils';
 
 describe('Skill status presentation', () => {
+  it('keeps downloaded content neutral and out of failed-check summaries', () => {
+    const skill = { source: 'downloads.example', sourceType: 'download', canCheckForUpdates: false, canRunUpdate: false, updateReason: 'download-source', hasUpdate: true };
+    const presentation = skillStatusPresentation(skill);
+    expect(presentation.local).toBe(false);
+    expect(presentation.notice).toBeNull();
+    expect(presentation.available).toBe(false);
+    expect(presentation.sourceLabel).toBe('downloads.example');
+    expect(presentation.sourceHintKey).toBe('skills.updateHint.downloadSource');
+    expect(resolveUpdateStatusLabelI18nKey(skill)).toBeNull();
+    expect(skillStatusPresentation({ ...skill, source: '' }).notice).toBeNull();
+  });
   it('treats package content as a dependency rather than a missing or failed remote source', () => {
     const presentation = skillStatusPresentation({ source: '@example/tools', updateReason: 'dependency-source' });
     expect(presentation.packageSource).toBe(true);

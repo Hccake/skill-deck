@@ -22,6 +22,7 @@ pub mod skill;
 pub mod skill_lock;
 pub mod skill_paths;
 pub mod skill_payload;
+pub(crate) mod source_display;
 pub mod source_filter;
 pub mod source_identity;
 pub mod source_parser;

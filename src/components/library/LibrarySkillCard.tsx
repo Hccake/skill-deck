@@ -62,7 +62,8 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
   const activation = useCardActivation(onClick ? () => onClick(skill.name) : undefined);
 
   const presentation = skillStatusPresentation(skill, check);
-  const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.sourceLabel;
+  const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource')
+    : presentation.sourceLabelKey ? t(presentation.sourceLabelKey) : presentation.sourceLabel;
   const updatedAt = skill.updatedAt ? formatSkillCardDate(skill.updatedAt, i18n.language) : null;
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
 

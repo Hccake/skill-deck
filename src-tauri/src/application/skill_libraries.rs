@@ -1447,20 +1447,38 @@ fn detail_from_record(
                     .map(crate::application::update::derive_update_capability_from_metadata);
                 let source =
                     serde_json::from_value::<LibrarySkillSourceRecord>(skill.source_record).ok();
+                let download = source
+                    .as_ref()
+                    .filter(|value| value.source_type == "download")
+                    .map(|value| {
+                        crate::core::source_display::download_source_display(
+                            &value.source,
+                            value.reacquisition_url.as_deref(),
+                        )
+                    });
                 LibrarySkillSummary {
                     name: skill.name,
                     description: skill.description,
-                    source: source
+                    source: download
                         .as_ref()
-                        .map(|value| value.source.clone())
-                        .unwrap_or_default(),
+                        .map(|value| value.label.clone())
+                        .unwrap_or_else(|| {
+                            source
+                                .as_ref()
+                                .map(|value| value.source.clone())
+                                .unwrap_or_default()
+                        }),
                     source_type: source
                         .as_ref()
                         .map(|value| value.source_type.clone())
                         .unwrap_or_default(),
-                    source_url: source
-                        .as_ref()
-                        .and_then(|value| value.reacquisition_url.clone()),
+                    source_url: if let Some(display) = download {
+                        display.openable_url
+                    } else {
+                        source
+                            .as_ref()
+                            .and_then(|value| value.reacquisition_url.clone())
+                    },
                     skill_path: source
                         .as_ref()
                         .and_then(|value| value.skill_path.clone())
@@ -2374,6 +2392,41 @@ mod tests {
                 "libraryId": "library-1",
                 "skillNames": ["api-design"]
             })
+        );
+    }
+
+    #[test]
+    fn downloaded_library_source_uses_the_same_safe_display_and_capability() {
+        let mut member = test_library_record("review", "content");
+        let address = "https://user:secret@downloads.example/review.zip?token=private";
+        member.source_record["sourceType"] = serde_json::json!("download");
+        member.source_record["source"] = serde_json::json!(address);
+        member.source_record["reacquisitionUrl"] = serde_json::json!(address);
+        member.source_record["refName"] = serde_json::Value::Null;
+        let detail = detail_from_record(
+            SkillLibraryRecord {
+                id: LibraryId::parse("downloads"),
+                name: "Downloads".into(),
+                skills: vec![member],
+                retired_skills: Vec::new(),
+                extra: serde_json::Map::new(),
+            },
+            Vec::new(),
+        );
+        assert_eq!(detail.skills[0].source, "downloads.example");
+        assert!(detail.skills[0].source_url.is_none());
+        assert!(
+            !detail.skills[0]
+                .update_capability
+                .as_ref()
+                .unwrap()
+                .can_run_update
+        );
+        let exposed = serde_json::to_string(&detail).unwrap();
+        assert!(
+            !exposed.contains("secret")
+                && !exposed.contains("token=")
+                && !exposed.contains("private")
         );
     }
 

@@ -164,6 +164,8 @@ pub struct InstalledSkill {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_filter: Option<crate::core::source_filter::SourceFilterInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
@@ -226,6 +228,7 @@ impl InstalledSkill {
     /// 从 global lock entry 填充元数据
     pub fn with_lock_entry(mut self, entry: Option<&SkillLockEntry>) -> Self {
         if let Some(e) = entry {
+            self.source_type = Some(e.source_type.clone());
             self.source_filter = Some(crate::core::source_filter::SourceFilterInfo::from_metadata(
                 &normalize_global_lock_entry(e),
             ));
@@ -251,6 +254,14 @@ impl InstalledSkill {
             self.can_run_update = Some(capability.can_run_update);
             self.can_check_for_updates = Some(capability.can_check_for_updates);
             self.update_reason = capability.reason;
+            if e.source_type == "download" {
+                let display = crate::core::source_display::download_source_display(
+                    &e.source,
+                    Some(&e.source_url),
+                );
+                self.source = Some(display.label);
+                self.source_url = display.openable_url;
+            }
         }
         self
     }
@@ -258,6 +269,7 @@ impl InstalledSkill {
     /// 从 local lock entry 填充元数据（项目级）
     pub fn with_local_lock_entry(mut self, entry: Option<&LocalSkillLockEntry>) -> Self {
         if let Some(e) = entry {
+            self.source_type = Some(e.source_type.clone());
             let metadata = normalize_local_lock_entry(e);
             self.source_filter = Some(crate::core::source_filter::SourceFilterInfo::from_metadata(
                 &metadata,
@@ -290,6 +302,14 @@ impl InstalledSkill {
             self.can_run_update = Some(capability.can_run_update);
             self.can_check_for_updates = Some(capability.can_check_for_updates);
             self.update_reason = capability.reason;
+            if e.source_type == "download" {
+                let display = crate::core::source_display::download_source_display(
+                    &e.source,
+                    e.source_url.as_deref(),
+                );
+                self.source = Some(display.label);
+                self.source_url = display.openable_url;
+            }
         }
         self
     }
@@ -450,6 +470,7 @@ Content.
             maintenance_error: None,
             comparison_fingerprint: None,
             source: None,
+            source_type: None,
             source_filter: None,
             source_url: None,
             installed_at: None,
@@ -520,6 +541,7 @@ Content.
             maintenance_error: None,
             comparison_fingerprint: None,
             source: None,
+            source_type: None,
             source_filter: None,
             source_url: None,
             installed_at: None,

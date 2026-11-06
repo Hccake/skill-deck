@@ -486,7 +486,8 @@
       "incompleteSource": "来源信息不完整",
       "dependencySource": "项目依赖",
       "dependencyPackage": "项目依赖 · {{name}}",
-      "sourceNumber": "来源 {{count}}"
+      "sourceNumber": "来源 {{count}}",
+      "downloadSource": "下载来源"
     },
     "scopeIcon": {
       "project": "项目 Skill",
@@ -723,7 +724,8 @@
       "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
       "auth": "无法访问来源，请检查访问权限。",
       "network-error": "网络连接异常。稍后可重新检查。",
-      "http-error": "版本检查失败。稍后可重新检查。"
+      "http-error": "版本检查失败。稍后可重新检查。",
+      "downloadSource": "下载来源，暂不支持检查更新。"
     },
     "updateReason": {
       "missingRemoteHash": "本地版本信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",

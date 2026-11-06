@@ -9,7 +9,7 @@
         {
           "identifier": "desktop-e2e",
           "windows": ["main", "install-wizard"],
-          "permissions": ["wdio:default"]
+          "permissions": ["wdio:default", "core:window:allow-set-focus"]
         }
       ]
     }

@@ -25,6 +25,6 @@ export const LibraryCompactItem = memo(function LibraryCompactItem({
   const handleClick = useCallback(() => onClick(skill.name), [onClick, skill.name]);
   const presentation = skillStatusPresentation(skill);
   const source = presentation.local ? t('skills.updateStatusLabel.localSource')
-    : presentation.sourceLabel ?? (presentation.notice ? t(presentation.notice.labelKey) : null);
+    : presentation.sourceLabelKey ? t(presentation.sourceLabelKey) : presentation.sourceLabel ?? (presentation.notice ? t(presentation.notice.labelKey) : null);
   return <SkillCompactRow itemKey={skill.name} name={skill.name} source={source} selected={isSelected} onClick={handleClick} />;
 });

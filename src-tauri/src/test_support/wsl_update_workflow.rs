@@ -465,6 +465,12 @@ async fn real_wsl2_private_only_copy_manage_and_remove() {
 
 #[tokio::test]
 #[ignore = "requires Windows, a matching Worker, and SKILL_DECK_TEST_WSL_NODE / SKILL_DECK_TEST_WSL_CLI"]
+async fn real_wsl2_download_record_copy_manage_and_remove() {
+    run_wsl_update(WslWorkflow::Download).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Windows, a matching Worker, and SKILL_DECK_TEST_WSL_NODE / SKILL_DECK_TEST_WSL_CLI"]
 async fn real_wsl2_dependency_copy_manage_remove_preserves_package() {
     run_wsl_update(WslWorkflow::Dependency).await;
 }
@@ -494,6 +500,7 @@ enum WslWorkflow {
     EveUpdate,
     Adjacent,
     Dependency,
+    Download,
     AgentCompatibility,
     Relocation,
     PinnedCommit,
@@ -1176,14 +1183,11 @@ fi
         .await
         .unwrap();
     }
-    if matches!(workflow, WslWorkflow::Adjacent | WslWorkflow::Dependency) {
-        verify_wsl_adjacent_workflows(
-            &facts,
-            runtime,
-            manager.clone(),
-            workflow == WslWorkflow::Dependency,
-        )
-        .await;
+    if matches!(
+        workflow,
+        WslWorkflow::Adjacent | WslWorkflow::Dependency | WslWorkflow::Download
+    ) {
+        verify_wsl_adjacent_workflows(&facts, runtime, manager.clone(), workflow).await;
     }
     clock.store(120_000, Ordering::SeqCst);
     manager.cleanup().await.unwrap();
@@ -1374,8 +1378,10 @@ async fn verify_wsl_adjacent_workflows(
     source: &FixtureFacts,
     runtime: Arc<WslRuntime>,
     payloads: Arc<PayloadSessionManager>,
-    dependency: bool,
+    workflow: WslWorkflow,
 ) {
+    let dependency = workflow == WslWorkflow::Dependency;
+    let downloaded = workflow == WslWorkflow::Download;
     use crate::application::agent_selection::AgentSelectionSubmission;
     use crate::application::copy::{
         CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
@@ -1406,6 +1412,22 @@ async fn verify_wsl_adjacent_workflows(
         .native_path
         .clone();
     let destination = format!("{project}-copy");
+    if downloaded {
+        let node = std::env::var("SKILL_DECK_TEST_WSL_NODE").unwrap();
+        run_fixture(distro_name, r#"set -eu
+"$2" -e 'const fs=require("fs"); const p=process.argv[1]; const d=JSON.parse(fs.readFileSync(p)); d.skills.alpha={source:"https://docs.example.com/alpha.zip?token=private-value",sourceType:"download",computedHash:d.skills.alpha.computedHash,installMode:"copy",downloadMetadata:{preserved:true}}; fs.writeFileSync(p,JSON.stringify(d))' "$1/skills-lock.json"
+printf '\nDownloaded content\n' >> "$1/.codebuddy/skills/alpha/SKILL.md"
+"#, &[project.clone(), node]).await.unwrap();
+        let reader = RuntimeResourceReader::new(runtime.clone());
+        assert!(!reader
+            .read_skill(ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: format!("{project}/.codebuddy/skills/alpha"),
+            })
+            .await
+            .unwrap()
+            .is_empty());
+    }
     if dependency {
         let node = std::env::var("SKILL_DECK_TEST_WSL_NODE").unwrap();
         run_fixture(distro_name, r#"set -eu
@@ -1586,7 +1608,7 @@ ln -s "$1/not-a-directory" "$1/unreadable-skill"
     .await
     .unwrap();
 
-    if dependency {
+    if dependency || downloaded {
         let lock = load_lock_document(
             &WslAtomicDocumentIo::new(source.workspace.clone()),
             &locations.target.initial.resolved_context.lock,
@@ -1676,6 +1698,25 @@ ln -s "$1/not-a-directory" "$1/unreadable-skill"
         .await
         .unwrap();
         assert_eq!(lock.entry_snapshot("alpha").value().unwrap()["via"], ".");
+    }
+
+    if downloaded {
+        let lock = load_lock_document(
+            &WslAtomicDocumentIo::new(source.workspace.clone()),
+            &source.initial.resolved_context.lock,
+            None,
+            LockSchema::Project,
+        )
+        .await
+        .unwrap();
+        let entry = lock.entry_snapshot("alpha");
+        let value = entry.value().unwrap();
+        assert_eq!(
+            value["source"],
+            "https://docs.example.com/alpha.zip?token=private-value"
+        );
+        assert_eq!(value["downloadMetadata"]["preserved"], true);
+        assert_eq!(value["installMode"], "copy");
     }
 
     let remove = RemoveService::new(

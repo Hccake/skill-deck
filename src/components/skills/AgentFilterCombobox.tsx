@@ -141,7 +141,7 @@ export function AgentFilterCombobox({
         className={cn(
           'flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-muted px-2.5 text-sm text-foreground shadow-none outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50',
           selectedAgent !== null && 'bg-primary/10 text-primary hover:bg-primary/15',
-          compact ? 'w-full text-xs' : 'min-w-[140px] max-w-56',
+          compact ? 'w-full px-2 text-xs' : 'min-w-[140px] max-w-56',
         )}
       >
         <Filter className="size-3.5 shrink-0" aria-hidden="true" />

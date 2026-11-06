@@ -942,7 +942,7 @@ associatedAgents: AgentId[];
 /**
  * 当前 Scope 中实际被引用的同名库版本。
  */
-libraryVersions?: InstalledLibraryVersion[] | null; maintenanceError?: AppError | null; comparisonFingerprint?: string | null; source?: string | null; sourceFilter?: SourceFilterInfo | null; sourceUrl?: string | null;
+libraryVersions?: InstalledLibraryVersion[] | null; maintenanceError?: AppError | null; comparisonFingerprint?: string | null; source?: string | null; sourceType?: string | null; sourceFilter?: SourceFilterInfo | null; sourceUrl?: string | null;
 /**
  * 项目依赖提供内容或声明来源的信息；不授予依赖同步写入权限。
  */
@@ -1212,7 +1212,7 @@ export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequire
  * 仅用于列表归类；不参与来源获取、缓存或写入授权。
  */
 export type SourceFilterInfo = { key: string; kind: SourceFilterKind; label: string; detail: string }
-export type SourceFilterKind = "git" | "wellKnown" | "dependency" | "local" | "incomplete"
+export type SourceFilterKind = "git" | "wellKnown" | "download" | "dependency" | "local" | "incomplete"
 export type SourcePathChange = { previousPath: string; nextPath: string }
 export type SourceProvider = "github" | "gitlab" | "git" | "wellKnown"
 export type SourceSelectionIntent = { wildcardRequested: boolean; explicitSkillNames: string[] }

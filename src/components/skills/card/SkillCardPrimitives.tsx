@@ -98,7 +98,7 @@ export const SkillSourceLink = memo(function SkillSourceLink({
     </button>
   );
   return <OverflowTooltip always={Boolean(hint || (openable && openable !== label))} content={<>
-      <p>{label}</p>
+      {!openable || openable === label ? <p>{label}</p> : null}
       {openable && openable !== label ? <p>{openable}</p> : null}
       {hint ? <p className="mt-1">{hint}</p> : null}
     </>}>{source}</OverflowTooltip>;

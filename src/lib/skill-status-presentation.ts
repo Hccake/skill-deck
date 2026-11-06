@@ -4,7 +4,7 @@ import { resolveEvidenceFailureNextStepI18nKey, resolveEvidenceFailureReasonI18n
 
 type SkillStatusInput = Partial<Pick<SkillListItem,
   'source' | 'sourceUrl' | 'hasUpdate' | 'canRunUpdate' | 'canCheckForUpdates' | 'updateReason' | 'updateStatus' | 'updateError' | 'updateEvidence'
->> & { sourceType?: string; updateCapability?: CheckUpdateCapability | null };
+>> & { sourceType?: string | null; updateCapability?: CheckUpdateCapability | null };
 
 export interface SkillSourceNotice {
   labelKey: string;
@@ -49,11 +49,18 @@ function isTransientCheckError(error: AppError): boolean {
 
 export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUpdateInfo) {
   const reason = check?.reason ?? skill.updateReason ?? skill.updateCapability?.reason;
+  if (skill.sourceType === 'download' || reason === 'download-source') {
+    const sourceLabel = skill.source?.trim() || null;
+    return { local: false, packageSource: false, sourceLabel,
+      sourceLabelKey: sourceLabel ? null : 'skills.filter.downloadSource',
+      available: false, notice: null as SkillSourceNotice | null,
+      sourceHintKey: 'skills.updateHint.downloadSource' };
+  }
   const status = check?.status ?? skill.updateStatus;
   const packageSource = reason === 'dependency-source' || skill.sourceType === 'node_modules';
   const sourceLabel = skill.source?.trim() || skill.sourceUrl?.trim() || null;
   const incomplete = reason === 'missingSource' || reason === 'missing-skill-path'
-    || (!sourceLabel && skill.sourceType !== undefined && skill.sourceType !== 'local');
+    || (!sourceLabel && skill.sourceType != null && skill.sourceType !== 'local');
   const local = !incomplete && (reason === 'local-source' || skill.sourceType === 'local'
     || (!sourceLabel && !reason && !skill.updateError && !check?.error));
   const deleted = status === 'deletedUpstream' || reason === 'deletedUpstream' || reason === 'deleted-upstream';
@@ -86,5 +93,5 @@ export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUp
       ? canRunUpdate ? 'skills.updateHint.missingRemoteHashCanUpdate' : 'skills.updateHint.missingRemoteHash'
     : reason === 'unsupportedSource' || reason === 'unsupported-source-type' ? 'skills.updateHint.unsupportedSource'
     : null;
-  return { local, packageSource, sourceLabel, available, notice, sourceHintKey };
+  return { local, packageSource, sourceLabel, sourceLabelKey: null, available, notice, sourceHintKey };
 }

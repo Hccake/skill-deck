@@ -10,6 +10,7 @@ use super::{NormalizedUpdateMetadata, SourceIdentity, SourceProvider};
 pub enum SourceFilterKind {
     Git,
     WellKnown,
+    Download,
     Dependency,
     Local,
     Incomplete,
@@ -43,7 +44,26 @@ impl SourceFilterInfo {
     }
 
     pub fn from_metadata(metadata: &NormalizedUpdateMetadata) -> Self {
-        if matches!(metadata.source_type.as_str(), "local" | "download") {
+        if metadata.source_type == "download" {
+            let display = super::source_display::download_source_display(
+                &metadata.source,
+                metadata.source_url.as_deref(),
+            );
+            return Self {
+                key: display
+                    .origin
+                    .as_deref()
+                    .map(|origin| key(&format!("download:{origin}")))
+                    .unwrap_or_else(|| "source-filter:download".into()),
+                kind: SourceFilterKind::Download,
+                label: display.label,
+                detail: display
+                    .origin
+                    .filter(|origin| !origin.starts_with("notion:"))
+                    .unwrap_or_default(),
+            };
+        }
+        if metadata.source_type == "local" {
             return Self::local();
         }
         if metadata.source_type == "node_modules" {
@@ -142,6 +162,25 @@ mod tests {
             computed_hash: None,
             well_known_digest: None,
         }
+    }
+
+    #[test]
+    fn download_filters_group_origins_without_exposing_locator_secrets() {
+        let mut one =
+            metadata("https://alice:secret@downloads.example:8443/review.zip?token=private");
+        one.source_type = "download".into();
+        let mut two = metadata("https://downloads.example:8443/other.tar.gz");
+        two.source_type = "download".into();
+        let group = SourceFilterInfo::from_metadata(&one);
+        assert_eq!(group.key, SourceFilterInfo::from_metadata(&two).key);
+        assert_eq!(group.label, "downloads.example:8443");
+        assert_eq!(serde_json::to_value(&group).unwrap()["kind"], "download");
+        let text = serde_json::to_string(&group).unwrap();
+        for secret in ["alice", "secret", "private", "token=", "review.zip"] {
+            assert!(!text.contains(secret));
+        }
+        two.source_url = Some("http://downloads.example:8443/other.tar.gz".into());
+        assert_ne!(group.key, SourceFilterInfo::from_metadata(&two).key);
     }
 
     #[test]

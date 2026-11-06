@@ -434,3 +434,7 @@ SKILL_DECK_E2E_SPEC=source-filter pnpm test:desktop
 ```
 
 夹具使用实际 Skills 工具栏、Agent 与来源筛选器、Skill 卡片和 Git 引用组件，在 720×520 原生 WebView 中验证 240/320px 窄列表及完整列表，中英文、深浅主题、弹层边界、筛选与关键词组合，以及固定提交全文提示。夹具不执行真实项目检查或写入；项目与全局的操作范围、读取不完整和切换位置的状态由组件测试验证。后端 core::source_filter 验证仓库归类、引用隔离、索引区分及凭据脱敏。
+
+### 基础兼容的整页原生界面
+
+`SKILL_DECK_E2E_SPEC=basic-compatibility pnpm test:desktop` 使用实际 Header、SkillsPage、卡片、紧凑列表和详情组件，配合隔离数据，在 1280、960、760px 下检查中英文、深浅主题和来源筛选。下载来源使用原属性位置与提示，不增加说明区域，也不计入检查异常。对应 Rust 用例另外验证外部下载记录的能力、来源脱敏和复制结果；界面夹具不替代文件工作流测试。

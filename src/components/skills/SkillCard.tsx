@@ -101,7 +101,7 @@ export const SkillCard = memo(function SkillCard({
     : notice?.hintKey ? t(notice.hintKey) : undefined;
   const sourceLabel = presentation.local ? t('skills.updateStatusLabel.localSource')
     : presentation.packageSource ? t('skills.dependency.cardSource', { package: presentation.sourceLabel })
-    : presentation.sourceLabel;
+    : presentation.sourceLabelKey ? t(presentation.sourceLabelKey) : presentation.sourceLabel;
   const sourceUrl = isOpenableUrl(skill.sourceUrl) ? skill.sourceUrl : null;
   const updatedAt = skill.updatedAt
     ? formatSkillCardDate(skill.updatedAt, i18n.language)

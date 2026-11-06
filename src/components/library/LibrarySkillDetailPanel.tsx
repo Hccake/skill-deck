@@ -63,7 +63,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   const { t, i18n } = useTranslation();
 
   const presentation = skillStatusPresentation(skill, check);
-  const sourceLabel = presentation.sourceLabel;
+  const sourceLabel = presentation.sourceLabelKey ? t(presentation.sourceLabelKey) : presentation.sourceLabel;
   const sourceUrl = isOpenableUrl(skill.sourceUrl)
     ? skill.sourceUrl
     : isOpenableUrl(skill.source) ? skill.source : null;

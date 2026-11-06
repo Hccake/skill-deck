@@ -179,6 +179,7 @@ mod environment_tests {
             private_copy_agents: Some(Vec::new()),
             agents,
             source: None,
+            source_type: None,
             source_filter: None,
             source_url: None,
             installed_at: None,
@@ -208,6 +209,38 @@ mod environment_tests {
         assert_eq!(skill.scope, InstalledSkillLocation::Project);
         assert!(skill.agents.is_empty());
         assert_eq!(skill.source, None);
+    }
+
+    #[test]
+    fn downloaded_lock_records_are_projected_without_credentials_or_update_permission() {
+        for (kind, version, scope) in [
+            (LockKind::Global, 3, InstalledSkillLocation::Global),
+            (LockKind::Project, 1, InstalledSkillLocation::Project),
+        ] {
+            let skill = installed_skill(
+                "toolkit",
+                "downloaded content",
+                "fixture/skills/toolkit",
+                scope,
+                Vec::new(),
+            );
+            let address =
+                "https://user:secret@downloads.example/tool.zip?token=query-private-value";
+            let lock = serde_json::to_vec(&serde_json::json!({"version":version,"skills":{"toolkit":{
+                "source":address,"sourceType":"download","sourceUrl":address,"skillPath":"toolkit/SKILL.md",
+                "computedHash":"content","skillFolderHash":"content","installedAt":"time","updatedAt":"time"
+            }}})).unwrap();
+            let result =
+                enrich_environment_skills_from_lock(vec![skill], Some(&lock), kind).unwrap();
+            assert_eq!(result[0].source.as_deref(), Some("downloads.example"));
+            assert_eq!(result[0].source_type.as_deref(), Some("download"));
+            assert!(result[0].source_url.is_none());
+            assert_eq!(result[0].can_run_update, Some(false));
+            let exposed = serde_json::to_string(&result).unwrap();
+            for secret in ["user:", "secret", "token=", "query-private-value"] {
+                assert!(!exposed.contains(secret));
+            }
+        }
     }
 
     #[test]

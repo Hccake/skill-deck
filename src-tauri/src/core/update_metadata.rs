@@ -91,6 +91,15 @@ pub fn recover_source_url(
 mod tests {
     use super::*;
 
+    #[test]
+    fn download_records_do_not_authorize_remote_maintenance() {
+        let metadata = global("download", "content-hash");
+        let capability = derive_update_capability(&metadata);
+        assert!(!capability.can_run_update);
+        assert!(!capability.can_check_for_updates);
+        assert_eq!(capability.reason.as_deref(), Some("download-source"));
+    }
+
     fn global(source_type: &str, baseline: &str) -> NormalizedUpdateMetadata {
         normalize_global_lock_entry(&SkillLockEntry {
             source: "acme/tools".into(),
@@ -312,6 +321,13 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
 }
 
 pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCapability {
+    if metadata.source_type == "download" {
+        return UpdateCapability {
+            can_check_for_updates: false,
+            can_run_update: false,
+            reason: Some("download-source".into()),
+        };
+    }
     if metadata.source_type == "node_modules" {
         return UpdateCapability {
             can_check_for_updates: false,

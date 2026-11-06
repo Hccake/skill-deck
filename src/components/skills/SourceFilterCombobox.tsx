@@ -11,6 +11,7 @@ import type { TFunction } from 'i18next';
 function sourceLabel(source: SourceFilterOption, t: TFunction) {
   if (source.kind === 'local') return t('skills.updateStatusLabel.localSource');
   if (source.kind === 'incomplete') return t('skills.filter.incompleteSource');
+  if (source.kind === 'download') return source.label || t('skills.filter.downloadSource');
   if (source.kind === 'dependency') return source.label
     ? t('skills.filter.dependencyPackage', { name: source.label }) : t('skills.filter.dependencySource');
   return source.label;
@@ -103,7 +104,7 @@ export function SourceFilterCombobox({ options, selected, onChange, totalCount, 
               : '';
             const display = option ? `${sourceLabel(option, t)}${suffix ? ` · ${suffix}` : ''}` : t('skills.filter.allSources');
             const count = option?.count ?? totalCount;
-            const Icon = option?.kind === 'wellKnown' ? Globe : option?.kind === 'dependency' ? Package : option?.kind === 'incomplete' ? CircleHelp : Folder;
+            const Icon = option?.kind === 'wellKnown' || option?.kind === 'download' ? Globe : option?.kind === 'dependency' ? Package : option?.kind === 'incomplete' ? CircleHelp : Folder;
             return <button key={option?.key ?? 'all'} id={`${listId}-${index}`} type="button" role="option" tabIndex={-1}
               aria-selected={(selected?.key ?? null) === (option?.key ?? null)} aria-label={`${display} (${count})`}
               title={option ? `${display} ${option.detail}` : display}
