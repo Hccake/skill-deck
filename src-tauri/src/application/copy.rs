@@ -1181,7 +1181,7 @@ fn build_copy_unit(
             ),
         );
     }
-    let entries = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+    let scope_plan = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
         skill: SkillDirectoryName::try_from(request.skill_name.as_str())?,
         catalog: &target.catalog,
         placements: target.observed.placements.clone(),
@@ -1191,8 +1191,11 @@ fn build_copy_unit(
         },
         direct_changes,
     })
-    .map(|plan| plan.compile_entries())
     .map_err(|error| error.into_app_error())?;
+    let install_mode = scope_plan
+        .ordinary_install_mode(&target.catalog)?
+        .unwrap_or_else(|| request.agent_selection.requested_mode.clone());
+    let entries = scope_plan.compile_entries();
     let eve_target_ids = target
         .selected_option_ids
         .iter()
@@ -1214,7 +1217,13 @@ fn build_copy_unit(
             .project
             .as_ref()
             .map(|project| project.native_path.as_str()),
-    );
+    )
+    .map(|mut replacement| {
+        if install_mode == InstallMode::Copy {
+            replacement["installMode"] = serde_json::json!("copy");
+        }
+        replacement
+    });
     let lock_mutation = PreparedLockMutation {
         target: target.facts.resolved_context.lock.clone(),
         legacy_target: None,

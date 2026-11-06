@@ -552,7 +552,7 @@ fi
     if workflow == WslWorkflow::PinnedCommit {
         run_fixture(&distro, r#"set -eu
 cp "$1/project/.codebuddy/skills/alpha/SKILL.md" "$1/pinned-content.md"
-"$2" -e 'const fs=require("fs"); const p=process.argv[1]; const d=JSON.parse(fs.readFileSync(p,"utf8")); d.skills.alpha.ref=process.argv[2]; delete d.skills.alpha.refKind; fs.writeFileSync(p,JSON.stringify(d));' "$1/project/skills-lock.json" "$3"
+"$2" -e 'const fs=require("fs"); const p=process.argv[1]; const d=JSON.parse(fs.readFileSync(p,"utf8")); d.skills.alpha.ref=process.argv[2]; d.skills.alpha.installMode={future:"mode"}; delete d.skills.alpha.refKind; fs.writeFileSync(p,JSON.stringify(d));' "$1/project/skills-lock.json" "$3"
 "#, &[root.clone(), std::env::var("SKILL_DECK_TEST_WSL_NODE").unwrap(), original_commit.clone()]).await.unwrap();
     }
 
@@ -841,6 +841,7 @@ cp "$1/project/.codebuddy/skills/alpha/SKILL.md" "$1/pinned-content.md"
         let expected = if workflow == WslWorkflow::PinnedCommit {
             assert_eq!(stored["ref"], original_commit);
             assert_eq!(stored["refKind"], "commit");
+            assert_eq!(stored["installMode"], serde_json::json!({"future":"mode"}));
             assert_eq!(stored["skillPath"], "skills/alpha/SKILL.md");
             format!("{root}/pinned-content.md")
         } else {

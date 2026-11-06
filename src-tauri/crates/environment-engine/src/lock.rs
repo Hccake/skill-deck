@@ -255,6 +255,7 @@ fn schema_version(schema: LockSchema) -> u64 {
 fn merge_entry_fields(schema: LockSchema, current: Option<&Value>, replacement: Value) -> Value {
     let known_fields: &[&str] = match schema {
         LockSchema::Global => &[
+            "installMode",
             "source",
             "sourceType",
             "sourceUrl",
@@ -269,6 +270,7 @@ fn merge_entry_fields(schema: LockSchema, current: Option<&Value>, replacement: 
             "wellKnownDigest",
         ],
         LockSchema::Project => &[
+            "installMode",
             "source",
             "ref",
             "refKind",

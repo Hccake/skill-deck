@@ -141,6 +141,8 @@ Skill Deck 仍可读取旧的 `<project>/.agents/.skill-lock.json`，并在下�
 
 ### Skill Deck 修改 lock 文件
 
+新版 CLI 的 `installMode: "copy"` 是整份 Skill 的粗粒度安装偏好。Skill Deck 仍按各实际位置维护链接和副本：同来源内容更新与路径迁移原样保留该字段，新安装、复制和实际 Agent 关联变化则按目标计划写入或清除。普通 Agent 专用位置均为副本时记录 `copy`，含链接或混合形态时省略；通用内容目录、Eve 强制副本和库位置不用于判断。单个字段无法完整表达混合形态，其他工具后续重新安装仍遵循自身规则。
+
 Skill Deck 修改全局或项目 lock 时，只替换本次操作负责的根字段或 Skill 记录。保存结果会保留：
 
 - 其他 Skill 记录；

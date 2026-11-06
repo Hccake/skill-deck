@@ -402,7 +402,7 @@ where
             )
             .protect_dependency_content(&metadata.skill_name, &facts, &self.targets)
             .await?;
-            let entries = plan_install_entries(
+            let (entries, install_mode) = plan_install_entries(
                 request,
                 &catalog,
                 seed,
@@ -417,6 +417,7 @@ where
                 payload,
                 &selection.eve_subagents,
                 entries,
+                install_mode.unwrap_or_else(|| request.agent_selection.requested_mode.clone()),
                 (self.now)(),
             )?;
             if include_plan {
@@ -502,7 +503,7 @@ fn plan_install_entries(
     snapshot: &LibraryCandidateSnapshot,
     payload: &ValidatedSkillPayload,
     eve_payload: Option<&PinnedPayloadLease>,
-) -> Result<PreparedMutationEntries, AppError> {
+) -> Result<(PreparedMutationEntries, Option<InstallMode>), AppError> {
     let original_payload_id = payload.manifest().payload_id().clone();
     let mut direct_changes = BTreeMap::new();
     for placement in &seed.placements {
@@ -535,7 +536,7 @@ fn plan_install_entries(
         direct_changes.insert(placement.id.clone(), change);
     }
     let skill = SkillDirectoryName::try_from(payload.planning_metadata().skill_name.as_str())?;
-    ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+    let plan = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
         skill,
         catalog,
         placements,
@@ -545,8 +546,8 @@ fn plan_install_entries(
         },
         direct_changes,
     })
-    .map(|plan| plan.compile_entries())
-    .map_err(|error| error.into_app_error())
+    .map_err(|error| error.into_app_error())?;
+    Ok((plan.compile_entries(), plan.ordinary_install_mode(catalog)?))
 }
 
 fn direct_download_conflict(
@@ -645,6 +646,7 @@ fn build_unit(
     payload: &ValidatedSkillPayload,
     eve_subagents: &BTreeSet<String>,
     entries: PreparedMutationEntries,
+    install_mode: InstallMode,
     now: String,
 ) -> Result<MutationUnitDraft, AppError> {
     let metadata = payload.planning_metadata();
@@ -656,7 +658,7 @@ fn build_unit(
         expected_revisions: facts.revisions.clone(),
         entries,
         lock_mutation: (metadata.source_type != "download")
-            .then(|| lock_mutation(facts, metadata, eve_subagents, now))
+            .then(|| lock_mutation(facts, metadata, eve_subagents, &install_mode, now))
             .transpose()?,
     })
 }
@@ -665,6 +667,7 @@ fn lock_mutation(
     facts: &ScopePlanningSnapshot,
     metadata: &crate::application::payload_session::PayloadPlanningMetadata,
     eve_subagents: &BTreeSet<String>,
+    install_mode: &InstallMode,
     now: String,
 ) -> Result<PreparedLockMutation, AppError> {
     let resolved = crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
@@ -694,7 +697,7 @@ fn lock_mutation(
         .entry_snapshot(&resolved.lock_key)
         .value()
         .cloned();
-    let replacement = match facts.lock_schema {
+    let mut replacement = match facts.lock_schema {
         LockSchema::Global => {
             let installed_at = existing
                 .as_ref()
@@ -755,6 +758,9 @@ fn lock_mutation(
             Value::Object(entry)
         }
     };
+    if *install_mode == InstallMode::Copy {
+        replacement["installMode"] = json!("copy");
+    }
     Ok(PreparedLockMutation {
         target: facts.resolved_context.lock.clone(),
         legacy_target: None,
@@ -1127,6 +1133,30 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn planner_records_copy_preference_only_for_copy_installations() {
+        for mode in [InstallMode::Copy, InstallMode::Symlink] {
+            let mut fixture = MultiSkillInstallFixture::new().await;
+            fixture.request.agent_selection.requested_mode = mode.clone();
+            let (_, plan) = fixture
+                .planner
+                .rebuild(&fixture.request, fixture.leases().await)
+                .await
+                .unwrap();
+            let replacement = plan.units[0]
+                .lock_mutation
+                .as_ref()
+                .unwrap()
+                .replacement()
+                .unwrap();
+            if mode == InstallMode::Copy {
+                assert_eq!(replacement.get("installMode"), Some(&json!("copy")));
+            } else {
+                assert!(replacement.get("installMode").is_none());
+            }
+        }
     }
 
     #[tokio::test]
@@ -1723,20 +1753,38 @@ mod tests {
             well_known: None,
         };
         let no_targets = BTreeSet::new();
-        let no_targets_mutation =
-            lock_mutation(&facts, &metadata, &no_targets, "now".to_string()).unwrap();
+        let no_targets_mutation = lock_mutation(
+            &facts,
+            &metadata,
+            &no_targets,
+            &InstallMode::Symlink,
+            "now".to_string(),
+        )
+        .unwrap();
         let no_targets = no_targets_mutation.replacement().unwrap();
         assert!(!no_targets.as_object().unwrap().contains_key("subagents"));
 
         let root_only = BTreeSet::from(["".to_string()]);
-        let root_only_mutation =
-            lock_mutation(&facts, &metadata, &root_only, "now".to_string()).unwrap();
+        let root_only_mutation = lock_mutation(
+            &facts,
+            &metadata,
+            &root_only,
+            &InstallMode::Symlink,
+            "now".to_string(),
+        )
+        .unwrap();
         let root_only = root_only_mutation.replacement().unwrap();
         assert!(!root_only.as_object().unwrap().contains_key("subagents"));
 
         let named_and_root = BTreeSet::from(["".to_string(), "builder".to_string()]);
-        let named_and_root_mutation =
-            lock_mutation(&facts, &metadata, &named_and_root, "now".to_string()).unwrap();
+        let named_and_root_mutation = lock_mutation(
+            &facts,
+            &metadata,
+            &named_and_root,
+            &InstallMode::Symlink,
+            "now".to_string(),
+        )
+        .unwrap();
         let named_and_root = named_and_root_mutation.replacement().unwrap();
         assert_eq!(named_and_root["subagents"], json!(["", "builder"]));
     }
@@ -1926,11 +1974,17 @@ mod tests {
         };
         let eve_subagents = BTreeSet::new();
 
-        let global = lock_mutation(&facts, &metadata, &eve_subagents, "now".to_string())
-            .unwrap()
-            .replacement()
-            .unwrap()
-            .clone();
+        let global = lock_mutation(
+            &facts,
+            &metadata,
+            &eve_subagents,
+            &InstallMode::Symlink,
+            "now".to_string(),
+        )
+        .unwrap()
+        .replacement()
+        .unwrap()
+        .clone();
         assert_eq!(
             global["sourceBaseUrl"],
             "https://skills.example.com/catalog"
@@ -1940,11 +1994,17 @@ mod tests {
         let mut project_facts = facts;
         project_facts.lock_schema = LockSchema::Project;
         project_facts.lock_document = LosslessLockDocument::empty(LockSchema::Project);
-        let project = lock_mutation(&project_facts, &metadata, &eve_subagents, "now".to_string())
-            .unwrap()
-            .replacement()
-            .unwrap()
-            .clone();
+        let project = lock_mutation(
+            &project_facts,
+            &metadata,
+            &eve_subagents,
+            &InstallMode::Symlink,
+            "now".to_string(),
+        )
+        .unwrap()
+        .replacement()
+        .unwrap()
+        .clone();
         assert_eq!(project["sourceUrl"], "https://skills.example.com/catalog");
     }
 

@@ -3702,7 +3702,12 @@ mod update_lifecycle {
                 .await
                 .unwrap();
             assert_succeeded(&managed.units);
-            assert_eq!(read_json(&lock_path).unwrap()["skills"]["alpha"], record);
+            let mut maintained_record = record.clone();
+            maintained_record["installMode"] = json!("copy");
+            assert_eq!(
+                read_json(&lock_path).unwrap()["skills"]["alpha"],
+                maintained_record
+            );
             assert_eq!(fs::read(package.join("SKILL.md")).unwrap(), markdown);
 
             let destination = fixture._root.path().join("copy-target");
@@ -4255,7 +4260,13 @@ mod update_lifecycle {
             let fixture = UpdateLifecycleFixture::new(["alpha", "beta"]).await;
             fixture.install().await;
             let lock_path = fixture.project_path.join("skills-lock.json");
-            let before = read_json(&lock_path).unwrap();
+            let mut before = read_json(&lock_path).unwrap();
+            before["skills"]["alpha"]["installMode"] = if new_folder == "skills/Alpha" {
+                json!({"future":"mode"})
+            } else {
+                json!("copy")
+            };
+            fs::write(&lock_path, serde_json::to_vec(&before).unwrap()).unwrap();
             fixture.remote.relocate_skill("skills/alpha", new_folder);
             let request = UpdateCheckRequest {
                 context: fixture.context(),
@@ -4299,6 +4310,10 @@ mod update_lifecycle {
                 "{result:?}"
             );
             let after = read_json(&lock_path).unwrap();
+            assert_eq!(
+                after["skills"]["alpha"]["installMode"],
+                before["skills"]["alpha"]["installMode"]
+            );
             assert_eq!(
                 after["skills"]["alpha"]["skillPath"],
                 format!("{new_folder}/SKILL.md")
@@ -4598,6 +4613,11 @@ mod update_lifecycle {
             .unwrap();
         assert_succeeded(&copied.units);
         assert_eq!(
+            read_json(&destination.join("skills-lock.json")).unwrap()["skills"]["alpha"]
+                ["installMode"],
+            "copy"
+        );
+        assert_eq!(
             fs::read(destination.join(".agents/skills/alpha/SKILL.md")).unwrap(),
             markdown
         );
@@ -4653,6 +4673,11 @@ mod update_lifecycle {
             .unwrap();
         assert_succeeded(&added.units);
         assert_eq!(fs::read(minimax.join("SKILL.md")).unwrap(), markdown);
+        assert_eq!(
+            read_json(&fixture.project_path.join("skills-lock.json")).unwrap()["skills"]["alpha"]
+                ["installMode"],
+            "copy"
+        );
         assert!(!standard.exists());
 
         let selection = copy.selection(&context, "alpha").await.unwrap().selection;

@@ -9,6 +9,7 @@ pub enum LockSchema {
 }
 
 const GLOBAL_ENTRY_FIELDS: &[&str] = &[
+    "installMode",
     "source",
     "sourceType",
     "sourceUrl",
@@ -24,6 +25,7 @@ const GLOBAL_ENTRY_FIELDS: &[&str] = &[
 ];
 
 const PROJECT_ENTRY_FIELDS: &[&str] = &[
+    "installMode",
     "source",
     "ref",
     "refKind",

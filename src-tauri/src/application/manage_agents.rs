@@ -1055,12 +1055,19 @@ async fn build_manage_plan(
     })
     .map_err(|error| error.into_app_error())?;
     let entries = scope_plan.compile_entries();
+    let install_mode = scope_plan.ordinary_install_mode(&request.catalog)?;
+    let placement_changed = scope_plan
+        .directories()
+        .iter()
+        .any(|directory| !matches!(directory.action(), PreparedEntryAction::Keep));
     let lock_mutation = manage_lock_mutation(
         &request.selection,
         &facts,
         &observed_entries,
         &snapshot.resolved,
         &additions,
+        install_mode,
+        placement_changed,
     )?;
     Ok(assemble_plan(MutationPlanDraft {
         kind: MutationKind::ManageAgents,
@@ -1086,6 +1093,8 @@ fn manage_lock_mutation(
     observed_entries: &[crate::application::skill_entry_projection::ObservedPlannedEntry],
     resolved: &crate::application::installed_skill_resolver::ResolvedInstalledSkill,
     additions: &ResolvedAdditions,
+    install_mode: Option<InstallMode>,
+    placement_changed: bool,
 ) -> Result<Option<PreparedLockMutation>, AppError> {
     let selected = request.remove_entry_ids.iter().collect::<BTreeSet<_>>();
     let removes_eve = observed_entries.iter().any(|entry| {
@@ -1098,13 +1107,15 @@ fn manage_lock_mutation(
         .options
         .iter()
         .any(|option| option.placement.content.uses_eve_payload());
-    if !removes_eve && !adds_eve {
+    if !placement_changed && !removes_eve && !adds_eve {
         return Ok(None);
     }
-    if !matches!(
-        request.context.scope,
-        crate::environment::types::SkillLocation::Project { .. }
-    ) {
+    if (removes_eve || adds_eve)
+        && !matches!(
+            request.context.scope,
+            crate::environment::types::SkillLocation::Project { .. }
+        )
+    {
         return Err(AppError::Validation {
             field: Some("eveTargets".to_string()),
             message: "Eve targets require Project Context".to_string(),
@@ -1127,17 +1138,35 @@ fn manage_lock_mutation(
             .eve_subagent()
             .map(crate::core::eve::lock_subagent_value)
     }));
-    let Some(replacement) = eve_lock_replacement(
-        facts
-            .lock_document
-            .entry_snapshot(&resolved.lock_key)
-            .value()
-            .cloned(),
-        &subagents,
-    )?
+    let Some(existing) = facts
+        .lock_document
+        .entry_snapshot(&resolved.lock_key)
+        .value()
+        .cloned()
     else {
         return Ok(None);
     };
+    let mut replacement = if removes_eve || adds_eve {
+        eve_lock_replacement(Some(existing.clone()), &subagents)?.ok_or(AppError::StaleTarget)?
+    } else {
+        existing.clone()
+    };
+    if let Some(mode) = install_mode {
+        let object =
+            replacement
+                .as_object_mut()
+                .ok_or_else(|| AppError::ConfigurationCorrupted {
+                    message: "Skill lock entry must be an object".into(),
+                })?;
+        if mode == InstallMode::Copy {
+            object.insert("installMode".into(), serde_json::json!("copy"));
+        } else {
+            object.remove("installMode");
+        }
+    }
+    if replacement == existing && !resolved.requires_lock_key_migration() {
+        return Ok(None);
+    }
     Ok(Some(PreparedLockMutation {
         target: facts.resolved_context.lock.clone(),
         legacy_target: None,

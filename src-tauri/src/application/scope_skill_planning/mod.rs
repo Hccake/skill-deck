@@ -278,6 +278,56 @@ pub(crate) struct ScopeSkillPlan {
 }
 
 impl ScopeSkillPlan {
+    /// 共同记录只概括普通 Agent 的直接安装；内容目录、Eve 和库位置另有归属。
+    pub(crate) fn ordinary_install_mode(
+        &self,
+        catalog: &AgentSelectionCatalog,
+    ) -> Result<Option<crate::models::InstallMode>, AppError> {
+        use crate::models::InstallMode;
+        let mut found = false;
+        for directory in &self.directories {
+            if !matches!(directory.elected, ElectedVersion::Direct(_))
+                || directory
+                    .placements
+                    .contains(&DirectoryPlacementRef::Catalog(
+                        DirectoryPlacementId::Standard,
+                    ))
+                || !directory
+                    .placements
+                    .iter()
+                    .any(|placement| match placement {
+                        DirectoryPlacementRef::Catalog(DirectoryPlacementId::Option(id)) => catalog
+                            .option(id)
+                            .is_some_and(|option| !option.placement.content.uses_eve_payload()),
+                        _ => false,
+                    })
+            {
+                continue;
+            }
+            found = true;
+            match &directory.action {
+                PreparedEntryAction::Replace {
+                    requested_mode: InstallMode::Copy,
+                    ..
+                } => {}
+                PreparedEntryAction::Replace {
+                    requested_mode: InstallMode::Symlink,
+                    ..
+                }
+                | PreparedEntryAction::Link { .. } => return Ok(Some(InstallMode::Symlink)),
+                PreparedEntryAction::Keep => match directory.fact.entry_kind {
+                    TargetEntryKind::Directory => {}
+                    TargetEntryKind::Symlink | TargetEntryKind::Junction => {
+                        return Ok(Some(InstallMode::Symlink))
+                    }
+                    _ => return Err(AppError::StaleTarget),
+                },
+                PreparedEntryAction::Remove => return Err(AppError::StaleTarget),
+            }
+        }
+        Ok(found.then_some(InstallMode::Copy))
+    }
+
     pub(crate) fn directories(&self) -> &[ScopePlannedDirectory] {
         &self.directories
     }
@@ -1124,6 +1174,43 @@ mod tests {
                 content: crate::application::agent_selection::DirectoryContentKind::Original,
             },
         )
+    }
+
+    #[test]
+    fn ordinary_install_mode_uses_private_placement_shape_not_the_content_directory() {
+        use crate::models::InstallMode;
+        let catalog = catalog_with_option();
+        for (kind, expected) in [
+            (TargetEntryKind::Directory, Some(InstallMode::Copy)),
+            (TargetEntryKind::Symlink, Some(InstallMode::Symlink)),
+            (TargetEntryKind::Junction, Some(InstallMode::Symlink)),
+            (TargetEntryKind::Missing, None),
+        ] {
+            let plan = ScopeSkillPlanner::plan_direct_change(DirectSkillChangeRequest {
+                skill: SkillDirectoryName::try_from("demo").unwrap(),
+                catalog: &catalog,
+                placements: ScopeSkillPlacementSet::new(
+                    context(),
+                    BTreeMap::from([
+                        (
+                            DirectoryPlacementId::Standard,
+                            fact("demo", TargetEntryKind::Directory, None),
+                        ),
+                        (
+                            DirectoryPlacementId::Option(AgentInstallOptionId("private".into())),
+                            fact("private", kind, Some("/scope/demo")),
+                        ),
+                    ]),
+                ),
+                libraries: LibraryElectionState {
+                    candidates: &LibraryCandidateSet::empty(),
+                    selected_agent_ids: &[],
+                },
+                direct_changes: BTreeMap::new(),
+            })
+            .unwrap();
+            assert_eq!(plan.ordinary_install_mode(&catalog).unwrap(), expected);
+        }
     }
 
     #[test]

@@ -4,6 +4,45 @@ use environment_engine::lock::{apply, EntryMutation, LockError, LockMutation, Lo
 use serde_json::json;
 
 #[test]
+fn installation_mode_is_replaced_without_erasing_unrelated_extensions() {
+    for (schema, version) in [(LockSchema::Global, 3), (LockSchema::Project, 1)] {
+        let previous = json!({"source":"old", "installMode":"copy", "futureField":{"keep":true}});
+        let bytes =
+            serde_json::to_vec(&json!({"version":version, "skills":{"demo":previous}})).unwrap();
+        for value in [None, Some(json!("copy")), Some(json!({"future":"mode"}))] {
+            let mut replacement = json!({"source":"new"});
+            if let Some(value) = value.clone() {
+                replacement["installMode"] = value;
+            }
+            let applied = apply(
+                Some(&bytes),
+                None,
+                &LockMutation {
+                    schema,
+                    entry: EntryMutation::Replace {
+                        key: "demo".into(),
+                        replacement,
+                    },
+                    root_replacements: BTreeMap::new(),
+                    expected_entries: BTreeMap::from([("demo".into(), Some(previous.clone()))]),
+                    expected_roots: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+            let document: serde_json::Value = serde_json::from_slice(&applied.bytes).unwrap();
+            assert_eq!(
+                document["skills"]["demo"].get("installMode"),
+                value.as_ref()
+            );
+            assert_eq!(
+                document["skills"]["demo"]["futureField"],
+                previous["futureField"]
+            );
+        }
+    }
+}
+
+#[test]
 fn conditional_lock_apply_preserves_unknown_fields_and_returns_new_evidence() {
     let current = serde_json::to_vec(&json!({
         "version": 3,

@@ -1129,7 +1129,7 @@ fn lock_mutation(
     now: String,
 ) -> Result<PreparedLockMutation, AppError> {
     let metadata = payload.planning_metadata();
-    let replacement = match facts.lock_schema {
+    let mut replacement = match facts.lock_schema {
         LockSchema::Global => json!({
             "source": metadata.source,
             "sourceType": metadata.source_type,
@@ -1190,6 +1190,14 @@ fn lock_mutation(
             Value::Object(entry)
         }
     };
+    if let Some(mode) = facts
+        .lock_document
+        .entry_snapshot(&locked.lock_key)
+        .value()
+        .and_then(|entry| entry.get("installMode"))
+    {
+        replacement["installMode"] = mode.clone();
+    }
     Ok(PreparedLockMutation {
         target: facts.resolved_context.lock.clone(),
         legacy_target: None,
