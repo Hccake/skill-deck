@@ -30,6 +30,7 @@ function fetchResult(name: string) {
     sourceUrl: `https://github.com/owner/${name}`,
     gitRef: null,
     skillFilter: null,
+    selectionResult: { matchedNames: [name], unmatchedInputs: [], ambiguousInputs: [] },
     skills: [{
       name,
       installDirName: name,

@@ -287,6 +287,7 @@ describe('SourceStep', () => {
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,
       skillFilter: 'demo',
+      selectionResult: { matchedNames: ['demo'], unmatchedInputs: [], ambiguousInputs: [] },
       skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo' }],
     });
 
@@ -358,6 +359,7 @@ describe('SourceStep', () => {
       sourceUrl: 'https://skills.sh/p/frontend',
       gitRef: null,
       skillFilter,
+      selectionResult: { matchedNames: expected ? expected.split(',') : [], unmatchedInputs: [], ambiguousInputs: [] },
       skills: [
         { name: 'alpha', installDirName: 'alpha', description: 'Alpha', relativePath: 'alpha' },
         { name: 'beta', installDirName: 'beta', description: 'Beta', relativePath: 'beta' },
@@ -382,6 +384,7 @@ describe('SourceStep', () => {
       sourceUrl: 'https://github.com/openclaw/community-skills',
       gitRef: null,
       skillFilter: 'demo',
+      selectionResult: { matchedNames: ['demo'], unmatchedInputs: [], ambiguousInputs: [] },
       skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
     });
 
@@ -392,7 +395,7 @@ describe('SourceStep', () => {
 
     expect(fetchAvailableMock).toHaveBeenCalledWith(
       nativeGlobal.environment,
-      'openclaw/community-skills@demo',
+      'openclaw/community-skills#@demo',
       expect.any(String),
       { wildcardRequested: false, explicitSkillNames: [] },
     );

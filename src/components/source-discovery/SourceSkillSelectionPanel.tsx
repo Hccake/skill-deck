@@ -1,4 +1,7 @@
 import { memo, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { SourceSelectionResult } from '@/bindings';
+import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,6 +12,7 @@ export interface SourceSkillCandidate {
   candidateId: string;
   name: string;
   description: string;
+  relativePath?: string;
   groupName?: string | null;
   selectable: boolean;
   statusLabel?: string;
@@ -31,6 +35,7 @@ interface SourceSkillSelectionPanelProps {
   onQueryChange: (query: string) => void;
   onSelectionChange: (candidateIds: string[]) => void;
   copy: SourceSkillSelectionCopy;
+  selectionResult?: SourceSelectionResult | null;
 }
 
 export function SourceSkillSelectionPanel({
@@ -40,7 +45,11 @@ export function SourceSkillSelectionPanel({
   onQueryChange,
   onSelectionChange,
   copy,
+  selectionResult,
 }: SourceSkillSelectionPanelProps) {
+  const { t } = useTranslation();
+  const unresolvedAmbiguities = selectionResult?.ambiguousInputs.filter(item => !candidates.some(candidate => item.candidateNames.includes(candidate.name) && selectedCandidateIds.includes(candidate.candidateId))) ?? [];
+  const ambiguousNames = useMemo(() => new Set(selectionResult?.ambiguousInputs.flatMap(item => item.candidateNames)), [selectionResult]);
   const filteredCandidates = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return candidates;
@@ -108,6 +117,7 @@ export function SourceSkillSelectionPanel({
     <CandidateRow
       key={candidate.candidateId}
       candidate={candidate}
+      showPath={ambiguousNames.has(candidate.name)}
       selected={selectedSet.has(candidate.candidateId)}
       onToggle={toggleCandidate}
     />
@@ -145,6 +155,12 @@ export function SourceSkillSelectionPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md border bg-background">
+        {selectionResult && (selectionResult.unmatchedInputs.length > 0 || unresolvedAmbiguities.length > 0) ? (
+          <div role="status" className="space-y-1 border-b bg-muted/15 px-3 py-2 text-xs leading-5 text-muted-foreground">
+            {unresolvedAmbiguities.map(item => <p key={item.input}>{t('addSkill.skills.ambiguous', { name: item.input, count: item.candidateNames.length })}</p>)}
+            {selectionResult.unmatchedInputs.length > 0 ? <p>{t('addSkill.skills.unmatched', { names: selectionResult.unmatchedInputs.join(', ') })}</p> : null}
+          </div>
+        ) : null}
         {filteredCandidates.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">{copy.empty}</div>
         ) : groupedCandidates ? (
@@ -178,10 +194,12 @@ const CandidateRow = memo(function CandidateRow({
   candidate,
   selected,
   onToggle,
+  showPath,
 }: {
   candidate: SourceSkillCandidate;
   selected: boolean;
   onToggle: (candidateId: string) => void;
+  showPath: boolean;
 }) {
   return (
     <label
@@ -197,8 +215,15 @@ const CandidateRow = memo(function CandidateRow({
         className="mt-0.5 shrink-0"
       />
       <span className="min-w-0 flex-1">
-        <span className="block break-words text-sm font-medium [overflow-wrap:anywhere]" translate="no">
-          {candidate.name}
+        <span className="flex min-w-0 items-baseline gap-2" translate="no">
+          {showPath ? <OverflowTooltip content={candidate.name}>
+            <span tabIndex={0} className="min-w-0 truncate text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">{candidate.name}</span>
+          </OverflowTooltip> : <span className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{candidate.name}</span>}
+          {showPath && candidate.relativePath ? (
+            <OverflowTooltip content={candidate.relativePath}>
+              <span tabIndex={0} className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">{candidate.relativePath.replace(/(?:^|\/)SKILL\.md$/i, '') || '.'}</span>
+            </OverflowTooltip>
+          ) : null}
         </span>
         {candidate.description ? (
           <span className="mt-0.5 block break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">

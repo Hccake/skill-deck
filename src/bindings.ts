@@ -776,6 +776,7 @@ export type AgentStorageIssue = { code: string; message: string; readOnly: boole
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
+export type AmbiguousSourceSelection = { input: string; candidateNames: string[] }
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "upstreamSkillNameChanged"; data: { expectedName: string; actualName: string } } | { kind: "upstreamSkillAmbiguous"; data: { skillName: string } } | { kind: "upstreamSkillDeleted"; data: { skillName: string } } | { kind: "sourceAcquisitionFailed"; data: { wellKnownReason: SourceAcquisitionFailureReason; downloadReason: SourceAcquisitionFailureReason } } | { kind: "wellKnownSourceFailed"; data: { reason: SourceAcquisitionFailureReason } } | { kind: "wellKnownScopeNotFound"; data: { scopePath: string; rootUrl: string } } | { kind: "directDownloadFailed"; data: { reason: DirectDownloadFailureReason } } | { kind: "directDownloadConflict"; data: { target: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitCommitUnavailable"; data: { commit: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
@@ -903,7 +904,7 @@ skillFilter: string | null;
 /**
  * 可用的 skills 列表
  */
-skills: AvailableSkill[] }
+skills: AvailableSkill[]; selectionResult?: SourceSelectionResult | null }
 export type GitProxyScope = "githubOnly" | "allHttpHttps"
 /**
  * 已验证的 Git 跟踪目标类型；缺失时按旧版未分类引用处理。
@@ -1216,6 +1217,7 @@ export type SourceFilterKind = "git" | "wellKnown" | "download" | "dependency" |
 export type SourcePathChange = { previousPath: string; nextPath: string }
 export type SourceProvider = "github" | "gitlab" | "git" | "wellKnown"
 export type SourceSelectionIntent = { wildcardRequested: boolean; explicitSkillNames: string[] }
+export type SourceSelectionResult = { matchedNames: string[]; unmatchedInputs: string[]; ambiguousInputs: AmbiguousSourceSelection[] }
 export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
 export type SourceUpdateCheckInfo = { provider?: SourceProvider | null; source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null; sourceKey?: string | null; error?: AppError | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"

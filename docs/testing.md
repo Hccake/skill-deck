@@ -437,4 +437,4 @@ SKILL_DECK_E2E_SPEC=source-filter pnpm test:desktop
 
 ### 基础兼容的整页原生界面
 
-`SKILL_DECK_E2E_SPEC=basic-compatibility pnpm test:desktop` 使用实际 Header、SkillsPage、卡片、紧凑列表和详情组件，配合隔离数据，在 1280、960、760px 下检查中英文、深浅主题和来源筛选。下载来源使用原属性位置与提示，不增加说明区域，也不计入检查异常。对应 Rust 用例另外验证外部下载记录的能力、来源脱敏和复制结果；界面夹具不替代文件工作流测试。
+`SKILL_DECK_E2E_SPEC=basic-compatibility pnpm test:desktop` 使用实际 Header、SkillsPage、卡片、紧凑列表和详情组件，配合隔离数据，在 1280、960、760px 下检查中英文、深浅主题和来源筛选。下载来源使用原属性位置与提示，不增加说明区域，也不计入检查异常。同一夹具还覆盖安装向导和库添加的候选列表，验证歧义反馈、路径同行、显式选择及主题过渡完成后的文字对比。对应 Rust 用例另外验证外部下载记录维护、完整名称选择与内容获取；界面夹具不替代文件工作流测试。

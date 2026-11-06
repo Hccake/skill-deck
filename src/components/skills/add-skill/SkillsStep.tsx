@@ -19,6 +19,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
       candidateId: skill.name,
       name: skill.name,
       description: skill.description,
+      relativePath: skill.relativePath,
       groupName: skill.pluginName,
       selectable: true,
     })),
@@ -40,6 +41,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
   return (
     <SourceSkillSelectionPanel
       candidates={candidates}
+      selectionResult={state.sourceSelectionResult}
       selectedCandidateIds={state.selectedSkills}
       query={state.skillSearchQuery}
       onQueryChange={(skillSearchQuery) => updateState({ skillSearchQuery })}

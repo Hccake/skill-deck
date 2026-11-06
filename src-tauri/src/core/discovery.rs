@@ -46,7 +46,6 @@ pub struct DiscoveredSkill {
     pub relative_path: String,
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     pub plugin_name: Option<String>,
-    pub(crate) internal: bool,
 }
 
 /// Environment collector 读取的 discovery 文档。
@@ -260,6 +259,100 @@ pub fn collect_discovery_inventory(
     })
 }
 
+/// 明确名称请求使用同一有界采集器读取完整候选，超时或取消不产生部分结论。
+pub(crate) fn collect_complete_discovery_inventory(
+    base: &Path,
+    subpath: Option<&str>,
+    cancellation: &crate::core::mutation::CancellationSignal,
+) -> Result<DiscoveryInventory, AppError> {
+    use environment_engine::source_inventory::{
+        SourceInventoryError, SourceInventoryRequest, SourceRoot, SourceScanMode,
+    };
+    use std::io::Read;
+    if subpath.is_some_and(|path| !is_subpath_safe(base, path)) {
+        return Err(crate::core::update_locations::incomplete());
+    }
+    let search_prefix = subpath.map(PathBuf::from).unwrap_or_default();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let scan = environment_engine::source_candidates::scan_update_candidates(
+        &SourceInventoryRequest {
+            roots: vec![SourceRoot {
+                path: base.join(&search_prefix),
+                stat_only: false,
+            }],
+            mode: SourceScanMode::UpdateCandidates,
+            per_file_limit: 256 * 1024,
+            aggregate_limit: 16 * 1024 * 1024,
+        },
+        || cancellation.is_cancelled() || std::time::Instant::now() >= deadline,
+    )
+    .map_err(|error| {
+        if error == SourceInventoryError::Cancelled && cancellation.is_cancelled() {
+            AppError::MutationCancelled
+        } else {
+            crate::core::update_locations::incomplete()
+        }
+    })?;
+    let mut text = BTreeMap::new();
+    let mut skill_documents = Vec::new();
+    for entry in scan.entries {
+        let path = entry
+            .relative_path
+            .to_str()
+            .ok_or_else(crate::core::update_locations::incomplete)?
+            .replace('\\', "/");
+        if path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+        {
+            skill_documents.push(DiscoveryDocument {
+                relative_path: path,
+                content: entry.content_bytes,
+            });
+        } else {
+            match String::from_utf8(entry.content_bytes) {
+                Ok(content) => {
+                    text.insert(path, content);
+                }
+                Err(_) if path == "skills.sh.json" => {}
+                Err(_) => return Err(crate::core::update_locations::incomplete()),
+            }
+        }
+    }
+    let local_lock_document = if subpath.is_some() {
+        let lock = base.join("skills-lock.json");
+        match std::fs::symlink_metadata(&lock) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                let mut content = String::new();
+                std::fs::File::open(lock)?
+                    .take(256 * 1024 + 1)
+                    .read_to_string(&mut content)?;
+                if content.len() > 256 * 1024 {
+                    return Err(crate::core::update_locations::incomplete());
+                }
+                Some(content)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            _ => return Err(crate::core::update_locations::incomplete()),
+        }
+    } else {
+        text.remove("skills-lock.json")
+    };
+    if let Some(lock) = &local_lock_document {
+        serde_json::from_str::<serde_json::Value>(lock)
+            .map_err(|_| crate::core::update_locations::incomplete())?;
+    }
+    Ok(DiscoveryInventory {
+        search_prefix,
+        skill_documents,
+        local_lock_document,
+        marketplace_document: text.remove(".claude-plugin/marketplace.json"),
+        plugin_document: text.remove(".claude-plugin/plugin.json"),
+        skills_sh_document: text.remove("skills.sh.json"),
+    })
+}
+
 fn insert_native_document(
     search_path: &Path,
     path: &Path,
@@ -287,6 +380,40 @@ pub fn select_discovered_skills(
     options: DiscoverOptions,
 ) -> Result<Vec<DiscoveredSkill>, AppError> {
     DiscoverySelector::new(inventory, options).select()
+}
+
+/// 完整盘点后保留普通发现优先级，再补入深层候选；完全同名仍取首项。
+pub(crate) fn select_complete_skills(
+    inventory: &DiscoveryInventory,
+) -> Result<Vec<DiscoveredSkill>, AppError> {
+    for document in &inventory.skill_documents {
+        let content = std::str::from_utf8(&document.content)
+            .map_err(|_| crate::core::update_locations::incomplete())?;
+        parse_skill_md_content(content).map_err(|_| crate::core::update_locations::incomplete())?;
+    }
+    let mut selector = DiscoverySelector::new(
+        inventory,
+        DiscoverOptions {
+            include_internal: true,
+            full_depth: true,
+        },
+    );
+    // 先使用原有优先级，避免引入深层候选后改变完全同名项的来源。
+    let ordinary = select_discovered_skills(
+        inventory,
+        DiscoverOptions {
+            include_internal: true,
+            full_depth: true,
+        },
+    )?;
+    selector
+        .seen_names
+        .extend(ordinary.iter().map(|skill| skill.name.clone()));
+    selector.skills = ordinary;
+    for directory in selector.documents.keys().cloned().collect::<Vec<_>>() {
+        selector.try_add(&directory);
+    }
+    Ok(selector.skills)
 }
 
 fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
@@ -502,7 +629,6 @@ impl<'a> DiscoverySelector<'a> {
             description: parsed.description,
             relative_path,
             plugin_name: self.plugin_groupings.get(directory).cloned(),
-            internal,
         });
         CandidateResult::Added
     }

@@ -124,6 +124,7 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
         discoverySession: undefined,
         gitRef: null,
         skillFilter: null,
+        sourceSelectionResult: null,
         redirectedDownloadHost: null,
         redirectAcknowledged: false,
         preparation: { status: 'idle' },

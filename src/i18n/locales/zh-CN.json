@@ -1684,7 +1684,9 @@
       "selectAll": "全选",
       "clear": "清空",
       "empty": "没有匹配的 Skill",
-      "required": "请至少选择一个 Skill"
+      "required": "请至少选择一个 Skill",
+      "ambiguous": "「{{name}}」匹配到 {{count}} 项，请选择。",
+      "unmatched": "未找到指定 Skill：{{names}}"
     },
     "agents": {
       "title": "安装目标",

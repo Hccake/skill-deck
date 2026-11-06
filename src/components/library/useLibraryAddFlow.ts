@@ -1,3 +1,4 @@
+import { sourceWithSkill } from '@/lib/source-discovery/source-selection';
 import { useCallback, useMemo, useState } from 'react';
 import type {
   AppError,
@@ -81,6 +82,7 @@ export function useLibraryAddFlow({
         candidateId: skill.relativePath,
         name: skill.name,
         description: skill.description,
+        relativePath: skill.relativePath,
         groupName: skill.pluginName,
         selectable: !exists,
         statusLabel: exists ? 'alreadyInLibrary' : undefined,
@@ -139,7 +141,7 @@ export function useLibraryAddFlow({
   ), [acceptDiscovery, retrySource]);
 
   const selectSearchResult = useCallback(async (skill: SearchSkill) => {
-    const nextSource = `${skill.source}@${skill.name}`;
+    const nextSource = sourceWithSkill(skill.source, skill.name);
     setSourceInputState(nextSource);
     setFlowError(null);
     setFlowIssue(null);

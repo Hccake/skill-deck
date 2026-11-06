@@ -20,9 +20,7 @@ use crate::application::wsl_source_access::{WslSourceAccess, WslSourceFuture};
 use crate::core::mutation::CancellationSignal;
 use crate::core::plugin_manifest::get_relative_plugin_search_dirs;
 use crate::core::skill_paths::normalize_skill_folder_path;
-use crate::core::{
-    select_discovered_skills, DiscoverOptions, DiscoveryDocument, DiscoveryInventory,
-};
+use crate::core::{DiscoveryDocument, DiscoveryInventory};
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::operations::scan::{
@@ -217,6 +215,7 @@ impl RuntimeWslSourceAccess {
                             member_failures: fetched.member_failures,
                             full_depth: policy.full_depth,
                             internal_skill_visibility: policy.internal_skill_visibility,
+                            cancellation,
                             ..Default::default()
                         },
                     )
@@ -268,6 +267,7 @@ impl RuntimeWslSourceAccess {
                             redirected_download_host,
                             full_depth: policy.full_depth,
                             internal_skill_visibility: policy.internal_skill_visibility,
+                            cancellation,
                             ..Default::default()
                         },
                     )
@@ -368,6 +368,7 @@ impl RuntimeWslSourceAccess {
                         git_ref: prepared.git_ref,
                         ref_kind: prepared.ref_kind,
                         skill_filter: prepared.skill_filter,
+                        selection_result: prepared.selection_result,
                         skills: prepared.skills,
                     })
                 }
@@ -377,6 +378,7 @@ impl RuntimeWslSourceAccess {
 }
 
 struct PreparedWslDiscovery {
+    selection_result: Option<crate::core::source_selection::SourceSelectionResult>,
     source_fingerprint: String,
     storage: Arc<dyn PayloadSessionStorage>,
     retained: RetainedDiscoverySource,
@@ -444,10 +446,32 @@ async fn prepare_native_wsl_source(
                 per_file_limit: 256 * 1024,
                 aggregate_limit: 16 * 1024 * 1024,
             },
-            Some(cancellation),
+            Some(cancellation.clone()),
         )
         .await?;
         merge_wsl_priority_documents(&mut response, priority, &plugin_search_dirs);
+    }
+    if policy.internal_skill_visibility.explicit_names().is_some() {
+        let mut complete = crate::environment::wsl::operations::scan::scan_complete_candidates(
+            &workspace,
+            &native,
+            ScanRequest {
+                roots: vec![root.clone()],
+                stat_only_root_indexes: BTreeSet::new(),
+                recursive: true,
+                per_file_limit: 256 * 1024,
+                aggregate_limit: 16 * 1024 * 1024,
+            },
+            Some(cancellation.clone()),
+        )
+        .await?;
+        complete.entries.extend(
+            response
+                .entries
+                .into_iter()
+                .filter(|entry| entry.root_index == 1),
+        );
+        response = complete;
     }
     let (discovered, mut catalog) = build_wsl_discovery_catalog(
         &response,
@@ -497,6 +521,12 @@ async fn prepare_native_wsl_source(
         git_ref: parsed.git_ref,
         ref_kind: parsed.ref_kind,
         skill_filter: parsed.skill_filter,
+        selection_result: policy.internal_skill_visibility.selection_result(
+            &discovered
+                .iter()
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>(),
+        ),
         skills: discovered.into_iter().map(AvailableSkill::from).collect(),
     })
 }
@@ -578,6 +608,14 @@ pub(crate) fn build_wsl_discovery_catalog(
     ),
     AppError,
 > {
+    if internal_skill_visibility.explicit_names().is_some()
+        && response
+            .entries
+            .iter()
+            .any(|entry| entry.truncated || entry.error_code.is_some())
+    {
+        return Err(crate::core::update_locations::incomplete());
+    }
     if response.entries.iter().any(|entry| {
         (entry.relative_path.is_empty() || entry.relative_path == "skills.sh.json")
             && (entry.truncated || entry.error_code.is_some())
@@ -630,16 +668,13 @@ pub(crate) fn build_wsl_discovery_catalog(
         local_lock_document,
         skills_sh_document: wsl_document(response, "skills.sh.json").map(str::to_owned),
     };
-    let discovered = select_discovered_skills(
-        &inventory,
-        DiscoverOptions {
-            include_internal: internal_skill_visibility.scans_internal(),
-            full_depth,
-        },
-    )?
-    .into_iter()
-    .filter(|skill| internal_skill_visibility.allows(&skill.name, skill.internal))
-    .collect::<Vec<_>>();
+    if internal_skill_visibility.explicit_names().is_some() {
+        if let Some(lock) = &inventory.local_lock_document {
+            serde_json::from_str::<serde_json::Value>(lock)
+                .map_err(|_| crate::core::update_locations::incomplete())?;
+        }
+    }
+    let discovered = internal_skill_visibility.select(&inventory, full_depth)?;
     let mut catalog = BTreeMap::new();
     for skill in &discovered {
         catalog.insert(

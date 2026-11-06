@@ -1,3 +1,4 @@
+import { sourceWithSkill } from '@/lib/source-discovery/source-selection';
 import { GitReference } from '../GitReference';
 import { OverflowTooltip } from '@/components/ui/overflow-tooltip';
 // src/components/skills/add-skill/SourceStep.tsx
@@ -95,6 +96,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         ? state.selectedSkills.filter((name) => availableNames.has(name))
         : discoverySelection.selectedSkillNames,
       skillFilter: discoveryResult.skillFilter,
+      sourceSelectionResult: discoveryResult.selectionResult,
       gitRef: discoveryResult.gitRef ?? null,
       refKind: discoveryResult.refKind ?? null,
       discoverySession: discoveryResult.discoverySession,
@@ -148,6 +150,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       availableSkills: [],
       selectedSkills: [],
       skillFilter: null,
+      sourceSelectionResult: null,
       discoverySession: undefined,
       preparation: { status: 'idle' },
       redirectedDownloadHost: null,
@@ -174,7 +177,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
   // 搜索结果选中处理（用于 SkillSearch 组件）
   const handleSearchSelect = useCallback((skill: SearchSkill) => {
-    const newSource = `${skill.source}@${skill.name}`;
+    const newSource = sourceWithSkill(skill.source, skill.name);
     handleSourceInputChange(newSource);
     handleFetchWithSource(newSource);
   }, [handleFetchWithSource, handleSourceInputChange]);

@@ -72,6 +72,22 @@ pub async fn scan(
     .await
 }
 
+pub async fn scan_complete_candidates(
+    workspace: &WslWorkspace,
+    source: &WslNativeSource,
+    request: ScanRequest,
+    cancellation: Option<CancellationSignal>,
+) -> Result<ScanResponse, AppError> {
+    execute_scan(
+        workspace,
+        source,
+        request,
+        environment_protocol::SourceScanMode::UpdateCandidates,
+        cancellation,
+    )
+    .await
+}
+
 pub async fn scan_priority_directories(
     workspace: &WslWorkspace,
     source: &WslNativeSource,

@@ -118,18 +118,18 @@ fn parse_fragment_ref(input: &str) -> FragmentRefResult {
                 git_ref: if git_ref.is_empty() {
                     None
                 } else {
-                    Some(git_ref.to_string())
+                    Some(decode_fragment(git_ref))
                 },
                 skill_filter: if skill.is_empty() {
                     None
                 } else {
-                    Some(skill.to_string())
+                    Some(decode_fragment(skill))
                 },
             }
         } else {
             FragmentRefResult {
                 input_without_fragment: before.to_string(),
-                git_ref: Some(fragment.to_string()),
+                git_ref: Some(decode_fragment(fragment)),
                 skill_filter: None,
             }
         }
@@ -142,12 +142,23 @@ fn parse_fragment_ref(input: &str) -> FragmentRefResult {
     }
 }
 
+fn decode_fragment(value: &str) -> String {
+    urlencoding::decode(value)
+        .map(|value| value.into_owned())
+        .unwrap_or_else(|_| value.to_string())
+}
+
 /// 将 fragment ref 信息附加回输入字符串（用于递归调用 parse_source 时携带 ref）
 fn append_fragment_ref(input: &str, git_ref: Option<&str>, skill_filter: Option<&str>) -> String {
     match (git_ref, skill_filter) {
-        (Some(r), Some(s)) => format!("{}#{}@{}", input, r, s),
-        (Some(r), None) => format!("{}#{}", input, r),
-        (None, Some(s)) => format!("{}#@{}", input, s),
+        (Some(r), Some(s)) => format!(
+            "{}#{}@{}",
+            input,
+            urlencoding::encode(r),
+            urlencoding::encode(s)
+        ),
+        (Some(r), None) => format!("{}#{}", input, urlencoding::encode(r)),
+        (None, Some(s)) => format!("{}#@{}", input, urlencoding::encode(s)),
         (None, None) => input.to_string(),
     }
 }
@@ -201,7 +212,7 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
     // 6. 检查 SSH Git URL
     if input.starts_with("ssh://") {
         let mut result = parse_git_url(input)?;
-        result.git_ref = fragment_ref;
+        result.git_ref = fragment_ref.or(result.git_ref);
         result.skill_filter = fragment_skill_filter;
         return Ok(result);
     }
@@ -221,13 +232,25 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
     // 8. 检查 Git URL (git@...)
     if input.starts_with("git@") {
         let mut result = parse_git_url(input)?;
-        result.git_ref = fragment_ref;
+        result.git_ref = fragment_ref.or(result.git_ref);
         result.skill_filter = fragment_skill_filter;
         return Ok(result);
     }
 
     // 9. 尝试解析为 GitHub shorthand（支持 .git 后缀）
     let mut result = parse_github_shorthand(input)?;
+    if fragment_ref.is_none() && fragment_skill_filter.is_none() && result.subpath.is_none() {
+        static VERSION_REF: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(?:v?\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|[0-9a-fA-F]{40})$").unwrap()
+        });
+        if result
+            .skill_filter
+            .as_deref()
+            .is_some_and(|value| VERSION_REF.is_match(value))
+        {
+            result.git_ref = result.skill_filter.take();
+        }
+    }
     result.git_ref = result.git_ref.or(fragment_ref);
     result.skill_filter = fragment_skill_filter.or(result.skill_filter);
     Ok(result)
@@ -504,7 +527,7 @@ fn is_hosted_artifact_url(url: &Url) -> bool {
 
 /// 解析 Git URL (git@github.com:owner/repo.git)
 fn parse_git_url(input: &str) -> Result<ParsedSource, AppError> {
-    Ok(ParsedSource {
+    let mut result = ParsedSource {
         source_type: SourceType::Git,
         url: input.to_string(),
         subpath: None,
@@ -512,7 +535,27 @@ fn parse_git_url(input: &str) -> Result<ParsedSource, AppError> {
         git_ref: None,
         ref_kind: None,
         skill_filter: None,
-    })
+    };
+    let github_path = input
+        .strip_prefix("git@github.com:")
+        .map(str::to_string)
+        .or_else(|| {
+            Url::parse(input)
+                .ok()
+                .filter(|url| url.scheme() == "ssh" && url.host_str() == Some("github.com"))
+                .map(|url| url.path().trim_start_matches('/').to_string())
+        });
+    if let Some(path) = github_path {
+        let parts = path.split('/').collect::<Vec<_>>();
+        if parts.len() >= 4 && parts[2] == "tree" && !parts[3].is_empty() {
+            result.url = input[..input.find("/tree/").unwrap()].to_string();
+            result.git_ref = Some(decode_fragment(parts[3]));
+            if parts.len() > 4 {
+                result.subpath = Some(sanitize_subpath(&parts[4..].join("/"))?);
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// 解析 GitHub URL
@@ -715,6 +758,49 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn version_selection_and_explicit_fragments_have_distinct_meanings() {
+        for suffix in [
+            "v1.2.3",
+            "1.2",
+            "1.2.3-beta.1+build.2",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ] {
+            let parsed = super::parse_source(&format!("github:owner/repo@{suffix}")).unwrap();
+            assert_eq!(parsed.git_ref.as_deref(), Some(suffix));
+            assert_eq!(parsed.skill_filter, None);
+        }
+        for (input, reference, skill) in [
+            ("owner/repo@v2", None, Some("v2")),
+            ("owner/repo/sub@1.2.3", None, Some("1.2.3")),
+            ("owner/repo#@1.2.3", None, Some("1.2.3")),
+            ("owner/repo@1.2.3#main", Some("main"), Some("1.2.3")),
+            (
+                "github:owner/repo#release%40next@code%23review",
+                Some("release@next"),
+                Some("code#review"),
+            ),
+            (
+                "github:owner/repo#release%2540next@code%2540review",
+                Some("release%40next"),
+                Some("code%40review"),
+            ),
+        ] {
+            let parsed = super::parse_source(input).unwrap();
+            assert_eq!(parsed.git_ref.as_deref(), reference, "{input}");
+            assert_eq!(parsed.skill_filter.as_deref(), skill, "{input}");
+        }
+        for input in [
+            "git@github.com:owner/repo/tree/main/skills/demo",
+            "ssh://git@github.com/owner/repo/tree/main/skills/demo",
+        ] {
+            let parsed = super::parse_source(input).unwrap();
+            assert_eq!(parsed.git_ref.as_deref(), Some("main"));
+            assert_eq!(parsed.subpath.as_deref(), Some("skills/demo"));
+            assert!(!parsed.url.contains("/tree/"));
+        }
+    }
+
     #[test]
     fn azure_complete_commit_is_an_explicit_pin() {
         let sha = "a".repeat(40);

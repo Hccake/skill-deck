@@ -1,7 +1,9 @@
+import { TooltipProvider } from '@/components/ui/tooltip';
+import type { ReactElement } from 'react';
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { render as renderBase, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -17,6 +19,8 @@ vi.mock('react-i18next', () => ({
     ),
   }),
 }));
+
+const render = (ui: ReactElement) => renderBase(<TooltipProvider>{ui}</TooltipProvider>);
 
 const initialState: WizardState = {
   step: 'skills',

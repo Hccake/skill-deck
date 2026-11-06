@@ -1684,7 +1684,9 @@
       "selectAll": "Select all",
       "clear": "Clear",
       "empty": "No matching skills",
-      "required": "Select at least one skill"
+      "required": "Select at least one skill",
+      "ambiguous": "“{{name}}” matches {{count}} Skills. Choose one.",
+      "unmatched": "No matching Skill: {{names}}"
     },
     "agents": {
       "title": "Install Targets",

@@ -1,3 +1,7 @@
+import { WindowLifecycleContext } from '@/lifecycle/useWindowLifecycle';
+import { WizardPage } from '@/pages/WizardPage';
+import { LibraryAddDialog } from '@/components/library/LibraryAddDialog';
+import { commands, type FetchResult } from '@/bindings';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { MemoryRouter } from 'react-router-dom';
@@ -15,7 +19,7 @@ import { useSkillsDataStore } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useTranslationSettings } from '@/stores/translation';
-import { useSettingsStore } from '@/stores/settings';
+import { useSettingsStore, applyPersistedAppearance } from '@/stores/settings';
 import { useRecoveryStore } from '@/stores/recovery';
 import { projectWorkspace } from '@/stores/projects';
 import { getSkillIdentity } from '@/lib/skills/identity';
@@ -76,11 +80,27 @@ useSkillDetailStore.setState({ detailOpen: true, selectedSkillRef: getSkillIdent
 Object.assign(window, { configureBasicCompatibility: async (options: {language: 'zh-CN' | 'en'; dark: boolean; detail: boolean}) => {
   await getCurrentWindow().setFocus();
   await i18n.changeLanguage(options.language);
-  document.documentElement.classList.toggle('dark', options.dark);
+  applyPersistedAppearance(options.dark ? 'dark' : 'light');
   useSettingsStore.setState({locale: options.language, theme: options.dark ? 'dark' : 'light'});
-  useSkillDetailStore.setState({detailOpen: options.detail});
+  useSkillDetailStore.setState({detailOpen: options.detail, selectedSkillRef: getSkillIdentity(downloads, projectPath), selectedContext: context, skillContent: content});
 } });
 function Fixture() {
   return <MemoryRouter><TooltipProvider><div className="flex h-screen min-h-0 flex-col bg-background text-foreground"><Header /><main className="min-h-0 flex-1"><SkillsPage /></main></div></TooltipProvider></MemoryRouter>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+const root = createRoot(document.getElementById('root')!);
+const selectionFixture: FetchResult = {
+  discoverySession: { sessionId: 'fixture', environment: native, sourceFingerprint: 'fixture', expiresAtEpochMs: Date.now() + 60_000 },
+  sourceType: 'github', sourceUrl: 'https://github.com/acme/team-skills', gitRef: 'v1.2.3', skillFilter: 'code-review',
+  skills: [
+    { name: 'Code Review', installDirName: 'code-review', description: 'Review the shared project conventions.', relativePath: 'skills/shared/project-conventions/code-review/SKILL.md' },
+    { name: 'code_review', installDirName: 'code-review', description: 'Review the application code and automated checks.', relativePath: 'packages/customer-portal/engineering/quality/checks/code-review/SKILL.md' },
+  ],
+  selectionResult: { matchedNames: [], unmatchedInputs: ['missing-skill'], ambiguousInputs: [{ input: 'code-review', candidateNames: ['Code Review', 'code_review'] }] },
+};
+commands.discoverSkillSource = async () => ({ status: 'ok', data: selectionFixture });
+Object.assign(window, { setCompatibilityFlow: (mode: 'skills' | 'wizard' | 'library') => {
+  root.render(mode === 'skills' ? <Fixture /> : <MemoryRouter key={mode} initialEntries={['/?prefillSource=acme%2Fteam-skills%23%40code-review']}><TooltipProvider><WindowLifecycleContext.Provider value={{ requestAction: async () => {} }}>
+    {mode === 'wizard' ? <WizardPage /> : <><div className="h-screen bg-background" /><LibraryAddDialog open target={{ environment: native, environmentName: 'Windows', libraryId: 'fixture', libraryName: 'Team Skills' }} existingSkillNames={new Set()} execute={async () => { throw new Error('UI fixture cannot write'); }} onClose={() => {}} /></>}
+  </WindowLifecycleContext.Provider></TooltipProvider></MemoryRouter>);
+} });
+root.render(<Fixture />);

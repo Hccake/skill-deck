@@ -23,9 +23,7 @@ use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
-use crate::core::{
-    compute_local_tree_sha, discover_skills, get_owner_repo, CloneProgress, DiscoverOptions,
-};
+use crate::core::{compute_local_tree_sha, get_owner_repo, CloneProgress, DiscoverOptions};
 use crate::environment::types::EnvironmentRef;
 use crate::error::{AppError, SourceAcquisitionFailureReason};
 use crate::models::{AvailableSkill, ParsedSource, SourceType};
@@ -70,6 +68,8 @@ pub struct FetchResult {
     pub skill_filter: Option<String>,
     /// 可用的 skills 列表
     pub skills: Vec<AvailableSkill>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_result: Option<crate::core::source_selection::SourceSelectionResult>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,6 +78,7 @@ pub(crate) enum InternalSkillVisibility {
     PublicOnly,
     Explicit(BTreeSet<String>),
     All,
+    AllExplicit(BTreeSet<String>),
 }
 
 impl InternalSkillVisibility {
@@ -86,11 +87,12 @@ impl InternalSkillVisibility {
         source_skill_filter: Option<&str>,
         install_internal_skills: bool,
     ) -> Self {
-        if install_internal_skills {
-            return Self::All;
-        }
         if selection.wildcard_requested {
-            return Self::PublicOnly;
+            return if install_internal_skills {
+                Self::All
+            } else {
+                Self::PublicOnly
+            };
         }
         let names = selection
             .explicit_skill_names
@@ -100,13 +102,15 @@ impl InternalSkillVisibility {
             .filter(|name| !name.is_empty())
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
-        if names.is_empty() {
-            Self::PublicOnly
-        } else {
-            Self::Explicit(names)
+        match (install_internal_skills, names.is_empty()) {
+            (true, true) => Self::All,
+            (true, false) => Self::AllExplicit(names),
+            (false, true) => Self::PublicOnly,
+            (false, false) => Self::Explicit(names),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn allows(&self, skill_name: &str, internal: bool) -> bool {
         if !internal {
             return true;
@@ -114,12 +118,58 @@ impl InternalSkillVisibility {
         match self {
             Self::PublicOnly => false,
             Self::Explicit(names) => names.contains(skill_name),
-            Self::All => true,
+            Self::All | Self::AllExplicit(_) => true,
         }
     }
 
-    pub(crate) fn scans_internal(&self) -> bool {
-        !matches!(self, Self::PublicOnly)
+    pub(crate) fn explicit_names(&self) -> Option<&BTreeSet<String>> {
+        match self {
+            Self::Explicit(names) | Self::AllExplicit(names) => Some(names),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn selection_result(
+        &self,
+        names: &[String],
+    ) -> Option<crate::core::source_selection::SourceSelectionResult> {
+        self.explicit_names()
+            .map(|inputs| crate::core::source_selection::match_names(inputs, names))
+    }
+
+    pub(crate) fn select(
+        &self,
+        inventory: &crate::core::discovery::DiscoveryInventory,
+        full_depth: bool,
+    ) -> Result<Vec<crate::core::DiscoveredSkill>, AppError> {
+        let mut ordinary = crate::core::discovery::select_discovered_skills(
+            inventory,
+            DiscoverOptions {
+                include_internal: matches!(self, Self::All | Self::AllExplicit(_)),
+                full_depth,
+            },
+        )?;
+        if let Some(names) = self.explicit_names() {
+            let complete = crate::core::discovery::select_complete_skills(inventory)?;
+            let selection = crate::core::source_selection::match_names(
+                names,
+                &complete
+                    .iter()
+                    .map(|skill| skill.name.clone())
+                    .collect::<Vec<_>>(),
+            );
+            for skill in complete {
+                if selection.includes(&skill.name) {
+                    if let Some(existing) = ordinary.iter_mut().find(|item| item.name == skill.name)
+                    {
+                        *existing = skill;
+                    } else {
+                        ordinary.push(skill);
+                    }
+                }
+            }
+        }
+        Ok(ordinary)
     }
 }
 
@@ -207,6 +257,7 @@ impl GitSourceDiscovery {
                         allow_empty_catalog: policy.allow_empty_catalog,
                         full_depth: policy.full_depth,
                         internal_skill_visibility: policy.internal_skill_visibility,
+                        cancellation,
                         ..Default::default()
                     },
                 )
@@ -321,6 +372,7 @@ pub(crate) struct RetainedSourceOptions {
     pub(crate) member_failures: BTreeMap<String, crate::error::SourceAcquisitionFailureReason>,
     pub(crate) full_depth: bool,
     pub(crate) internal_skill_visibility: InternalSkillVisibility,
+    pub(crate) cancellation: CancellationSignal,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -346,17 +398,20 @@ where
         member_failures,
         full_depth,
         internal_skill_visibility,
+        cancellation,
     } = options;
     let scan_root = native_root.clone();
     let scan_subpath = parsed.subpath.clone();
     let managed_source = parsed.source_type != SourceType::Local;
     let cleanup_root = native_root.clone();
+    let selection_visibility = internal_skill_visibility.clone();
     let (discovered, catalog, managed_bytes) = tokio::task::spawn_blocking(move || {
         let (discovered, catalog) = build_discovery_catalog(
             &scan_root,
             scan_subpath.as_deref(),
             &internal_skill_visibility,
             full_depth,
+            &cancellation,
         )?;
         let bytes = if managed_source {
             environment_engine::directory::size_no_follow(&scan_root)?
@@ -415,6 +470,12 @@ where
         git_ref: parsed.git_ref.clone(),
         ref_kind: parsed.ref_kind,
         skill_filter: parsed.skill_filter.clone(),
+        selection_result: selection_visibility.selection_result(
+            &skills
+                .iter()
+                .map(|skill| skill.name.clone())
+                .collect::<Vec<_>>(),
+        ),
         skills,
     })
 }
@@ -431,6 +492,7 @@ fn build_discovery_catalog(
     subpath: Option<&str>,
     internal_skill_visibility: &InternalSkillVisibility,
     full_depth: bool,
+    cancellation: &CancellationSignal,
 ) -> Result<
     (
         Vec<crate::core::DiscoveredSkill>,
@@ -438,17 +500,23 @@ fn build_discovery_catalog(
     ),
     AppError,
 > {
-    let discovered = discover_skills(
-        native_root,
-        subpath,
-        DiscoverOptions {
-            include_internal: internal_skill_visibility.scans_internal(),
-            full_depth,
-        },
-    )?
-    .into_iter()
-    .filter(|skill| internal_skill_visibility.allows(&skill.name, skill.internal))
-    .collect::<Vec<_>>();
+    let discovered = if internal_skill_visibility.explicit_names().is_some() {
+        let inventory = crate::core::discovery::collect_complete_discovery_inventory(
+            native_root,
+            subpath,
+            cancellation,
+        )?;
+        internal_skill_visibility.select(&inventory, full_depth)?
+    } else {
+        crate::core::discover_skills(
+            native_root,
+            subpath,
+            DiscoverOptions {
+                include_internal: matches!(internal_skill_visibility, InternalSkillVisibility::All),
+                full_depth,
+            },
+        )?
+    };
     let physical_root = fs::canonicalize(native_root)?;
     let mut catalog = std::collections::BTreeMap::new();
     for skill in &discovered {
@@ -1521,8 +1589,9 @@ mod tests {
         for (case, bytes) in cases {
             let materialized =
                 materialize_download(&bytes).unwrap_or_else(|error| panic!("{case}: {error}"));
-            let discovered = discover_skills(materialized.path(), None, DiscoverOptions::default())
-                .unwrap_or_else(|error| panic!("{case}: {error}"));
+            let discovered =
+                crate::core::discover_skills(materialized.path(), None, DiscoverOptions::default())
+                    .unwrap_or_else(|error| panic!("{case}: {error}"));
             assert!(!discovered.is_empty(), "{case}");
         }
     }
@@ -1981,6 +2050,11 @@ mod tests {
             None,
             false,
         );
+        assert!(build_wsl_discovery_catalog(&response, None, &exact, false).is_err());
+        let mut response = response;
+        response
+            .entries
+            .retain(|entry| entry.relative_path != "skills/broken/SKILL.md");
         let (discovered, catalog) =
             build_wsl_discovery_catalog(&response, None, &exact, false).expect("exact catalog");
         assert_eq!(
@@ -1997,6 +2071,39 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from(["demo", "private"])
         );
+    }
+
+    #[test]
+    fn explicit_internal_duplicate_keeps_complete_catalog_priority() {
+        use crate::core::discovery::{DiscoveryDocument, DiscoveryInventory};
+        let inventory = DiscoveryInventory {
+            search_prefix: PathBuf::new(),
+            marketplace_document: None,
+            plugin_document: None,
+            local_lock_document: None,
+            skills_sh_document: None,
+            skill_documents: vec![
+                DiscoveryDocument {
+                    relative_path: "SKILL.md".into(),
+                    content:
+                        b"---\nname: demo\ndescription: root\nmetadata:\n  internal: true\n---\n"
+                            .to_vec(),
+                },
+                DiscoveryDocument {
+                    relative_path: "skills/demo/SKILL.md".into(),
+                    content: b"---\nname: demo\ndescription: public\n---\n".to_vec(),
+                },
+            ],
+        };
+        let public = InternalSkillVisibility::PublicOnly
+            .select(&inventory, false)
+            .unwrap();
+        assert_eq!(public[0].relative_path, "skills/demo/SKILL.md");
+        let explicit = InternalSkillVisibility::Explicit(["demo".into()].into())
+            .select(&inventory, false)
+            .unwrap();
+        assert_eq!(explicit.len(), 1);
+        assert_eq!(explicit[0].relative_path, "SKILL.md");
     }
 
     #[test]
@@ -2062,8 +2169,14 @@ mod tests {
             None,
             false,
         );
-        let (discovered, catalog) =
-            build_discovery_catalog(source.path(), None, &visibility, false).expect("catalog");
+        let (discovered, catalog) = build_discovery_catalog(
+            source.path(),
+            None,
+            &visibility,
+            false,
+            &CancellationSignal::default(),
+        )
+        .expect("catalog");
 
         assert_eq!(
             discovered
@@ -2732,6 +2845,120 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.relative_path == "assets/data.bin"));
+    }
+
+    #[tokio::test]
+    async fn explicit_source_selection_searches_complete_scope_before_normalizing() {
+        let source = tempdir().unwrap();
+        for (folder, name) in [
+            ("", "Code Review"),
+            ("a/b/c/d/e/f", "code_review"),
+            ("unrelated/deep", "private-other"),
+        ] {
+            let dir = source.path().join(folder);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: test\nmetadata:\n  internal: {}\n---\nbody",
+                    !folder.is_empty()
+                ),
+            )
+            .unwrap();
+        }
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1024 * 1024,
+            },
+            || 1_000,
+        ));
+        let service = SourceDiscoveryService::with_git_transport(
+            manager.clone(),
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
+        );
+        let result = service
+            .discover_with_selection(
+                EnvironmentRef::Native,
+                source.path().to_string_lossy().to_string(),
+                SourceSelectionIntent {
+                    wildcard_requested: false,
+                    explicit_skill_names: vec!["code_review".into()],
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Code Review", "code_review"]
+        );
+        assert_eq!(
+            result.selection_result.as_ref().unwrap().matched_names,
+            ["code_review"]
+        );
+        let payloads = SelectedPayloadAcquisitionService::new(manager)
+            .acquire(AcquireSelectedPayloadsRequest {
+                discovery_session: result.discovery_session,
+                skill_paths: vec!["a/b/c/d/e/f/SKILL.md".into()],
+            })
+            .await
+            .unwrap();
+        assert_eq!(payloads.len(), 1);
+        let ambiguous = service
+            .discover_with_selection(
+                EnvironmentRef::Native,
+                source.path().to_string_lossy().to_string(),
+                SourceSelectionIntent {
+                    wildcard_requested: false,
+                    explicit_skill_names: vec!["code-review".into(), "missing".into()],
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+        let selection = ambiguous.selection_result.unwrap();
+        assert!(selection.matched_names.is_empty());
+        assert_eq!(selection.unmatched_inputs, ["missing"]);
+        assert_eq!(
+            selection.ambiguous_inputs[0].candidate_names,
+            ["Code Review", "code_review"]
+        );
+        let wildcard = service
+            .discover_with_selection(
+                EnvironmentRef::Native,
+                source.path().to_string_lossy().to_string(),
+                SourceSelectionIntent {
+                    wildcard_requested: true,
+                    explicit_skill_names: vec!["code_review".into()],
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(wildcard.skills.len(), 1);
+        fs::write(
+            source.path().join("unrelated/deep/SKILL.md"),
+            vec![b'x'; 256 * 1024 + 1],
+        )
+        .unwrap();
+        assert!(service
+            .discover_with_selection(
+                EnvironmentRef::Native,
+                source.path().to_string_lossy().to_string(),
+                SourceSelectionIntent {
+                    wildcard_requested: false,
+                    explicit_skill_names: vec!["code_review".into()],
+                },
+                |_| {}
+            )
+            .await
+            .is_err());
     }
 
     #[tokio::test]

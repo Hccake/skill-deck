@@ -1,3 +1,4 @@
+import { sourceWithSkill } from '@/lib/source-discovery/source-selection';
 // src/pages/WizardPage.tsx
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -56,10 +57,10 @@ function createInitialState(params: {
     ? globalContext(params.context.environment)
     : params.context;
 
-  // Discovery 入口：拼接 source@skillName 格式，让 SourceStep 的 @skill 语法预选逻辑自动生效
+  // Discovery 入口已明确选中 Skill，保留名称选择语义。
   let source = params.prefillSource ?? '';
   if (source && params.prefillSkillName) {
-    source = `${source}@${params.prefillSkillName}`;
+    source = sourceWithSkill(source, params.prefillSkillName);
   }
 
   return {

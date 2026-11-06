@@ -493,6 +493,12 @@ async fn real_wsl2_update_pinned_commit_preserves_content_and_persists_reference
     run_wsl_update(WslWorkflow::PinnedCommit).await;
 }
 
+#[tokio::test]
+#[ignore = "requires Windows, a matching Worker, and the skills CLI fixture"]
+async fn real_wsl2_explicit_selection_prefers_deep_exact_name() {
+    run_wsl_update(WslWorkflow::ExplicitSelection).await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WslWorkflow {
     PrivateUpdate,
@@ -501,6 +507,7 @@ enum WslWorkflow {
     Adjacent,
     Dependency,
     Download,
+    ExplicitSelection,
     AgentCompatibility,
     Relocation,
     PinnedCommit,
@@ -765,6 +772,93 @@ cp "$1/project/.codebuddy/skills/alpha/SKILL.md" "$1/pinned-content.md"
         },
         move || read_clock.load(Ordering::SeqCst),
     ));
+    if workflow == WslWorkflow::ExplicitSelection {
+        use crate::application::source_acquisition::{
+            AcquireSelectedPayloadsRequest, InternalSkillVisibility,
+            SelectedPayloadAcquisitionService, SourceDiscoveryPolicy,
+        };
+        use crate::application::wsl_source_access::WslSourceAccess;
+        let source_root = format!("{root}/selection");
+        run_fixture(&distro, r#"set -eu
+mkdir -p "$1/a/b/c/d/e/f"
+printf '%s\n' '---' 'name: Code Review' 'description: Root' '---' 'Root body' > "$1/SKILL.md"
+printf '%s\n' '---' 'name: code_review' 'description: Deep' 'metadata:' '  internal: true' '---' 'Deep body' > "$1/a/b/c/d/e/f/SKILL.md"
+"#, std::slice::from_ref(&source_root)).await.unwrap();
+        let settings = Arc::new(crate::runtime::proxy_settings::ProxySettingsStore::new(
+            crate::models::NetworkProxySettings::default(),
+        ));
+        let access = crate::runtime::wsl_source::RuntimeWslSourceAccess::new(
+            manager.clone(),
+            runtime,
+            settings.clone(),
+            Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+            crate::runtime::download::RuntimeDownloadAccess::new(
+                crate::runtime::http_transport::HttpTransport::new(settings),
+            ),
+        );
+        for (name, expected) in [
+            ("code_review", vec!["code_review"]),
+            ("code-review", vec![]),
+        ] {
+            let fetched = access
+                .discover(
+                    &distro,
+                    crate::core::parse_source(&source_root).unwrap(),
+                    source_root.clone(),
+                    SourceDiscoveryPolicy {
+                        allow_empty_catalog: false,
+                        full_depth: false,
+                        selected_skill_names: None,
+                        internal_skill_visibility: InternalSkillVisibility::Explicit(
+                            [name.into()].into(),
+                        ),
+                    },
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                fetched
+                    .skills
+                    .iter()
+                    .map(|skill| skill.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Code Review", "code_review"]
+            );
+            assert_eq!(
+                fetched.selection_result.as_ref().unwrap().matched_names,
+                expected
+            );
+            if name == "code-review" {
+                assert_eq!(
+                    fetched
+                        .selection_result
+                        .as_ref()
+                        .unwrap()
+                        .ambiguous_inputs
+                        .len(),
+                    1
+                );
+            }
+            let acquired = SelectedPayloadAcquisitionService::new(manager.clone())
+                .acquire(AcquireSelectedPayloadsRequest {
+                    discovery_session: fetched.discovery_session,
+                    skill_paths: vec!["a/b/c/d/e/f/SKILL.md".into()],
+                })
+                .await
+                .unwrap();
+            let lease = manager.pin_verified(&acquired[0]).await.unwrap();
+            assert_eq!(lease.planning_metadata().skill_name, "code_review");
+            assert!(lease
+                .load_payload()
+                .await
+                .unwrap()
+                .blobs
+                .values()
+                .any(|bytes| bytes.windows(9).any(|window| window == b"Deep body")));
+        }
+        return;
+    }
     let source_calls = Arc::new(AtomicUsize::new(0));
     let recovery = tempfile::tempdir().unwrap();
     let executor = RuntimePlanExecutor::new(

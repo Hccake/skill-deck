@@ -73,6 +73,7 @@ function sourceResult(environment: EnvironmentRef): FetchResult {
     sourceUrl: 'https://github.com/owner/skills',
     gitRef: null,
     skillFilter: 'demo',
+    selectionResult: { matchedNames: ['demo'], unmatchedInputs: [], ambiguousInputs: [] },
     redirectedDownloadHost: null,
     skills: [{
       name: 'demo',

@@ -291,6 +291,7 @@ function LibrarySkillSelectionStep({ flow }: { flow: LibraryAddFlow }) {
       ) : (
         <SourceSkillSelectionPanel
           candidates={candidates}
+          selectionResult={flow.discovery.result?.selectionResult}
           selectedCandidateIds={flow.selectedCandidateIds}
           query={flow.selectionQuery}
           onQueryChange={flow.setSelectionQuery}

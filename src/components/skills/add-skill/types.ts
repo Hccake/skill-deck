@@ -69,6 +69,7 @@ export interface WizardState {
   availableSkills: AvailableSkill[];
   selectedSkills: string[];
   skillFilter: string | null;
+  sourceSelectionResult?: import('@/bindings').SourceSelectionResult | null;
   skillSearchQuery: string;
 
   // Confirm

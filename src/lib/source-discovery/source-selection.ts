@@ -2,12 +2,14 @@ import type {
   AgentSelectionIntent,
   AvailableSkill,
   SourceSelectionIntent,
+  SourceSelectionResult,
 } from '@/bindings';
 import { isSkillsShPackUrl, parseSkillsCommand } from '@/utils/parse-skills-command';
 
 interface SourceDiscoverySelection {
   skills: AvailableSkill[];
   skillFilter: string | null;
+  selectionResult?: SourceSelectionResult | null;
 }
 
 export interface ResolvedSourceSelection {
@@ -23,18 +25,13 @@ export function resolveSourceSelection(
 ): ResolvedSourceSelection {
   const parsed = parseSkillsCommand(input);
   const source = parsed.isCommand ? parsed.source : input.trim();
-  const availableNames = new Set(result.skills.map((skill) => skill.name));
-  const selectedFromFilter = result.skillFilter && availableNames.has(result.skillFilter)
-    ? [result.skillFilter]
-    : [];
-  const selectedFromCommand = parsed.skills.filter((name) => availableNames.has(name));
   const hasExplicitSelection = Boolean(result.skillFilter) || parsed.skills.length > 0;
 
   let selectedSkillNames: string[];
   if (parsed.wildcardRequested || (!hasExplicitSelection && isSkillsShPackUrl(source))) {
     selectedSkillNames = result.skills.map((skill) => skill.name);
   } else {
-    selectedSkillNames = [...new Set([...selectedFromFilter, ...selectedFromCommand])];
+    selectedSkillNames = result.selectionResult?.matchedNames ?? [];
   }
 
   return {
@@ -49,4 +46,11 @@ export function resolveSourceSelection(
       explicitAgentIds: parsed.agents,
     },
   };
+}
+
+/** 图形化搜索已明确选中 Skill，使用显式名称语法避开版本引用。 */
+export function sourceWithSkill(source: string, name: string): string {
+  return /^(?:github:)?[^/:#@]+\/[^/#@]+$/.test(source)
+    ? `${source}#@${encodeURIComponent(name)}`
+    : `${source}@${name}`;
 }

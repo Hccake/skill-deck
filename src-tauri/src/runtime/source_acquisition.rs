@@ -215,6 +215,7 @@ impl SourceDiscoveryService {
                     (),
                     RetainedSourceOptions {
                         internal_skill_visibility,
+                        cancellation,
                         ..Default::default()
                     },
                 )
@@ -251,6 +252,7 @@ impl SourceDiscoveryService {
                                 redirected_download_hosts: fetched.redirected_download_hosts,
                                 member_failures: fetched.member_failures,
                                 internal_skill_visibility: well_known_visibility,
+                                cancellation: well_known_cancellation,
                                 ..Default::default()
                             },
                         )
@@ -343,6 +345,7 @@ impl SourceDiscoveryService {
             RetainedSourceOptions {
                 redirected_download_host,
                 internal_skill_visibility,
+                cancellation,
                 ..Default::default()
             },
         )

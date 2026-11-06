@@ -11,7 +11,12 @@ async function configure(width, language, dark, detail) {
     outer.width += width - actual.width; outer.height += 850 - actual.height;
   }
   await browser.executeAsync((options, done) => window.configureBasicCompatibility(options).then(done), { language, dark, detail });
-  await browser.executeAsync(async done => { await document.fonts.ready; requestAnimationFrame(() => requestAnimationFrame(done)); });
+  await browser.executeAsync(async done => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.allSettled(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished));
+    done();
+  });
 }
 
 describe('Basic compatibility in the existing Skills workspace', () => {
@@ -57,4 +62,48 @@ describe('Basic compatibility in the existing Skills workspace', () => {
     assert.ok(list.includes('code-review'));
     assert.ok(!list.includes('frontend-design'));
   });
+  it('keeps matching feedback inside both existing selection workflows', async () => {
+    for (const mode of ['wizard', 'library']) {
+      await configure(1280, 'zh-CN', false, false);
+      await browser.execute(mode => window.setCompatibilityFlow(mode), mode);
+      if (mode === 'library') {
+        const input = $('input[name="library-add-source"]');
+        await input.waitForDisplayed();
+        await input.setValue('acme/team-skills#@code-review');
+        await $('button=读取来源').click();
+      }
+      try {
+        await $('input[name="source-skill-search"]').waitForDisplayed();
+      } catch (error) {
+        console.log('selection flow', mode, await browser.execute(() => document.body.innerText));
+        throw error;
+      }
+      for (const width of [1280, 960, 760]) {
+        await configure(width, width === 760 ? 'en' : 'zh-CN', width === 760, false);
+        const state = await browser.execute(() => {
+          const list = document.querySelector('[role="region"]');
+          return {
+            overflow: document.documentElement.scrollWidth > innerWidth,
+            feedback: list.querySelector('[role="status"]')?.textContent,
+            selected: [...list.querySelectorAll('[role="checkbox"]')].some(el => el.getAttribute('aria-checked') === 'true'),
+            pathRows: [...list.querySelectorAll('label')].map(row => {
+              const line = row.querySelector('[translate="no"]');
+              return line && getComputedStyle(line).display === 'flex' && line.textContent.includes('SKILL.md') === false;
+            }),
+          };
+        });
+        assert.equal(await browser.execute(() => getComputedStyle(document.querySelector('[role="region"] label [translate="no"]')).color === getComputedStyle(document.body).color), true);
+        assert.equal(state.overflow, false);
+        assert.ok(state.feedback.includes('code-review') && state.feedback.includes('missing-skill'));
+        assert.equal(state.selected, false);
+        assert.deepEqual(state.pathRows, [true, true]);
+        await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `compatibility-selection-${mode}-${width}.png`));
+      }
+      await $('[role="checkbox"][aria-label="code_review"]').click();
+      const feedback = await $('[role="status"]').getText();
+      assert.ok(!feedback.includes('code-review'));
+      assert.ok(feedback.includes('missing-skill'));
+    }
+  });
+
 });

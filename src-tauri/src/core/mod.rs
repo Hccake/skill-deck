@@ -26,6 +26,7 @@ pub(crate) mod source_display;
 pub mod source_filter;
 pub mod source_identity;
 pub mod source_parser;
+pub mod source_selection;
 pub mod update_locations;
 pub mod update_metadata;
 

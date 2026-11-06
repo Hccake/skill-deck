@@ -1,7 +1,9 @@
+import { TooltipProvider } from '@/components/ui/tooltip';
+import type { ReactElement } from 'react';
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { render as renderBase, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +11,8 @@ import {
   SourceSkillSelectionPanel,
   type SourceSkillCandidate,
 } from '../SourceSkillSelectionPanel';
+
+const render = (ui: ReactElement) => renderBase(<TooltipProvider>{ui}</TooltipProvider>);
 
 const candidates: SourceSkillCandidate[] = [
   {
@@ -65,6 +69,21 @@ function Harness({ onSelectionChange = () => undefined }: {
 }
 
 describe('SourceSkillSelectionPanel', () => {
+  it('keeps ambiguous choices unselected and shows paths within their rows', async () => {
+    const changed = vi.fn();
+    render(<SourceSkillSelectionPanel candidates={[
+      { candidateId: 'one', name: 'Code Review', description: 'first', relativePath: 'skills/one/SKILL.md', selectable: true },
+      { candidateId: 'two', name: 'code_review', description: 'second', relativePath: 'tools/two/SKILL.md', selectable: true },
+    ]} selectedCandidateIds={[]} query="" onQueryChange={() => {}} onSelectionChange={changed} copy={copy}
+      selectionResult={{ matchedNames: [], unmatchedInputs: ['missing'], ambiguousInputs: [{ input: 'code-review', candidateNames: ['Code Review', 'code_review'] }] }} />);
+    expect(screen.getByRole('status')).toBeTruthy();
+    expect(screen.getByText('skills/one')).toBeTruthy();
+    expect(screen.getByText('tools/two')).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Code Review' }).getAttribute('aria-checked')).toBe('false');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Code Review' }));
+    expect(changed).toHaveBeenCalledWith(['one']);
+  });
+
   it('uses its title as an accessible region name without repeating a visible heading', () => {
     render(<Harness />);
 
