@@ -3813,11 +3813,32 @@ mod update_lifecycle {
         for directory in [".factory", ".pi/agent", ".kilo", ".kilocode"] {
             fs::create_dir_all(home.join(directory)).unwrap();
         }
+        for (container, name) in [
+            (".gemini/config/skills", "current"),
+            (".gemini/antigravity/skills", "legacy"),
+            (".gemini/antigravity-cli/skills", "legacy"),
+            (".gemini/skills", "legacy"),
+        ] {
+            let directory = home.join(container).join(name);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {name}\n---\n# {name}\n"),
+            )
+            .unwrap();
+        }
         let registry = AgentRegistry::build(
-            ["codex", "droid", "kilo", "pi"]
-                .into_iter()
-                .map(builtin_definition)
-                .collect(),
+            [
+                "codex",
+                "droid",
+                "kilo",
+                "pi",
+                "antigravity",
+                "antigravity-cli",
+            ]
+            .into_iter()
+            .map(builtin_definition)
+            .collect(),
             vec![],
         )
         .snapshot()
@@ -3918,6 +3939,39 @@ mod update_lifecycle {
             )
             .await
             .unwrap();
+            if matches!(context.scope, SkillLocation::Global) {
+                let common = catalog
+                    .options()
+                    .filter(|option| {
+                        option
+                            .public
+                            .agent_ids
+                            .iter()
+                            .filter(|id| matches!(id.as_str(), "antigravity" | "antigravity-cli"))
+                            .count()
+                            == 2
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(common.len(), 1);
+                assert_eq!(
+                    fs::canonicalize(&common[0].placement.root.native_path).unwrap(),
+                    fs::canonicalize(home.join(".gemini/config/skills")).unwrap()
+                );
+                assert_eq!(
+                    catalog
+                        .options()
+                        .filter(|option| option
+                            .public
+                            .agent_ids
+                            .iter()
+                            .any(|id| matches!(id.as_str(), "antigravity" | "antigravity-cli")))
+                        .count(),
+                    4
+                );
+                for id in ["antigravity", "antigravity-cli"] {
+                    assert!(legacy.agents.iter().any(|agent| agent.as_str() == id));
+                }
+            }
             let kilo = catalog
                 .snapshot()
                 .agents

@@ -1307,6 +1307,12 @@ async fn verify_wsl_agent_directories(initial: &FixtureFacts, runtime: Arc<WslRu
         distro_name,
         r##"set -eu
 mkdir -p "$1/.factory" "$1/.pi/agent" "$1/.kilo" "$1/.kilocode"
+for container in .gemini/config .gemini/antigravity .gemini/antigravity-cli .gemini; do
+  name=legacy
+  if [ "$container" = .gemini/config ]; then name=current; fi
+  mkdir -p "$1/$container/skills/$name"
+  printf '%s\n' '---' "name: $name" "description: $name" '---' "# $name" > "$1/$container/skills/$name/SKILL.md"
+done
 for root in "$1" "$2"; do
   for pair in '.agents shared' '.kilo current' '.kilocode legacy'; do
     set -- $pair
@@ -1321,7 +1327,12 @@ done
     .unwrap();
     let definitions = crate::core::builtin_agent_catalog::builtin_agent_definitions()
         .into_iter()
-        .filter(|agent| matches!(agent.id.as_str(), "codex" | "droid" | "kilo" | "pi"))
+        .filter(|agent| {
+            matches!(
+                agent.id.as_str(),
+                "codex" | "droid" | "kilo" | "pi" | "antigravity" | "antigravity-cli"
+            )
+        })
         .collect();
     let registry = crate::core::agent_registry::AgentRegistry::build(definitions, vec![])
         .snapshot()
@@ -1405,6 +1416,44 @@ done
                 .count(),
             2
         );
+        if global {
+            let common = catalog
+                .options()
+                .filter(|option| {
+                    option
+                        .public
+                        .agent_ids
+                        .iter()
+                        .filter(|id| matches!(id.as_str(), "antigravity" | "antigravity-cli"))
+                        .count()
+                        == 2
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(common.len(), 1);
+            assert_eq!(
+                common[0].placement.root.native_path,
+                format!("{home}/.gemini/config/skills")
+            );
+            assert_eq!(
+                catalog
+                    .options()
+                    .filter(|option| option
+                        .public
+                        .agent_ids
+                        .iter()
+                        .any(|id| matches!(id.as_str(), "antigravity" | "antigravity-cli")))
+                    .count(),
+                4
+            );
+            let legacy = listed
+                .skills
+                .iter()
+                .find(|skill| skill.name == "legacy")
+                .unwrap();
+            for id in ["antigravity", "antigravity-cli"] {
+                assert!(legacy.agents.iter().any(|agent| agent.as_str() == id));
+            }
+        }
         let recovery = tempfile::tempdir().unwrap();
         let executor = RuntimePlanExecutor::new(
             runtime.clone(),

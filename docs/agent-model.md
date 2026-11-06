@@ -84,6 +84,8 @@ Droid、Pi 和 Kilo Code 在全局及项目范围中都可读取通用 Skill 目
 | Pi | 项目 `.pi/skills`，全局 `~/.pi/agent/skills` | 与通用目录同时读取 |
 | Kilo Code | 项目 `.kilo/skills`，全局 `~/.kilo/skills` | 已存在的 `.kilocode/skills` 继续读取和维护；检测兼容 `.kilo` 与 `.kilocode` |
 
+Antigravity IDE 与 Antigravity CLI 在项目中读取 `.agents/skills`，全局当前目录共用 `~/.gemini/config/skills`。IDE 保留 `~/.gemini/antigravity/skills`，CLI 保留 `~/.gemini/antigravity-cli/skills` 和 `~/.gemini/skills`；这些兼容目录仅在已存在时参与读取和维护。新增关联使用当前目录，当前物理位置共用时合并为一项写入。两者检测分别依据 `.gemini/antigravity` 与 `.gemini/antigravity-cli`，共享配置目录不能单独证明任一产品已安装。CLI 的兼容目录可能优先于当前目录，应用按实际位置展示并维护内容，不自动迁移。目录依据：[Antigravity Skills](https://antigravity.google/docs/skills)、[配置发现](https://antigravity.google/docs/customization-discovery)。
+
 Kilo 的新旧目录并存时，安装及管理 Agent 的原有选择区分别显示“当前目录”和“兼容目录”，并保留完整路径提示与已有选择。多个路径实际指向同一目录时合并为一个选项和一项写入。跨项目复制按目标项目的当前安装目录建立新关联，目标原有的其他关联继续保留。应用不会因注册表升级自动搬迁旧内容。
 
 仍被 Agent 读取的旧位置使用 `ReadAndMaintain` 规则，只有实际存在的目录进入读取与维护范围。仅用于检测或迁移提示的旧位置继续使用原有规则，不自动进入安装选择。

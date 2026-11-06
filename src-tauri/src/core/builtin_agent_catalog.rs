@@ -199,16 +199,36 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
         .with_detection(vec![config_home("amp")]),
         agent(
             "antigravity",
-            "Antigravity",
+            "Antigravity IDE",
             ".agents/skills",
-            Some(home(".gemini/antigravity/skills")),
-        ),
+            Some(home(".gemini/config/skills")),
+        )
+        .with_detection(vec![home(".gemini/antigravity")])
+        .with_legacy_path(LegacyPath {
+            scope: LegacyPathScope::Global,
+            path: home(".gemini/antigravity/skills"),
+            behavior: LegacyPathBehavior::ReadAndMaintain,
+            migration_target: LegacyMigrationTarget::CurrentPrivate,
+        }),
         agent(
             "antigravity-cli",
             "Antigravity CLI",
             ".agents/skills",
-            Some(home(".gemini/antigravity-cli/skills")),
-        ),
+            Some(home(".gemini/config/skills")),
+        )
+        .with_detection(vec![home(".gemini/antigravity-cli")])
+        .with_legacy_path(LegacyPath {
+            scope: LegacyPathScope::Global,
+            path: home(".gemini/antigravity-cli/skills"),
+            behavior: LegacyPathBehavior::ReadAndMaintain,
+            migration_target: LegacyMigrationTarget::CurrentPrivate,
+        })
+        .with_legacy_path(LegacyPath {
+            scope: LegacyPathScope::Global,
+            path: home(".gemini/skills"),
+            behavior: LegacyPathBehavior::ReadAndMaintain,
+            migration_target: LegacyMigrationTarget::CurrentPrivate,
+        }),
         agent(
             "astrbot",
             "AstrBot",

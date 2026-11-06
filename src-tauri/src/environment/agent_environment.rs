@@ -1441,6 +1441,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn antigravity_shared_current_directory_keeps_detection_and_legacy_reads_separate() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(home.join(".gemini/config/skills")).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        let definitions = crate::core::builtin_agent_catalog::builtin_agent_definitions()
+            .into_iter()
+            .filter(|definition| {
+                matches!(definition.id.as_str(), "antigravity" | "antigravity-cli")
+            })
+            .collect();
+        let registry = registry("antigravity-paths", definitions);
+        let context = EnvironmentContext {
+            environment: EnvironmentRef::Native,
+            home: home.to_string_lossy().into_owned(),
+            config_home: home.join(".config").to_string_lossy().into_owned(),
+            environment_variables: BTreeMap::new(),
+            availability: EnvironmentStatus::Available,
+            revision: "first".into(),
+            wsl_workspace: None,
+        };
+        let expected = super::join_resolved(&context.home, ".gemini/config/skills", &context);
+        let resolver = AgentEnvironmentResolver::from_environment(context.clone());
+        let initial = resolver
+            .resolve_registry(&registry, Some(&project.to_string_lossy()))
+            .await
+            .unwrap();
+        for agent in initial.agents.values() {
+            assert_eq!(
+                agent.global.private_path.as_deref(),
+                Some(expected.as_str())
+            );
+            assert_eq!(agent.global.read_paths, std::slice::from_ref(&expected));
+            assert!(!agent.global.reads_standard);
+            assert!(agent.project.reads_standard);
+            assert_eq!(agent.detection, super::DetectionState::NotDetected);
+        }
+        fs::create_dir_all(home.join(".gemini/antigravity/skills")).unwrap();
+        fs::create_dir_all(home.join(".gemini/skills")).unwrap();
+        let resolver = AgentEnvironmentResolver::from_environment(context);
+        let resolved = resolver
+            .resolve_registry(&registry, Some(&project.to_string_lossy()))
+            .await
+            .unwrap();
+        let ide = &resolved.agents[&AgentId::parse("antigravity").unwrap()];
+        let cli = &resolved.agents[&AgentId::parse("antigravity-cli").unwrap()];
+        assert_eq!(ide.definition.display_name, "Antigravity IDE");
+        assert_eq!(ide.detection, super::DetectionState::Detected);
+        assert_eq!(cli.detection, super::DetectionState::NotDetected);
+        assert_eq!(ide.global.read_paths.len(), 2);
+        assert_eq!(cli.global.read_paths.len(), 2);
+        assert!(ide
+            .global
+            .read_paths
+            .iter()
+            .any(|path| std::path::Path::new(path) == home.join(".gemini/antigravity/skills")));
+        assert!(cli
+            .global
+            .read_paths
+            .iter()
+            .any(|path| std::path::Path::new(path) == home.join(".gemini/skills")));
+        assert!(!cli
+            .global
+            .read_paths
+            .iter()
+            .any(|path| std::path::Path::new(path) == home.join(".gemini/antigravity-cli/skills")));
+    }
+
+    #[tokio::test]
     async fn resolves_scope_locations_independently_for_each_definition() {
         let definitions = vec![
             definition(

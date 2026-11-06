@@ -86,6 +86,11 @@ async function main() {
   const root = path.resolve(process.env.SKILL_DECK_DESKTOP_ROOT ?? path.join(homedir(), '.cache', 'skill-deck-validation', 'desktop'));
   const paths = desktopPaths(root);
   const run = await createDesktopRun(root);
+  if (process.env.SKILL_DECK_E2E_SPEC === 'basic-compatibility') {
+    for (const relative of ['.gemini/config/skills', '.gemini/antigravity/skills', '.gemini/antigravity-cli/skills', '.gemini/skills']) {
+      await mkdir(path.join(run.env.SKILL_DECK_E2E_HOME, relative), { recursive: true });
+    }
+  }
   console.log(`Desktop evidence: ${run.directory}`);
   const env = { ...process.env, ...run.env, CARGO_TARGET_DIR: paths.target, SKILL_DECK_E2E_BINARY: paths.binary };
   if (!process.argv.includes('--no-build')) {
