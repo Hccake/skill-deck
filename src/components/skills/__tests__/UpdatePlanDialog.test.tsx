@@ -189,6 +189,33 @@ describe('UpdatePlanDialog', () => {
     expect(useSkillUpdateWorkflow.getState().selectedCopyEntries.size).toBe(0);
   });
 
+  it('discloses a clipped shared-directory name without changing its selection', async () => {
+    const label = 'Antigravity IDE · Antigravity CLI';
+    useSkillUpdateWorkflow.setState({ phase: 'ready', context, skillNames: ['toolkit'],
+      selectedCopyEntries: new Set(),
+      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{
+        skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: 'main',
+        targets: [automaticTarget()], adapterTargets: [], cleanCopyCount: 0,
+        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+        overwritePrivateEntries: [], blockingReasons: [], fallbackForecasts: [],
+        linkedTargets: [{ displayPath: { environment: context.environment, nativePath: '/shared/toolkit' },
+          targetPath: automaticTarget().displayPath, targetCopyEntryId: null, isStandard: false,
+          readers: [
+            { agentId: 'antigravity', displayName: 'Antigravity IDE', logicalTargetId: 'ide' },
+            { agentId: 'antigravity-cli', displayName: 'Antigravity CLI', logicalTargetId: 'cli' },
+          ],
+        }],
+      }] },
+    });
+    render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
+    const name = screen.getByText(label);
+    Object.defineProperties(name, { clientWidth: { value: 180 }, scrollWidth: { value: 300 } });
+    fireEvent.focus(name);
+    expect((await screen.findByRole('tooltip')).textContent).toContain(label);
+    expect(screen.getByRole('checkbox', { name: /Antigravity IDE/ }).getAttribute('aria-checked')).toBe('true');
+    expect(useSkillUpdateWorkflow.getState().selectedCopyEntries.size).toBe(0);
+  });
+
   it('keeps a stable dialog frame while the preview is loading', () => {
     useSkillUpdateWorkflow.setState({
       phase: 'loadingPreview',

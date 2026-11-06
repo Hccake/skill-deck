@@ -5,7 +5,9 @@ import { browser, $ } from '@wdio/globals';
 async function settle() {
   await browser.executeAsync(async done => {
     await document.fonts.ready;
-    requestAnimationFrame(() => requestAnimationFrame(done));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.allSettled(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished));
+    done();
   });
 }
 
@@ -75,4 +77,57 @@ describe('Source path changes in the native update preview', () => {
     // Tooltip 同时包含屏幕阅读器副本；这里只核对可见的路径节点。
     assert.equal(await tooltip.$(':scope > code').getText(), value);
   });
+  it('allocates room to shared names and paths while keeping mixed states visible', async () => {
+    for (const [width, locations, language, dark] of [
+      [960, 'simple', 'zh-CN', false], [760, 'simple', 'en', false],
+      [760, 'mixed', 'en', true], [720, 'long', 'zh-CN', true],
+    ]) {
+      await configure({ locations, language, dark });
+      await viewport(width, 600);
+      const geometry = await browser.execute(() => {
+        const rect = el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+        const body = document.querySelector('[data-testid="update-plan-dialog-body"]');
+        return { overflow: body.scrollWidth > body.clientWidth, footer: rect(document.querySelector('[data-slot="dialog-footer"]')), height: innerHeight,
+          rows: [...document.querySelectorAll('.update-position-row')].map(row => {
+            const name = row.querySelector('.update-position-name'), path = row.querySelector('.update-position-path'), meta = row.querySelector('.update-position-metadata');
+            return { row: rect(row), name: rect(name), path: rect(path), nameClipped: name.scrollWidth > name.clientWidth,
+              meta: meta ? rect(meta) : null, metadataClipped: [...row.querySelectorAll('.update-position-status,.update-position-mode')].some(el => el.scrollWidth > el.clientWidth),
+            };
+          }),
+        };
+      });
+      assert.equal(geometry.overflow, false);
+      assert.ok(geometry.footer.bottom <= geometry.height);
+      for (const row of geometry.rows) {
+        assert.ok(Math.abs(row.name.left - geometry.rows[0].name.left) < 1);
+        assert.ok(Math.abs(row.path.left - geometry.rows[0].path.left) < 1);
+        assert.equal(row.metadataClipped, false);
+        if (row.meta) assert.ok(row.meta.right <= row.row.right + 1);
+        if (width >= 760) {
+          assert.ok(row.name.width >= 180 && row.name.width <= 224);
+          assert.ok(row.path.top < row.name.bottom);
+          assert.equal(row.nameClipped, false);
+        } else assert.ok(row.path.top >= row.name.bottom);
+      }
+      if (locations === 'simple') assert.equal(geometry.rows[0].meta, null);
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `update-columns-${locations}-${language}-${width}.png`));
+    }
+  });
+
+  it('reveals clipped Agent names with keyboard focus without selecting a copy', async () => {
+    await configure({ locations: 'long', language: 'en' });
+    await viewport(760, 600);
+    await browser.execute(() => document.activeElement?.blur());
+    const label = await browser.execute(() => {
+      const el = [...document.querySelectorAll('.update-position-name')].find(el => el.scrollWidth > el.clientWidth);
+      if (!el) return null;
+      el.focus(); return el.textContent;
+    });
+    assert.ok(label?.includes('Antigravity IDE') && label.includes('Antigravity CLI'));
+    const tooltip = $('[data-slot="tooltip-content"]');
+    await tooltip.waitForDisplayed();
+    assert.ok((await tooltip.getText()).includes(label));
+    assert.equal(await $('[role="checkbox"]:not([disabled])').getAttribute('aria-checked'), 'false');
+  });
+
 });

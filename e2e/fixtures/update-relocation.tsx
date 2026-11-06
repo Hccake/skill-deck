@@ -1,6 +1,8 @@
 // 原生布局夹具使用实际预览组件；确认操作不执行文件写入。
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { applyPersistedAppearance } from '@/stores/settings';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
@@ -16,8 +18,11 @@ import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import type { SkillLocationRef, SourcePathChange as PathChange, UpdateSkillPreview } from '@/bindings';
 
 const context: SkillLocationRef = { environment: { kind: 'native' }, scope: { scope: 'global' } };
-type Config = { language: 'zh-CN' | 'en'; long: boolean; library: boolean; dark: boolean };
+type Config = { language: 'zh-CN' | 'en'; long: boolean; library: boolean; dark: boolean; locations?: 'simple' | 'mixed' | 'long' };
 const initial: Config = { language: 'zh-CN', long: false, library: false, dark: false };
+const windows = navigator.userAgent.includes('Windows');
+const home = windows ? 'C:\\Users\\User' : '/home/tester';
+const at = (relative: string) => ({ environment: context.environment, nativePath: windows ? `${home}\\${relative.replaceAll('/', '\\')}` : `${home}/${relative}` });
 const shortChange = { previousPath: 'skills/review', nextPath: 'tools/review' };
 const longChange = { previousPath: 'skills/platform-engineering/team-development/cross-platform-architecture-review', nextPath: 'plugins/engineering-quality/skills/cross-platform-architecture-review' };
 
@@ -27,18 +32,35 @@ function Fixture() {
   const change: PathChange = config.long ? longChange : shortChange;
   useEffect(() => {
     const configure = async (next: Config) => {
+      await getCurrentWindow().setFocus();
       await i18n.changeLanguage(next.language);
-      document.documentElement.classList.toggle('dark', next.dark);
+      applyPersistedAppearance(next.dark ? 'dark' : 'light');
       const skillName = next.long ? 'cross-platform-architecture-review' : 'review';
       const preview: UpdateSkillPreview = {
         skillName, pathChange: next.long ? longChange : shortChange,
         sourceKey: 'source-1', sourceDisplay: 'acme/engineering-skills', refDisplay: 'main',
         capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
         adapterTargets: [], cleanCopyCount: 0, blockingReasons: [], fallbackForecasts: [], linkedTargets: [],
-        targets: [{ displayPath: { environment: context.environment, nativePath: `C:\\Skills\\${skillName}` }, readers: [], restoring: false, isStandard: true, kind: 'directory' }],
-        overwritePrivateEntries: [{ entryId: 'cursor-copy', readers: [{ agentId: 'cursor', displayName: 'Cursor', logicalTargetId: 'cursor' }], displayPath: { environment: context.environment, nativePath: `C:\\Users\\User\\.cursor\\skills\\${skillName}` } }],
+        targets: [{ displayPath: at(`.agents/skills/${skillName}`), readers: [], restoring: false, isStandard: true, kind: 'directory' }],
+        overwritePrivateEntries: [{ entryId: 'cursor-copy', readers: [{ agentId: 'cursor', displayName: 'Cursor', logicalTargetId: 'cursor' }], displayPath: at(`.cursor/skills/${skillName}`) }],
       };
-      useSkillUpdateWorkflow.setState({ phase: 'ready', context, skillNames: [skillName], preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [preview] }, selectedCopyEntries: new Set(), confirm: async () => {} });
+      if (next.locations) {
+        preview.linkedTargets = [{
+          displayPath: at(next.locations === 'long' ? `AppData/Roaming/custom-agent/engineering/team-conventions/skills/${skillName}` : `.gemini/config/skills/${skillName}`),
+          targetPath: preview.targets[0].displayPath, targetCopyEntryId: null, isStandard: false,
+          readers: [
+            ...(next.locations === 'long' ? [{ agentId: 'custom', displayName: '团队代码审查与架构规范助手', logicalTargetId: 'custom' }] : []),
+            { agentId: 'antigravity', displayName: 'Antigravity IDE', logicalTargetId: 'ide' },
+            { agentId: 'antigravity-cli', displayName: 'Antigravity CLI', logicalTargetId: 'cli' },
+          ],
+        }];
+        if (next.locations === 'simple') preview.overwritePrivateEntries = [];
+        else {
+          preview.targets.push({ displayPath: at(`agent/subagents/research/skills/${skillName}`), restoring: true, readers: [{ agentId: 'eve', displayName: 'Eve · Research', logicalTargetId: 'eve' }] });
+          preview.preservedTargets = [{ displayPath: at(`.reasonix/skills/${skillName}`), restoring: false, kind: 'directory', readers: [{ agentId: 'reasonix', displayName: 'Reasonix', logicalTargetId: 'reasonix' }] }];
+        }
+      }
+      useSkillUpdateWorkflow.setState({ phase: 'ready', context, skillNames: [skillName], preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [preview], pathBase: { logicalRoot: { environment: context.environment, nativePath: home }, physicalRoot: { environment: context.environment, nativePath: home }, pathStyle: windows ? 'windows' : 'posix' } }, selectedCopyEntries: new Set(), confirm: async () => {} });
       setConfig(next);
     };
     Object.assign(window, { configureUpdateRelocation: configure });

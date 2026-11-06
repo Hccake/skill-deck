@@ -117,21 +117,31 @@ function LocationRow({ skillName, path, readers, isStandard, status, kind, check
   const id = useId();
   const names = [...new Set(readers.map((reader) => ownerLabels([reader], agentDisplayNames)))];
   const label = isStandard ? t('skills.updatePlan.commonDirectory') : names.join(' · ') || t('skills.updatePlan.installLocation');
+  const showKind = Boolean(kind && !isStandard && status !== 'restore');
   const ShapeIcon = kind === 'link' ? Link2 : Files;
   return (
     <li className="update-position-row">
       <Checkbox id={id} checked={checked} disabled={!selection}
         aria-label={`${skillName} · ${label} · ${presentInstallPath(path, pathBase, scope).label}`}
         onCheckedChange={(value) => selection?.change(value === true)} />
-      <label htmlFor={id} className={`update-position-name ${selection ? 'cursor-pointer' : ''}`}>{label}</label>
+      <OverflowTooltip content={label}>
+        <label htmlFor={id} tabIndex={0}
+          className={`update-position-name rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${selection ? 'cursor-pointer' : ''}`}>
+          {label}
+        </label>
+      </OverflowTooltip>
       <UpdatePath path={path} pathBase={pathBase} scope={scope} />
-      <span className={`update-position-status ${status === 'different' ? 'text-warning' : 'text-muted-foreground'}`}>
-        {status ? t(status === 'different' ? 'skills.updatePlan.contentDifferent' : status === 'restore' ? 'skills.updatePlan.restoreLocation' : 'skills.updatePlan.excludedLocation') : null}
-      </span>
-      <span className="update-position-mode text-muted-foreground">
-        {kind && !isStandard && status !== 'restore' ? <><ShapeIcon className="size-3.5 shrink-0" aria-hidden="true" />
-          {t(kind === 'link' ? 'skills.updatePlan.linkKind' : 'skills.updatePlan.copyKind')}</> : null}
-      </span>
+      {status || showKind ? (
+        <div className="update-position-metadata">
+          {status ? <span className={`update-position-status ${status === 'different' ? 'text-warning' : 'text-muted-foreground'}`}>
+            {t(status === 'different' ? 'skills.updatePlan.contentDifferent' : status === 'restore' ? 'skills.updatePlan.restoreLocation' : 'skills.updatePlan.excludedLocation')}
+          </span> : null}
+          {showKind ? <span className="update-position-mode text-muted-foreground">
+            <ShapeIcon className="size-3.5 shrink-0" aria-hidden="true" />
+            {t(kind === 'link' ? 'skills.updatePlan.linkKind' : 'skills.updatePlan.copyKind')}
+          </span> : null}
+        </div>
+      ) : null}
     </li>
   );
 }
