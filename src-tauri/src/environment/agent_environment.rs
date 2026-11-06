@@ -448,7 +448,10 @@ impl AgentEnvironmentResolver {
                 (
                     id.clone(),
                     ResolvedAgent {
-                        definition: definition.clone(),
+                        definition: definition.for_platform(
+                            matches!(self.environment_context.environment, EnvironmentRef::Native)
+                                && cfg!(windows),
+                        ),
                         detection,
                         detection_reason,
                         global,
@@ -536,6 +539,12 @@ impl AgentEnvironmentResolver {
         queries: &mut BTreeMap<String, PathQuery>,
     ) {
         match spec {
+            PathSpec::Platform { windows, unix } => self.collect_path_spec_queries(
+                self.platform_branch(windows, unix),
+                project_path,
+                inspect_eve_package,
+                queries,
+            ),
             PathSpec::FirstExisting {
                 candidates,
                 fallback,
@@ -756,6 +765,11 @@ impl AgentEnvironmentResolver {
         metadata: &BTreeMap<String, PathMetadata>,
     ) -> PathResolution {
         match spec {
+            PathSpec::Platform { windows, unix } => self.resolve_detection_path(
+                self.platform_branch(windows, unix),
+                project_path,
+                metadata,
+            ),
             PathSpec::FirstExisting {
                 candidates,
                 fallback,
@@ -914,6 +928,9 @@ impl AgentEnvironmentResolver {
         metadata: &BTreeMap<String, PathMetadata>,
     ) -> PathResolution {
         match spec {
+            PathSpec::Platform { windows, unix } => {
+                self.resolve_path(self.platform_branch(windows, unix), project_path, metadata)
+            }
             PathSpec::FirstExisting {
                 candidates,
                 fallback,
@@ -958,6 +975,14 @@ impl AgentEnvironmentResolver {
         }
     }
 
+    fn platform_branch<'a>(&self, windows: &'a PathSpec, unix: &'a PathSpec) -> &'a PathSpec {
+        if matches!(self.environment_context.environment, EnvironmentRef::Native) && cfg!(windows) {
+            windows
+        } else {
+            unix
+        }
+    }
+
     fn resolve_simple_path(&self, spec: &PathSpec, project_path: Option<&str>) -> PathResolution {
         match spec {
             PathSpec::Home { relative_path } => PathResolution::Resolved(join_resolved(
@@ -979,7 +1004,7 @@ impl AgentEnvironmentResolver {
                     ))
                 })
                 .unwrap_or(PathResolution::ProjectNotSelected),
-            PathSpec::EnvironmentVariable { .. } => {
+            PathSpec::EnvironmentVariable { .. } | PathSpec::Platform { .. } => {
                 unreachable!("handled by resolve_path and collect_path_spec_queries")
             }
             PathSpec::Absolute { path } => {
@@ -1438,6 +1463,154 @@ mod tests {
             .get(&AgentId::parse("detection-agent").unwrap())
             .unwrap();
         (agent.detection, agent.detection_reason)
+    }
+
+    #[tokio::test]
+    async fn reasonix_home_override_isolated_from_native_defaults_and_legacy() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let roaming = temp.path().join("roaming");
+        fs::create_dir_all(home.join(".reasonix/skills")).unwrap();
+        fs::create_dir_all(&roaming).unwrap();
+        let registry = registry(
+            "reasonix-paths",
+            crate::core::builtin_agent_catalog::builtin_agent_definitions()
+                .into_iter()
+                .filter(|agent| agent.id.as_str() == "reasonix")
+                .collect(),
+        );
+        let mut context = EnvironmentContext {
+            environment: EnvironmentRef::Native,
+            home: home.to_string_lossy().into_owned(),
+            config_home: home.join(".config").to_string_lossy().into_owned(),
+            environment_variables: [("APPDATA".into(), roaming.to_string_lossy().into_owned())]
+                .into(),
+            availability: EnvironmentStatus::Available,
+            revision: "first".into(),
+            wsl_workspace: None,
+        };
+        let expected = if cfg!(windows) {
+            roaming.join("reasonix/skills")
+        } else {
+            home.join(".reasonix/skills")
+        };
+        let resolved = AgentEnvironmentResolver::from_environment(context.clone())
+            .resolve_registry(&registry, None)
+            .await
+            .unwrap();
+        let agent = resolved.agents.values().next().unwrap();
+        assert_eq!(
+            std::path::Path::new(agent.global.private_path.as_ref().unwrap()),
+            expected
+        );
+        assert!(agent
+            .global
+            .read_paths
+            .iter()
+            .any(|path| std::path::Path::new(path) == home.join(".reasonix/skills")));
+        let isolated = temp.path().join("not-yet-created");
+        context.environment_variables.insert(
+            "REASONIX_HOME".into(),
+            isolated.to_string_lossy().into_owned(),
+        );
+        let resolved = AgentEnvironmentResolver::from_environment(context.clone())
+            .resolve_registry(&registry, None)
+            .await
+            .unwrap();
+        let agent = resolved.agents.values().next().unwrap();
+        assert_eq!(
+            std::path::Path::new(agent.global.private_path.as_ref().unwrap()),
+            isolated.join("skills")
+        );
+        assert_eq!(agent.global.read_paths.len(), 1);
+        assert_eq!(agent.detection, super::DetectionState::NotDetected);
+        context.environment_variables.clear();
+        let fallback = if cfg!(windows) {
+            home.join("AppData/Roaming/reasonix/skills")
+        } else {
+            home.join(".reasonix/skills")
+        };
+        let resolved = AgentEnvironmentResolver::from_environment(context)
+            .resolve_registry(&registry, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::path::Path::new(
+                resolved
+                    .agents
+                    .values()
+                    .next()
+                    .unwrap()
+                    .global
+                    .private_path
+                    .as_ref()
+                    .unwrap()
+            ),
+            fallback
+        );
+    }
+
+    #[tokio::test]
+    async fn reasonix_wsl_paths_use_distribution_home_and_override() {
+        let registry = registry(
+            "reasonix-wsl",
+            crate::core::builtin_agent_catalog::builtin_agent_definitions()
+                .into_iter()
+                .filter(|agent| agent.id.as_str() == "reasonix")
+                .collect(),
+        );
+        for custom_home in [None, Some("/opt/isolated-reasonix")] {
+            let mut context = runtime_context(
+                EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".into(),
+                },
+                EnvironmentStatus::Available,
+                "wsl",
+            );
+            context
+                .environment_variables
+                .insert("APPDATA".into(), "C:\\Users\\host\\AppData\\Roaming".into());
+            if let Some(value) = custom_home {
+                context
+                    .environment_variables
+                    .insert("REASONIX_HOME".into(), value.into());
+            }
+            let (resolver, calls) = resolver_with_present_paths(
+                context,
+                ["/home/alice/.reasonix", "/home/alice/.reasonix/skills"],
+            );
+            let resolved = resolver
+                .resolve_registry(&registry, Some("/work/app"))
+                .await
+                .unwrap();
+            let agent = resolved.agents.values().next().unwrap();
+            assert_eq!(
+                agent.global.read_paths,
+                [format!(
+                    "{}/skills",
+                    custom_home.unwrap_or("/home/alice/.reasonix")
+                )]
+            );
+            assert_eq!(
+                agent.project.private_path.as_deref(),
+                Some("/work/app/.reasonix/skills")
+            );
+            assert!(calls
+                .lock()
+                .unwrap()
+                .iter()
+                .flatten()
+                .all(|path| !path.contains("AppData")));
+            if custom_home.is_some() {
+                assert!(calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .flatten()
+                    .all(|path| !path.starts_with("/home/alice/.reasonix")));
+                assert_eq!(agent.detection, super::DetectionState::NotDetected);
+            }
+        }
     }
 
     #[tokio::test]

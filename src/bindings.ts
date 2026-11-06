@@ -1125,7 +1125,11 @@ export type ObservedEntryKind = "missing" | "directory" | "symlink" | "junction"
 export type ObservedEntryReader = { agentId: AgentId; displayName: string; logicalTargetId: string }
 export type ObservedPhysicalEntry = { entryId: ObservedEntryId; displayPath: ResourceLocator; kind: ObservedEntryKind; physicalTargetKey: string; readers: ObservedEntryReader[]; willBreakIfStandardRemoved: boolean }
 export type OperationErrorCode = "validation" | "noUpdateTargets" | "skillPlacementTargetConflict" | "wellKnownScopeNotFound" | "environmentUnavailable" | "storageUnsupported" | "capabilityUnavailable" | "unsafePath" | "unsafeSourceLink" | "selfCopy" | "payloadSessionExpired" | "staleContext" | "staleRegistry" | "staleEnvironment" | "stalePayload" | "staleTarget" | "externalLockChanged" | "upstreamSkillNameChanged" | "upstreamSkillDeleted" | "upstreamSkillAmbiguous" | "gitCommitUnavailable" | "mutationCancelled" | "executionFailed" | "restoreFailed" | "recoveryRequired" | "libraryRecoveryIncomplete" | "configurationReadOnly" | "configurationCorrupted" | "configurationWriteUnconfirmed"
-export type PathSpec = { kind: "home"; relativePath: string } | { kind: "configHome"; relativePath: string } | { kind: "project"; relativePath: string } | { kind: "environmentVariable"; name: string; relativePath: string; fallback: PathSpec } | { kind: "firstExisting"; candidates: PathSpec[]; fallback: PathSpec } |
+export type PathSpec =
+/**
+ * 内置目录按目标 Environment 的平台选择；WSL 始终使用 Unix 分支。
+ */
+{ kind: "platform"; windows: PathSpec; unix: PathSpec } | { kind: "home"; relativePath: string } | { kind: "configHome"; relativePath: string } | { kind: "project"; relativePath: string } | { kind: "environmentVariable"; name: string; relativePath: string; fallback: PathSpec } | { kind: "firstExisting"; candidates: PathSpec[]; fallback: PathSpec } |
 /**
  * Absolute paths are reserved for built-in system detection candidates.
  */

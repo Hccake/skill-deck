@@ -266,6 +266,7 @@ function detectionPathsFor(item: AgentListItem): Array<PathSpec | CustomPathSpec
 }
 
 function detectionPathLabel(path: PathSpec | CustomPathSpec, t: (key: string) => string): string {
+  if (path.kind === 'platform') return `Windows: ${detectionPathLabel(path.windows, t)}; macOS/Linux: ${detectionPathLabel(path.unix, t)}`;
   if (path.kind === 'absolute') return path.path;
   if (path.kind === 'environmentVariable') {
     const suffix = path.relativePath ? ` / ${path.relativePath}` : '';

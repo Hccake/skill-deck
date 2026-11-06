@@ -499,6 +499,12 @@ async fn real_wsl2_explicit_selection_prefers_deep_exact_name() {
     run_wsl_update(WslWorkflow::ExplicitSelection).await;
 }
 
+#[tokio::test]
+#[ignore = "requires Windows, WSL 2, and the skills CLI fixture"]
+async fn real_wsl2_reasonix_session_override_isolated_from_legacy() {
+    run_wsl_update(WslWorkflow::Reasonix).await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WslWorkflow {
     PrivateUpdate,
@@ -508,6 +514,7 @@ enum WslWorkflow {
     Dependency,
     Download,
     ExplicitSelection,
+    Reasonix,
     AgentCompatibility,
     Relocation,
     PinnedCommit,
@@ -628,6 +635,10 @@ cp "$1/project/.codebuddy/skills/alpha/SKILL.md" "$1/pinned-content.md"
         },
         workspace: workspace.clone(),
     };
+    if workflow == WslWorkflow::Reasonix {
+        verify_wsl_reasonix_home(&facts).await;
+        return;
+    }
     if workflow == WslWorkflow::AgentCompatibility {
         verify_wsl_agent_directories(&facts, runtime).await;
         return;
@@ -1285,6 +1296,88 @@ fi
     }
     clock.store(120_000, Ordering::SeqCst);
     manager.cleanup().await.unwrap();
+}
+
+async fn verify_wsl_reasonix_home(initial: &FixtureFacts) {
+    let environment = initial.initial.resolved_context.context.environment.clone();
+    let EnvironmentRef::Wsl { distro_name } = &environment else {
+        panic!("WSL fixture")
+    };
+    let home = initial.initial.resolved_context.home.native_path.clone();
+    let isolated = format!("{home}/isolated-reasonix");
+    run_fixture(
+        distro_name,
+        "mkdir -p -- \"$1/.reasonix/skills\" \"$2/skills\"",
+        &[home.clone(), isolated.clone()],
+    )
+    .await
+    .unwrap();
+    let definitions = crate::core::builtin_agent_catalog::builtin_agent_definitions()
+        .into_iter()
+        .filter(|definition| definition.id.as_str() == "reasonix")
+        .collect();
+    let registry = crate::core::agent_registry::AgentRegistry::build(definitions, vec![])
+        .snapshot()
+        .clone();
+    for override_home in [
+        Some(isolated.clone()),
+        Some(format!("{home}/missing-reasonix")),
+        None,
+    ] {
+        let script = format!(
+            "{}\nset -- session\n{}",
+            if override_home.is_some() {
+                "export REASONIX_HOME=\"$1\""
+            } else {
+                "unset REASONIX_HOME"
+            },
+            include_str!("../environment/wsl/scripts/session.sh")
+        );
+        let bytes = run_fixture(
+            distro_name,
+            &script,
+            &[override_home.clone().unwrap_or_default()],
+        )
+        .await
+        .unwrap();
+        let session =
+            crate::environment::wsl::parse_wsl_session_output(distro_name, &bytes).unwrap();
+        assert_eq!(
+            session.environment.get("REASONIX_HOME"),
+            override_home.as_ref()
+        );
+        let resolver = AgentEnvironmentResolver::from_environment(EnvironmentContext {
+            environment: environment.clone(),
+            home: home.clone(),
+            config_home: format!("{home}/.config"),
+            environment_variables: session.environment,
+            availability: EnvironmentStatus::Available,
+            revision: format!("reasonix-{override_home:?}"),
+            wsl_workspace: Some(initial.workspace.clone()),
+        });
+        let resolved = resolver.resolve_registry(&registry, None).await.unwrap();
+        let reasonix = resolved.agents.values().next().unwrap();
+        let expected = format!(
+            "{}/skills",
+            override_home
+                .as_deref()
+                .unwrap_or(&format!("{home}/.reasonix"))
+        );
+        assert_eq!(reasonix.global.read_paths, [expected]);
+        assert_eq!(
+            reasonix.detection,
+            if override_home
+                .as_ref()
+                .is_some_and(|path| path.ends_with("missing-reasonix"))
+            {
+                crate::environment::agent_environment::DetectionState::NotDetected
+            } else {
+                crate::environment::agent_environment::DetectionState::Detected
+            }
+        );
+        let definition = serde_json::to_string(&reasonix.definition).unwrap();
+        assert!(!definition.contains("APPDATA") && !definition.contains("platform"));
+    }
 }
 
 async fn verify_wsl_agent_directories(initial: &FixtureFacts, runtime: Arc<WslRuntime>) {

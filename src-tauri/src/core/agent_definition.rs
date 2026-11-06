@@ -104,6 +104,11 @@ pub enum CustomPathBase {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[specta(tag = "kind", rename_all = "camelCase")]
 pub enum PathSpec {
+    /// 内置目录按目标 Environment 的平台选择；WSL 始终使用 Unix 分支。
+    Platform {
+        windows: Box<PathSpec>,
+        unix: Box<PathSpec>,
+    },
     Home {
         #[serde(rename = "relativePath")]
         #[specta(rename = "relativePath")]
@@ -135,6 +140,35 @@ pub enum PathSpec {
 }
 
 impl PathSpec {
+    /// 对外展示目标平台使用的路径规则，保留环境变量及回退含义。
+    pub(crate) fn for_platform(&self, is_windows: bool) -> Self {
+        match self {
+            Self::Platform { windows, unix } => {
+                (if is_windows { windows } else { unix }).for_platform(is_windows)
+            }
+            Self::EnvironmentVariable {
+                name,
+                relative_path,
+                fallback,
+            } => Self::EnvironmentVariable {
+                name: name.clone(),
+                relative_path: relative_path.clone(),
+                fallback: Box::new(fallback.for_platform(is_windows)),
+            },
+            Self::FirstExisting {
+                candidates,
+                fallback,
+            } => Self::FirstExisting {
+                candidates: candidates
+                    .iter()
+                    .map(|path| path.for_platform(is_windows))
+                    .collect(),
+                fallback: Box::new(fallback.for_platform(is_windows)),
+            },
+            _ => self.clone(),
+        }
+    }
+
     pub fn home(relative_path: impl Into<String>) -> Self {
         Self::Home {
             relative_path: relative_path.into(),
@@ -160,6 +194,9 @@ impl PathSpec {
     #[cfg(test)]
     fn contains_project(&self) -> bool {
         match self {
+            Self::Platform { windows, unix } => {
+                windows.contains_project() || unix.contains_project()
+            }
             Self::Project { .. } => true,
             Self::EnvironmentVariable { fallback, .. } => fallback.contains_project(),
             Self::FirstExisting {
@@ -173,6 +210,9 @@ impl PathSpec {
     #[cfg(test)]
     fn contains_absolute(&self) -> bool {
         match self {
+            Self::Platform { windows, unix } => {
+                windows.contains_absolute() || unix.contains_absolute()
+            }
             Self::Absolute { .. } => true,
             Self::EnvironmentVariable { fallback, .. } => fallback.contains_absolute(),
             Self::FirstExisting {
@@ -186,6 +226,10 @@ impl PathSpec {
     #[cfg(test)]
     fn validate(&self, field: &str) -> Result<(), AgentFieldError> {
         match self {
+            Self::Platform { windows, unix } => {
+                windows.validate(field)?;
+                unix.validate(field)
+            }
             Self::Home { relative_path }
             | Self::ConfigHome { relative_path }
             | Self::Project { relative_path } => validate_relative_path(relative_path, field),
@@ -315,6 +359,25 @@ pub struct AgentDefinition {
 }
 
 impl AgentDefinition {
+    pub(crate) fn for_platform(&self, is_windows: bool) -> Self {
+        let mut definition = self.clone();
+        for scope in [&mut definition.global, &mut definition.project] {
+            scope.private_path = scope
+                .private_path
+                .as_ref()
+                .map(|path| path.for_platform(is_windows));
+        }
+        let DetectionSpec::AnyPathExists { paths } = &mut definition.detection;
+        *paths = paths
+            .iter()
+            .map(|path| path.for_platform(is_windows))
+            .collect();
+        for legacy in &mut definition.legacy_paths {
+            legacy.path = legacy.path.for_platform(is_windows);
+        }
+        definition
+    }
+
     #[cfg(test)]
     pub fn validate(&self) -> Result<(), AgentFieldError> {
         self.id.validate()?;

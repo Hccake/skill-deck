@@ -49,6 +49,7 @@ export async function createDesktopRun(root) {
       XDG_STATE_HOME: path.join(directory, 'state'),
       CODEX_HOME: path.join(home, '.codex'),
       CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+      REASONIX_HOME: '',
       APPDATA: path.join(home, 'AppData', 'Roaming'),
       LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
     },
@@ -87,7 +88,7 @@ async function main() {
   const paths = desktopPaths(root);
   const run = await createDesktopRun(root);
   if (process.env.SKILL_DECK_E2E_SPEC === 'basic-compatibility') {
-    for (const relative of ['.gemini/config/skills', '.gemini/antigravity/skills', '.gemini/antigravity-cli/skills', '.gemini/skills']) {
+    for (const relative of ['.gemini/config/skills', '.gemini/antigravity/skills', '.gemini/antigravity-cli/skills', '.gemini/skills', '.reasonix/skills', 'AppData/Roaming/reasonix/skills']) {
       await mkdir(path.join(run.env.SKILL_DECK_E2E_HOME, relative), { recursive: true });
     }
   }

@@ -85,7 +85,15 @@ impl AgentSettingsRecords {
     ) -> AgentSettingsSnapshot {
         AgentSettingsSnapshot {
             registry_revision: registry_revision.into(),
-            active_builtin: self.active_builtin.clone(),
+            active_builtin: self
+                .active_builtin
+                .iter()
+                .map(|definition| {
+                    definition.for_platform(
+                        matches!(current_environment, EnvironmentRef::Native) && cfg!(windows),
+                    )
+                })
+                .collect(),
             active_custom: self.active_custom.clone(),
             disabled_conflicts: self.disabled_conflicts.clone(),
             invalid_custom_records: self.invalid_custom_records.clone(),
@@ -126,6 +134,30 @@ mod tests {
         DetectionSpec, PathSpec, ScopeDefinition, ScopeLocation,
     };
     use crate::environment::types::EnvironmentRef;
+
+    #[test]
+    fn settings_project_reasonix_rules_to_the_selected_environment() {
+        let records = super::AgentSettingsRecords {
+            active_builtin: crate::core::builtin_agent_catalog::builtin_agent_definitions()
+                .into_iter()
+                .filter(|definition| definition.id.as_str() == "reasonix")
+                .collect(),
+            ..Default::default()
+        };
+        for environment in [
+            EnvironmentRef::Native,
+            EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".into(),
+            },
+        ] {
+            let windows = matches!(environment, EnvironmentRef::Native) && cfg!(windows);
+            let snapshot = records.snapshot("revision", environment);
+            let encoded = serde_json::to_string(&snapshot.active_builtin).unwrap();
+            assert!(!encoded.contains("platform"));
+            assert_eq!(encoded.contains("APPDATA"), windows);
+            assert!(encoded.contains("REASONIX_HOME"));
+        }
+    }
 
     fn builtin_definition() -> AgentDefinition {
         AgentDefinition {

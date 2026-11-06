@@ -612,8 +612,40 @@ fn build_catalog() -> Vec<BuiltinAgentSpec> {
             "reasonix",
             "Reasonix",
             ".reasonix/skills",
-            Some(home(".reasonix/skills")),
-        ),
+            Some(environment_path(
+                "REASONIX_HOME",
+                "skills",
+                PathSpec::Platform {
+                    windows: Box::new(environment_path(
+                        "APPDATA",
+                        "reasonix/skills",
+                        home("AppData/Roaming/reasonix/skills"),
+                    )),
+                    unix: Box::new(home(".reasonix/skills")),
+                },
+            )),
+        )
+        .with_detection(vec![
+            environment_path(
+                "REASONIX_HOME",
+                "",
+                PathSpec::Platform {
+                    windows: Box::new(environment_path(
+                        "APPDATA",
+                        "reasonix",
+                        home("AppData/Roaming/reasonix"),
+                    )),
+                    unix: Box::new(home(".reasonix")),
+                },
+            ),
+            environment_path("REASONIX_HOME", "", home(".reasonix")),
+        ])
+        .with_legacy_path(LegacyPath {
+            scope: LegacyPathScope::Global,
+            path: environment_skills_path("REASONIX_HOME", ".reasonix/skills"),
+            behavior: LegacyPathBehavior::ReadAndMaintain,
+            migration_target: LegacyMigrationTarget::CurrentPrivate,
+        }),
         agent(
             "replit",
             "Replit",
@@ -787,6 +819,10 @@ fn home_with_macos_application_detection(home_path: &str, application_path: &str
 
 fn parent_path(path: &PathSpec) -> PathSpec {
     match path {
+        PathSpec::Platform { windows, unix } => PathSpec::Platform {
+            windows: Box::new(parent_path(windows)),
+            unix: Box::new(parent_path(unix)),
+        },
         PathSpec::Home { relative_path } => home(parent_relative(relative_path)),
         PathSpec::ConfigHome { relative_path } => config_home(parent_relative(relative_path)),
         PathSpec::Project { relative_path } => project(parent_relative(relative_path)),

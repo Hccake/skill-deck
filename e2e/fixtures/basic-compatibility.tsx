@@ -98,7 +98,13 @@ const selectionFixture: FetchResult = {
   selectionResult: { matchedNames: [], unmatchedInputs: ['missing-skill'], ambiguousInputs: [{ input: 'code-review', candidateNames: ['Code Review', 'code_review'] }] },
 };
 commands.discoverSkillSource = async () => ({ status: 'ok', data: selectionFixture });
-Object.assign(window, { setCompatibilityFlow: (mode: 'skills' | 'wizard' | 'library') => {
+Object.assign(window, { inspectReasonix: async () => {
+  const context = { environment: native, scope: { scope: 'global' as const } };
+  const settings = await commands.getAgentSettingsSnapshot(context);
+  const runtime = await commands.listAgents(context);
+  if (runtime.status === 'error') throw runtime.error;
+  return { rule: settings.activeBuiltin.find(agent => agent.id === 'reasonix'), resolved: runtime.data.agents.reasonix };
+}, setCompatibilityFlow: (mode: 'skills' | 'wizard' | 'library') => {
   root.render(mode === 'skills' ? <Fixture /> : <MemoryRouter key={mode} initialEntries={['/?prefillSource=acme%2Fteam-skills%23%40code-review']}><TooltipProvider><WindowLifecycleContext.Provider value={{ requestAction: async () => {} }}>
     {mode === 'wizard' ? <WizardPage /> : <><div className="h-screen bg-background" /><LibraryAddDialog open target={{ environment: native, environmentName: 'Windows', libraryId: 'fixture', libraryName: 'Team Skills' }} existingSkillNames={new Set()} execute={async () => { throw new Error('UI fixture cannot write'); }} onClose={() => {}} /></>}
   </WindowLifecycleContext.Provider></TooltipProvider></MemoryRouter>);

@@ -106,19 +106,25 @@ describe('Basic compatibility in the existing Skills workspace', () => {
     }
   });
 
-  it('shows Antigravity current and compatible directories in the existing target step', async () => {
+  it('shows Agent current and compatible directories in the existing target step', async () => {
     await configure(1280, 'zh-CN', false, false);
     await browser.execute(() => window.setCompatibilityFlow('wizard'));
     await $('[role="checkbox"][aria-label="code_review"]').waitForDisplayed();
     await $('[role="checkbox"][aria-label="code_review"]').click();
     await $('button=下一步').click();
     await browser.waitUntil(async () => (await browser.execute(() => document.body.innerText)).includes('Antigravity IDE'));
+    const reasonix = await browser.executeAsync(done => window.inspectReasonix().then(done));
+    assert.ok(!JSON.stringify(reasonix.rule).includes('platform'));
+    const currentPath = reasonix.resolved.global.privatePath.replaceAll('\\', '/');
+    assert.ok(currentPath.endsWith(process.platform === 'win32' ? '/AppData/Roaming/reasonix/skills' : '/.reasonix/skills'));
+    assert.equal(reasonix.resolved.global.readPaths.length, process.platform === 'win32' ? 2 : 1);
     for (const width of [1280, 960, 760]) {
       await configure(width, width === 760 ? 'en' : 'zh-CN', width === 760, false);
       const state = await browser.execute(() => ({ overflow: document.documentElement.scrollWidth > innerWidth, text: document.body.innerText }));
       assert.equal(state.overflow, false);
       assert.ok(state.text.includes('Antigravity IDE'));
       assert.ok(state.text.includes('Antigravity CLI'));
+      assert.ok(state.text.includes('Reasonix'));
       assert.ok(state.text.includes(width === 760 ? 'Compatibility directory' : '兼容目录'));
       await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `compatibility-antigravity-${width}.png`));
     }

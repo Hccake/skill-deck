@@ -59,6 +59,7 @@ export function scopeReadMode(
 }
 
 export function formatPathRule(path: PathSpec | CustomPathSpec): string {
+  if (path.kind === 'platform') return `Windows: ${formatPathRule(path.windows)}; macOS/Linux: ${formatPathRule(path.unix)}`;
   if (path.kind === 'absolute') return path.path;
   if (path.kind === 'based') {
     const base = path.base === 'configHome'
@@ -81,6 +82,7 @@ export function formatPathRule(path: PathSpec | CustomPathSpec): string {
 
 export function pathRelativeValue(path: PathSpec | CustomPathSpec | null): string | null {
   if (!path) return null;
+  if (path.kind === 'platform') return null;
   if (path.kind === 'absolute') return null;
   if (path.kind === 'based') return path.relativePath;
   if (path.kind === 'environmentVariable') return path.relativePath;
