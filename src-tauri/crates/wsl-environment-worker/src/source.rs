@@ -592,6 +592,7 @@ async fn run_git(
     }
     let mut command = Command::new("git");
     command
+        .args(["-c", "core.longpaths=true"])
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")

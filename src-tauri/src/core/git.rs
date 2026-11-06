@@ -111,10 +111,8 @@ where
     let repo_path = temp_dir.path().to_path_buf();
 
     // 构建 git clone 命令，添加 --progress 以便 git 输出进度
-    let mut cmd = std_command("git");
-    apply_proxy_override(&mut cmd, proxy);
+    let mut cmd = source_git_command(proxy);
     cmd.arg("clone").arg("--depth").arg("1").arg("--progress");
-    apply_clone_env(&mut cmd);
 
     // 如果指定了分支/tag
     if let Some(branch) = git_ref {
@@ -136,9 +134,7 @@ where
                         vec!["fetch", "--depth", "1", "origin", reference],
                         vec!["checkout", "--detach", "FETCH_HEAD"],
                     ] {
-                        let mut command = std_command("git");
-                        apply_proxy_override(&mut command, proxy);
-                        apply_clone_env(&mut command);
+                        let mut command = source_git_command(proxy);
                         command.arg("-C").arg(&repo_path).args(arguments);
                         let remaining = timeout.saturating_sub(started_at.elapsed());
                         if remaining.is_zero() {
@@ -258,9 +254,7 @@ fn fetch_commit<F: Fn(CloneProgress)>(
                 timeout_secs: display_timeout_secs.try_into().unwrap_or(u32::MAX),
             });
         }
-        let mut command = std_command("git");
-        apply_proxy_override(&mut command, proxy);
-        apply_clone_env(&mut command);
+        let mut command = source_git_command(proxy);
         command.arg("-C").arg(temp.path()).args(arguments);
         let output =
             execute_with_timeout_and_progress(&mut command, remaining, progress, cancellation)?;
@@ -326,6 +320,14 @@ fn apply_clone_env(cmd: &mut Command) {
     for (key, value) in clone_env_pairs() {
         cmd.env(key, value);
     }
+}
+
+fn source_git_command(proxy: Option<&str>) -> Command {
+    let mut command = std_command("git");
+    command.args(["-c", "core.longpaths=true"]);
+    apply_proxy_override(&mut command, proxy);
+    apply_clone_env(&mut command);
+    command
 }
 
 fn apply_proxy_override(cmd: &mut Command, proxy: Option<&str>) {
@@ -841,6 +843,109 @@ pub(crate) fn classify_git_failure(
 )]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_paths_clone_and_pinned_checkout_preserve_content() {
+        const FIXTURE_ENV: &str = "SKILL_DECK_LONG_PATH_CHECKOUT_FIXTURE";
+        if std::env::var_os(FIXTURE_ENV).is_none() {
+            // 将 Git 配置隔离到子进程，避免改变其他并行测试和用户配置。
+            let fixture = tempfile::tempdir().unwrap();
+            let config = fixture.path().join("gitconfig");
+            std::fs::write(&config, "").unwrap();
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "core::git::tests::long_paths_clone_and_pinned_checkout_preserve_content",
+                    "--nocapture",
+                ])
+                .env(FIXTURE_ENV, "1")
+                .env("GIT_CONFIG_GLOBAL", &config)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(std::fs::read_to_string(config).unwrap().is_empty());
+            return;
+        }
+
+        let source = tempfile::tempdir().unwrap();
+        let mut relative = PathBuf::from("skills");
+        for _ in 0..9 {
+            relative.push("nested-directory-for-long-path-checkout");
+        }
+        relative.push("SKILL.md");
+        let contents = "---\nname: long-path\ndescription: Git checkout fixture\n---\n完整内容\n";
+        std::fs::write(source.path().join("fixture.md"), contents).unwrap();
+        let git = |arguments: &[&str]| {
+            let output = Command::new("git")
+                .current_dir(source.path())
+                .args(["-c", "core.longpaths=true"])
+                .args(arguments)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.name", "Skill Deck Test"]);
+        git(&["config", "user.email", "test@example.com"]);
+        // 直接构造索引，避免仓库准备阶段依赖待验证的 Windows 长路径遍历。
+        let blob = git(&["hash-object", "-w", "fixture.md"]);
+        let entry = format!(
+            "100644,{blob},{}",
+            relative.to_string_lossy().replace('\\', "/")
+        );
+        git(&["update-index", "--add", "--cacheinfo", &entry]);
+        let tree = git(&["write-tree"]);
+        let commit = git(&["commit-tree", &tree, "-m", "long path"]);
+        git(&["update-ref", "refs/heads/main", &commit]);
+        let pinned = format!("commit:{commit}");
+        let url = url::Url::from_directory_path(source.path())
+            .unwrap()
+            .to_string();
+        #[cfg(target_os = "windows")]
+        {
+            let unconfigured = tempfile::tempdir().unwrap();
+            let output = Command::new("git")
+                .args(["clone", "--depth", "1", "--", &url])
+                .arg(unconfigured.path())
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("Filename too long"));
+        }
+        for reference in [
+            None,
+            Some("refs/heads/main"),
+            Some(commit.as_str()),
+            Some(pinned.as_str()),
+        ] {
+            let fetched = clone_repo_with_progress_options(
+                &url,
+                reference,
+                |_| {},
+                CancellationSignal::default(),
+                None,
+                Duration::from_secs(30),
+                30,
+            )
+            .unwrap_or_else(|error| panic!("{reference:?}: {error}"));
+            assert_eq!(
+                std::fs::read_to_string(fetched.repo_path.join(&relative)).unwrap(),
+                contents
+            );
+            assert_eq!(fetched.ref_revision.as_deref(), Some(commit.as_str()));
+        }
+    }
 
     #[test]
     fn saved_ref_probe_and_checkout_agree_for_branch_tag_name_collisions() {
