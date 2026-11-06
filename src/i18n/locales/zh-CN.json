@@ -451,7 +451,9 @@
       "copyToProject": "复制到项目",
       "updateNamed": "更新「{{name}}」",
       "deleteNamed": "删除「{{name}}」",
-      "copyToProjectNamed": "将「{{name}}」复制到其他项目"
+      "copyToProjectNamed": "将「{{name}}」复制到其他项目",
+      "reacquire": "按来源重新获取",
+      "reacquireNamed": "按来源重新获取「{{name}}」"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -725,7 +727,8 @@
       "auth": "无法访问来源，请检查访问权限。",
       "network-error": "网络连接异常。稍后可重新检查。",
       "http-error": "版本检查失败。稍后可重新检查。",
-      "downloadSource": "下载来源，暂不支持检查更新。"
+      "downloadSource": "下载来源，暂不支持检查更新。",
+      "downloadAccess": "请确认下载地址和访问权限。"
     },
     "updateReason": {
       "missingRemoteHash": "本地版本信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
@@ -1672,7 +1675,8 @@
           "emptyContent": "下载内容为空。"
         },
         "downloadConflict": "目标目录已有同名 Skill，直接下载无法覆盖：{{target}}",
-        "commitUnavailable": "无法获取固定提交 {{commit}}。请检查提交是否仍可访问及仓库权限。"
+        "commitUnavailable": "无法获取固定提交 {{commit}}。请检查提交是否仍可访问及仓库权限。",
+        "downloadRateLimited": "下载站点暂时限制了请求，请稍后重试。"
       },
       "commitHelpLabel": "来源与固定提交用法",
       "commitHelp": "固定提交示例：owner/repo#完整40位SHA。短 SHA 仅作为分支或标签名解析。"
@@ -1793,9 +1797,29 @@
       "dependencyOverrideTitle": "改为独立安装",
       "dependencyOverrideDescription": "这些 Skill 将按本次来源独立维护，并解除原依赖同步关系。依赖包中的内容会保留。",
       "directDownloadConflict": "不能覆盖",
-      "redirectTitle": "下载地址已跳转到其他站点",
-      "redirectBody": "Skill 内容将从 {{host}} 下载。请确认你信任该站点后再继续。",
-      "redirectAcknowledge": "我信任这个下载站点，并允许继续安装"
+      "redirectTitle": "确认下载来源",
+      "redirectBody": "下载请求已从 {{original}} 重定向至 <host>{{host}}</host>",
+      "redirectAcknowledge": "允许继续安装",
+      "redirectAllowAdd": "允许继续添加",
+      "redirectDestination": "下载站点：<host>{{host}}</host>",
+      "overview": {
+        "skillCount": "{{count}} 个 Skill",
+        "plan": {
+          "shared": "通用目录",
+          "linkShort": "链接",
+          "copyShort": "副本"
+        },
+        "positions": "安装位置",
+        "positionCount": "{{count}} 个位置",
+        "agentCount": "{{count}} 个 Agent",
+        "showAllSkills": "查看全部 {{count}} 项",
+        "collapseSkills": "收起清单",
+        "showAllPositions": "查看全部 {{count}} 个位置",
+        "collapsePositions": "收起位置",
+        "showAllAgents": "查看全部 {{count}} 个 Agent",
+        "collapseAgents": "收起 Agent"
+      },
+      "overwriteSkills": "有 {{count}} 个 Skill 将覆盖已有内容"
     },
     "installing": {
       "title": "安装中...",

@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Copy, Folder, Link2, Package } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { RedirectHostConfirmation } from '@/components/source-discovery/RedirectHostConfirmation';
+import { InstallConfirmationSummary } from './InstallConfirmationSummary';
 import type { InstallAgentSelectionSnapshot } from '@/bindings';
 import type { AgentSelectionSessionController } from '@/hooks/useAgentSelectionSession';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
@@ -82,10 +80,6 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
     return () => controller.abort();
   }, [agentSelection, preparationAttempt, selection, state.agentSelectionIntent, state.availableSkills, state.context, state.discoverySession, state.redirectAcknowledged, state.redirectedDownloadHost, state.selectedSkills, state.source]);
 
-  const availableSkillMap = useMemo(
-    () => new Map(state.availableSkills.map((skill) => [skill.name, skill])),
-    [state.availableSkills],
-  );
   const overwriteCount = state.selectedSkills.filter((name) => (state.overwrites[name] ?? []).length > 0).length;
   const libraryOverrideCount = state.preparation.status === 'ready'
     ? state.preparation.prepared.preview.skills.filter((skill) => skill.overridesLibrary).length
@@ -166,95 +160,13 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
         </div>
       ) : null}
 
-      {state.redirectedDownloadHost ? (
-        <RedirectHostConfirmation
-          host={state.redirectedDownloadHost}
-          acknowledged={state.redirectAcknowledged === true}
-          onAcknowledgedChange={(redirectAcknowledged) => updateState({ redirectAcknowledged })}
-        />
-      ) : null}
-
-      <section className="space-y-2">
-        <div className="space-y-0.5" data-install-contents-section>
-          <h2 className="text-sm font-semibold" data-skill-list-heading>{t('addSkill.confirm.itemsTitle')}</h2>
-          {state.preparation.status === 'ready' ? (
-            <p className="text-xs leading-5 text-muted-foreground">
-              {overwriteCount > 0
-                ? t('addSkill.confirm.summary', { count: state.selectedSkills.length, overwriteCount })
-                : t('addSkill.confirm.summaryNoOverwrite', { count: state.selectedSkills.length })}
-            </p>
-          ) : null}
-        </div>
-        <div className="overflow-hidden rounded-md border bg-card">
-          {isPreparing ? state.selectedSkills.map((name) => (
-            <div key={name} className="flex items-center justify-between border-b px-3 py-3 last:border-b-0">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-5 w-14" />
-            </div>
-          )) : state.selectedSkills.map((name) => {
-            const skill = availableSkillMap.get(name);
-            return (
-              <div key={name} className="flex min-h-10 items-center gap-3 border-b px-3 py-2.5 last:border-b-0">
-                <Package className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{name}</span>
-                {blockedSkills.has(name) ? (
-                  <Badge variant="destructive">{t('addSkill.confirm.directDownloadConflict')}</Badge>
-                ) : state.preparation.status === 'ready' && state.preparation.prepared.preview.skills.find((item) => item.skillName === name)?.overridesLibrary ? (
-                  <Badge variant="outline">{t('addSkill.confirm.libraryOverrideBadge')}</Badge>
-                ) : (state.overwrites[name] ?? []).length > 0 ? (
-                  <Badge variant="outline">{t('addSkill.confirm.overwriteGroup')}</Badge>
-                ) : null}
-                {skill?.digestVerified ? <Badge variant="outline">{t('addSkill.confirm.trust.digestVerified')}</Badge> : null}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="space-y-2 pt-2">
-        <h2 className="text-sm font-semibold">{t('addSkill.confirm.installPlan')}</h2>
-        <div className="space-y-2">
-          <PlanRow icon={Folder} title={t('addSkill.confirm.defaultLocation')} path={getSharedSkillDirectory(scope)} names={directAgents} />
-          {linkOptions.length > 0 ? (
-            <PlanRow icon={Link2} title={t('addSkill.confirm.createLinks')} names={linkOptions.map((option) => option.displayName)} paths={linkOptions.map((option) => option.path)} />
-          ) : null}
-          {copyOptions.length > 0 ? (
-            <PlanRow icon={Copy} title={t('addSkill.confirm.createCopies')} names={copyOptions.map((option) => option.displayName)} paths={copyOptions.map((option) => option.path)} />
-          ) : null}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function PlanRow({
-  icon: Icon,
-  title,
-  path,
-  paths = [],
-  names,
-}: {
-  icon: typeof Folder;
-  title: string;
-  path?: string;
-  paths?: string[];
-  names: string[];
-}) {
-  return (
-    <div className="rounded-md border bg-muted/15 px-3 py-2.5">
-      <div className="flex items-start gap-2.5">
-        <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold">{title}</span>
-            {path ? <code className="truncate text-[11px] text-muted-foreground">{path}</code> : null}
-          </div>
-          {paths.map((item) => <code key={item} className="block truncate text-[11px] text-muted-foreground">{item}</code>)}
-          <div className="flex flex-wrap gap-1.5">
-            {names.map((name) => <Badge key={name} variant="outline">{name}</Badge>)}
-          </div>
-        </div>
-      </div>
+      <InstallConfirmationSummary
+        state={state} isPreparing={isPreparing} blockedSkills={blockedSkills} overwriteCount={overwriteCount}
+        defaultPath={getSharedSkillDirectory(scope)} directAgents={directAgents}
+        agentCount={new Set([...(projected?.directAgents ?? []).map(agent => agent.id), ...selectedOptions.flatMap(option => option.agentIds)]).size}
+        linkOptions={linkOptions} copyOptions={copyOptions}
+        onAcknowledge={redirectAcknowledged => updateState({redirectAcknowledged})}
+      />
     </div>
   );
 }

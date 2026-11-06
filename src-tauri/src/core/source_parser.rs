@@ -70,6 +70,9 @@ fn looks_like_git_source(input: &str) -> bool {
     }
     // HTTP(S) URL
     if let Ok(parsed) = Url::parse(input) {
+        if is_hosted_artifact_url(&parsed) {
+            return false;
+        }
         let host = parsed.host_str().unwrap_or("");
         let path = parsed.path();
         if path.split('/').any(|segment| segment == "_git") {
@@ -221,8 +224,11 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
     if input.starts_with("http://") || input.starts_with("https://") {
         let mut result = parse_url(input)?;
         // 合并 fragment ref（URL 提取的 ref 优先，fragment 作为 fallback）
-        // Well-known 类型不应用 fragment ref
-        if result.source_type != SourceType::WellKnown {
+        // 文件下载保留原始 fragment，用于判断地址是否可以长期保存。
+        if matches!(
+            result.source_type,
+            SourceType::GitHub | SourceType::GitLab | SourceType::Git
+        ) {
             result.git_ref = result.git_ref.or(fragment_ref);
             result.skill_filter = fragment_skill_filter.or(result.skill_filter);
         }
@@ -758,6 +764,21 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hosted_download_fragments_remain_part_of_the_original_url() {
+        for source in [
+            "https://github.com/owner/repo/archive/refs/heads/main.zip#section",
+            "https://github.com/owner/repo/releases/download/v1/skills.zip#@demo",
+            "https://gitlab.com/owner/repo/-/archive/main/repo.tar.gz#section",
+        ] {
+            let parsed = parse_source(source).unwrap();
+            assert_eq!(parsed.source_type, SourceType::Download);
+            assert_eq!(parsed.url, source);
+            assert_eq!(parsed.git_ref, None);
+            assert!(crate::core::download_source::maintenance_url(Some(&parsed.url)).is_none());
+        }
+    }
+
     #[test]
     fn version_selection_and_explicit_fragments_have_distinct_meanings() {
         for suffix in [

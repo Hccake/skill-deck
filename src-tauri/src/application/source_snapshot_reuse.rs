@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::application::payload_session::{DiscoverySessionHandle, PayloadSessionManager};
+use crate::core::mutation::CancellationSignal;
 use crate::core::source_identity::{AcquisitionTransportIdentity, NormalizedRef, SourceIdentity};
 use crate::environment::types::{EnvironmentKey, EnvironmentRef};
 
@@ -38,15 +39,23 @@ impl PayloadAcquisitionKey {
 
 #[derive(Clone)]
 pub struct SourceSnapshotReuseIndex {
-    entries: Arc<Mutex<HashMap<PayloadAcquisitionKey, SourceSnapshotReuseEntry>>>,
+    state: Arc<Mutex<SourceSnapshotReuseState>>,
     now: Arc<dyn Fn() -> u64 + Send + Sync>,
+}
+
+#[derive(Default)]
+struct SourceSnapshotReuseState {
+    entries: HashMap<PayloadAcquisitionKey, SourceSnapshotReuseEntry>,
+    generations: HashMap<PayloadAcquisitionKey, u64>,
 }
 
 #[derive(Clone)]
 struct SourceSnapshotReuseEntry {
+    /// Git 引用版本或下载响应摘要；成员版本由各 Skill 的来源摘要单独比较。
     ref_revision: String,
     discovery: DiscoverySessionHandle,
     reuse_deadline_epoch_ms: u64,
+    cancellation: Option<CancellationSignal>,
 }
 
 impl Default for SourceSnapshotReuseIndex {
@@ -58,28 +67,58 @@ impl Default for SourceSnapshotReuseIndex {
 impl SourceSnapshotReuseIndex {
     pub fn with_clock(now: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
         Self {
-            entries: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(SourceSnapshotReuseState::default())),
             now: Arc::new(now),
         }
+    }
+
+    pub fn generation(&self, key: &PayloadAcquisitionKey) -> u64 {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.generations.get(key).copied())
+            .unwrap_or(0)
     }
 
     pub fn remember(
         &self,
         key: PayloadAcquisitionKey,
-        ref_revision: String,
+        revision: String,
         discovery: DiscoverySessionHandle,
     ) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.insert(
-                key,
-                SourceSnapshotReuseEntry {
-                    ref_revision,
-                    discovery,
-                    reuse_deadline_epoch_ms: (self.now)()
-                        .saturating_add(SOURCE_SNAPSHOT_REUSE_TTL_MS),
-                },
-            );
+        let generation = self.generation(&key);
+        self.remember_if_current(key, generation, revision, discovery, None);
+    }
+
+    /// 只登记当前获取代次的结果；新检查开始后，迟到的旧获取不能重新开放复用。
+    pub fn remember_if_current(
+        &self,
+        key: PayloadAcquisitionKey,
+        generation: u64,
+        revision: String,
+        discovery: DiscoverySessionHandle,
+        cancellation: Option<CancellationSignal>,
+    ) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        if state.generations.get(&key).copied().unwrap_or(0) != generation
+            || cancellation
+                .as_ref()
+                .is_some_and(CancellationSignal::is_cancelled)
+        {
+            return false;
         }
+        state.entries.insert(
+            key,
+            SourceSnapshotReuseEntry {
+                ref_revision: revision,
+                discovery,
+                reuse_deadline_epoch_ms: (self.now)().saturating_add(SOURCE_SNAPSHOT_REUSE_TTL_MS),
+                cancellation,
+            },
+        );
+        true
     }
 
     pub fn find(
@@ -88,12 +127,16 @@ impl SourceSnapshotReuseIndex {
         ref_revision: &str,
         sessions: &PayloadSessionManager,
     ) -> Option<DiscoverySessionHandle> {
-        let mut entries = self.entries.lock().ok()?;
-        let entry = entries.get(key)?.clone();
+        let mut state = self.state.lock().ok()?;
+        let entry = state.entries.get(key)?.clone();
         if entry.reuse_deadline_epoch_ms < (self.now)()
+            || entry
+                .cancellation
+                .as_ref()
+                .is_some_and(CancellationSignal::is_cancelled)
             || sessions.source_snapshot(&entry.discovery).is_err()
         {
-            entries.remove(key);
+            state.entries.remove(key);
             return None;
         }
         (entry.ref_revision == ref_revision).then_some(entry.discovery)
@@ -104,28 +147,34 @@ impl SourceSnapshotReuseIndex {
         key: &PayloadAcquisitionKey,
         sessions: &PayloadSessionManager,
     ) -> Option<(String, DiscoverySessionHandle)> {
-        let mut entries = self.entries.lock().ok()?;
-        let entry = entries.get(key)?.clone();
+        let mut state = self.state.lock().ok()?;
+        let entry = state.entries.get(key)?.clone();
         if entry.reuse_deadline_epoch_ms < (self.now)()
+            || entry
+                .cancellation
+                .as_ref()
+                .is_some_and(CancellationSignal::is_cancelled)
             || sessions.source_snapshot(&entry.discovery).is_err()
         {
-            entries.remove(key);
+            state.entries.remove(key);
             return None;
         }
         Some((entry.ref_revision, entry.discovery))
     }
 
     pub fn invalidate(&self, key: &PayloadAcquisitionKey) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.remove(key);
+        if let Ok(mut state) = self.state.lock() {
+            state.entries.remove(key);
+            let generation = state.generations.entry(key.clone()).or_default();
+            *generation = generation.wrapping_add(1);
         }
     }
 
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.entries
+        self.state
             .lock()
-            .map(|entries| entries.len())
+            .map(|state| state.entries.len())
             .unwrap_or(0)
     }
 }
@@ -183,6 +232,51 @@ mod tests {
             max_sessions: 8,
             max_bytes: 1024 * 1024,
         }
+    }
+
+    #[tokio::test]
+    async fn a_new_check_prevents_late_candidate_registration_without_retiring_a_preview() {
+        let sessions = PayloadSessionManager::in_memory(limits(), || 1_000);
+        let handle = sessions
+            .discover_with_retained_source(EnvironmentRef::Native, "source", retained_source())
+            .await
+            .unwrap();
+        let index = SourceSnapshotReuseIndex::with_clock(|| 1_000);
+        let generation = index.generation(&key());
+        index.remember_if_current(key(), generation, "old".into(), handle.clone(), None);
+        index.invalidate(&key());
+        assert!(!index.remember_if_current(key(), generation, "late".into(), handle.clone(), None));
+        assert!(index.candidate(&key(), &sessions).is_none());
+        assert!(sessions.source_snapshot(&handle).is_ok());
+        assert!(index.remember_if_current(
+            key(),
+            index.generation(&key()),
+            "current".into(),
+            handle,
+            None,
+        ));
+        assert_eq!(index.candidate(&key(), &sessions).unwrap().0, "current");
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_registration_rejects_candidate_but_keeps_retained_content() {
+        let sessions = PayloadSessionManager::in_memory(limits(), || 1_000);
+        let handle = sessions
+            .discover_with_retained_source(EnvironmentRef::Native, "source", retained_source())
+            .await
+            .unwrap();
+        let index = SourceSnapshotReuseIndex::with_clock(|| 1_000);
+        let cancellation = CancellationSignal::default();
+        assert!(index.remember_if_current(
+            key(),
+            0,
+            "response".into(),
+            handle.clone(),
+            Some(cancellation.clone())
+        ));
+        cancellation.cancel();
+        assert!(index.candidate(&key(), &sessions).is_none());
+        assert!(sessions.source_snapshot(&handle).is_ok());
     }
 
     #[tokio::test]

@@ -22,7 +22,9 @@ use crate::application::wellknown_access::{
 use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
-use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
+#[cfg(test)]
+use crate::core::skill_payload::compute_cli_project_hash_from_payload;
+use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash};
 use crate::core::{compute_local_tree_sha, get_owner_repo, CloneProgress, DiscoverOptions};
 use crate::environment::types::EnvironmentRef;
 use crate::error::{AppError, SourceAcquisitionFailureReason};
@@ -709,8 +711,11 @@ impl SelectedPayloadAcquisitionService {
             return Ok(catalog.clone());
         }
         let documents = match source.location() {
-            DiscoverySourceLocation::Native { root, ref_revision } => {
-                let is_git = ref_revision.is_some();
+            DiscoverySourceLocation::Native { root, .. } => {
+                let is_git = matches!(
+                    source.descriptor().source_type.as_str(),
+                    "github" | "gitlab" | "git"
+                );
                 let root = root.clone();
                 let cancel = cancellation.clone();
                 tokio::task::spawn_blocking(move || {
@@ -1115,7 +1120,7 @@ fn prepare_native_payload(
     let metadata = planning_metadata(
         source.descriptor(),
         skill,
-        compute_cli_project_hash_from_payload(&payload)?,
+        compute_cli_project_hash(&source_root)?,
         upstream_revision,
         source.well_known_metadata(&skill.skill_name),
     );

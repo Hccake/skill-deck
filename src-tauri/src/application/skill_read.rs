@@ -1401,6 +1401,7 @@ fn project_candidate(
         has_update: None,
         can_run_update: None,
         can_check_for_updates: None,
+        can_check_automatically: None,
         update_reason: None,
         plugin_name: None,
         git_ref: None,

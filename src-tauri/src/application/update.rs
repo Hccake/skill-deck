@@ -70,6 +70,7 @@ pub enum UpdateCheckReasonCode {
 pub struct CheckUpdateCapability {
     pub can_run_update: bool,
     pub can_check_for_updates: bool,
+    pub can_check_automatically: bool,
     pub reason: Option<UpdateCapabilityReasonCode>,
 }
 
@@ -156,9 +157,26 @@ pub enum UpdateCheckOutcome {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateCheckResponse {
+    pub skipped: Vec<SkippedUpdateCheck>,
     pub outcome: UpdateCheckOutcome,
     pub sources: Vec<SourceUpdateCheckInfo>,
     pub skills: Vec<SkillUpdateInfo>,
+}
+
+/// 正常未参与本次远端比较的成员，不产生成功比较时间或请求失败。
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedUpdateCheck {
+    pub name: String,
+    pub reason: UpdateCheckSkipReason,
+    pub comparison_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateCheckSkipReason {
+    ManualOnly,
+    NotMaintainable,
 }
 
 pub fn derive_update_capability(
@@ -169,16 +187,19 @@ pub fn derive_update_capability(
         (true, true) => CheckUpdateCapability {
             can_run_update: true,
             can_check_for_updates: true,
+            can_check_automatically: true,
             reason: None,
         },
         (true, false) => CheckUpdateCapability {
             can_run_update: true,
             can_check_for_updates: false,
+            can_check_automatically: false,
             reason: Some(UpdateCapabilityReasonCode::MissingRemoteHash),
         },
         (false, _) => CheckUpdateCapability {
             can_run_update: false,
             can_check_for_updates: false,
+            can_check_automatically: false,
             reason: Some(UpdateCapabilityReasonCode::MissingSource),
         },
     }
@@ -193,6 +214,7 @@ pub fn derive_update_capability_from_metadata(
         metadata.comparison_baseline().is_some(),
     );
     capability.can_check_for_updates = core.can_check_for_updates;
+    capability.can_check_automatically = core.can_check_automatically;
     capability.reason = match core.reason.as_deref() {
         None => None,
         Some("missing-remote-hash") => Some(UpdateCapabilityReasonCode::MissingRemoteHash),
@@ -248,6 +270,8 @@ pub struct PreparedUpdatePreview {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateSourcePreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_redirect: Option<DownloadRedirect>,
     pub source_key: String,
     pub source_display: String,
     pub ref_display: String,
@@ -255,6 +279,14 @@ pub struct UpdateSourcePreview {
     pub ref_kind: Option<crate::models::GitRefKind>,
     pub skill_names: Vec<String>,
     pub error: Option<AppError>,
+}
+
+/// 原始请求和本次固定内容的实际下载站点，随来源分组绑定。
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadRedirect {
+    pub original_host: String,
+    pub actual_host: String,
 }
 
 pub struct PreparedUpdate {
@@ -600,7 +632,25 @@ where
                         .any(|skill| source.skill_names.contains(&skill.name))
                 });
                 let (ref_display, ref_kind) = identity.reference_display();
+                let download_redirect =
+                    if identity.remote().provider() == &crate::core::SourceProvider::Download {
+                        acquired
+                            .and_then(|source| source.result.as_ref().ok())
+                            .and_then(|content| content.redirected_download_hosts.first())
+                            .and_then(|actual_host| {
+                                let url = crate::core::download_source::maintenance_url(
+                                    group.skills[0].metadata.source_url.as_deref(),
+                                )?;
+                                Some(DownloadRedirect {
+                                    original_host: url.host_str()?.to_string(),
+                                    actual_host: actual_host.clone(),
+                                })
+                            })
+                    } else {
+                        None
+                    };
                 Ok(UpdateSourcePreview {
+                    download_redirect,
                     source_key: acquired.map_or_else(
                         || group.source_result_id.clone(),
                         |source| source.source_result_id.clone(),

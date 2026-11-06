@@ -255,6 +255,18 @@ impl ErrorReport {
                     .insert("reason".to_string(), reason.code().to_string());
                 report
             }
+            AppError::DownloadRateLimited { retry_at_epoch_ms } => {
+                let mut report = Self::new(OperationErrorCode::ExecutionFailed);
+                report
+                    .parameters
+                    .insert("reason".into(), "rateLimited".into());
+                if let Some(deadline) = retry_at_epoch_ms {
+                    report
+                        .parameters
+                        .insert("retryAtEpochMs".into(), deadline.to_string());
+                }
+                report
+            }
             AppError::DirectDownloadConflict { target } => {
                 let mut report = Self::new(OperationErrorCode::Validation);
                 report

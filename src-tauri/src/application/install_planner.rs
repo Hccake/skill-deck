@@ -657,9 +657,11 @@ fn build_unit(
         target: request.context.clone(),
         expected_revisions: facts.revisions.clone(),
         entries,
-        lock_mutation: (metadata.source_type != "download")
-            .then(|| lock_mutation(facts, metadata, eve_subagents, &install_mode, now))
-            .transpose()?,
+        lock_mutation: (metadata.source_type != "download"
+            || crate::core::download_source::maintenance_url(metadata.source_url.as_deref())
+                .is_some())
+        .then(|| lock_mutation(facts, metadata, eve_subagents, &install_mode, now))
+        .transpose()?,
     })
 }
 
@@ -1365,7 +1367,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_download_only_plans_new_install_without_lock_mutation() {
+    async fn direct_download_requires_consent_and_records_only_maintainable_sources() {
+        for source_url in [
+            "https://example.com/SKILL.md",
+            "https://example.com/SKILL.md?token=temporary",
+        ] {
+            for redirected in [false, true] {
+                verify_download_install_policy(source_url, redirected).await;
+            }
+        }
+    }
+
+    async fn verify_download_install_policy(source_url: &str, redirected: bool) {
         let temp = tempdir().unwrap();
         let physical_root = fs::canonicalize(temp.path()).unwrap();
         let canonical_root = physical_root.join(".agents/skills");
@@ -1396,12 +1409,12 @@ mod tests {
                         ref_revision: None,
                     },
                     DiscoverySourceDescriptor {
-                        source: "https://example.com/SKILL.md".to_string(),
+                        source: source_url.to_string(),
                         source_type: "download".to_string(),
-                        source_url: Some("https://example.com/SKILL.md".to_string()),
+                        source_url: Some(source_url.to_string()),
                         ref_name: None,
                         ref_kind: None,
-                        redirected_download_host: Some("cdn.example.net".to_string()),
+                        redirected_download_host: redirected.then(|| "cdn.example.net".to_string()),
                     },
                     BTreeMap::new(),
                     (),
@@ -1417,14 +1430,14 @@ mod tests {
                 PayloadPlanningMetadata {
                     skill_name: "demo".to_string(),
                     install_dir_name: "demo".to_string(),
-                    source: "https://example.com/SKILL.md".to_string(),
+                    source: source_url.to_string(),
                     source_type: "download".to_string(),
-                    source_url: Some("https://example.com/SKILL.md".to_string()),
+                    source_url: Some(source_url.to_string()),
                     ref_name: None,
                     ref_kind: None,
                     skill_path: "SKILL.md".to_string(),
                     plugin_name: None,
-                    computed_hash: "download-computed-hash".to_string(),
+                    computed_hash: "a".repeat(64),
                     upstream_revision: None,
                     well_known: None,
                 },
@@ -1478,7 +1491,7 @@ mod tests {
         );
         let request = InstallRequest {
             context,
-            source: "https://example.com/SKILL.md".to_string(),
+            source: source_url.to_string(),
             discovery_session: discovery,
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
@@ -1489,11 +1502,13 @@ mod tests {
         let unacknowledged = planner
             .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await;
-        assert!(matches!(
-            unacknowledged,
-            Err(AppError::DirectDownloadRedirectConfirmationRequired { host })
-                if host == "cdn.example.net"
-        ));
+        if redirected {
+            assert!(
+                matches!(unacknowledged, Err(AppError::DirectDownloadRedirectConfirmationRequired { host }) if host == "cdn.example.net")
+            );
+        } else {
+            assert!(unacknowledged.is_ok());
+        }
         let request = InstallRequest {
             acknowledge_redirect: true,
             ..request
@@ -1503,7 +1518,19 @@ mod tests {
             .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
             .await
             .unwrap();
-        assert!(plan.units[0].lock_mutation.is_none());
+        if source_url.contains('?') {
+            assert!(plan.units[0].lock_mutation.is_none());
+        } else {
+            let recorded = plan.units[0]
+                .lock_mutation
+                .as_ref()
+                .unwrap()
+                .replacement()
+                .unwrap();
+            assert_eq!(recorded["sourceType"], "download");
+            assert_eq!(recorded["sourceUrl"], source_url);
+            assert_eq!(recorded["skillFolderHash"], "a".repeat(64));
+        }
 
         fs::create_dir_all(canonical_root.join("demo")).unwrap();
         let conflict_preview = planner

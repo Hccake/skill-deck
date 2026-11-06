@@ -407,6 +407,284 @@ struct FixtureCleanup {
     root: String,
 }
 
+#[tokio::test]
+#[ignore = "requires Windows and a matching real WSL 2 Worker"]
+async fn real_wsl2_download_install_check_and_update_use_native_http_and_worker_storage(
+) -> Result<(), AppError> {
+    use crate::application::agent_selection::test_submission_for_agents_and_own_directories;
+    use crate::application::git_transport::UnavailableGitSourceTransport;
+    use crate::application::install::{InstallPreviewOutcome, InstallRequest, InstallService};
+    use crate::application::install_planner::ConcreteInstallPlanner;
+    use crate::application::library_candidates::EmptyLibraryCandidateSource;
+    use crate::application::resources::SkillIdentity;
+    use crate::application::source_acquisition::{
+        AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService,
+    };
+    use crate::application::source_evidence::SourceEvidenceCoordinator;
+    use crate::application::source_evidence_provider::RuntimeSourceEvidenceDetector;
+    use crate::application::source_evidence_provider::UnavailableGithubAccess;
+    use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
+    use crate::application::update::{
+        SkillUpdateCheckStatus, UpdateCheckMode, UpdateCheckRequest, UpdateCheckSelection,
+    };
+    use crate::application::update_check::UpdateCheckService;
+    use crate::application::wellknown_access::UnavailableWellKnownAccess;
+    use crate::native_workflow_integration_support::download_maintenance::{
+        content, markdown, DownloadFixture,
+    };
+    use crate::runtime::download::RuntimeDownloadAccess;
+    use crate::runtime::proxy_settings::ProxySettingsStore;
+    use crate::runtime::source_acquisition::SourceDiscoveryService;
+    use crate::runtime::update_service::RuntimeSkillSourceModule;
+    use crate::runtime::wsl_source::RuntimeWslSourceAccess;
+
+    let distro = std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".into());
+    let runtime = Arc::new(WslRuntime::for_wsl_test());
+    let session = runtime.connect(&distro).await?;
+    let workspace = runtime.workspace(&distro)?;
+    let root = format!(
+        "/tmp/skill-deck-cli-update-{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    let _cleanup = FixtureCleanup {
+        distro: distro.clone(),
+        root: root.clone(),
+    };
+    run_fixture(
+        &distro,
+        "mkdir -p \"$1/project/.codebuddy\" \"$1/home/.config\"",
+        std::slice::from_ref(&root),
+    )
+    .await?;
+    let environment = EnvironmentRef::Wsl {
+        distro_name: distro.clone(),
+    };
+    let locator = |path: String| ResourceLocator {
+        environment: environment.clone(),
+        native_path: path,
+    };
+    let context = SkillLocationRef {
+        environment: environment.clone(),
+        scope: SkillLocation::Project {
+            project_id: "fixture".into(),
+        },
+    };
+    let project = format!("{root}/project");
+    let home = format!("{root}/home");
+    let revision = format!("fixture-worker-{}", session.runtime_generation);
+    let registry = crate::native_workflow_integration_support::test_registry();
+    let agent_runtime = AgentEnvironmentResolver::from_environment(EnvironmentContext {
+        environment: environment.clone(),
+        home: home.clone(),
+        config_home: format!("{home}/.config"),
+        environment_variables: BTreeMap::new(),
+        availability: EnvironmentStatus::Available,
+        revision: revision.clone(),
+        wsl_workspace: Some(workspace.clone()),
+    })
+    .resolve_registry(&registry, Some(&project))
+    .await?;
+    let facts = FixtureFacts {
+        initial: ScopePlanningSnapshot {
+            resolved_context: ResolvedContext {
+                context: context.clone(),
+                project: Some(RegisteredProject {
+                    id: "fixture".into(),
+                    native_path: project.clone(),
+                    display_name: None,
+                    order: None,
+                    suppress_cross_storage_warning: false,
+                }),
+                home: locator(home),
+                skill_root: locator(format!("{project}/.agents/skills")),
+                lock: locator(format!("{project}/skills-lock.json")),
+            },
+            agent_runtime,
+            revisions: RuntimeRevisions {
+                registry: registry.revision.clone(),
+                environment: revision,
+                context: ContextSnapshotRevision::parse("context-v1-download-wsl")?,
+            },
+            lock_schema: LockSchema::Project,
+            lock_document: crate::core::lossless_lock::LosslessLockDocument::empty(
+                LockSchema::Project,
+            ),
+            eve_targets: Vec::new(),
+        },
+        workspace,
+    };
+    let manager = Arc::new(PayloadSessionManager::in_memory(
+        PayloadSessionLimits {
+            ttl_ms: 60_000,
+            max_sessions: 8,
+            max_bytes: 8 * 1024 * 1024,
+        },
+        || 1_000,
+    ));
+    let settings = Arc::new(ProxySettingsStore::new(
+        crate::models::NetworkProxySettings::default(),
+    ));
+    let download = RuntimeDownloadAccess::for_test();
+    let wsl = Arc::new(RuntimeWslSourceAccess::new(
+        manager.clone(),
+        runtime.clone(),
+        settings,
+        Arc::new(UnavailableWellKnownAccess),
+        download.clone(),
+    ));
+    let transport = Arc::new(UnavailableGitSourceTransport);
+    let remote = DownloadFixture::new(false, true);
+    let discovery = SourceDiscoveryService::new(
+        manager.clone(),
+        transport.clone(),
+        Arc::new(UnavailableWellKnownAccess),
+        download.clone(),
+        wsl.clone(),
+    )
+    .discover(environment.clone(), remote.url.clone(), |_| {})
+    .await?;
+    let handles = SelectedPayloadAcquisitionService::new(manager.clone())
+        .acquire(AcquireSelectedPayloadsRequest {
+            discovery_session: discovery.discovery_session.clone(),
+            skill_paths: discovery
+                .skills
+                .iter()
+                .map(|skill| skill.relative_path.clone())
+                .collect(),
+        })
+        .await?;
+    let targets = RuntimeTargetFactResolver::new(runtime.clone());
+    let selection = test_submission_for_agents_and_own_directories(
+        &context,
+        &facts.initial.agent_runtime,
+        &[],
+        &facts.initial.resolved_context.skill_root,
+        &targets,
+        &[],
+        crate::models::InstallMode::Copy,
+    )
+    .await;
+    let recovery = tempfile::tempdir()?;
+    let executor = || {
+        RuntimePlanExecutor::new(
+            runtime.clone(),
+            Arc::new(NativeRecoveryMarkerStore::new(recovery.path()).unwrap()),
+            Arc::new(RuntimeLockCommitter::new()),
+            Arc::new(facts.clone()),
+        )
+    };
+    let installer = InstallService::new(
+        manager.clone(),
+        ConcreteInstallPlanner::new(
+            facts.clone(),
+            targets.clone(),
+            manager.clone(),
+            || "2026-11-07T00:00:00Z".into(),
+            Arc::new(EmptyLibraryCandidateSource),
+        ),
+        executor(),
+    );
+    let request = InstallRequest {
+        context: context.clone(),
+        source: remote.url.clone(),
+        discovery_session: discovery.discovery_session,
+        payloads: handles,
+        skills: vec!["demo".into()],
+        agent_selection: selection,
+        acknowledge_redirect: true,
+    };
+    let InstallPreviewOutcome::Ready { preview } = installer.preview(&request).await? else {
+        panic!("ready install preview");
+    };
+    let installed = installer
+        .execute(&request, preview.token, CancellationSignal::default())
+        .await?;
+    assert!(
+        installed.units[0].lock_committed,
+        "{:?}",
+        installed.units[0]
+    );
+    *remote.body.lock().unwrap() = content(false, "", "v2");
+    let snapshots = Arc::new(SourceSnapshotReuseIndex::default());
+    let evidence = SourceEvidenceCoordinator::new(Arc::new(RuntimeSourceEvidenceDetector::new(
+        manager.clone(),
+        snapshots.clone(),
+        Arc::new(UnavailableGithubAccess),
+        transport.clone(),
+        wsl.clone(),
+        Arc::new(UnavailableWellKnownAccess),
+        download.clone(),
+    )));
+    let libraries: Arc<dyn SkillLibraryRepository> = Arc::new(EmptyLibraries);
+    let checks = UpdateCheckService::new(
+        InstalledUpdateRecordProvider::new(facts.clone(), targets.clone(), libraries.clone()),
+        evidence.clone(),
+    );
+    let check = UpdateCheckRequest {
+        context: context.clone(),
+        mode: UpdateCheckMode::Force,
+        selection: UpdateCheckSelection::Skills(vec![SkillIdentity {
+            context: context.clone(),
+            skill_name: "demo".into(),
+        }]),
+    };
+    assert_eq!(
+        checks.check(&check).await?.skills[0].status,
+        SkillUpdateCheckStatus::UpdateAvailable
+    );
+    let source = RuntimeSkillSourceModule::new(
+        manager.clone(),
+        snapshots,
+        evidence,
+        transport,
+        wsl,
+        Arc::new(UnavailableWellKnownAccess),
+        download,
+    );
+    let service = UpdateService::new(
+        manager.clone(),
+        ConcreteUpdatePlanner::new(facts.clone(), targets, manager.clone(), libraries, || {
+            "2026-11-07T00:01:00Z".into()
+        }),
+        source,
+        executor(),
+    );
+    let prepared = service
+        .prepare(
+            &UpdateRequest {
+                context,
+                skill_names: vec!["demo".into()],
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert!(
+        prepared.preview.blocked.is_empty(),
+        "{:?}",
+        prepared.preview.blocked
+    );
+    let count = remote.requests.load(Ordering::SeqCst);
+    let result = service
+        .execute_prepared(prepared, &[], CancellationSignal::default(), |_| {})
+        .await?;
+    assert_eq!(result.outcome, UpdateOutcome::Succeeded, "{result:?}");
+    assert_eq!(remote.requests.load(Ordering::SeqCst), count);
+    let actual = run_fixture(
+        &distro,
+        "cat \"$1/project/.agents/skills/demo/SKILL.md\"",
+        std::slice::from_ref(&root),
+    )
+    .await?;
+    assert_eq!(actual, markdown("v2").into_bytes());
+    assert_eq!(
+        checks.check(&check).await?.skills[0].status,
+        SkillUpdateCheckStatus::UpToDate
+    );
+    manager.retire_wsl_sessions();
+    manager.cleanup().await?;
+    Ok(())
+}
+
 impl Drop for FixtureCleanup {
     fn drop(&mut self) {
         if !self.root.starts_with("/tmp/skill-deck-cli-update-") {

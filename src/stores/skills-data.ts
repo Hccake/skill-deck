@@ -62,7 +62,9 @@ const emptySnapshot = (): ContextSkillSnapshot => ({
   skills: [], agents: [], pathExists: true, loading: false, error: null, requestId: 0,
   libraryApplication: { orderedLibraries: [], selectedAgentIds: [], pending: false, syncState: 'synced' },
 });
-const eligible = (snapshot: ContextSkillSnapshot) => snapshot.skills.filter((skill) => skill.canCheckForUpdates === true);
+const eligible = (snapshot: ContextSkillSnapshot, mode: 'force' | 'automatic' = 'force') => snapshot.skills.filter((skill) => (
+  skill.canCheckForUpdates === true && (mode === 'force' || skill.canCheckAutomatically === true)
+));
 const fingerprint = (skill: SkillListItem) => skill.comparisonFingerprint ?? '';
 const sourceKey = (source: SourceUpdateCheckInfo) => source.sourceKey ?? source.source;
 
@@ -127,7 +129,8 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => {
             if (check?.memberRequests?.[name] !== requestId || (check.invalidatedAt?.[name] ?? 0) > requestId) continue;
             const skill = current.skills.find((skill) => skill.name === name);
             const result = response.skills.find((result) => result.name === name);
-            if (skill && (!result || (result.comparisonFingerprint ?? '') !== fingerprint(skill))) needsRefresh = true;
+            const skipped = response.skipped?.find((item) => item.name === name);
+            if (skill && ((!result && !skipped) || ((result ?? skipped)?.comparisonFingerprint ?? '') !== fingerprint(skill))) needsRefresh = true;
           }
           for (const result of response.skills) {
             const skill = current.skills.find((skill) => skill.name === result.name);
@@ -300,7 +303,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => {
       const snapshot = state.snapshots[key];
       if (!session?.active || !snapshot || snapshot.loading || snapshot.error) return;
       const now = Date.now();
-      const names = eligible(snapshot).filter((skill) => {
+      const names = eligible(snapshot, 'automatic').filter((skill) => {
         const changed = session.observedSkills[skill.name] !== fingerprint(skill);
         if (!changed && skill.updateError?.kind === 'capabilityUnavailable'
           && ['sourceDirectoryLinks', 'sourceSessionCapacity'].includes(skill.updateError.data.capability)) return false;
@@ -315,7 +318,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => {
       }).map((skill) => skill.name);
       if (!names.length) return;
       set((state) => ({ updateCheckSessions: { ...state.updateCheckSessions, [key]: {
-        ...session, observedSkills: Object.fromEntries(eligible(snapshot).map((skill) => [skill.name, fingerprint(skill)])),
+        ...session, observedSkills: Object.fromEntries(eligible(snapshot, 'automatic').map((skill) => [skill.name, fingerprint(skill)])),
       } } }));
       await runCheck(context, names, 'automatic');
     },

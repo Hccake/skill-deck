@@ -8,9 +8,9 @@ use crate::application::source_evidence::{
 };
 use crate::application::update::{
     derive_update_capability_from_metadata, CheckUpdateCapability, SkillUpdateCheckStatus,
-    SkillUpdateInfo, SourceUpdateCheckInfo, UpdateCapabilityReasonCode, UpdateCheckMode,
-    UpdateCheckOutcome, UpdateCheckReasonCode, UpdateCheckRequest, UpdateCheckResponse,
-    UpdateCheckSelection,
+    SkillUpdateInfo, SkippedUpdateCheck, SourceUpdateCheckInfo, UpdateCapabilityReasonCode,
+    UpdateCheckMode, UpdateCheckOutcome, UpdateCheckReasonCode, UpdateCheckRequest,
+    UpdateCheckResponse, UpdateCheckSelection, UpdateCheckSkipReason,
 };
 use crate::application::update_records::{
     BoundInstalledUpdateRecords, BoundLibraryUpdateRecords, InstalledUpdateRecordSnapshots,
@@ -30,6 +30,7 @@ struct UpdateCheckSkill {
 struct PreparedUpdateChecks {
     groups: HashMap<RemoteEvidenceKey, UpdateCheckGroup>,
     immediate_results: Vec<SkillUpdateInfo>,
+    skipped: Vec<SkippedUpdateCheck>,
 }
 
 #[derive(Clone)]
@@ -110,6 +111,7 @@ where
             if skill.maintenance_error.is_some() {
                 skill.can_run_update = Some(false);
                 skill.can_check_for_updates = Some(false);
+                skill.can_check_automatically = Some(false);
                 continue;
             }
             match records.get(&skill.name) {
@@ -119,11 +121,14 @@ where
                 Some(record) if matches!(record.state, UpdateRecordState::Invalid(_)) => {
                     skill.can_run_update = Some(false);
                     skill.can_check_for_updates = Some(true);
+                    skill.can_check_automatically =
+                        Some(skill.source_type.as_deref() != Some("download"));
                     skill.comparison_fingerprint = record.comparison_fingerprint.clone();
                 }
                 _ => {
                     skill.can_run_update = Some(false);
                     skill.can_check_for_updates = Some(false);
+                    skill.can_check_automatically = Some(false);
                     skill.comparison_fingerprint = None;
                 }
             }
@@ -160,7 +165,7 @@ impl UpdateEvidenceModule {
     {
         let initial = source.snapshot(names.clone()).await?;
         let initial_revisions = subject_revisions(&initial);
-        let prepared = prepare_record_checks(initial);
+        let prepared = prepare_record_checks(initial, mode);
         let mut checked = HashMap::new();
         let mut sources = Vec::new();
         let mut detections = tokio::task::JoinSet::new();
@@ -231,7 +236,7 @@ impl UpdateEvidenceModule {
 
         let latest = source.snapshot(names).await?;
         let latest_revisions = subject_revisions(&latest);
-        let latest = prepare_record_checks(latest);
+        let latest = prepare_record_checks(latest, mode);
         let mut skills = latest.immediate_results;
         for (key, group) in latest.groups {
             skills.extend(group.skills.into_iter().map(|skill| {
@@ -264,11 +269,16 @@ impl UpdateEvidenceModule {
         }
         skills.sort_by(|left, right| left.name.cmp(&right.name));
         sources.sort_by(|left, right| left.source.cmp(&right.source));
-        let outcome = update_check_outcome(&sources, &skills);
+        let outcome = if sources.is_empty() && skills.is_empty() && !latest.skipped.is_empty() {
+            UpdateCheckOutcome::Completed
+        } else {
+            update_check_outcome(&sources, &skills)
+        };
         Ok(UpdateCheckResponse {
             outcome,
             sources,
             skills,
+            skipped: latest.skipped,
         })
     }
 }
@@ -292,7 +302,10 @@ fn update_check_outcome(
     let completed = sources.iter().filter(source_completed).count()
         + skills
             .iter()
-            .filter(|skill| skill.status != SkillUpdateCheckStatus::CannotCheck)
+            .filter(|skill| {
+                skill.status != SkillUpdateCheckStatus::CannotCheck
+                    || skill.reason == Some(UpdateCheckReasonCode::MissingRemoteHash)
+            })
             .count();
     let incomplete = sources.len() + skills.len() - completed;
 
@@ -338,7 +351,35 @@ fn projection_entries(snapshot: Vec<UpdateRecord>) -> Vec<(String, RecordProject
         .collect()
 }
 
-fn prepare_record_checks(records: Vec<UpdateRecord>) -> PreparedUpdateChecks {
+fn prepare_record_checks(
+    records: Vec<UpdateRecord>,
+    mode: UpdateCheckMode,
+) -> PreparedUpdateChecks {
+    let mut skipped = Vec::new();
+    let records = records
+        .into_iter()
+        .filter(|record| {
+            let reason = match &record.state {
+                UpdateRecordState::Excluded => Some(UpdateCheckSkipReason::NotMaintainable),
+                UpdateRecordState::Source(RecordProjection::Available(metadata))
+                    if mode == UpdateCheckMode::Automatic && metadata.source_type == "download" =>
+                {
+                    Some(UpdateCheckSkipReason::ManualOnly)
+                }
+                _ => None,
+            };
+            if let Some(reason) = reason {
+                skipped.push(SkippedUpdateCheck {
+                    name: record.skill_name.clone(),
+                    reason,
+                    comparison_fingerprint: record.comparison_fingerprint.clone(),
+                });
+                false
+            } else {
+                true
+            }
+        })
+        .collect::<Vec<_>>();
     let mut failures = records
         .iter()
         .filter_map(|record| match &record.state {
@@ -350,6 +391,7 @@ fn prepare_record_checks(records: Vec<UpdateRecord>) -> PreparedUpdateChecks {
         })
         .collect::<HashMap<_, _>>();
     let mut prepared = prepare_update_checks(projection_entries(records));
+    prepared.skipped = skipped;
     for item in &mut prepared.immediate_results {
         if let Some((error, fingerprint)) = failures.remove(&item.name) {
             item.error = Some(error);
@@ -428,6 +470,7 @@ fn prepare_update_checks(entries: Vec<(String, RecordProjection)>) -> PreparedUp
     PreparedUpdateChecks {
         groups,
         immediate_results,
+        skipped: Vec::new(),
     }
 }
 
@@ -448,6 +491,7 @@ fn unavailable_info(
         capability: CheckUpdateCapability {
             can_run_update: false,
             can_check_for_updates: false,
+            can_check_automatically: false,
             reason: Some(capability_reason),
         },
         reason: Some(reason),
@@ -562,7 +606,7 @@ fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> 
     let revision = evidence.skill_revisions.get(&path).and_then(|revision| {
         match (skill.metadata.source_type.as_str(), revision) {
             ("github", SkillRevision::GitTreeOid(value))
-            | ("git" | "gitlab", SkillRevision::CliContentHash(value))
+            | ("git" | "gitlab" | "download", SkillRevision::CliContentHash(value))
             | ("well-known", SkillRevision::WellKnownDigest(value)) => Some(value.as_str()),
             _ => None,
         }
@@ -613,7 +657,7 @@ fn source_info(group: &UpdateCheckGroup, result: &EvidenceCheckResult) -> Source
         source: group.identity.sanitized_display().to_string(),
         requested_ref: (!matches!(
             group.identity.remote().provider(),
-            crate::core::SourceProvider::WellKnown
+            crate::core::SourceProvider::WellKnown | crate::core::SourceProvider::Download
         ))
         .then(|| match group.identity.normalized_ref() {
             NormalizedRef::Default => "HEAD".to_string(),
@@ -621,7 +665,10 @@ fn source_info(group: &UpdateCheckGroup, result: &EvidenceCheckResult) -> Source
         }),
         resolved_ref: evidence
             .filter(|_| {
-                group.identity.remote().provider() != &crate::core::SourceProvider::WellKnown
+                !matches!(
+                    group.identity.remote().provider(),
+                    crate::core::SourceProvider::WellKnown | crate::core::SourceProvider::Download
+                )
             })
             .map(|entry| {
                 crate::models::GitRefKind::from_transport(&entry.snapshot_id.resolved_ref).0
@@ -677,6 +724,38 @@ fn info(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_download_checks_are_skipped_before_source_acquisition() {
+        let metadata = NormalizedUpdateMetadata {
+            source: "https://example.com/skills.zip".into(),
+            source_type: "download".into(),
+            source_url: Some("https://example.com/skills.zip".into()),
+            ref_name: None,
+            ref_kind: None,
+            skill_path: Some("SKILL.md".into()),
+            remote_hash: Some("a".repeat(64)),
+            computed_hash: None,
+            well_known_digest: None,
+        };
+        let record = || UpdateRecord {
+            skill_name: "demo".into(),
+            revision: "revision".into(),
+            comparison_fingerprint: Some(metadata.comparison_fingerprint()),
+            state: UpdateRecordState::Source(RecordProjection::Available(metadata.clone())),
+        };
+        let automatic = prepare_record_checks(vec![record()], UpdateCheckMode::Automatic);
+        assert!(automatic.groups.is_empty());
+        assert!(automatic.immediate_results.is_empty());
+        assert_eq!(automatic.skipped.len(), 1);
+        assert!(matches!(
+            automatic.skipped[0].reason,
+            UpdateCheckSkipReason::ManualOnly
+        ));
+        let manual = prepare_record_checks(vec![record()], UpdateCheckMode::Force);
+        assert_eq!(manual.groups.len(), 1);
+        assert!(manual.skipped.is_empty());
+    }
+
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1243,7 +1322,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_and_uncheckable_skills_produce_partial_outcome() {
+    async fn a_missing_baseline_does_not_turn_a_successful_check_into_a_request_failure() {
         let lock = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-skills/alpha"},"legacy":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/legacy"}}}"#;
         let detector = Arc::new(RecordingDetector {
             requested: Mutex::new(Vec::new()),
@@ -1261,7 +1340,17 @@ mod tests {
 
         assert_eq!(
             response.outcome,
-            crate::application::update::UpdateCheckOutcome::Partial
+            crate::application::update::UpdateCheckOutcome::Completed
+        );
+        let legacy = response
+            .skills
+            .iter()
+            .find(|skill| skill.name == "legacy")
+            .unwrap();
+        assert_eq!(legacy.status, SkillUpdateCheckStatus::CannotCheck);
+        assert_eq!(
+            legacy.reason,
+            Some(UpdateCheckReasonCode::MissingRemoteHash)
         );
     }
 

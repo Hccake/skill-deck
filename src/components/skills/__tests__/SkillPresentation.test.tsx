@@ -17,11 +17,11 @@ const installed: SkillListItem = { name: 'toolkit', description: 'Toolkit', path
 const library: LibrarySkillSummary = { name: 'toolkit', description: 'Toolkit', source: 'owner/repo', sourceType: 'git', sourceUrl: 'https://github.com/owner/repo',
   skillPath: 'skills/toolkit', contentHash: 'hash', updatedAt: null, pluginName: null, refName: null };
 const check: SkillUpdateInfo = { name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'updateAvailable', reason: null,
-  capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, gitRef: null, sourceUrl: null, skillPath: null, freshness: 'backingOff',
+  capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null }, gitRef: null, sourceUrl: null, skillPath: null, freshness: 'backingOff',
   error: { kind: 'gitNetworkError', data: { message: 'connection failed' } } };
 
 function renderView(view: string, local: boolean) {
-  const skill: SkillListItem = local ? { ...installed, source: null, sourceUrl: null, updateReason: 'local-source', canCheckForUpdates: false, canRunUpdate: false }
+  const skill: SkillListItem = local ? { ...installed, source: null, sourceUrl: null, updateReason: 'local-source', canCheckForUpdates: false, canCheckAutomatically: false, canRunUpdate: false }
     : { ...installed, hasUpdate: true, updateStatus: 'updateAvailable', updateError: check.error };
   const member = local ? { ...library, source: '/work/toolkit', sourceType: 'local', sourceUrl: null } : library;
   const actions = { onUpdate: vi.fn(), onClose: vi.fn(), onDelete: vi.fn(), onManageAgents: vi.fn(), onCopyToProject: vi.fn(), onRetry: vi.fn() };

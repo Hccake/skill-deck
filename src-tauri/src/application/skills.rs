@@ -54,6 +54,7 @@ fn enrich_environment_skills_from_lock_at(
     for skill in &mut skills {
         skill.can_run_update = Some(false);
         skill.can_check_for_updates = Some(false);
+        skill.can_check_automatically = Some(false);
         skill.update_reason = Some("local-source".to_string());
         skill.source_filter = Some(crate::core::source_filter::SourceFilterInfo::local());
     }
@@ -130,6 +131,7 @@ fn enrich_environment_skills_from_lock_at(
             Err(_) => {
                 skill.can_run_update = Some(false);
                 skill.can_check_for_updates = Some(false);
+                skill.can_check_automatically = Some(false);
                 skill.update_reason = Some("missingSource".to_string());
                 skill.source_filter =
                     Some(crate::core::source_filter::SourceFilterInfo::incomplete());
@@ -187,6 +189,7 @@ mod environment_tests {
             has_update: None,
             can_run_update: None,
             can_check_for_updates: None,
+            can_check_automatically: None,
             update_reason: None,
             plugin_name: None,
             git_ref: None,

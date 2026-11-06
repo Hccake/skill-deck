@@ -4,7 +4,7 @@ import { resolveUpdateStatusLabelI18nKey } from '@/stores/skills-utils';
 
 describe('Skill status presentation', () => {
   it('keeps downloaded content neutral and out of failed-check summaries', () => {
-    const skill = { source: 'downloads.example', sourceType: 'download', canCheckForUpdates: false, canRunUpdate: false, updateReason: 'download-source', hasUpdate: true };
+    const skill = { source: 'downloads.example', sourceType: 'download', canCheckForUpdates: false, canCheckAutomatically: false, canRunUpdate: false, updateReason: 'download-source', hasUpdate: true };
     const presentation = skillStatusPresentation(skill);
     expect(presentation.local).toBe(false);
     expect(presentation.notice).toBeNull();
@@ -37,7 +37,7 @@ describe('Skill status presentation', () => {
     ] })).toBe('skills.checkUpdatesFailed');
     expect(updateCheckFailureKey({
       skills: [{ name: 'unknown', source: 'other/repo', sourceKey: 'other', hasUpdate: false, status: 'cannotCheck',
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, reason: 'upstreamUnavailable',
+        capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null }, reason: 'upstreamUnavailable',
         gitRef: null, sourceUrl: null, skillPath: null, freshness: 'unavailable' }],
       sources: [{ ...source, sourceKey: 'known', error: { kind: 'gitNetworkError', data: { message: 'offline' } } }],
     })).toBe('skills.checkUpdatesFailed');

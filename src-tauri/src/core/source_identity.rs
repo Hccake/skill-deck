@@ -15,6 +15,7 @@ pub enum SourceProvider {
     Gitlab,
     Git,
     WellKnown,
+    Download,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
@@ -129,6 +130,7 @@ impl AcquisitionDescriptor {
                 SourceProvider::Gitlab => SourceType::GitLab,
                 SourceProvider::Git => SourceType::Git,
                 SourceProvider::WellKnown => SourceType::WellKnown,
+                SourceProvider::Download => SourceType::Download,
             },
             url: self.source.clone(),
             subpath: None,
@@ -173,6 +175,14 @@ impl SourceIdentity {
 
     pub fn from_metadata(metadata: &NormalizedUpdateMetadata) -> Result<Self, AppError> {
         let source_type = parse_source_type(&metadata.source_type)?;
+        if source_type == SourceType::Download {
+            let source =
+                crate::core::download_source::maintenance_url(metadata.source_url.as_deref())
+                    .ok_or_else(|| {
+                        invalid_identity("download requires an explicit maintainable URL")
+                    })?;
+            return Self::build(source_type, source.to_string(), None);
+        }
         let source = metadata
             .source_url
             .clone()
@@ -206,7 +216,32 @@ impl SourceIdentity {
         source: String,
         git_ref: Option<String>,
     ) -> Result<Self, AppError> {
-        if matches!(source_type, SourceType::Local | SourceType::Download) {
+        if source_type == SourceType::Download {
+            let url = crate::core::download_source::maintenance_url(Some(&source))
+                .ok_or_else(|| invalid_identity("download URL cannot be retained"))?;
+            let source = url.to_string();
+            let authority = url[url::Position::BeforeHost..url::Position::AfterPort].to_string();
+            let repository = format!("download-v1:{:x}", Sha256::digest(source.as_bytes()));
+            return Ok(Self {
+                remote: RemoteSourceIdentity {
+                    provider: SourceProvider::Download,
+                    authority: authority.clone(),
+                    repository: repository.clone(),
+                },
+                transport: AcquisitionTransportIdentity {
+                    transport: AcquisitionTransport::Https,
+                    authority: authority.clone(),
+                    repository,
+                },
+                normalized_ref: NormalizedRef::Default,
+                acquisition: AcquisitionDescriptor {
+                    source,
+                    git_ref: None,
+                },
+                display: format!("{authority}{}", url.path()),
+            });
+        }
+        if source_type == SourceType::Local {
             return Err(invalid_identity(
                 "source does not have a remote Git identity",
             ));
@@ -403,6 +438,42 @@ fn invalid_identity(reason: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn download_identity_preserves_http_path_and_transport_semantics() {
+        let identity = |url: &str| {
+            SourceIdentity::from_parsed(&crate::models::ParsedSource {
+                source_type: SourceType::Download,
+                url: url.into(),
+                subpath: None,
+                local_path: None,
+                git_ref: None,
+                ref_kind: None,
+                skill_filter: None,
+            })
+            .unwrap()
+        };
+        let urls = [
+            "https://example.com/Pack.zip",
+            "https://example.com/pack.zip",
+            "http://example.com/Pack.zip",
+            "https://example.com:8443/Pack.zip",
+            "https://example.com/Pack.zip/",
+            "https://example.com/Pack.zip.git",
+        ];
+        let keys = urls
+            .iter()
+            .map(|url| identity(url).key())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(keys.len(), urls.len());
+        let source = identity(urls[0]);
+        let restored = source
+            .acquisition()
+            .parsed_source(source.remote().provider());
+        assert_eq!(restored.source_type, SourceType::Download);
+        assert_eq!(restored.url, urls[0]);
+        assert_eq!(restored.git_ref, None);
+    }
+
     #[test]
     fn pinned_and_named_sources_have_separate_evidence_and_round_trip_targets() {
         let sha = "a".repeat(40);

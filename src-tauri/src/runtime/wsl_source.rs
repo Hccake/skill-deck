@@ -3,14 +3,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::application::download_source::materialize_download;
 use crate::application::payload_session::{
     DiscoverySkillSnapshot, DiscoverySourceDescriptor, DiscoverySourceLocation,
     PayloadSessionManager, PayloadSessionStorage, RetainedDiscoverySource,
 };
 use crate::application::source_acquisition::FetchResult;
 use crate::application::source_acquisition::{
-    attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
+    attempt_wellknown_then_download, invalid_source, retain_discovered_source,
     snapshot_fingerprint, source_identifier, InternalSkillVisibility, ManagedDownloadedDirectory,
     RetainedSourceOptions, SourceDiscoveryPolicy,
 };
@@ -235,11 +234,13 @@ impl RuntimeWslSourceAccess {
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
         let workspace = self.environments.workspace(distro_name)?;
-        let fetched = self.download.fetch(&parsed.url, &cancellation).await?;
-        let materialized = materialize_download(&fetched.bytes)?;
-        let root = materialized.keep();
+        let downloaded = self
+            .download
+            .materialize(&parsed.url, &cancellation)
+            .await?;
+        let root = downloaded.directory.keep();
         let owner = ManagedDownloadedDirectory::new(root.clone());
-        let redirected_download_host = redirected_host(&parsed.url, &fetched.final_url);
+        let redirected_download_host = downloaded.redirected_host;
         parsed.source_type = SourceType::Download;
         let environment = EnvironmentRef::Wsl {
             distro_name: distro_name.to_string(),
@@ -258,12 +259,13 @@ impl RuntimeWslSourceAccess {
                         requested_source,
                         DiscoverySourceLocation::Native {
                             root: root.clone(),
-                            ref_revision: None,
+                            ref_revision: Some(downloaded.snapshot_revision),
                         },
                         root,
                         owner,
                         RetainedSourceOptions {
                             storage: Some(storage),
+                            allow_empty_catalog: policy.allow_empty_catalog,
                             redirected_download_host,
                             full_depth: policy.full_depth,
                             internal_skill_visibility: policy.internal_skill_visibility,

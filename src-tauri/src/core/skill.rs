@@ -181,9 +181,12 @@ pub struct InstalledSkill {
     /// 是否可直接执行更新
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_run_update: Option<bool>,
-    /// 是否可自动检查更新
+    /// 是否具备版本比较能力
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_check_for_updates: Option<bool>,
+    /// 是否允许页面加载等自动触发进行检查
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_check_automatically: Option<bool>,
     /// 更新能力缺失原因
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update_reason: Option<String>,
@@ -253,8 +256,11 @@ impl InstalledSkill {
             let capability = derive_update_capability(&normalize_global_lock_entry(e));
             self.can_run_update = Some(capability.can_run_update);
             self.can_check_for_updates = Some(capability.can_check_for_updates);
+            self.can_check_automatically = Some(capability.can_check_automatically);
             self.update_reason = capability.reason;
             if e.source_type == "download" {
+                self.git_ref = None;
+                self.ref_kind = None;
                 let display = crate::core::source_display::download_source_display(
                     &e.source,
                     Some(&e.source_url),
@@ -301,8 +307,11 @@ impl InstalledSkill {
             let capability = derive_update_capability(&metadata);
             self.can_run_update = Some(capability.can_run_update);
             self.can_check_for_updates = Some(capability.can_check_for_updates);
+            self.can_check_automatically = Some(capability.can_check_automatically);
             self.update_reason = capability.reason;
             if e.source_type == "download" {
+                self.git_ref = None;
+                self.ref_kind = None;
                 let display = crate::core::source_display::download_source_display(
                     &e.source,
                     e.source_url.as_deref(),
@@ -478,6 +487,7 @@ Content.
             has_update: None,
             can_run_update: None,
             can_check_for_updates: None,
+            can_check_automatically: None,
             update_reason: None,
             plugin_name: None,
             git_ref: None,
@@ -549,6 +559,7 @@ Content.
             has_update: None,
             can_run_update: None,
             can_check_for_updates: None,
+            can_check_automatically: None,
             update_reason: None,
             plugin_name: None,
             git_ref: None,

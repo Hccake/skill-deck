@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use crate::application::download_source::materialize_download;
 use crate::application::git_transport::GitSourceTransport;
 use crate::application::payload_session::{DiscoverySourceLocation, PayloadSessionManager};
 use crate::application::source_acquisition::FetchResult;
 use crate::application::source_acquisition::{
-    attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
-    GitSourceDiscovery, InternalSkillVisibility, ManagedDownloadedDirectory, RetainedSourceOptions,
+    attempt_wellknown_then_download, invalid_source, retain_discovered_source, GitSourceDiscovery,
+    InternalSkillVisibility, ManagedDownloadedDirectory, RetainedSourceOptions,
     SourceDiscoveryPolicy, SourceSelectionIntent,
 };
 use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchError};
@@ -321,35 +320,26 @@ impl SourceDiscoveryService {
     async fn discover_download(
         &self,
         environment: EnvironmentRef,
-        mut parsed: ParsedSource,
-        requested_source: String,
+        parsed: ParsedSource,
+        _requested_source: String,
         internal_skill_visibility: InternalSkillVisibility,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
-        let fetched = self.download.fetch(&parsed.url, &cancellation).await?;
-        let materialized = materialize_download(&fetched.bytes)?;
-        let root = materialized.keep();
-        parsed.source_type = SourceType::Download;
-        let redirected_download_host = redirected_host(&parsed.url, &fetched.final_url);
-        retain_discovered_source(
-            self.sessions.clone(),
-            environment,
-            parsed,
-            requested_source,
-            DiscoverySourceLocation::Native {
-                root: root.clone(),
-                ref_revision: None,
-            },
-            root.clone(),
-            ManagedDownloadedDirectory::new(root),
-            RetainedSourceOptions {
-                redirected_download_host,
-                internal_skill_visibility,
+        self.download
+            .discover(
+                self.sessions.clone(),
+                self.wsl_source.as_ref(),
+                environment,
+                parsed,
+                SourceDiscoveryPolicy {
+                    allow_empty_catalog: false,
+                    selected_skill_names: None,
+                    full_depth: false,
+                    internal_skill_visibility,
+                },
                 cancellation,
-                ..Default::default()
-            },
-        )
-        .await
+            )
+            .await
     }
 }
 

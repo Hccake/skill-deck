@@ -38,6 +38,11 @@ impl NormalizedUpdateMetadata {
 
     pub fn comparison_baseline(&self) -> Option<&str> {
         match self.source_type.as_str() {
+            "download" => self
+                .computed_hash
+                .as_deref()
+                .or(self.remote_hash.as_deref())
+                .filter(|value| crate::core::download_source::valid_content_hash(value)),
             "well-known" => self
                 .well_known_digest
                 .as_deref()
@@ -63,6 +68,7 @@ impl NormalizedUpdateMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateCapability {
     pub can_check_for_updates: bool,
+    pub can_check_automatically: bool,
     pub can_run_update: bool,
     pub reason: Option<String>,
 }
@@ -92,12 +98,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn download_records_do_not_authorize_remote_maintenance() {
-        let metadata = global("download", "content-hash");
+    fn download_records_with_explicit_url_and_content_baseline_allow_manual_maintenance() {
+        let baseline = "a".repeat(64);
+        let metadata = global("download", &baseline);
         let capability = derive_update_capability(&metadata);
-        assert!(!capability.can_run_update);
-        assert!(!capability.can_check_for_updates);
-        assert_eq!(capability.reason.as_deref(), Some("download-source"));
+        assert!(capability.can_run_update);
+        assert!(capability.can_check_for_updates);
+        assert!(!capability.can_check_automatically);
+        assert_eq!(metadata.ref_name, None);
+        assert_eq!(metadata.ref_kind, None);
+        assert_eq!(metadata.comparison_baseline(), Some(baseline.as_str()));
+        assert_eq!(capability.reason, None);
+    }
+
+    #[test]
+    fn download_record_qualification_separates_url_path_and_baseline() {
+        let mut metadata = global("download", "");
+        assert!(derive_update_capability(&metadata).can_run_update);
+        assert!(!derive_update_capability(&metadata).can_check_for_updates);
+        metadata.remote_hash = Some("not-a-content-hash".into());
+        assert_eq!(metadata.comparison_baseline(), None);
+        metadata.remote_hash = Some("b".repeat(64));
+        for url in [
+            None,
+            Some("https://example.com/a.zip?token=private"),
+            Some("https://u:p@example.com/a.zip"),
+            Some("https://example.com/a.zip#member"),
+        ] {
+            metadata.source_url = url.map(str::to_owned);
+            assert!(
+                !derive_update_capability(&metadata).can_run_update,
+                "{url:?}"
+            );
+        }
+        metadata.source_url = Some("https://example.com/SKILL.md".into());
+        metadata.skill_path = Some("SKILL.md".into());
+        assert!(derive_update_capability(&metadata).can_run_update);
+        metadata.skill_path = None;
+        assert!(!derive_update_capability(&metadata).can_run_update);
+    }
+
+    #[test]
+    fn download_normalization_does_not_promote_a_display_url_to_maintenance() {
+        let entry = LocalSkillLockEntry {
+            source: "https://example.com/skills.zip".into(),
+            source_type: "download".into(),
+            computed_hash: "a".repeat(64),
+            skill_path: Some("skills/demo/SKILL.md".into()),
+            source_url: None,
+            ref_name: None,
+            ref_kind: None,
+            remote_hash: None,
+            well_known_digest: None,
+            version: None,
+            via: None,
+            subagents: None,
+            plugin_name: None,
+        };
+        let metadata = normalize_local_lock_entry(&entry);
+        assert_eq!(metadata.source_url, None);
+        assert!(!derive_update_capability(&metadata).can_run_update);
     }
 
     fn global(source_type: &str, baseline: &str) -> NormalizedUpdateMetadata {
@@ -267,7 +327,9 @@ pub fn normalize_global_lock_entry(entry: &SkillLockEntry) -> NormalizedUpdateMe
     NormalizedUpdateMetadata {
         source: entry.source.clone(),
         source_type: entry.source_type.clone(),
-        source_url: if well_known {
+        source_url: if entry.source_type == "download" {
+            (!entry.source_url.is_empty()).then(|| entry.source_url.clone())
+        } else if well_known {
             entry
                 .source_base_url
                 .as_deref()
@@ -280,13 +342,21 @@ pub fn normalize_global_lock_entry(entry: &SkillLockEntry) -> NormalizedUpdateMe
                 Some(entry.source_url.as_str()),
             )
         },
-        ref_name: entry.ref_name.clone(),
-        ref_kind: entry.ref_kind,
+        ref_name: (entry.source_type != "download")
+            .then(|| entry.ref_name.clone())
+            .flatten(),
+        ref_kind: (entry.source_type != "download")
+            .then_some(entry.ref_kind)
+            .flatten(),
         skill_path: entry.skill_path.clone(),
         remote_hash: if entry.skill_folder_hash.is_empty() {
             None
         } else {
-            Some(entry.skill_folder_hash.clone())
+            Some(if entry.source_type == "download" {
+                entry.skill_folder_hash.to_ascii_lowercase()
+            } else {
+                entry.skill_folder_hash.clone()
+            })
         },
         computed_hash: None,
         well_known_digest: entry.well_known_digest.clone(),
@@ -298,7 +368,9 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
     NormalizedUpdateMetadata {
         source: entry.source.clone(),
         source_type: entry.source_type.clone(),
-        source_url: if well_known {
+        source_url: if entry.source_type == "download" {
+            entry.source_url.clone().filter(|value| !value.is_empty())
+        } else if well_known {
             entry
                 .source_url
                 .as_deref()
@@ -311,26 +383,48 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
                 entry.source_url.as_deref(),
             )
         },
-        ref_name: entry.ref_name.clone(),
-        ref_kind: entry.ref_kind,
+        ref_name: (entry.source_type != "download")
+            .then(|| entry.ref_name.clone())
+            .flatten(),
+        ref_kind: (entry.source_type != "download")
+            .then_some(entry.ref_kind)
+            .flatten(),
         skill_path: entry.skill_path.clone(),
         remote_hash: entry.remote_hash.clone(),
-        computed_hash: (!entry.computed_hash.is_empty()).then(|| entry.computed_hash.clone()),
+        computed_hash: (!entry.computed_hash.is_empty()).then(|| {
+            if entry.source_type == "download" {
+                entry.computed_hash.to_ascii_lowercase()
+            } else {
+                entry.computed_hash.clone()
+            }
+        }),
         well_known_digest: entry.well_known_digest.clone(),
     }
 }
 
 pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCapability {
     if metadata.source_type == "download" {
+        let can_run_update =
+            crate::core::download_source::maintenance_url(metadata.source_url.as_deref()).is_some()
+                && crate::core::download_source::valid_member_path(metadata.skill_path.as_deref());
+        let can_check_for_updates = can_run_update && metadata.comparison_baseline().is_some();
         return UpdateCapability {
-            can_check_for_updates: false,
-            can_run_update: false,
-            reason: Some("download-source".into()),
+            can_check_for_updates,
+            can_check_automatically: false,
+            can_run_update,
+            reason: if !can_run_update {
+                Some("download-source".into())
+            } else if !can_check_for_updates {
+                Some("missing-remote-hash".into())
+            } else {
+                None
+            },
         };
     }
     if metadata.source_type == "node_modules" {
         return UpdateCapability {
             can_check_for_updates: false,
+            can_check_automatically: false,
             can_run_update: false,
             reason: Some("dependency-source".to_string()),
         };
@@ -340,6 +434,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
     if !can_run_update {
         return UpdateCapability {
             can_check_for_updates: false,
+            can_check_automatically: false,
             can_run_update: false,
             reason: Some("local-source".to_string()),
         };
@@ -349,12 +444,15 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
         if metadata.source_url.is_none() {
             return UpdateCapability {
                 can_check_for_updates: false,
+                can_check_automatically: false,
                 can_run_update: false,
                 reason: Some("missing-source".to_string()),
             };
         }
         return UpdateCapability {
             can_check_for_updates: metadata.comparison_baseline().is_some()
+                && metadata.source_url.is_some(),
+            can_check_automatically: metadata.comparison_baseline().is_some()
                 && metadata.source_url.is_some(),
             can_run_update: metadata.source_url.is_some(),
             reason: metadata
@@ -367,6 +465,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
     if !matches!(metadata.source_type.as_str(), "github" | "gitlab" | "git") {
         return UpdateCapability {
             can_check_for_updates: false,
+            can_check_automatically: false,
             can_run_update: true,
             reason: Some("unsupported-source-type".to_string()),
         };
@@ -375,6 +474,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
     if metadata.skill_path.as_deref().unwrap_or("").is_empty() {
         return UpdateCapability {
             can_check_for_updates: false,
+            can_check_automatically: false,
             can_run_update: false,
             reason: Some("missing-skill-path".to_string()),
         };
@@ -383,6 +483,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
     if metadata.comparison_baseline().is_none() {
         return UpdateCapability {
             can_check_for_updates: false,
+            can_check_automatically: false,
             can_run_update: true,
             reason: Some("missing-remote-hash".to_string()),
         };
@@ -390,6 +491,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
 
     UpdateCapability {
         can_check_for_updates: true,
+        can_check_automatically: true,
         can_run_update: true,
         reason: None,
     }

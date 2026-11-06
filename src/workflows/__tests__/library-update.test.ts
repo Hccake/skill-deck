@@ -24,7 +24,7 @@ const updateInfo = (status: SkillUpdateInfo['status']): SkillUpdateInfo => ({
   status,
   reason: status === 'cannotCheck' ? 'upstreamUnavailable' : null,
   freshness: status === 'cannotCheck' ? 'unavailable' : 'fresh',
-  capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+  capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
   gitRef: null,
   sourceUrl: 'https://github.com/owner/repo',
   skillPath: 'skills/demo',
@@ -32,6 +32,7 @@ const updateInfo = (status: SkillUpdateInfo['status']): SkillUpdateInfo => ({
 });
 const checkResponse = (skill: SkillUpdateInfo, outcome: UpdateCheckResponse['outcome']): UpdateCheckResponse => ({
   outcome,
+  skipped: [],
   sources: [],
   skills: [skill],
 });

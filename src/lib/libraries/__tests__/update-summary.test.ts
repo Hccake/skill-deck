@@ -18,7 +18,7 @@ function checks(...statuses: SkillUpdateCheckStatus[]): Record<string, SkillUpda
       source: 'https://example.com/repo.git',
       hasUpdate: status === 'updateAvailable',
       status,
-      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
       reason: null,
       gitRef: null,
       sourceUrl: null,

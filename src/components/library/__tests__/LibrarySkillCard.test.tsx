@@ -34,7 +34,7 @@ const check = (status: SkillUpdateInfo['status']): SkillUpdateInfo => ({
   source: 'https://github.com/example/repo',
   hasUpdate: status === 'updateAvailable',
   status,
-  capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+  capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
   reason: null,
   gitRef: null,
   sourceUrl: null,
@@ -115,7 +115,7 @@ describe('LibrarySkillCard', () => {
     const { rerender } = render(
       <TooltipProvider>
         <LibrarySkillCard
-          skill={{ ...sampleSkill, updateCapability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' } }}
+          skill={{ ...sampleSkill, updateCapability: { canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'missingRemoteHash' } }}
           onUpdate={onUpdate}
           onRemove={vi.fn()}
         />

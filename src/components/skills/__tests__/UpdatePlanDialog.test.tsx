@@ -36,7 +36,7 @@ describe('UpdatePlanDialog', () => {
     useSkillUpdateWorkflow.getState().reset();
     useSkillsDataStore.setState({ snapshots: {
       [contextKey(context)]: {
-        skills: [{ name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit', scope: 'global', agents: [], associatedAgents: [], source: 'owner/repo', hasUpdate: true, canRunUpdate: true, canCheckForUpdates: true, updateStatus: 'updateAvailable', updateReason: null }],
+        skills: [{ name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit', scope: 'global', agents: [], associatedAgents: [], source: 'owner/repo', hasUpdate: true, canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, updateStatus: 'updateAvailable', updateReason: null }],
         agents: [], pathExists: true, loading: false, error: null, requestId: 1,
       },
     } });
@@ -47,7 +47,7 @@ describe('UpdatePlanDialog', () => {
     const base = {
       skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: 'main',
       targets: [automaticTarget()], adapterTargets: [], cleanCopyCount: 0,
-      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
       overwritePrivateEntries: [], linkedTargets: [], blockingReasons: [], fallbackForecasts: [],
     };
     useSkillUpdateWorkflow.setState({ phase: 'ready', context, skillNames: ['toolkit', 'other'],
@@ -71,7 +71,7 @@ describe('UpdatePlanDialog', () => {
       { ...automaticTarget('/cursor/toolkit'), isStandard: false, kind: 'directory' as const, selectableEntryId: 'cursor-copy',
         readers: [{ agentId: 'cursor', displayName: 'Cursor', logicalTargetId: 'cursor' }] }],
       adapterTargets: [], cleanCopyCount: 0,
-      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
       overwritePrivateEntries: [{ entryId: 'conflict', isStandard: false,
         readers: [{ agentId: 'claude', displayName: 'Claude Code', logicalTargetId: 'claude' }],
         displayPath: { environment: context.environment, nativePath: '/private/toolkit' } }],
@@ -121,7 +121,7 @@ describe('UpdatePlanDialog', () => {
       preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{
         skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: '', targets: [],
         adapterTargets: [], cleanCopyCount: 0, overwritePrivateEntries: [], linkedTargets: [], fallbackForecasts: [],
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+        capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
         blockingReasons: ['noUpdateTargets'], preservedTargets: [automaticTarget('/external/toolkit')],
       }] },
     });
@@ -141,7 +141,7 @@ describe('UpdatePlanDialog', () => {
         blocked: [{ skillName: 'alpha', error }, { skillName: 'beta', error }], redirectedDownloadHosts: [],
         skills: [{ skillName: 'gamma', sourceKey: 'ready-source', sourceDisplay: 'ready/repo', refDisplay: 'v2',
           targets: [automaticTarget('/canonical/gamma')], adapterTargets: [], cleanCopyCount: 0,
-          capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+          capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
           overwritePrivateEntries: [], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }],
       },
     });
@@ -162,7 +162,7 @@ describe('UpdatePlanDialog', () => {
           skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: 'main',
           targets: [{ ...automaticTarget('/home/alice/.agents/skills/toolkit'), restoring: true }],
           adapterTargets: [], cleanCopyCount: 0,
-          capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+          capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
           overwritePrivateEntries: ['claude', 'codex'].map((name) => ({
             entryId: name,
             readers: [{ agentId: name, displayName: name, logicalTargetId: name }],
@@ -196,7 +196,7 @@ describe('UpdatePlanDialog', () => {
       preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{
         skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: 'main',
         targets: [automaticTarget()], adapterTargets: [], cleanCopyCount: 0,
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+        capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
         overwritePrivateEntries: [], blockingReasons: [], fallbackForecasts: [],
         linkedTargets: [{ displayPath: { environment: context.environment, nativePath: '/shared/toolkit' },
           targetPath: automaticTarget().displayPath, targetCopyEntryId: null, isStandard: false,
@@ -228,7 +228,7 @@ describe('UpdatePlanDialog', () => {
           sourceDisplay: 'should-not-render-before-ready',
           refDisplay: 'HEAD',
           adapterTargets: [],
-          capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+          capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [],
           blockingReasons: [],
@@ -289,7 +289,7 @@ describe('UpdatePlanDialog', () => {
     const confirm = vi.fn();
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], targets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 0, overwritePrivateEntries: [{ entryId: 'private', displayPath: { environment: context.environment, nativePath: '/agents/private' }, readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }] },
+      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], targets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null }, cleanCopyCount: 0, overwritePrivateEntries: [{ entryId: 'private', displayPath: { environment: context.environment, nativePath: '/agents/private' }, readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }] },
       selectedCopyEntries: new Set(), confirm,
     });
 
@@ -320,7 +320,7 @@ describe('UpdatePlanDialog', () => {
           targets: [{ displayPath: { environment: context.environment, nativePath: '/actual/agent/skills/toolkit' }, readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }], restoring: false }],
           preservedTargets: [automaticTarget('/independent/skills/toolkit')],
           adapterTargets: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-adapter' }],
-          capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+          capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [],
           blockingReasons: [],
@@ -358,7 +358,7 @@ describe('UpdatePlanDialog', () => {
           sourceDisplay: 'github.com/owner/repo',
           refDisplay: 'HEAD',
           adapterTargets: [],
-          capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+          capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [
             { displayPath: { environment: context.environment, nativePath: "/agents/private-a" }, entryId: 'private-a', readers: [{ agentId: 'custom-a', displayName: 'Custom', logicalTargetId: 'target-a' }] },
@@ -384,7 +384,7 @@ describe('UpdatePlanDialog', () => {
   it('lists automatic update locations without making them selectable', () => {
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{ targets: [automaticTarget(), automaticTarget('/agents/clean-1'), automaticTarget('/agents/clean-2')], skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 2, overwritePrivateEntries: [{ displayPath: { environment: context.environment, nativePath: "/agents/private" }, entryId: 'private', readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }] },
+      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{ targets: [automaticTarget(), automaticTarget('/agents/clean-1'), automaticTarget('/agents/clean-2')], skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null }, cleanCopyCount: 2, overwritePrivateEntries: [{ displayPath: { environment: context.environment, nativePath: "/agents/private" }, entryId: 'private', readers: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }] },
     });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
@@ -471,7 +471,7 @@ describe('UpdatePlanDialog', () => {
   it('allows direct reinstall when preview permits it even though the display plan has no update row', () => {
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{ targets: [automaticTarget()], skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' }, cleanCopyCount: 0, overwritePrivateEntries: [], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }] },
+      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{ targets: [automaticTarget()], skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'missingRemoteHash' }, cleanCopyCount: 0, overwritePrivateEntries: [], blockingReasons: [], linkedTargets: [], fallbackForecasts: [] }] },
     });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
@@ -527,7 +527,7 @@ describe('UpdatePlanDialog', () => {
           sourceDisplay: 'github.com/owner/repo',
           refDisplay: 'HEAD',
           adapterTargets: [],
-          capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+          capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [],
           blockingReasons: [],

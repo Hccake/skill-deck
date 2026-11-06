@@ -259,7 +259,7 @@ describe('LibraryPage maintenance', () => {
     (contextState.selectedContext as { environment: EnvironmentRef }).environment = { kind: 'native' };
     execute.mockResolvedValue({ status: 'succeeded', snapshot: {} });
     vi.mocked(readLibrarySkillContent).mockReset().mockResolvedValue('# API design');
-    vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({
+    vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({ skipped: [],
       outcome: 'completed',
       sources: [],
       skills: [{
@@ -267,7 +267,7 @@ describe('LibraryPage maintenance', () => {
         source: 'https://example.com/repo',
         hasUpdate: true,
         status: 'updateAvailable',
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+        capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
         reason: null,
         gitRef: null,
         sourceUrl: 'https://example.com/repo',
@@ -341,9 +341,9 @@ describe('LibraryPage maintenance', () => {
 
   it('gives immediate feedback when a manual library check fails', async () => {
     const notification = vi.spyOn(toast, 'error');
-    vi.mocked(checkLibrarySkillUpdates).mockResolvedValueOnce({ sources: [], skills: [{
+    vi.mocked(checkLibrarySkillUpdates).mockResolvedValueOnce({ skipped: [], sources: [], skills: [{
       name: 'api-design', source: 'owner/repo', hasUpdate: false, status: 'cannotCheck',
-      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
       reason: 'upstreamUnavailable', gitRef: null, sourceUrl: null, skillPath: null, freshness: 'unavailable',
     }], outcome: 'notCompleted' });
     render(<MemoryRouter><LibraryPage /></MemoryRouter>);
@@ -561,7 +561,7 @@ describe('LibraryPage maintenance', () => {
   });
 
   it('confirms a completed check that found nothing', async () => {
-    vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({
+    vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({ skipped: [],
       outcome: 'completed',
       sources: [],
       skills: [{
@@ -569,7 +569,7 @@ describe('LibraryPage maintenance', () => {
         source: 'https://example.com/repo',
         hasUpdate: false,
         status: 'upToDate',
-        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+        capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
         reason: null,
         gitRef: null,
         sourceUrl: 'https://example.com/repo',

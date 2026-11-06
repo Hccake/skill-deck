@@ -15,9 +15,12 @@ import {
 import { makeAgentSelectionSnapshot } from '@/test-utils';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 vi.mock('react-i18next', () => ({
+  Trans: ({ i18nKey, values }: { i18nKey: string; values: Record<string, unknown> }) => <>{`${i18nKey}:${JSON.stringify(values)}`}</>,
   useTranslation: () => ({
+    i18n: { language: "zh-CN" },
     t: (key: string, values?: Record<string, unknown>) => (
       values ? `${key}:${JSON.stringify(values)}` : key
     ),
@@ -127,12 +130,12 @@ function ConfirmHarness({
   }, [currentMode, requestedMode, setMode]);
   if (agentSelection.status !== 'ready' || currentMode !== requestedMode) return null;
   return (
-    <ConfirmStep
+    <TooltipProvider><ConfirmStep
       state={current}
       agentSelection={agentSelection}
       updateState={updateState}
       scope="global"
-    />
+    /></TooltipProvider>
   );
 }
 
@@ -268,7 +271,7 @@ describe('ConfirmStep', () => {
     expect(screen.getByText('~/.cursor/skills')).toBeDefined();
   });
 
-  it('groups selected Agents by the link or copy action the user will see', async () => {
+  it('shows the link or copy action next to each selected placement', async () => {
     const current = state();
     const selection = agentSnapshot();
     selection.selection.agents.push({
@@ -285,8 +288,8 @@ describe('ConfirmStep', () => {
     renderConfirm(current, vi.fn(), selection, 'symlink');
 
     await waitFor(() => expect(preview).toHaveBeenCalledOnce());
-    expect(screen.getByText('addSkill.confirm.createLinks')).toBeDefined();
-    expect(screen.getByText('addSkill.confirm.createCopies')).toBeDefined();
+    expect(screen.getByText('Cursor').closest('li')?.textContent).toContain('addSkill.confirm.overview.plan.linkShort');
+    expect(screen.getByText('Eve').closest('li')?.textContent).toContain('addSkill.confirm.overview.plan.copyShort');
     expect(screen.queryByText('agentSelection.title')).toBeNull();
   });
 
@@ -294,7 +297,7 @@ describe('ConfirmStep', () => {
     const user = userEvent.setup();
     const updateState = vi.fn();
     renderConfirm(
-      state({ redirectedDownloadHost: 'cdn.example.net' }),
+      state({ source: 'https://docs.example.com/skill.zip', redirectedDownloadHost: 'cdn.example.net' }),
       updateState,
     );
 

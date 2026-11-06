@@ -1,5 +1,6 @@
 import { GitReference } from './GitReference';
 import { useEffect, useId, useMemo, useRef } from 'react';
+import { DownloadSourceRoute } from '@/components/source-discovery/DownloadSourceRoute';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, CircleAlert, CircleStop, Files, Link2, LoaderCircle } from 'lucide-react';
 import {
@@ -294,6 +295,7 @@ export function UpdatePlanDialog({
     }
     return groups;
   }, [preview]);
+  const unmappedRedirectHosts = preview?.redirectedDownloadHosts.filter(host => !previewGroups.some(group => group.downloadRedirect?.actualHost === host)) ?? [];
   const cancelButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
 
@@ -395,11 +397,11 @@ export function UpdatePlanDialog({
           ) : phase === 'ready' && preview ? (
             <TooltipProvider>
             <div>
-              {preview.redirectedDownloadHosts.length > 0 ? <p className="text-sm text-warning">{t('libraries.redirectConfirmation', { host: preview.redirectedDownloadHosts.join(', ') })}</p> : null}
+              {unmappedRedirectHosts.length > 0 ? <p className="text-sm text-warning">{t('libraries.redirectConfirmation', { host: unmappedRedirectHosts.join(', ') })}</p> : null}
               {executionError ? <p className="text-sm text-warning" role="alert">{formatAppError(executionError, t)}</p> : null}
               {previewGroups.map((group) => (
                 <section key={group.sourceKey} className="update-source-group">
-                  <p className="update-source-heading">{t('skills.updatePlan.source')} {group.sourceDisplay}{group.refDisplay ? <> · <GitReference value={group.refDisplay} kind={group.refKind} /></> : null}</p>
+                  <p className="update-source-heading"><span className="inline-flex min-w-0 max-w-full items-center gap-2"><span className="shrink-0">{t('skills.updatePlan.source')}</span>{group.downloadRedirect ? <DownloadSourceRoute {...group.downloadRedirect} /> : <span className="min-w-0">{group.sourceDisplay}{group.refDisplay ? <> · <GitReference value={group.refDisplay} kind={group.refKind} /></> : null}</span>}</span></p>
                   {group.error ? <p className="text-xs text-destructive" role="alert">{formatAppError(group.error, t)}</p> : null}
                   <div className="update-source-skills">
                     {group.skillNames.map((name) => {

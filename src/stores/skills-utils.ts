@@ -244,7 +244,7 @@ export function resolveEvidenceFailureNextStepI18nKey(reason: EvidenceFailureRea
 export function hasIncompleteUpdateCheck(
   skill: Pick<SkillListItem, 'updateStatus' | 'updateReason' | 'updateEvidence' | 'updateAttempt' | 'sourceType'>,
 ): boolean {
-  if (skill.sourceType === 'download' || skill.updateReason === 'download-source') return false;
+  if (skill.updateReason === 'download-source') return false;
   return skill.updateAttempt?.outcome === 'notCompleted'
     || (skill.updateStatus === 'cannotCheck'
     && skill.updateReason === 'upstreamUnavailable'
@@ -269,7 +269,7 @@ export function resolveUpdateStatusLabelI18nKey(
     updateAttempt?: SkillListItem['updateAttempt'];
   }
 ): string | null {
-  if (skill.sourceType === 'download' || skill.updateReason === 'download-source') return null;
+  if (skill.updateReason === 'download-source') return null;
   if (hasIncompleteUpdateCheck(skill)) {
     return 'skills.updateStatusLabel.checkIncomplete';
   }

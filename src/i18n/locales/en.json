@@ -451,7 +451,9 @@
       "copyToProject": "Copy to Project",
       "updateNamed": "Update \"{{name}}\"",
       "deleteNamed": "Delete \"{{name}}\"",
-      "copyToProjectNamed": "Copy \"{{name}}\" to another project"
+      "copyToProjectNamed": "Copy \"{{name}}\" to another project",
+      "reacquire": "Fetch again from source",
+      "reacquireNamed": "Fetch {{name}} again from source"
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -725,7 +727,8 @@
       "auth": "Cannot access the source. Check your access permissions.",
       "network-error": "Network connection failed. Check again later.",
       "http-error": "Version check failed. Check again later.",
-      "downloadSource": "Downloaded source. Update checks are not supported yet."
+      "downloadSource": "Downloaded source. Update checks are not supported yet.",
+      "downloadAccess": "Check the download address and access permissions."
     },
     "updateReason": {
       "missingRemoteHash": "Local version information is incomplete. Remove this Skill and install it again to restore version checks.",
@@ -1672,7 +1675,8 @@
           "emptyContent": "The downloaded content is empty."
         },
         "downloadConflict": "A matching Skill already exists at this target, so direct download cannot replace it: {{target}}",
-        "commitUnavailable": "Cannot fetch pinned commit {{commit}}. Check that the commit is accessible and that you have repository access."
+        "commitUnavailable": "Cannot fetch pinned commit {{commit}}. Check that the commit is accessible and that you have repository access.",
+        "downloadRateLimited": "The download site has temporarily limited requests. Try again later."
       },
       "commitHelpLabel": "Source and pinned commit help",
       "commitHelp": "To pin a commit, enter owner/repo#full-40-character-SHA. Short SHAs are only interpreted as branch or tag names."
@@ -1793,9 +1797,33 @@
       "dependencyOverrideTitle": "Replace with an independent installation",
       "dependencyOverrideDescription": "These Skills will be maintained from the selected source, detached from their previous dependency sync relationships. Package contents will be preserved.",
       "directDownloadConflict": "Cannot overwrite",
-      "redirectTitle": "Download redirected to another site",
-      "redirectBody": "The Skill content will be downloaded from {{host}}. Continue only if you trust this site.",
-      "redirectAcknowledge": "I trust this download site and want to continue"
+      "redirectTitle": "Confirm download source",
+      "redirectBody": "The download request was redirected from {{original}} to <host>{{host}}</host>",
+      "redirectAcknowledge": "Allow installation",
+      "redirectAllowAdd": "Allow adding to the library",
+      "redirectDestination": "Download site: <host>{{host}}</host>",
+      "overview": {
+        "skillCount_one": "{{count}} Skill",
+        "skillCount_other": "{{count}} Skills",
+        "plan": {
+          "shared": "Shared directory",
+          "linkShort": "Link",
+          "copyShort": "Copy"
+        },
+        "positions": "Installation locations",
+        "positionCount_one": "{{count}} location",
+        "positionCount_other": "{{count}} locations",
+        "agentCount_one": "{{count}} Agent",
+        "agentCount_other": "{{count}} Agents",
+        "showAllSkills": "View all {{count}} Skills",
+        "collapseSkills": "Show fewer Skills",
+        "showAllPositions": "View all {{count}} locations",
+        "collapsePositions": "Show fewer locations",
+        "showAllAgents": "View all {{count}} Agents",
+        "collapseAgents": "Show fewer Agents"
+      },
+      "overwriteSkills_one": "{{count}} Skill will replace existing content",
+      "overwriteSkills_other": "{{count}} Skills will replace existing content"
     },
     "installing": {
       "title": "Installing...",

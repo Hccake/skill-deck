@@ -7,6 +7,7 @@ pub mod app_config;
 pub mod builtin_agent_catalog;
 pub mod custom_agent_repository;
 pub mod discovery;
+pub(crate) mod download_source;
 pub mod eve;
 pub mod git;
 pub mod github_api;

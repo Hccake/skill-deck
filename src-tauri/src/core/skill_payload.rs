@@ -11,7 +11,6 @@ use crate::error::AppError;
 
 const EXCLUDED_PAYLOAD_FILES: &[&str] = &["metadata.json"];
 const EXCLUDED_PAYLOAD_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"];
-const EXCLUDED_CLI_DIRS: &[&str] = &[".git", "node_modules"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -248,46 +247,31 @@ pub fn verify_skill_payload_manifest(manifest: &SkillPayloadManifest) -> Result<
     Ok(())
 }
 
-#[cfg(test)]
 pub fn compute_cli_project_hash(root: &Path) -> Result<String, AppError> {
-    let mut files = Vec::new();
-    collect_cli_hash_files(root, root, &mut files)?;
-    files.sort_by(|left, right| compare_cli_paths(&left.0, &right.0));
-
-    let mut hasher = Sha256::new();
-    for (relative_path, content) in files {
-        hasher.update(relative_path.as_bytes());
-        hasher.update(content);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
+    environment_engine::source_hash::hash_directory(root, || false).map_err(Into::into)
 }
 
 pub fn compute_cli_project_hash_from_payload(payload: &SkillPayload) -> Result<String, AppError> {
     verify_skill_payload_integrity(payload)?;
-    let mut files = payload
+    let files = payload
         .entries
         .iter()
         .filter(|entry| entry.kind == PayloadEntryKind::File)
-        .filter(|entry| {
-            !entry
-                .relative_path
-                .split('/')
-                .any(|component| EXCLUDED_CLI_DIRS.contains(&component))
-        })
         .map(|entry| {
-            let blob_id = entry.blob_id.as_deref().ok_or(AppError::StalePayload)?;
-            let content = payload.blobs.get(blob_id).ok_or(AppError::StalePayload)?;
-            Ok((entry.relative_path.as_str(), content.as_slice()))
+            let blob = entry
+                .blob_id
+                .as_deref()
+                .and_then(|id| payload.blobs.get(id))
+                .ok_or(AppError::StalePayload)?;
+            Ok((entry.relative_path.clone(), blob.as_slice()))
         })
         .collect::<Result<Vec<_>, AppError>>()?;
-    files.sort_by(|left, right| compare_cli_paths(left.0, right.0));
-
-    let mut hasher = Sha256::new();
-    for (relative_path, content) in files {
-        hasher.update(relative_path.as_bytes());
-        hasher.update(content);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
+    environment_engine::source_hash::hash_files(
+        files,
+        |bytes| Ok(std::io::Cursor::new(bytes)),
+        || false,
+    )
+    .map_err(Into::into)
 }
 
 pub fn validate_manifest_for_target(
@@ -570,36 +554,6 @@ fn add_payload_file(
     Ok(())
 }
 
-#[cfg(test)]
-fn collect_cli_hash_files(
-    root: &Path,
-    current: &Path,
-    files: &mut Vec<(String, Vec<u8>)>,
-) -> Result<(), AppError> {
-    for entry in sorted_directory_entries(current)? {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if EXCLUDED_CLI_DIRS.contains(&name.as_ref()) {
-            continue;
-        }
-
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_dir() {
-            collect_cli_hash_files(root, &path, files)?;
-        } else if metadata.is_file() {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|error| AppError::UnsafePath {
-                    path: path.to_string_lossy().into_owned(),
-                    reason: error.to_string(),
-                })?;
-            files.push((normalized_relative_path(relative), fs::read(path)?));
-        }
-    }
-    Ok(())
-}
-
 fn sorted_directory_entries(path: &Path) -> Result<Vec<fs::DirEntry>, AppError> {
     let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
     entries.sort_by_key(fs::DirEntry::file_name);
@@ -611,12 +565,6 @@ fn normalized_relative_path(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn compare_cli_paths(left: &str, right: &str) -> std::cmp::Ordering {
-    left.to_ascii_lowercase()
-        .cmp(&right.to_ascii_lowercase())
-        .then_with(|| left.cmp(right))
 }
 
 fn compute_payload_root_hash(entries: &[PayloadEntry]) -> String {
@@ -762,6 +710,30 @@ mod tests {
             .expect("manifest from entries");
 
         assert_eq!(rebuilt, payload.manifest());
+    }
+
+    #[test]
+    fn source_hash_matches_cli_reference_vectors() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../crates/environment-engine/tests/fixtures/cli-content-hashes.json"
+        ))
+        .unwrap();
+        for vector in fixture["vectors"].as_array().unwrap() {
+            let root = tempfile::tempdir().unwrap();
+            for (relative, content) in vector["files"].as_object().unwrap() {
+                let path = relative
+                    .split('/')
+                    .fold(root.path().to_path_buf(), |path, part| path.join(part));
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, content.as_str().unwrap()).unwrap();
+            }
+            assert_eq!(
+                compute_cli_project_hash(root.path()).unwrap(),
+                vector["expected"].as_str().unwrap(),
+                "{}",
+                vector["name"]
+            );
+        }
     }
 
     #[test]

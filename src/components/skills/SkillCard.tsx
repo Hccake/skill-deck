@@ -172,7 +172,7 @@ export const SkillCard = memo(function SkillCard({
               {canShowUpdateAction ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  label={t('skills.actions.updateNamed', { name: skill.name })}
+                  label={t(presentation.reacquire ? 'skills.actions.reacquireNamed' : 'skills.actions.updateNamed', { name: skill.name })}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();

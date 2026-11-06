@@ -1,0 +1,83 @@
+{
+  "reference": {
+    "commit": "d3701c11b1101251af14c9d148f026e1a47ebe17",
+    "node": "v24.18.0",
+    "icu": "78.3",
+    "cldr": "48.0",
+    "locale": "en-US"
+  },
+  "vectors": [
+    {
+      "name": "punctuation",
+      "files": {
+        "SKILL.md": "---\nname: demo\n---\n# Demo\n",
+        "a-b.txt": "dash\n",
+        "a_b.txt": "underscore\n"
+      },
+      "expected": "bd77a5d7c6e53491a36d39aae56f7887a1cc6e36255834d7cdd9a5c1d69aadc7",
+      "order": [
+        "a_b.txt",
+        "a-b.txt",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "unicode-and-numbers",
+      "files": {
+        "SKILL.md": "demo\n",
+        "scripts/éclair.txt": "accent",
+        "scripts/中.txt": "han",
+        "scripts/10.txt": "ten",
+        "scripts/2.txt": "two",
+        "scripts/Zeta.txt": "upper",
+        "scripts/alpha.txt": "lower",
+        "scripts/Ångström.txt": "nordic"
+      },
+      "expected": "7a36d55bc76ab577103c92a4deece0b120f67878bfd6f6ef9249ced2edf12580",
+      "order": [
+        "scripts/10.txt",
+        "scripts/2.txt",
+        "scripts/alpha.txt",
+        "scripts/Ångström.txt",
+        "scripts/éclair.txt",
+        "scripts/Zeta.txt",
+        "scripts/中.txt",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "source-files-before-install-filter",
+      "files": {
+        "SKILL.md": "demo\n",
+        "metadata.json": "{\"original\":true}",
+        "__pycache__/a.pyc": "cache",
+        "__pypackages__/pkg.txt": "package",
+        ".git/config": "ignored",
+        "node_modules/pkg/index.js": "ignored",
+        "scripts/run.sh": "#!/bin/sh\n"
+      },
+      "expected": "e852410f4e76eaa7924dcd4175a7076a6c4de39ea1b0283f6e937964df651fbb",
+      "order": [
+        "__pycache__/a.pyc",
+        "__pypackages__/pkg.txt",
+        "metadata.json",
+        "scripts/run.sh",
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "directory-name-as-regular-file",
+      "files": {
+        "SKILL.md": "demo\n",
+        "node_modules": "ordinary file",
+        ".git": "ordinary file"
+      },
+      "expected": "fe3a2101cb36c4d832e39da5101a93b380b4fa56b9aa997fff1b3974221ece8b",
+      "order": [
+        ".git",
+        "node_modules",
+        "SKILL.md"
+      ]
+    }
+  ]
+}

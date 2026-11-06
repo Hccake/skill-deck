@@ -777,7 +777,7 @@ export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; r
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
 export type AmbiguousSourceSelection = { input: string; candidateNames: string[] }
-export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "upstreamSkillNameChanged"; data: { expectedName: string; actualName: string } } | { kind: "upstreamSkillAmbiguous"; data: { skillName: string } } | { kind: "upstreamSkillDeleted"; data: { skillName: string } } | { kind: "sourceAcquisitionFailed"; data: { wellKnownReason: SourceAcquisitionFailureReason; downloadReason: SourceAcquisitionFailureReason } } | { kind: "wellKnownSourceFailed"; data: { reason: SourceAcquisitionFailureReason } } | { kind: "wellKnownScopeNotFound"; data: { scopePath: string; rootUrl: string } } | { kind: "directDownloadFailed"; data: { reason: DirectDownloadFailureReason } } | { kind: "directDownloadConflict"; data: { target: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitCommitUnavailable"; data: { commit: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "upstreamSkillNameChanged"; data: { expectedName: string; actualName: string } } | { kind: "upstreamSkillAmbiguous"; data: { skillName: string } } | { kind: "upstreamSkillDeleted"; data: { skillName: string } } | { kind: "sourceAcquisitionFailed"; data: { wellKnownReason: SourceAcquisitionFailureReason; downloadReason: SourceAcquisitionFailureReason } } | { kind: "wellKnownSourceFailed"; data: { reason: SourceAcquisitionFailureReason } } | { kind: "wellKnownScopeNotFound"; data: { scopePath: string; rootUrl: string } } | { kind: "directDownloadFailed"; data: { reason: DirectDownloadFailureReason } } | { kind: "downloadRateLimited"; data: { retry_at_epoch_ms: number | null } } | { kind: "directDownloadConflict"; data: { target: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitCommitUnavailable"; data: { commit: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
@@ -832,7 +832,7 @@ digestVerified?: boolean | null;
  */
 trustReason?: string | null }
 export type BackendActivitySnapshot = { revision: number; mutation: ActiveMutation | null; lifecycle: ActiveLifecycleLease | null }
-export type CheckUpdateCapability = { canRunUpdate: boolean; canCheckForUpdates: boolean; reason: UpdateCapabilityReasonCode | null }
+export type CheckUpdateCapability = { canRunUpdate: boolean; canCheckForUpdates: boolean; canCheckAutomatically: boolean; reason: UpdateCapabilityReasonCode | null }
 export type ConfigResourceKind = "contextRoot" | "canonicalSkillsRoot"
 export type ConfirmInstallAgentSelectionOutcome = { status: "ready"; warning: AgentSelectionHistoryWarning | null } | { status: "selectionStale"; snapshot: InstallAgentSelectionSnapshot }
 export type ContextSnapshotRevision = string
@@ -859,6 +859,10 @@ export type DiscoverLeaderboardTab = "popular" | "trending" | "hot"
 export type DiscoverSearchPayload = { searchJson: string; officialCreators: string[] | null }
 export type DiscoverySessionHandle = { sessionId: string; environment: EnvironmentRef; sourceFingerprint: string; expiresAtEpochMs: number }
 export type DisplayPathStyle = "posix" | "windows"
+/**
+ * 原始请求和本次固定内容的实际下载站点，随来源分组绑定。
+ */
+export type DownloadRedirect = { originalHost: string; actualHost: string }
 export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null; wslIntegrationSupported: boolean; wslIntegrationEnabled: boolean; wslCapabilityRevision: number }
 export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus; revision: number; error: AppError | null }
 export type EnvironmentRef = { kind: "native" } | { kind: "wsl"; distro_name: string }
@@ -953,9 +957,13 @@ dependency?: SkillDependencyInfo | null; installedAt?: string | null; updatedAt?
  */
 canRunUpdate?: boolean | null;
 /**
- * 是否可自动检查更新
+ * 是否具备版本比较能力
  */
 canCheckForUpdates?: boolean | null;
+/**
+ * 是否允许页面加载等自动触发进行检查
+ */
+canCheckAutomatically?: boolean | null;
 /**
  * 更新能力缺失原因
  */
@@ -1212,6 +1220,10 @@ export type SkillReadIssueCount = { code: string; count: number }
 export type SkillReadStatus = { complete: boolean; issues: SkillReadIssue[]; counts: SkillReadIssueCount[]; omittedCount: number }
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
 export type SkillUpdateInfo = { pathChange?: SourcePathChange | null; name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; refKind?: GitRefKind | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness; comparisonFingerprint?: string | null; sourceKey?: string | null; error?: AppError | null }
+/**
+ * 正常未参与本次远端比较的成员，不产生成功比较时间或请求失败。
+ */
+export type SkippedUpdateCheck = { name: string; reason: UpdateCheckSkipReason; comparisonFingerprint: string | null }
 export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "directoryLinksUnsupported" | "unavailable"
 /**
  * 仅用于列表归类；不参与来源获取、缓存或写入授权。
@@ -1219,7 +1231,7 @@ export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequire
 export type SourceFilterInfo = { key: string; kind: SourceFilterKind; label: string; detail: string }
 export type SourceFilterKind = "git" | "wellKnown" | "download" | "dependency" | "local" | "incomplete"
 export type SourcePathChange = { previousPath: string; nextPath: string }
-export type SourceProvider = "github" | "gitlab" | "git" | "wellKnown"
+export type SourceProvider = "github" | "gitlab" | "git" | "wellKnown" | "download"
 export type SourceSelectionIntent = { wildcardRequested: boolean; explicitSkillNames: string[] }
 export type SourceSelectionResult = { matchedNames: string[]; unmatchedInputs: string[]; ambiguousInputs: AmbiguousSourceSelection[] }
 export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
@@ -1243,8 +1255,9 @@ export type UpdateCheckMode = "automatic" | "force"
 export type UpdateCheckOutcome = "completed" | "partial" | "notCompleted"
 export type UpdateCheckReasonCode = "missingRemoteHash" | "missingSource" | "unsupportedSource" | "upstreamUnavailable" | "deletedUpstream"
 export type UpdateCheckRequest = { context: SkillLocationRef; mode: UpdateCheckMode; selection: UpdateCheckSelection }
-export type UpdateCheckResponse = { outcome: UpdateCheckOutcome; sources: SourceUpdateCheckInfo[]; skills: SkillUpdateInfo[] }
+export type UpdateCheckResponse = { skipped: SkippedUpdateCheck[]; outcome: UpdateCheckOutcome; sources: SourceUpdateCheckInfo[]; skills: SkillUpdateInfo[] }
 export type UpdateCheckSelection = { kind: "skills"; skills: SkillIdentity[] }
+export type UpdateCheckSkipReason = "manualOnly" | "notMaintainable"
 export type UpdateConflictCopyPreview = { isStandard?: boolean | null; entryId: ObservedEntryId; readers: ObservedEntryReader[]; displayPath: ResourceLocator }
 export type UpdateCoverage = { kind: "updated" } | { kind: "updatedWithSkippedCopies" } | { kind: "notUpdated"; error: ErrorReport }
 export type UpdateLibrarySkillsRequest = { environment: EnvironmentRef; libraryId: LibraryId; skillNames: string[] }
@@ -1255,7 +1268,7 @@ export type UpdateRequest = { context: SkillLocationRef; skillNames: string[] }
 export type UpdateResponse = { sources: UpdateSourceResult[]; skills: UpdateSkillResult[]; outcome: UpdateOutcome }
 export type UpdateSkillPreview = { pathChange?: SourcePathChange | null; linkedTargets: UpdateLinkedTargetPreview[]; sourceKey?: string | null; skillName: string; sourceDisplay: string; refDisplay: string; refKind?: GitRefKind | null; adapterTargets: ObservedEntryReader[]; capability: CheckUpdateCapability; cleanCopyCount: number; targets: UpdateTargetPreview[]; preservedTargets?: UpdateTargetPreview[] | null; overwritePrivateEntries: UpdateConflictCopyPreview[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
 export type UpdateSkillResult = { skippedCopyPaths?: ResourceLocator[] | null; skillIdentity: SkillIdentity; sourceResultId: string; mutation: MutationUnitResult | null; coverage: UpdateCoverage; warnings: UpdateWarningCode[]; retryable: boolean }
-export type UpdateSourcePreview = { sourceKey: string; sourceDisplay: string; refDisplay: string; refKind?: GitRefKind | null; skillNames: string[]; error: AppError | null }
+export type UpdateSourcePreview = { downloadRedirect?: DownloadRedirect | null; sourceKey: string; sourceDisplay: string; refDisplay: string; refKind?: GitRefKind | null; skillNames: string[]; error: AppError | null }
 export type UpdateSourceResult = { id: string; source: string; status: UpdateSourceStatus; error: ErrorReport | null }
 export type UpdateSourceStatus = "acquired" | "failed"
 export type UpdateTargetPreview = { selectableEntryId?: ObservedEntryId | null; isStandard?: boolean | null; kind?: ObservedEntryKind | null; linkTarget?: ResourceLocator | null; displayPath: ResourceLocator; readers: ObservedEntryReader[]; restoring: boolean }

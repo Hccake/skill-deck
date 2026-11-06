@@ -28,7 +28,7 @@ const preview = (name = 'demo'): PreparedUpdatePreview => ({
     refDisplay: 'release',
     adapterTargets: [],
     targets: [{ displayPath: { environment: context.environment, nativePath: `/agents/${name}` }, readers: [], restoring: false }],
-    capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+    capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
     cleanCopyCount: 0,
     overwritePrivateEntries: [],
     blockingReasons: [],
@@ -56,7 +56,7 @@ describe('skill update workflow', () => {
         skills: [{
           name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit',
           scope: 'global', agents: ['legacy-agent'], source: 'stale/repo', hasUpdate: false,
-          canRunUpdate: true, canCheckForUpdates: false, updateStatus: 'cannotCheck',
+          canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, updateStatus: 'cannotCheck',
           updateReason: 'missingRemoteHash',
         }],
       },

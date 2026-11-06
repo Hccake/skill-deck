@@ -43,6 +43,7 @@ use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::download::RuntimeDownloadAccess;
 use crate::runtime::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::runtime::planning_facts::RuntimePlanningFactSource;
 
@@ -54,6 +55,7 @@ pub struct RuntimeSkillSourceModule {
     git_transport: Arc<dyn GitSourceTransport>,
     wsl_source: Arc<dyn WslSourceAccess>,
     wellknown: Arc<dyn WellKnownAccess>,
+    download: RuntimeDownloadAccess,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +90,7 @@ impl RuntimeSkillSourceModule {
         git_transport: Arc<dyn GitSourceTransport>,
         wsl_source: Arc<dyn WslSourceAccess>,
         wellknown: Arc<dyn WellKnownAccess>,
+        download: RuntimeDownloadAccess,
     ) -> Self {
         Self {
             payloads,
@@ -96,6 +99,7 @@ impl RuntimeSkillSourceModule {
             git_transport,
             wsl_source,
             wellknown,
+            download,
         }
     }
 
@@ -113,6 +117,7 @@ impl RuntimeSkillSourceModule {
             git_transport,
             wsl_source: Arc::new(UnavailableWslSourceAccess),
             wellknown: Arc::new(UnavailableWellKnownAccess),
+            download: RuntimeDownloadAccess::for_test(),
         }
     }
 
@@ -125,12 +130,27 @@ impl RuntimeSkillSourceModule {
             return Err(AppError::MutationCancelled);
         }
         let provider = group.evidence_key.remote.provider();
+        let generation = self.snapshots.generation(&group.key);
+        if provider == &SourceProvider::Download {
+            let identity = crate::core::SourceIdentity::from_metadata(&group.skills[0].metadata)?;
+            let throttle =
+                crate::application::source_evidence::ProviderThrottleKey::from_identity(&identity);
+            if let Some(deadline) = self
+                .evidence
+                .provider_cooldown_deadline(&group.environment, &throttle)
+            {
+                return Err(AppError::DownloadRateLimited {
+                    retry_at_epoch_ms: Some(deadline),
+                });
+            }
+        }
         let reusable = if provider != &SourceProvider::WellKnown {
             self.snapshots.candidate(&group.key, self.payloads.as_ref())
         } else {
             None
         };
         let discovery_session = match reusable {
+            Some((_, discovery)) if provider == &SourceProvider::Download => discovery,
             Some((retained_revision, discovery)) => {
                 let probe_source = group.descriptor.source().to_string();
                 let probe_ref = group.descriptor.git_ref().map(ToString::to_string);
@@ -315,13 +335,15 @@ impl RuntimeSkillSourceModule {
                 resolved_ref(&group.key.normalized_ref),
                 ref_revision,
             );
-            if let Err(error) = self.evidence.record_acquisition(
-                group.evidence_key.clone(),
-                group.key.environment.clone(),
-                snapshot_id.clone(),
-                skill_revisions,
-            ) {
-                log::warn!("Could not persist acquired source evidence: {error}");
+            if provider != &SourceProvider::Download {
+                if let Err(error) = self.evidence.record_acquisition(
+                    group.evidence_key.clone(),
+                    group.key.environment.clone(),
+                    snapshot_id.clone(),
+                    skill_revisions,
+                ) {
+                    log::warn!("Could not persist acquired source evidence: {error}");
+                }
             }
             let redirected_download_hosts = retained.download_hosts();
             drop(retained);
@@ -335,6 +357,14 @@ impl RuntimeSkillSourceModule {
                         "Prepared content retained; source cleanup will be retried: {error}"
                     );
                 }
+            } else if provider == &SourceProvider::Download {
+                self.snapshots.remember_if_current(
+                    group.key.clone(),
+                    generation,
+                    snapshot_id.commit_revision,
+                    discovery_session.clone(),
+                    Some(cancellation.clone()),
+                );
             } else {
                 self.snapshots.remember(
                     group.key.clone(),
@@ -366,6 +396,39 @@ impl RuntimeSkillSourceModule {
         let parsed = group
             .descriptor
             .parsed_source(group.evidence_key.remote.provider());
+        if group.evidence_key.remote.provider() == &SourceProvider::Download {
+            let result = self
+                .download
+                .discover(
+                    self.payloads.clone(),
+                    self.wsl_source.as_ref(),
+                    group.environment.clone(),
+                    parsed,
+                    SourceDiscoveryPolicy {
+                        allow_empty_catalog: true,
+                        selected_skill_names: None,
+                        full_depth: true,
+                        internal_skill_visibility: InternalSkillVisibility::All,
+                    },
+                    cancellation,
+                )
+                .await;
+            if let Err(AppError::DownloadRateLimited { retry_at_epoch_ms }) = &result {
+                let identity =
+                    crate::core::SourceIdentity::from_metadata(&group.skills[0].metadata)?;
+                self.evidence.record_provider_cooldown(
+                    &group.environment,
+                    crate::application::source_evidence::ProviderThrottleKey::from_identity(
+                        &identity,
+                    ),
+                    retry_at_epoch_ms.unwrap_or_else(|| {
+                        (chrono::Utc::now().timestamp_millis().max(0) as u64)
+                            .saturating_add(300_000)
+                    }),
+                );
+            }
+            return result.map(|result| result.discovery_session);
+        }
         if group.evidence_key.remote.provider() == &SourceProvider::WellKnown {
             let selected_names = group
                 .skills
@@ -481,9 +544,9 @@ fn acquisition_skill_revision(
             .cloned()
             .map(SkillRevision::GitTreeOid)
             .ok_or(AppError::StalePayload),
-        SourceProvider::Gitlab | SourceProvider::Git => Ok(SkillRevision::CliContentHash(
-            metadata.computed_hash.clone(),
-        )),
+        SourceProvider::Gitlab | SourceProvider::Git | SourceProvider::Download => Ok(
+            SkillRevision::CliContentHash(metadata.computed_hash.clone()),
+        ),
         SourceProvider::WellKnown => metadata
             .well_known
             .as_ref()
@@ -590,6 +653,7 @@ pub fn build_runtime_source_evidence_coordinator(
     git_transport: Arc<dyn GitSourceTransport>,
     wsl_source: Arc<dyn WslSourceAccess>,
     wellknown: Arc<dyn crate::application::wellknown_access::WellKnownAccess>,
+    download: RuntimeDownloadAccess,
 ) -> Result<SourceEvidenceCoordinator, AppError> {
     let detector = Arc::new(RuntimeSourceEvidenceDetector::new(
         payloads,
@@ -598,6 +662,7 @@ pub fn build_runtime_source_evidence_coordinator(
         git_transport,
         wsl_source,
         wellknown,
+        download,
     ));
     let home = crate::core::paths::home_dir().ok_or_else(|| AppError::Path {
         message: "无法确定用户主目录，不能初始化更新检查状态".to_string(),

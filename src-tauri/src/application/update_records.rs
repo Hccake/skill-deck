@@ -252,10 +252,16 @@ fn project_record(
     let state = match &record.projection {
         RecordProjection::Missing => UpdateRecordState::Excluded,
         RecordProjection::Available(metadata)
-            if matches!(
-                metadata.source_type.as_str(),
-                "local" | "download" | "node_modules"
-            ) =>
+            if matches!(metadata.source_type.as_str(), "local" | "node_modules") =>
+        {
+            UpdateRecordState::Excluded
+        }
+        RecordProjection::Available(metadata)
+            if metadata.source_type == "download"
+                && crate::core::download_source::maintenance_url(
+                    metadata.source_url.as_deref(),
+                )
+                .is_none() =>
         {
             UpdateRecordState::Excluded
         }

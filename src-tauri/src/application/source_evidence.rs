@@ -67,7 +67,9 @@ impl RemoteEvidenceKey {
     fn in_environment(&self, environment: &EnvironmentKey) -> Self {
         let mut key = self.clone();
         key.content_environment = match self.remote.provider() {
-            SourceProvider::Git | SourceProvider::Gitlab => Some(environment.clone()),
+            SourceProvider::Git | SourceProvider::Gitlab | SourceProvider::Download => {
+                Some(environment.clone())
+            }
             SourceProvider::Github | SourceProvider::WellKnown => None,
         };
         key
@@ -259,6 +261,7 @@ pub type EvidenceFuture<'a> =
     Pin<Box<dyn Future<Output = Result<EvidenceDetectionOutcome, AppError>> + Send + 'a>>;
 
 pub trait SourceEvidenceDetector: Send + Sync {
+    fn check_started(&self, _request: &EvidenceCheckRequest) {}
     fn detect<'a>(
         &'a self,
         request: EvidenceDetectionRequest,
@@ -344,6 +347,7 @@ enum PersistedSourceProvider {
     Gitlab,
     Git,
     WellKnown,
+    Download,
 }
 
 impl From<&SourceProvider> for PersistedSourceProvider {
@@ -353,6 +357,7 @@ impl From<&SourceProvider> for PersistedSourceProvider {
             SourceProvider::Gitlab => Self::Gitlab,
             SourceProvider::Git => Self::Git,
             SourceProvider::WellKnown => Self::WellKnown,
+            SourceProvider::Download => Self::Download,
         }
     }
 }
@@ -364,6 +369,7 @@ impl From<PersistedSourceProvider> for SourceProvider {
             PersistedSourceProvider::Gitlab => Self::Gitlab,
             PersistedSourceProvider::Git => Self::Git,
             PersistedSourceProvider::WellKnown => Self::WellKnown,
+            PersistedSourceProvider::Download => Self::Download,
         }
     }
 }
@@ -877,6 +883,7 @@ struct DetectionWaiters {
 struct DetectionWaiterState {
     active: usize,
     closed: bool,
+    completed: bool,
 }
 
 impl DetectionWaiters {
@@ -885,6 +892,7 @@ impl DetectionWaiters {
             state: Mutex::new(DetectionWaiterState {
                 active: 0,
                 closed: false,
+                completed: false,
             }),
             cancellation: CancellationSignal::default(),
         })
@@ -899,6 +907,15 @@ impl DetectionWaiters {
         Some(DetectionWaiter {
             waiters: self.clone(),
         })
+    }
+
+    fn complete(&self) -> bool {
+        let mut state = self.state.lock().expect("detection waiter state");
+        if state.closed {
+            return false;
+        }
+        state.completed = true;
+        true
     }
 }
 
@@ -918,7 +935,9 @@ impl Drop for DetectionWaiter {
         state.active -= 1;
         if state.active == 0 {
             state.closed = true;
-            self.waiters.cancellation.cancel();
+            if !state.completed {
+                self.waiters.cancellation.cancel();
+            }
         }
     }
 }
@@ -998,20 +1017,36 @@ impl SourceEvidenceCoordinator {
         Ok(coordinator)
     }
 
-    #[cfg(test)]
     pub fn record_provider_cooldown(
         &self,
         environment: &EnvironmentRef,
         key: ProviderThrottleKey,
         deadline_epoch_ms: u64,
     ) {
-        if let Ok(mut state) = self.inner.state.lock() {
+        if let Err(error) = update_persisted_state(&self.inner, |state| {
             state
                 .provider_cooldowns
                 .entry(EnvironmentThrottleKey::new(environment, &key))
                 .and_modify(|deadline| *deadline = (*deadline).max(deadline_epoch_ms))
                 .or_insert(deadline_epoch_ms);
+        }) {
+            log::warn!("Could not persist source cooldown: {error}");
         }
+    }
+
+    pub fn provider_cooldown_deadline(
+        &self,
+        environment: &EnvironmentRef,
+        key: &ProviderThrottleKey,
+    ) -> Option<u64> {
+        self.inner
+            .state
+            .lock()
+            .ok()?
+            .provider_cooldowns
+            .get(&EnvironmentThrottleKey::new(environment, key))
+            .copied()
+            .filter(|deadline| *deadline > (self.inner.now)())
     }
 
     /// 凭据成功变更后，只解除 Native GitHub 的认证类失败和服务商限流冷却期。
@@ -1119,6 +1154,17 @@ impl SourceEvidenceCoordinator {
         mut request: EvidenceCheckRequest,
         cancellation: CancellationSignal,
     ) -> Result<EvidenceCheckResult, AppError> {
+        if request.key.remote.provider() == &SourceProvider::Download
+            && request.mode == EvidenceCheckMode::Automatic
+        {
+            return Ok(EvidenceCheckResult {
+                evidence: None,
+                evidence_is_fresh: false,
+                freshness: EvidenceFreshness::Unavailable,
+                last_attempt: None,
+            });
+        }
+        self.inner.detector.check_started(&request);
         request.key = request
             .key
             .in_environment(&EnvironmentKey::from_ref(&request.environment));
@@ -1390,10 +1436,26 @@ async fn run_detection(
                                         .acquisition_transport_identity,
                                 },
                                 previous,
-                                cancellation,
+                                cancellation.clone(),
                             )
                             .await
                     };
+                let accepted = state(&inner)
+                    .ok()
+                    .and_then(|state| {
+                        state
+                            .in_flight
+                            .get(&operation_key)
+                            .filter(|batch| batch.batch_id == batch_id)
+                            .map(|batch| batch.waiters.complete())
+                    })
+                    .unwrap_or(false);
+                let outcome = if accepted && !cancellation.is_cancelled() {
+                    outcome
+                } else {
+                    cancellation.cancel();
+                    Err(AppError::MutationCancelled)
+                };
                 finish_detection(&inner, &throttle_key, &key, &operation_key, outcome)
             }
             Ok(None) => return,

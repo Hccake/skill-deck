@@ -281,6 +281,55 @@ mod windows_wsl2_tests {
     use crate::environment::wsl::WslRuntime;
 
     #[tokio::test]
+    #[ignore = "requires Windows with a real WSL 2 Worker"]
+    async fn real_wsl2_source_hash_matches_cli_reference_vectors() {
+        use std::sync::Arc;
+
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../crates/environment-engine/tests/fixtures/cli-content-hashes.json"
+        ))
+        .unwrap();
+        let distro =
+            std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".into());
+        let fixture = format!("/tmp/skill-deck-hash-{}", uuid::Uuid::new_v4().simple());
+        let _cleanup = FixtureCleanup {
+            distro: distro.clone(),
+            fixture: fixture.clone(),
+        };
+        let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+        let mut script = String::from("set -eu\n");
+        for vector in vectors["vectors"].as_array().unwrap() {
+            let name = vector["name"].as_str().unwrap();
+            for (relative, content) in vector["files"].as_object().unwrap() {
+                let path = format!("{name}/{relative}");
+                let parent = path.rsplit_once('/').unwrap().0;
+                script.push_str(&format!(
+                    "mkdir -p \"$1\"/{}\nprintf %s {} > \"$1\"/{}\n",
+                    quote(parent),
+                    quote(content.as_str().unwrap()),
+                    quote(&path)
+                ));
+            }
+        }
+        run_fixture_command(&distro, &script, &fixture).await;
+        let runtime = Arc::new(WslRuntime::for_wsl_test());
+        runtime.connect(&distro).await.unwrap();
+        let storage = WslPayloadSessionStorage::new(runtime.workspace(&distro).unwrap());
+        let key = PayloadStorageKey::new(uuid::Uuid::new_v4().to_string(), "vector");
+        for vector in vectors["vectors"].as_array().unwrap() {
+            let root = format!("{fixture}/{}", vector["name"].as_str().unwrap());
+            let result = storage.acquire_from_path(&key, &root, None).await.unwrap();
+            assert_eq!(
+                result.computed_hash,
+                vector["expected"].as_str().unwrap(),
+                "{}",
+                vector["name"]
+            );
+            storage.remove_session(key.session_id()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "requires Windows with an Ubuntu WSL 2 distribution"]
     async fn real_wsl2_worker_completes_git_scan_payload_and_release() {
         let distro =

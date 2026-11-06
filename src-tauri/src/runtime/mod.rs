@@ -238,6 +238,7 @@ impl RuntimeServiceGraph {
             git_source.clone(),
             wsl_source.clone(),
             network_services.wellknown(),
+            crate::runtime::download::RuntimeDownloadAccess::new(http.clone()),
         )?;
         let agent_selection_facts =
             RuntimePlanningFactSource::for_current_user(registry.clone(), wsl.clone());
@@ -294,6 +295,7 @@ impl RuntimeServiceGraph {
             git_source.clone(),
             wsl_source.clone(),
             network_services.wellknown(),
+            crate::runtime::download::RuntimeDownloadAccess::new(http.clone()),
         );
         let library_update = build_runtime_library_update_service(
             payloads.clone(),

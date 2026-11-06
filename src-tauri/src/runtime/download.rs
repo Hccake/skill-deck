@@ -1,4 +1,15 @@
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::application::payload_session::{DiscoverySourceLocation, PayloadSessionManager};
+use crate::application::source_acquisition::{
+    redirected_host, retain_discovered_source, FetchResult, ManagedDownloadedDirectory,
+    RetainedSourceOptions, SourceDiscoveryPolicy,
+};
+use crate::application::wsl_source_access::WslSourceAccess;
+use crate::environment::types::EnvironmentRef;
+use crate::models::{ParsedSource, SourceType};
 
 use crate::core::mutation::CancellationSignal;
 use crate::error::{AppError, DirectDownloadFailureReason};
@@ -45,6 +56,25 @@ impl RuntimeDownloadAccess {
             )
             .await
             .map_err(map_network_error)?;
+        if response.status.as_u16() == 429 {
+            let retry_at_epoch_ms = response
+                .headers
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .map(|seconds| now.saturating_add(seconds.saturating_mul(1_000)))
+                        .or_else(|| {
+                            chrono::DateTime::parse_from_rfc2822(value)
+                                .ok()
+                                .map(|time| time.timestamp_millis().max(0) as u64)
+                        })
+                });
+            return Err(AppError::DownloadRateLimited { retry_at_epoch_ms });
+        }
         if !response.status.is_success() {
             let reason = match response.status.as_u16() {
                 401 | 403 => DirectDownloadFailureReason::AuthenticationRequired,
@@ -58,6 +88,90 @@ impl RuntimeDownloadAccess {
             final_url: response.final_url.into(),
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::new(HttpTransport::new(Arc::new(
+            crate::runtime::proxy_settings::ProxySettingsStore::new(
+                crate::models::NetworkProxySettings::default(),
+            ),
+        )))
+    }
+
+    pub(crate) async fn materialize(
+        &self,
+        url: &str,
+        cancellation: &CancellationSignal,
+    ) -> Result<MaterializedDownload, AppError> {
+        let fetched = self.fetch(url, cancellation).await?;
+        let redirected_host = redirected_host(url, &fetched.final_url);
+        let snapshot_revision = format!("download:{:x}", Sha256::digest(&fetched.bytes));
+        let directory = tokio::task::spawn_blocking(move || {
+            crate::application::download_source::materialize_download(&fetched.bytes)
+        })
+        .await
+        .map_err(|_| AppError::StalePayload)??;
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        Ok(MaterializedDownload {
+            directory,
+            snapshot_revision,
+            redirected_host,
+        })
+    }
+
+    pub(crate) async fn discover(
+        &self,
+        sessions: Arc<PayloadSessionManager>,
+        wsl: &dyn WslSourceAccess,
+        environment: EnvironmentRef,
+        mut parsed: ParsedSource,
+        policy: SourceDiscoveryPolicy,
+        cancellation: CancellationSignal,
+    ) -> Result<FetchResult, AppError> {
+        parsed.source_type = SourceType::Download;
+        if let EnvironmentRef::Wsl { distro_name } = &environment {
+            return wsl
+                .discover(
+                    distro_name,
+                    parsed.clone(),
+                    parsed.url.clone(),
+                    policy,
+                    cancellation,
+                )
+                .await;
+        }
+        let downloaded = self.materialize(&parsed.url, &cancellation).await?;
+        let root = downloaded.directory.keep();
+        retain_discovered_source(
+            sessions,
+            environment,
+            parsed.clone(),
+            parsed.url,
+            DiscoverySourceLocation::Native {
+                root: root.clone(),
+                ref_revision: Some(downloaded.snapshot_revision),
+            },
+            root.clone(),
+            ManagedDownloadedDirectory::new(root),
+            RetainedSourceOptions {
+                allow_empty_catalog: policy.allow_empty_catalog,
+                redirected_download_host: downloaded.redirected_host,
+                full_depth: policy.full_depth,
+                internal_skill_visibility: policy.internal_skill_visibility,
+                cancellation,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+}
+
+pub(crate) struct MaterializedDownload {
+    pub directory: tempfile::TempDir,
+    pub snapshot_revision: String,
+    pub redirected_host: Option<String>,
 }
 
 #[derive(Debug, Clone)]

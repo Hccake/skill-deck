@@ -26,6 +26,7 @@ use crate::environment::types::EnvironmentRef;
 use crate::error::AppError;
 #[cfg(test)]
 use crate::models::{ParsedSource, SourceType};
+use crate::runtime::download::RuntimeDownloadAccess;
 
 pub struct RuntimeSourceEvidenceDetector {
     payloads: Arc<PayloadSessionManager>,
@@ -34,6 +35,7 @@ pub struct RuntimeSourceEvidenceDetector {
     git_transport: Arc<dyn GitSourceTransport>,
     wsl_source: Arc<dyn WslSourceAccess>,
     wellknown: Arc<dyn WellKnownAccess>,
+    download: RuntimeDownloadAccess,
 }
 
 impl RuntimeSourceEvidenceDetector {
@@ -44,6 +46,7 @@ impl RuntimeSourceEvidenceDetector {
         git_transport: Arc<dyn GitSourceTransport>,
         wsl_source: Arc<dyn WslSourceAccess>,
         wellknown: Arc<dyn WellKnownAccess>,
+        download: RuntimeDownloadAccess,
     ) -> Self {
         Self {
             payloads,
@@ -52,6 +55,7 @@ impl RuntimeSourceEvidenceDetector {
             git_transport,
             wsl_source,
             wellknown,
+            download,
         }
     }
 
@@ -68,6 +72,7 @@ impl RuntimeSourceEvidenceDetector {
             git_transport,
             wsl_source: Arc::new(UnavailableWslSourceAccess),
             wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+            download: RuntimeDownloadAccess::for_test(),
         }
     }
 
@@ -86,6 +91,7 @@ impl RuntimeSourceEvidenceDetector {
             ),
             wsl_source: Arc::new(UnavailableWslSourceAccess),
             wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+            download: RuntimeDownloadAccess::for_test(),
         }
     }
 
@@ -103,6 +109,7 @@ impl RuntimeSourceEvidenceDetector {
             git_transport,
             wsl_source: Arc::new(UnavailableWslSourceAccess),
             wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+            download: RuntimeDownloadAccess::for_test(),
         }
     }
 
@@ -258,10 +265,11 @@ impl RuntimeSourceEvidenceDetector {
         if cancellation.is_cancelled() {
             return Err(AppError::MutationCancelled);
         }
-        self.detect_by_clone(request, previous, cancellation).await
+        self.detect_from_source(request, previous, cancellation)
+            .await
     }
 
-    async fn detect_by_clone(
+    async fn detect_from_source(
         &self,
         request: EvidenceDetectionRequest,
         previous: Option<RemoteEvidenceEntry>,
@@ -276,7 +284,11 @@ impl RuntimeSourceEvidenceDetector {
             request.key.normalized_ref.clone(),
             &environment,
         );
-        let reusable = if previous.is_some() && matches!(&environment, EnvironmentRef::Native) {
+        let generation = self.snapshots.generation(&acquisition_key);
+        let reusable = if provider != SourceProvider::Download
+            && previous.is_some()
+            && matches!(&environment, EnvironmentRef::Native)
+        {
             let probe_source = source.clone();
             let probe_ref = request.acquisition.git_ref().map(ToString::to_string);
             let probe_cancellation = cancellation.clone();
@@ -309,25 +321,39 @@ impl RuntimeSourceEvidenceDetector {
         let (discovery_session, ref_revision) = match reusable {
             Some(reusable) => reusable,
             None => {
-                let discovery = GitSourceDiscovery::new(
-                    self.payloads.clone(),
-                    Arc::clone(&self.git_transport),
-                    Arc::clone(&self.wsl_source),
-                )
-                .discover(
-                    environment.clone(),
-                    parsed,
-                    source,
-                    SourceDiscoveryPolicy {
-                        allow_empty_catalog: true,
-                        selected_skill_names: None,
-                        full_depth: true,
-                        internal_skill_visibility: InternalSkillVisibility::All,
-                    },
-                    |_| {},
-                    cancellation.clone(),
-                )
-                .await;
+                let policy = SourceDiscoveryPolicy {
+                    allow_empty_catalog: true,
+                    selected_skill_names: None,
+                    full_depth: true,
+                    internal_skill_visibility: InternalSkillVisibility::All,
+                };
+                let discovery = if provider == SourceProvider::Download {
+                    self.download
+                        .discover(
+                            self.payloads.clone(),
+                            self.wsl_source.as_ref(),
+                            environment.clone(),
+                            parsed,
+                            policy,
+                            cancellation.clone(),
+                        )
+                        .await
+                } else {
+                    GitSourceDiscovery::new(
+                        self.payloads.clone(),
+                        Arc::clone(&self.git_transport),
+                        Arc::clone(&self.wsl_source),
+                    )
+                    .discover(
+                        environment.clone(),
+                        parsed,
+                        source,
+                        policy,
+                        |_| {},
+                        cancellation.clone(),
+                    )
+                    .await
+                };
                 let discovery = match discovery {
                     Ok(discovery) => discovery,
                     Err(
@@ -335,7 +361,13 @@ impl RuntimeSourceEvidenceDetector {
                         | AppError::InvalidProxySettings { .. }),
                     ) => return Err(error),
                     Err(error @ AppError::CapabilityUnavailable { .. }) => return Err(error),
-                    Err(error) => return Ok(git_failure(error)),
+                    Err(error) => {
+                        return if provider == SourceProvider::Download {
+                            Err(error)
+                        } else {
+                            Ok(git_failure(error))
+                        }
+                    }
                 };
                 let snapshot = self
                     .payloads
@@ -442,7 +474,7 @@ impl RuntimeSourceEvidenceDetector {
                     }
                 };
                 let metadata = lease.planning_metadata();
-                if let Some(revision) = clone_skill_revision(
+                if let Some(revision) = source_content_revision(
                     provider.clone(),
                     metadata.computed_hash.clone(),
                     metadata.upstream_revision.clone(),
@@ -455,11 +487,13 @@ impl RuntimeSourceEvidenceDetector {
             drop(snapshot);
             let resolved_ref = resolved_ref(&requested_ref);
             let snapshot_id = RemoteSnapshotId::new(requested_ref, resolved_ref, ref_revision);
-            self.snapshots.remember(
-                acquisition_key,
-                snapshot_id.commit_revision.clone(),
-                discovery_session.clone(),
-            );
+            if provider == SourceProvider::Download {
+                self.snapshots.remember_if_current(
+                    acquisition_key, generation, snapshot_id.commit_revision.clone(), discovery_session.clone(), Some(cancellation.clone()),
+                );
+            } else {
+                self.snapshots.remember(acquisition_key, snapshot_id.commit_revision.clone(), discovery_session.clone());
+            }
             Ok(EvidenceDetectionOutcome::Modified(
                 RemoteEvidenceObservation {
                 location_catalog,
@@ -550,7 +584,7 @@ impl RuntimeSourceEvidenceDetector {
 }
 
 #[cfg(test)]
-struct UnavailableGithubAccess;
+pub(crate) struct UnavailableGithubAccess;
 
 #[cfg(test)]
 impl GithubTreeAccess for UnavailableGithubAccess {
@@ -571,14 +605,14 @@ fn discovery_ref_revision(location: &DiscoverySourceLocation) -> Option<String> 
     }
 }
 
-fn clone_skill_revision(
+fn source_content_revision(
     provider: SourceProvider,
     computed_hash: String,
     upstream_revision: Option<String>,
 ) -> Option<SkillRevision> {
     match provider {
         SourceProvider::Github => upstream_revision.map(SkillRevision::GitTreeOid),
-        SourceProvider::Gitlab | SourceProvider::Git => {
+        SourceProvider::Gitlab | SourceProvider::Git | SourceProvider::Download => {
             Some(SkillRevision::CliContentHash(computed_hash))
         }
         SourceProvider::WellKnown => None,
@@ -586,6 +620,18 @@ fn clone_skill_revision(
 }
 
 impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
+    fn check_started(&self, request: &crate::application::source_evidence::EvidenceCheckRequest) {
+        if request.key.remote.provider() == &SourceProvider::Download
+            && request.mode == crate::application::source_evidence::EvidenceCheckMode::Force
+        {
+            self.snapshots.invalidate(&PayloadAcquisitionKey::new(
+                request.acquisition_transport_identity.clone(),
+                request.key.normalized_ref.clone(),
+                &request.environment,
+            ));
+        }
+    }
+
     fn detect<'a>(
         &'a self,
         request: EvidenceDetectionRequest,
@@ -597,8 +643,24 @@ impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
                 (EnvironmentRef::Native, SourceProvider::Github) => {
                     self.detect_github(request, _previous, cancellation).await
                 }
+                (_, SourceProvider::Download) => {
+                    match self
+                        .detect_from_source(request, _previous, cancellation)
+                        .await
+                    {
+                        Ok(result) => Ok(result),
+                        Err(
+                            error @ (AppError::MutationCancelled
+                            | AppError::InvalidProxySettings { .. }
+                            | AppError::EnvironmentUnavailable { .. }
+                            | AppError::StaleEnvironment),
+                        ) => Err(error),
+                        Err(error) => Ok(download_failure(error)),
+                    }
+                }
                 (_, SourceProvider::Github | SourceProvider::Gitlab | SourceProvider::Git) => {
-                    self.detect_by_clone(request, _previous, cancellation).await
+                    self.detect_from_source(request, _previous, cancellation)
+                        .await
                 }
                 (_, SourceProvider::WellKnown) => {
                     self.detect_wellknown(request, cancellation).await
@@ -606,6 +668,23 @@ impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
             }
         })
     }
+}
+
+fn download_failure(error: AppError) -> EvidenceDetectionOutcome {
+    use crate::error::DirectDownloadFailureReason;
+    let (reason, deadline, cooldown) = match &error {
+        AppError::DownloadRateLimited { retry_at_epoch_ms } => {
+            (EvidenceFailureReason::RateLimited, *retry_at_epoch_ms, true)
+        }
+        AppError::DirectDownloadFailed {
+            reason: DirectDownloadFailureReason::AuthenticationRequired,
+        } => (EvidenceFailureReason::AuthenticationRequired, None, false),
+        AppError::DirectDownloadFailed {
+            reason: DirectDownloadFailureReason::Network | DirectDownloadFailureReason::Timeout,
+        } => (EvidenceFailureReason::Network, None, false),
+        _ => (EvidenceFailureReason::SourceUnavailable, None, false),
+    };
+    failure(reason, &error.to_string(), deadline, cooldown)
 }
 
 fn git_failure(error: AppError) -> EvidenceDetectionOutcome {
@@ -660,6 +739,223 @@ fn evidence_covers_requested_paths(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn download_auto_check_never_fetches_and_rate_limit_also_blocks_preparation() {
+        use crate::application::skill_source::{SavedSkillSource, SkillSourceModule};
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/SKILL.md", server.server_addr());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
+        let worker =
+            thread::spawn(move || {
+                while let Some(request) = server
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .unwrap()
+                {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    request
+                        .respond(tiny_http::Response::empty(429).with_header(
+                            tiny_http::Header::from_bytes("Retry-After", "60").unwrap(),
+                        ))
+                        .unwrap();
+                }
+            });
+        let payloads = payloads();
+        let snapshots = Arc::new(SourceSnapshotReuseIndex::default());
+        let transport: Arc<dyn GitSourceTransport> =
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport);
+        let coordinator = SourceEvidenceCoordinator::with_clock(
+            Arc::new(RuntimeSourceEvidenceDetector::with_git_transport(
+                payloads.clone(),
+                snapshots.clone(),
+                transport.clone(),
+            )),
+            || 1_000,
+        );
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: url.clone(),
+            source_url: Some(url),
+            source_type: "download".into(),
+            skill_path: Some("SKILL.md".into()),
+            computed_hash: Some("a".repeat(64)),
+            remote_hash: None,
+            ref_name: None,
+            ref_kind: None,
+            well_known_digest: None,
+        };
+        let identity = SourceIdentity::from_metadata(&metadata).unwrap();
+        let mut request = EvidenceCheckRequest {
+            environment: EnvironmentRef::Native,
+            key: RemoteEvidenceKey::from_identity(&identity),
+            throttle_key: ProviderThrottleKey::from_identity(&identity),
+            mode: EvidenceCheckMode::Automatic,
+            requested_skill_paths: BTreeSet::from([String::new()]),
+            acquisition: Arc::new(identity.acquisition().clone()),
+            acquisition_transport_identity: identity.acquisition_transport().clone(),
+        };
+        assert!(coordinator
+            .check(request.clone(), CancellationSignal::default())
+            .await
+            .unwrap()
+            .evidence
+            .is_none());
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        request.mode = EvidenceCheckMode::Force;
+        let first = coordinator
+            .check(request.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let failure = first.last_attempt.unwrap().failure.unwrap();
+        assert_eq!(failure.reason, EvidenceFailureReason::RateLimited);
+        assert!(failure.provider_cooldown && failure.retry_at_epoch_ms.is_some());
+        coordinator
+            .check(request, CancellationSignal::default())
+            .await
+            .unwrap();
+        let source = crate::runtime::update_service::RuntimeSkillSourceModule::with_git_transport(
+            payloads,
+            snapshots,
+            coordinator,
+            transport,
+        );
+        let result = source
+            .acquire_saved_skills(
+                &EnvironmentRef::Native,
+                vec![SavedSkillSource {
+                    name: "demo".into(),
+                    metadata,
+                }],
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            result[0].result,
+            Err(AppError::DownloadRateLimited { .. })
+        ));
+        worker.join().unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn download_check_reuses_response_but_failed_recheck_revokes_candidate() {
+        use crate::application::skill_source::{SavedSkillSource, SkillSourceModule};
+        use sha2::{Digest, Sha256};
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/SKILL.md", server.server_addr());
+        let body = "---\nname: demo\ndescription: Download fixture\n---\n# Demo\n";
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
+        let server_task =
+            thread::spawn(move || {
+                while let Some(request) = server
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .unwrap()
+                {
+                    let attempt = count.fetch_add(1, Ordering::SeqCst);
+                    request
+                        .respond(
+                            tiny_http::Response::from_string(body)
+                                .with_status_code(if attempt == 0 { 200 } else { 403 }),
+                        )
+                        .unwrap();
+                }
+            });
+        let payloads = payloads();
+        let snapshots = Arc::new(SourceSnapshotReuseIndex::default());
+        let transport: Arc<dyn GitSourceTransport> =
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport);
+        let detector = Arc::new(RuntimeSourceEvidenceDetector::with_git_transport(
+            payloads.clone(),
+            snapshots.clone(),
+            transport.clone(),
+        ));
+        let coordinator = SourceEvidenceCoordinator::new(detector);
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: url.clone(),
+            source_type: "download".into(),
+            source_url: Some(url),
+            ref_name: None,
+            ref_kind: None,
+            skill_path: Some("SKILL.md".into()),
+            computed_hash: Some("a".repeat(64)),
+            remote_hash: None,
+            well_known_digest: None,
+        };
+        let identity = SourceIdentity::from_metadata(&metadata).unwrap();
+        let request = EvidenceCheckRequest {
+            environment: EnvironmentRef::Native,
+            key: RemoteEvidenceKey::from_identity(&identity),
+            throttle_key: ProviderThrottleKey::from_identity(&identity),
+            mode: EvidenceCheckMode::Force,
+            requested_skill_paths: BTreeSet::from([String::new()]),
+            acquisition: Arc::new(identity.acquisition().clone()),
+            acquisition_transport_identity: identity.acquisition_transport().clone(),
+        };
+        let evidence = coordinator
+            .check(request.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let expected = format!("{:x}", Sha256::digest(format!("SKILL.md{body}").as_bytes()));
+        assert_eq!(
+            evidence.evidence.unwrap().skill_revisions.get(""),
+            Some(&SkillRevision::CliContentHash(expected.clone()))
+        );
+        let source = crate::runtime::update_service::RuntimeSkillSourceModule::with_git_transport(
+            payloads.clone(),
+            snapshots.clone(),
+            coordinator.clone(),
+            transport,
+        );
+        let acquired = source
+            .acquire_saved_skills(
+                &EnvironmentRef::Native,
+                vec![SavedSkillSource {
+                    name: "demo".into(),
+                    metadata: metadata.clone(),
+                }],
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let result = acquired[0].result.as_ref().unwrap();
+        let member = result
+            .validate_member(payloads.as_ref(), &EnvironmentRef::Native, "demo")
+            .await
+            .unwrap();
+        assert_eq!(
+            member.source().update.computed_hash.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        let failed = coordinator
+            .check(request, CancellationSignal::default())
+            .await
+            .unwrap();
+        assert!(failed.last_attempt.unwrap().failure.is_some());
+        assert!(snapshots
+            .candidate(
+                &PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Native),
+                &payloads
+            )
+            .is_none());
+        let retry = source
+            .acquire_saved_skills(
+                &EnvironmentRef::Native,
+                vec![SavedSkillSource {
+                    name: "demo".into(),
+                    metadata,
+                }],
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert!(retry[0].result.is_err());
+        assert!(payloads.pin_verified(&result.payloads[0].1).await.is_ok());
+        server_task.join().unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 3);
+    }
+
     use std::collections::VecDeque;
     use std::net::SocketAddr;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -1097,6 +1393,7 @@ mod tests {
             Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
             Arc::new(UnavailableWslSourceAccess),
             Arc::new(ScopeNotFoundWellKnownAccess),
+            RuntimeDownloadAccess::for_test(),
         );
         let result = detector
             .detect(
@@ -1357,7 +1654,7 @@ mod tests {
     #[test]
     fn clone_revision_keeps_github_tree_oid_and_generic_git_content_hash_distinct() {
         assert_eq!(
-            clone_skill_revision(
+            source_content_revision(
                 SourceProvider::Github,
                 "content-hash".to_string(),
                 Some("tree-oid".to_string()),
@@ -1365,7 +1662,7 @@ mod tests {
             Some(SkillRevision::GitTreeOid("tree-oid".to_string()))
         );
         assert_eq!(
-            clone_skill_revision(
+            source_content_revision(
                 SourceProvider::Git,
                 "content-hash".to_string(),
                 Some("tree-oid".to_string()),

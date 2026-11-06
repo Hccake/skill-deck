@@ -5,6 +5,37 @@ use std::io::Read;
 use wsl_environment_worker::payload::PayloadManager;
 
 #[test]
+fn worker_source_hash_matches_cli_reference_vectors() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../environment-engine/tests/fixtures/cli-content-hashes.json"
+    ))
+    .unwrap();
+    for vector in fixture["vectors"].as_array().unwrap() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root).unwrap();
+        for (relative, content) in vector["files"].as_object().unwrap() {
+            let path = relative
+                .split('/')
+                .fold(root.clone(), |path, part| path.join(part));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content.as_str().unwrap()).unwrap();
+        }
+        let mut manager = PayloadManager::new(temp.path().to_path_buf()).unwrap();
+        let acquired = manager
+            .acquire_from_source("source-hash", "payload-vector", &root)
+            .unwrap();
+        assert_eq!(
+            acquired.computed_hash.as_deref(),
+            vector["expected"].as_str(),
+            "{}",
+            vector["name"]
+        );
+        manager.remove_session("source-hash").unwrap();
+    }
+}
+
+#[test]
 fn payload_manager_builds_verifies_reads_and_removes_worker_owned_payloads() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("source");

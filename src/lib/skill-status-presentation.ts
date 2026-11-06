@@ -19,6 +19,7 @@ function reasonFeedbackKey(reason: string): string {
 }
 
 function errorFeedbackKey(error: AppError): string {
+  if (error.kind === 'downloadRateLimited') return 'addSkill.source.error.downloadRateLimited';
   if (error.kind === 'gitNetworkError' || error.kind === 'gitTimeout') return 'skills.checkUpdatesNetworkFailed';
   if (error.kind === 'gitAuthFailed') return 'skills.checkUpdatesAccessFailed';
   if (error.kind === 'wellKnownSourceFailed' || error.kind === 'directDownloadFailed') return reasonFeedbackKey(error.data.reason);
@@ -37,7 +38,7 @@ export function updateCheckFailureKey(result: AppError | Pick<UpdateCheckRespons
   const keys = new Set([
     ...result.skills.flatMap(skill => skill.error ? [errorFeedbackKey(skill.error)]
       : skill.status === 'cannotCheck' && skill.reason !== 'upstreamUnavailable' ? ['skills.checkUpdatesFailed'] : []),
-    ...result.sources.flatMap(source => source.lastAttempt?.failure ? [reasonFeedbackKey(source.lastAttempt.failure.reason)]
+    ...result.sources.flatMap(source => source.lastAttempt?.failure ? [source.provider === 'download' && source.lastAttempt.failure.reason === 'rateLimited' ? 'addSkill.source.error.downloadRateLimited' : reasonFeedbackKey(source.lastAttempt.failure.reason)]
       : source.error ? [errorFeedbackKey(source.error)] : []),
   ]);
   return keys.size === 1 ? [...keys][0] : 'skills.checkUpdatesFailed';
@@ -49,11 +50,12 @@ function isTransientCheckError(error: AppError): boolean {
 
 export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUpdateInfo) {
   const reason = check?.reason ?? skill.updateReason ?? skill.updateCapability?.reason;
-  if (skill.sourceType === 'download' || reason === 'download-source') {
+  const canRunUpdate = check?.capability.canRunUpdate ?? skill.canRunUpdate ?? skill.updateCapability?.canRunUpdate;
+  if ((skill.sourceType === 'download' && canRunUpdate !== true) || reason === 'download-source') {
     const sourceLabel = skill.source?.trim() || null;
     return { local: false, packageSource: false, sourceLabel,
       sourceLabelKey: sourceLabel ? null : 'skills.filter.downloadSource',
-      available: false, notice: null as SkillSourceNotice | null,
+      available: false, reacquire: false, notice: null as SkillSourceNotice | null,
       sourceHintKey: 'skills.updateHint.downloadSource' };
   }
   const status = check?.status ?? skill.updateStatus;
@@ -75,7 +77,7 @@ export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUp
     notice = { labelKey: 'skills.card.sourceMissingUpstream', hintKey: 'skills.updateHint.deletedUpstream' };
   } else if (!local) {
     if (failure && ['authenticationRequired', 'refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(failure.reason)) {
-      notice = { labelKey: resolveEvidenceFailureReasonI18nKey(failure.reason), hintKey: resolveEvidenceFailureNextStepI18nKey(failure.reason) };
+      notice = { labelKey: resolveEvidenceFailureReasonI18nKey(failure.reason), hintKey: skill.sourceType === 'download' ? 'skills.updateHint.downloadAccess' : resolveEvidenceFailureNextStepI18nKey(failure.reason) };
     } else if (error && !isTransientCheckError(error)) {
       const labelKey = error.kind === 'gitAuthFailed' ? 'skills.updateEvidence.failure.authenticationRequired'
         : error.kind === 'gitRefNotFound' ? 'skills.updateEvidence.failure.refNotFound'
@@ -87,11 +89,11 @@ export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUp
     }
   }
 
-  const canRunUpdate = check?.capability.canRunUpdate ?? skill.canRunUpdate ?? skill.updateCapability?.canRunUpdate;
   const sourceHintKey = local ? null
     : reason === 'missingRemoteHash' || reason === 'missing-remote-hash'
       ? canRunUpdate ? 'skills.updateHint.missingRemoteHashCanUpdate' : 'skills.updateHint.missingRemoteHash'
     : reason === 'unsupportedSource' || reason === 'unsupported-source-type' ? 'skills.updateHint.unsupportedSource'
     : null;
-  return { local, packageSource, sourceLabel, sourceLabelKey: null, available, notice, sourceHintKey };
+  const reacquire = canRunUpdate === true && (reason === 'missingRemoteHash' || reason === 'missing-remote-hash');
+  return { local, packageSource, sourceLabel, sourceLabelKey: null, available, reacquire, notice, sourceHintKey };
 }

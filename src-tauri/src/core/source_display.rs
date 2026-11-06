@@ -40,10 +40,7 @@ pub(crate) fn download_source_display(
         .split_once("://")
         .map_or(origin.as_str(), |(_, host)| host)
         .to_owned();
-    let openable = url.username().is_empty()
-        && url.password().is_none()
-        && url.query().is_none()
-        && url.fragment().is_none();
+    let openable = crate::core::download_source::maintenance_url(Some(raw)).is_some();
     DownloadSourceDisplay {
         label,
         origin: Some(origin),

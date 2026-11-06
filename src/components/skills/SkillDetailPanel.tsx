@@ -171,7 +171,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const noticeDescription = notice?.error ? formatAppError(notice.error, t)
     : notice?.hintKey ? t(notice.hintKey) : undefined;
   const canShowUpdateAction = (skill.canRunUpdate === true || (skill.hasUpdate === true && skill.canRunUpdate !== false)) && !isDeletedUpstream;
-  const canConfigureCredentials = isIncompleteCheck && (typedFailure?.reason === 'rateLimited' || typedFailure?.reason === 'authenticationRequired');
+  const canConfigureCredentials = skill.sourceType !== 'download' && isIncompleteCheck && (typedFailure?.reason === 'rateLimited' || typedFailure?.reason === 'authenticationRequired');
   const canInspectSource = isIncompleteCheck && typedFailure != null
     && ['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
     && Boolean(skill.sourceUrl);
@@ -183,7 +183,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
         {canShowUpdateAction || updateStatus ? (
             <DetailAction
                 className="text-primary hover:text-primary hover:bg-primary/10"
-                label={t('skills.actions.update')}
+                label={t(presentation.reacquire ? 'skills.actions.reacquire' : 'skills.actions.update')}
                 hint={activeUpdatePhase ? t(resolveSkillUpdatePhaseI18nKey(activeUpdatePhase)) : undefined}
                 disabled={writeBlocked || Boolean(updateStatus) || !canShowUpdateAction}
                 onClick={handleUpdate}

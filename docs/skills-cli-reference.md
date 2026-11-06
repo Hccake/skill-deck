@@ -114,7 +114,9 @@ Eve 的用户选择和目标模型见[Agent 模型](./agent-model.md#eve-专用�
 
 当前参考 CLI 可以生成 Eve 目录型和单文件型内容，并移除其中的 `name`。Skill Deck 依据项目记录识别这类内容，写入只支持目录型安装；必要目标包含单文件时保留文件并阻断整份 Skill，具体规则见[Skill 生命周期](./skill-lifecycle.md#更新)。
 
-`computedHash` 按确定顺序组合相对路径和文件内容并计算 SHA-256，同时排除 `.git`、`node_modules` 等不属于 Skill 内容的目录。Skill Deck 从本次已经固定的完整内容计算同样的哈希。该字段保存安装或更新时的内容基线，外部编辑文件不会自动改写它。
+`computedHash` 按固定 en-US 区域排序组合相对路径和文件字节并计算 SHA-256，路径使用 `/`，遍历时排除 `.git` 和 `node_modules` 目录。Native 与 Worker 共用排序和文件集合规则。来源摘要在安装过滤前计算，因此来源中的 `metadata.json` 和 Python 缓存文件可以参与摘要，同时仍按既有规则从安装内容中省略。该字段只在安装或更新成功提交时保存，外部编辑不会自动改写它。
+
+兼容基准和固定向量见[测试与验证规范](./testing.md#下载来源持续维护)。CLI 的默认排序受运行时区域设置影响，旧记录没有记录该信息；历史摘要不同仍经过更新预览，可能产生一次内容未变的更新。检查不会静默迁移基线，也不保证与所有区域设置的 CLI 交替写入时摘要始终一致。
 
 项目 lock 中的 Local 来源尽可能保存相对于项目根目录的路径，并统一使用 `/` 分隔符。读取时根据当前项目根目录解析，因此项目整体移动后仍可定位同一相对来源；Windows 来源与项目不在同一盘符或来源使用 UNC 地址时保留绝对路径。
 
@@ -124,8 +126,8 @@ Skill Deck 仍可读取旧的 `<project>/.agents/.skill-lock.json`，并在下�
 
 | 字段 | 保存的信息 |
 |---|---|
-| 全局 `skillFolderHash` | 保存 `skills` CLI 用于跟踪来源版本的值；GitHub 来源使用 Skill 目录的 Git 目录树对象 ID（tree object ID），GitLab 和普通 Git 使用兼容内容哈希 |
-| 项目 `computedHash` | 安装或更新时保存的兼容内容哈希，也用于 GitLab 和普通 Git 来源的版本比较 |
+| 全局 `skillFolderHash` | 保存 `skills` CLI 用于跟踪来源版本的值；GitHub 来源使用 Skill 目录的 Git 目录树对象 ID（tree object ID），GitLab、普通 Git 和直接下载使用兼容内容哈希 |
+| 项目 `computedHash` | 安装或更新时保存的兼容内容哈希，也用于 GitLab、普通 Git 和直接下载的版本比较 |
 | Skill Deck `remoteHash` | 保存来源能够提供的远端版本标识；GitHub 来源使用 Skill 目录的目录树对象 ID |
 | `wellKnownDigest` | 保存 Well-known 索引提供或根据旧版内容计算的版本摘要 |
 
@@ -133,6 +135,7 @@ Skill Deck 仍可读取旧的 `<project>/.agents/.skill-lock.json`，并在下�
 
 - GitHub 使用全局 `skillFolderHash` 或项目 `remoteHash` 中的目录树对象 ID；项目记录只有 `computedHash` 时仍缺少远端比较基线。
 - GitLab 和普通 Git 使用全局 `skillFolderHash`；项目中优先使用 `computedHash`，缺失时使用 `remoteHash`。
+- 直接下载使用全局 `skillFolderHash` 或项目 `computedHash` 中的有效 SHA-256 来源摘要，只有明确的可维护 URL 和成员路径才允许获取。
 - Well-known 使用 `wellKnownDigest`，其他哈希字段不能替代该摘要。
 
 这些字段的含义和比较方式保持独立。远端版本的获取与缺少基线时的行为见[更新检查](./update-checking.md)。

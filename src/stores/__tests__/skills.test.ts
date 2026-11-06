@@ -46,7 +46,7 @@ function skill(overrides: Partial<SkillListItem> = {}): SkillListItem {
   return {
     name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit',
     scope: 'global', agents: ['codex'], associatedAgents: ['codex'], source: 'owner/repo', hasUpdate: true,
-    canRunUpdate: true, canCheckForUpdates: true, updateStatus: 'updateAvailable',
+    canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, updateStatus: 'updateAvailable',
     comparisonFingerprint: 'baseline-1', updateReason: null, ...overrides,
   };
 }
@@ -91,7 +91,7 @@ function updateInfo(
     source: `${name}/repo`,
     hasUpdate: false,
     status: 'upToDate',
-    capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+    capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
     reason: null,
     gitRef: null,
     sourceUrl: null,
@@ -132,6 +132,26 @@ describe('skills data store', () => {
 
   const force = (names = ['toolkit']) => useSkillsDataStore.getState().forceCheckUpdates(context, selected(context, names));
 
+  it('uses the backend automatic eligibility while keeping downloads manually checkable', async () => {
+    setSkills([skill({ sourceType: 'download', canCheckAutomatically: false, hasUpdate: false })]);
+    await useSkillsDataStore.getState().activateAutomaticChecks(context);
+    expect(mocks.checkUpdates).not.toHaveBeenCalled();
+    await force();
+    expect(mocks.checkUpdates).toHaveBeenCalledTimes(1);
+    expect(mocks.checkUpdates.mock.calls[0][0].mode).toBe('force');
+  });
+
+  it('does not reload or replace a comparison when the backend normally skips a member', async () => {
+    setSkills([skill()]);
+    mocks.checkUpdates.mockResolvedValue({ outcome: 'completed', sources: [], skills: [], skipped: [
+      { name: 'toolkit', reason: 'manualOnly', comparisonFingerprint: 'baseline-1' },
+    ] });
+    await force();
+    expect(mocks.listSkills).not.toHaveBeenCalled();
+    expect(useSkillsDataStore.getState().snapshots[contextKey(context)].skills[0].hasUpdate).toBe(true);
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
   it('reports an unsuccessful manual check without changing the known update', async () => {
     setSkills([skill()]);
     mocks.checkUpdates.mockResolvedValue({ ...response([updateInfo('toolkit', {
@@ -144,7 +164,7 @@ describe('skills data store', () => {
   });
   const snapshot = () => useSkillsDataStore.getState().snapshots[contextKey(context)]!;
   const response = (skills: SkillUpdateInfo[], sourceOverrides: Partial<SourceUpdateCheckInfo> = {}): UpdateCheckResponse => ({
-    outcome: 'completed', skills, sources: [sourceInfo('source', sourceOverrides)],
+    outcome: 'completed', skipped: [], skills, sources: [sourceInfo('source', sourceOverrides)],
   });
 
   it('matches backend fingerprints and source keys without interpreting URLs', () => {

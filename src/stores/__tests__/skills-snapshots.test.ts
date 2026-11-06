@@ -192,7 +192,7 @@ describe('context-keyed Skill snapshots', () => {
             source: 'owner/repo',
             sourceUrl: 'https://github.com/owner/repo',
             canRunUpdate: true,
-            canCheckForUpdates: true,
+            canCheckForUpdates: true, canCheckAutomatically: true,
           }],
           agents: [],
           pathExists: true,
@@ -212,7 +212,7 @@ describe('context-keyed Skill snapshots', () => {
       status: 'updateAvailable',
       reason: null,
       freshness: 'fresh',
-      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+      capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
     }] });
 
     await useSkillsDataStore.getState().forceCheckUpdates(ubuntuGlobal, { kind: 'all' });

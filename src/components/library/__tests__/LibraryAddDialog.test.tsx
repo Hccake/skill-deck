@@ -25,6 +25,7 @@ vi.mock('@/components/skills/skill-search/SkillSearch', () => ({
 }));
 
 vi.mock('react-i18next', () => ({
+  Trans: ({ i18nKey, values }: { i18nKey: string; values: Record<string, unknown> }) => <>{`${i18nKey}:${JSON.stringify(values)}`}</>,
   useTranslation: () => ({
     t: (key: string, values?: Record<string, unknown>) => (
       values ? `${key}:${JSON.stringify(values)}` : key
@@ -421,7 +422,7 @@ describe('LibraryAddDialog', () => {
 
     const confirm = await screen.findByRole('button', { name: 'libraries.addFlow.review.confirm' });
     expect(confirm).toHaveProperty('disabled', true);
-    await user.click(screen.getByRole('checkbox', { name: 'addSkill.confirm.redirectAcknowledge' }));
+    await user.click(screen.getByRole('checkbox', { name: 'addSkill.confirm.redirectAllowAdd' }));
     expect(confirm).toHaveProperty('disabled', false);
     await user.click(confirm);
 

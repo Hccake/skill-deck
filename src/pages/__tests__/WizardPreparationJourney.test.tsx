@@ -20,7 +20,7 @@ const api = vi.hoisted(() => ({
   confirmInstallAgentSelection: vi.fn(),
 }));
 
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'zh-CN' } }) }));
 vi.mock('@/hooks/useTauriApi', () => api);
 vi.mock('@tauri-apps/api/event', () => ({
   emit: vi.fn().mockResolvedValue(undefined),

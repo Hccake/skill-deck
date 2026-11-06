@@ -244,6 +244,9 @@ pub enum AppError {
     #[error("Direct download failed: {reason:?}")]
     DirectDownloadFailed { reason: DirectDownloadFailureReason },
 
+    #[error("download source rate limit is active")]
+    DownloadRateLimited { retry_at_epoch_ms: Option<u64> },
+
     #[error("Direct download cannot replace an existing target: {target}")]
     DirectDownloadConflict { target: String },
 

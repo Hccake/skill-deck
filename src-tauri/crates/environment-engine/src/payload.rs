@@ -9,7 +9,6 @@ use sha2::{Digest, Sha256};
 
 const EXCLUDED_PAYLOAD_FILES: &[&str] = &["metadata.json"];
 const EXCLUDED_PAYLOAD_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"];
-const EXCLUDED_CLI_DIRS: &[&str] = &[".git", "node_modules"];
 const MANIFEST_FILE: &str = "manifest.json";
 const BLOB_LIST_FILE: &str = "blob-list";
 const BLOBS_DIRECTORY: &str = "blobs";
@@ -284,7 +283,14 @@ fn build_payload_in_root(
         .collect::<std::collections::BTreeMap<_, _>>()
         .values()
         .sum();
-    let computed_hash = compute_cli_hash(&manifest, &blobs_root)?;
+    let computed_hash =
+        crate::source_hash::hash_directory(physical_root, is_cancelled).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                PayloadError::Cancelled
+            } else {
+                PayloadError::Io(error)
+            }
+        })?;
     Ok(BuiltPayload {
         manifest,
         total_bytes,
@@ -483,36 +489,6 @@ fn compute_payload_root_hash(entries: &[PayloadEntry]) -> String {
         hasher.update([0]);
     }
     format!("{:x}", hasher.finalize())
-}
-
-fn compute_cli_hash(manifest: &PayloadManifest, blobs_root: &Path) -> Result<String, PayloadError> {
-    let mut files = manifest
-        .entries
-        .iter()
-        .filter(|entry| entry.kind == PayloadEntryKind::File)
-        .filter(|entry| {
-            !entry
-                .relative_path
-                .split('/')
-                .any(|component| EXCLUDED_CLI_DIRS.contains(&component))
-        })
-        .collect::<Vec<_>>();
-    files.sort_by(|left, right| {
-        left.relative_path
-            .to_ascii_lowercase()
-            .cmp(&right.relative_path.to_ascii_lowercase())
-            .then_with(|| left.relative_path.cmp(&right.relative_path))
-    });
-    let mut hasher = Sha256::new();
-    for entry in files {
-        hasher.update(entry.relative_path.as_bytes());
-        let blob_id = entry
-            .blob_id
-            .as_deref()
-            .ok_or(PayloadError::InvalidPayload)?;
-        hash_file_into(&blobs_root.join(blob_id), &mut hasher)?;
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn file_sha256(path: &Path) -> Result<String, PayloadError> {

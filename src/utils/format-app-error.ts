@@ -56,6 +56,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       });
     case 'directDownloadFailed':
       return t(`addSkill.source.error.downloadFailure.${error.data.reason}`);
+    case 'downloadRateLimited':
+      return t('addSkill.source.error.downloadRateLimited');
     case 'directDownloadConflict':
       return t('addSkill.source.error.downloadConflict', { target: error.data.target });
     case 'invalidProxySettings':

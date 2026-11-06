@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
+#[path = "download_workflow.rs"]
+pub(crate) mod download_maintenance;
+
 use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
 use crate::application::agent_selection::{
     build_agent_selection_catalog, test_submission_for_agents_and_own_directories,
@@ -1973,7 +1976,7 @@ async fn http_source_reports_real_failure_reasons_for_both_attempts() {
 
 #[cfg(test)]
 #[tokio::test]
-async fn direct_download_flows_from_http_discovery_through_install_without_lock() {
+async fn direct_download_commits_source_record_only_for_successful_installations() {
     use std::thread;
     use std::time::Duration;
 
@@ -2189,10 +2192,18 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
     assert_eq!(response.units[0].status, MutationUnitStatus::Succeeded);
     assert_eq!(response.units[1].skill_name, "beta");
     assert_eq!(response.units[1].status, MutationUnitStatus::Failed);
-    assert!(response.units.iter().all(|unit| !unit.lock_committed));
+    assert!(response.units[0].lock_committed);
+    assert!(!response.units[1].lock_committed);
     assert!(project_path.join(".agents/skills/alpha/SKILL.md").is_file());
     assert!(!project_path.join(".agents/skills/beta").exists());
-    assert!(!project_path.join("skills-lock.json").exists());
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(project_path.join("skills-lock.json")).unwrap()).unwrap();
+    assert_eq!(lock["skills"]["alpha"]["sourceType"], "download");
+    assert_eq!(lock["skills"]["alpha"]["sourceUrl"], request.source);
+    assert!(lock["skills"]["alpha"]["computedHash"]
+        .as_str()
+        .is_some_and(|hash| hash.len() == 64));
+    assert!(lock["skills"].get("beta").is_none());
     assert_no_staging_leaks(temp.path()).unwrap();
     assert_recovery_graph_is_empty(&recovery_root).unwrap();
 }

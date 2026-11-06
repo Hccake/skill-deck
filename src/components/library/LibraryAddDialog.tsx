@@ -372,6 +372,8 @@ function LibraryAddReviewStep({ flow, environment }: { flow: LibraryAddFlow; env
       </ul>
       {preview?.redirectedDownloadHost ? (
         <RedirectHostConfirmation
+          sourceUrl={flow.discovery.result?.sourceUrl ?? flow.sourceInput}
+          action="add"
           host={preview.redirectedDownloadHost}
           acknowledged={flow.redirectAcknowledged}
           onAcknowledgedChange={flow.setRedirectAcknowledged}
