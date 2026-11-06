@@ -10,6 +10,7 @@ import type {
   LibraryUpdateResponse,
   LibraryUpdateSkillResult,
   SkillUpdateInfo,
+  SourceUpdateCheckInfo,
   UpdateLibrarySkillsRequest,
 } from '@/bindings';
 import {
@@ -32,6 +33,7 @@ interface LibraryUpdateWorkflowState {
   environment: EnvironmentRef | null;
   libraryId: LibraryId | null;
   checks: Record<string, SkillUpdateInfo>;
+  sources: SourceUpdateCheckInfo[];
   /** 上一批更新中每个成员的提交结果，用于卡片显示完成或失败。 */
   lastResults: Record<string, LibraryUpdateSkillResult>;
   hasError: boolean;
@@ -51,6 +53,7 @@ const initialState = {
   environment: null,
   libraryId: null,
   checks: {},
+  sources: [],
   lastResults: {},
   hasError: false,
   error: null,
@@ -85,6 +88,7 @@ export const useLibraryUpdateWorkflow = create<LibraryUpdateWorkflowState>()((se
       set((state) => ({
         phase: 'idle',
         error: null,
+        sources: response.sources,
         checks: Object.fromEntries(response.skills.map((check) => {
           const previous = state.checks[check.name];
           return [

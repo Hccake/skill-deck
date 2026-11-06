@@ -339,6 +339,26 @@ describe('LibraryPage maintenance', () => {
     expect(screen.getAllByRole('button', { name: 'libraries.update' }).at(-1)).toBeTruthy();
   });
 
+  it('shows each download route and initially focuses Cancel in the update dialog', async () => {
+    vi.mocked(prepareLibrarySkillUpdates).mockResolvedValue({
+      blocked: [], skillNames: ['api-design'], redirectedDownloadHosts: ['cdn.example.com'],
+      downloadRedirects: [{ sourceKey: 'first', redirect: { originalHost: 'docs.example.com', actualHost: 'cdn.example.com' } },
+        { sourceKey: 'second', redirect: { originalHost: 'other.example.com', actualHost: 'cdn.example.com' } }],
+    });
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.checkUpdates' }));
+    const trigger = await screen.findByRole('button', { name: 'skills.actions.updateNamed:{"name":"api-design"}' });
+    act(() => trigger.focus());
+    fireEvent.click(trigger);
+    expect(await screen.findByText('docs.example.com')).toBeTruthy();
+    expect(screen.getByText('other.example.com')).toBeTruthy();
+    expect(screen.getAllByText('cdn.example.com')).toHaveLength(2);
+    expect(screen.queryByText(/libraries.redirectConfirmation/)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'common.cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'skills.actions.updateNamed:{"name":"api-design"}' })));
+  });
+
   it('gives immediate feedback when a manual library check fails', async () => {
     const notification = vi.spyOn(toast, 'error');
     vi.mocked(checkLibrarySkillUpdates).mockResolvedValueOnce({ skipped: [], sources: [], skills: [{
@@ -563,9 +583,9 @@ describe('LibraryPage maintenance', () => {
   it('confirms a completed check that found nothing', async () => {
     vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({ skipped: [],
       outcome: 'completed',
-      sources: [],
+      sources: [{ sourceKey: "source-1", source: "https://example.com/repo", requestedRef: null, resolvedRef: null, refRevision: null, checkedAtEpochMs: Date.now(), expiresAtEpochMs: Date.now() + 60_000, freshness: "fresh", lastAttempt: null }],
       skills: [{
-        name: 'api-design',
+        name: 'api-design', sourceKey: 'source-1',
         source: 'https://example.com/repo',
         hasUpdate: false,
         status: 'upToDate',

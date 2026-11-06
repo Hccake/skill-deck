@@ -69,7 +69,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
 
   // 只有"新版本可用"进标题标签。已是最新是默认状态不占位，来源异常走注意行。
   const capability = check?.capability ?? skill.updateCapability;
-  const canShowUpdateAction = (check?.status === 'updateAvailable' || canRetryLibraryUpdate(result))
+  const canShowUpdateAction = (presentation.available || presentation.reacquire || canRetryLibraryUpdate(result))
     && capability?.canRunUpdate !== false && !activeUpdatePhase
     && Boolean(onUpdate);
   const attentionLabels = [
@@ -150,8 +150,9 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
             <div className="-mr-1 flex h-6 shrink-0 items-center gap-0.5">
               {canShowUpdateAction ? (
                 <SkillCardAction
+                  data-library-update={`card:${skill.name}`}
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  label={t('skills.actions.updateNamed', { name: skill.name })}
+                  label={t(presentation.reacquire ? 'skills.actions.reacquireNamed' : 'skills.actions.updateNamed', { name: skill.name })}
                   disabled={busy}
                   onClick={(event) => {
                     event.stopPropagation();

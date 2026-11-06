@@ -68,9 +68,8 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
     ? skill.sourceUrl
     : isOpenableUrl(skill.source) ? skill.source : null;
 
-  const isUpdateAvailable = check?.status === 'updateAvailable';
   const capability = check?.capability ?? skill.updateCapability;
-  const canUpdate = capability?.canRunUpdate !== false && (isUpdateAvailable || canRetryLibraryUpdate(result));
+  const canUpdate = capability?.canRunUpdate !== false && (presentation.available || presentation.reacquire || canRetryLibraryUpdate(result));
   const attentionLabels = [
     result?.error ? formatMutationError(result.error, t) : null,
     presentation.notice && !result?.error ? t(presentation.notice.labelKey) : null,
@@ -86,8 +85,9 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
       <DetailHeader name={skill.name} contentState={content ? loading ? 'refreshing' : contentError ? 'stale' : undefined : undefined}>
         {canUpdate && onUpdate ? (
           <DetailAction
+            data-library-update={`detail:${skill.name}`}
             className="text-primary hover:bg-primary/10 hover:text-primary"
-            label={t('libraries.update')}
+            label={t(presentation.reacquire ? 'skills.actions.reacquire' : 'libraries.update')}
             disabled={busy}
             onClick={() => onUpdate(skill.name)}
           >

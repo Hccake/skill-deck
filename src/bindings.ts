@@ -1041,6 +1041,7 @@ export type LibraryApplicationState = { orderedLibraryIds: LibraryId[]; selected
 export type LibraryApplicationSummary = { orderedLibraries: SkillLibrarySummary[]; selectedAgentIds: AgentId[]; pending: boolean; syncState: LibraryApplicationSyncState }
 export type LibraryApplicationSyncState = "synced" | "pending" | "unverified" | "recoveryRequired"
 export type LibraryCommitStatus = "succeeded" | "failed" | "notRun"
+export type LibraryDownloadRedirect = { sourceKey: string; redirect: DownloadRedirect }
 export type LibraryId = string
 export type LibraryMembershipOutcome = { scopes: MembershipScopeResult[]; cleanup: RetiredCleanupResult[]; snapshotError: AppError | null }
 export type LibraryMembershipPreview = { environment: EnvironmentRef; libraryId: LibraryId; scopes: SkillLocationRef[]; impacts: MembershipScopeImpact[]; inventoryComplete: boolean; inventoryToken: string; token: string }
@@ -1143,7 +1144,7 @@ export type PathSpec =
  */
 { kind: "absolute"; path: string }
 export type PhysicalIdentityComparison = "same" | "different" | "unknown"
-export type PreparedLibraryUpdatePreview = { pathChanges?: LibrarySkillPathChange[] | null; skillNames: string[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
+export type PreparedLibraryUpdatePreview = { pathChanges?: LibrarySkillPathChange[] | null; skillNames: string[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[]; downloadRedirects?: LibraryDownloadRedirect[] | null }
 export type PreparedUpdatePreview = { sources: UpdateSourcePreview[]; pathBase?: ScopePathBase | null; skills: UpdateSkillPreview[]; blocked: UpdatePreparationIssue[]; redirectedDownloadHosts: string[] }
 export type PreviewAddLibrarySkillItem = { skillName: string; payload: AcquiredPayloadHandle }
 export type PreviewAddLibrarySkillsRequest = { environment: EnvironmentRef; libraryId: LibraryId; discoverySession: DiscoverySessionHandle; skills: PreviewAddLibrarySkillItem[] }

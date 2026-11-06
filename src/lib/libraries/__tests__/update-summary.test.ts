@@ -24,15 +24,51 @@ function checks(...statuses: SkillUpdateCheckStatus[]): Record<string, SkillUpda
       sourceUrl: null,
       skillPath: null,
       freshness: 'fresh',
+      sourceKey: 'source-1',
     } satisfies SkillUpdateInfo,
   ]));
 }
 
+const sources = [{ sourceKey: 'source-1', expiresAtEpochMs: Date.now() + 60_000 }];
+const membersFor = (result: Record<string, SkillUpdateInfo>) => Object.values(result).map(check => ({
+  name: check.name, sourceType: 'git', comparisonFingerprint: check.comparisonFingerprint, updateCapability: check.capability,
+}));
+const summary = (result: Record<string, SkillUpdateInfo>, hasError: boolean) => summarizeLibraryUpdates(result, hasError, membersFor(result), sources);
+
 const line = (statuses: SkillUpdateCheckStatus[], hasError = false) => (
-  formatLibraryUpdateSummary(summarizeLibraryUpdates(checks(...statuses), hasError), t)
+  formatLibraryUpdateSummary(summary(checks(...statuses), hasError), t)
 );
 
 describe('library update summary', () => {
+  it('does not call the Library up to date when a new maintainable member has no result', () => {
+    const result = checks('upToDate');
+    const members = ['skill-0', 'new-download'].map(name => ({ name, sourceType: 'download', comparisonFingerprint: null, updateCapability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: false, reason: null } }));
+    expect(formatLibraryUpdateSummary(summarizeLibraryUpdates(result, false, members, sources), t)).toBe('');
+  });
+
+  it('ignores normally excluded members and rejects stale or different-baseline comparisons', () => {
+    const result = checks('upToDate');
+    const members = [{ name: 'skill-0', sourceType: 'download', comparisonFingerprint: 'current', updateCapability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: false, reason: null } },
+      { name: 'one-time', sourceType: 'download', comparisonFingerprint: null, updateCapability: { canRunUpdate: false, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'unsupportedSource' as const } }];
+    expect(formatLibraryUpdateSummary(summarizeLibraryUpdates(result, false, members, sources), t)).toBe('');
+    result['skill-0'].comparisonFingerprint = 'current';
+    expect(formatLibraryUpdateSummary(summarizeLibraryUpdates(result, false, members, sources), t)).toBe('libraries.updateSummary.allUpToDate');
+    result['skill-0'].freshness = 'stale';
+    expect(formatLibraryUpdateSummary(summarizeLibraryUpdates(result, false, members, sources), t)).toBe('');
+    result['skill-0'].freshness = 'fresh';
+    expect(formatLibraryUpdateSummary(summarizeLibraryUpdates(result, true, members, sources), t)).toBe('libraries.updateSummary.incomplete');
+  });
+
+  it('requires unexpired evidence associated with each comparison', () => {
+    const result = checks('upToDate');
+    result['skill-0'].sourceKey = 'download-a';
+    const sources = [{ sourceKey: 'download-a', expiresAtEpochMs: Date.now() + 60_000 }];
+    expect(summarizeLibraryUpdates(result, false, membersFor(result), sources).coverageComplete).toBe(true);
+    expect(summarizeLibraryUpdates(result, false, membersFor(result), [{ ...sources[0], expiresAtEpochMs: Date.now() - 1 }]).coverageComplete).toBe(false);
+    delete result['skill-0'].sourceKey;
+    expect(summarizeLibraryUpdates(result, false, membersFor(result), [{ ...sources[0], sourceKey: undefined }]).coverageComplete).toBe(false);
+  });
+
   it('says nothing has been checked yet before the first result', () => {
     // 尚未检查不占位，摘要为空。
     expect(line([])).toBe('');
@@ -61,14 +97,14 @@ describe('library update summary', () => {
 
   it('preserves the visual meaning of normal, actionable, and warning states', () => {
     expect(formatLibraryUpdateSummaryItems(
-      summarizeLibraryUpdates(checks('upToDate'), false),
+      summary(checks('upToDate'), false),
       t,
     )).toEqual([
       { text: 'libraries.updateSummary.allUpToDate', tone: 'neutral' },
     ]);
 
     expect(formatLibraryUpdateSummaryItems(
-      summarizeLibraryUpdates(checks('updateAvailable', 'deletedUpstream'), true),
+      summary(checks('updateAvailable', 'deletedUpstream'), true),
       t,
     )).toEqual([
       { text: 'libraries.updateSummary.updateAvailable(1)', tone: 'accent' },

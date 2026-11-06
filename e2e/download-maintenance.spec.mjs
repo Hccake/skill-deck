@@ -14,7 +14,7 @@ async function configure(options = {}, width = 960, height = 720) {
   if ((options.view ?? 'wizard') === 'wizard' && (options.step ?? 'confirm') === 'confirm') {
     await browser.waitUntil(async () => await browser.execute(count => window.__downloadFixture.lastPrepared.length === count, options.count ?? 20));
     await $('.install-confirmation').waitForDisplayed();
-  } else await $(options.view === 'update' ? '[role="dialog"]' : '[data-e2e-wizard-footer]').waitForDisplayed();
+  } else await $(options.view === 'library' ? 'button[aria-label="Check for Updates"],button[aria-label="检查更新"]' : options.view === 'update' ? '[role="dialog"]' : '[data-e2e-wizard-footer]').waitForDisplayed();
   await browser.executeAsync(async done => {
     await document.fonts.ready;
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -94,4 +94,39 @@ describe('Download maintenance confirmation in the native desktop', () => {
     assert.ok(metrics.text.includes('content-distribution.engineering.example.net'));
     await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, 'download-update-source.png'));
   });
+  it('keeps the library confirmation compact, preserves focus and reveals full hosts by keyboard', async () => {
+    for (const [language, dark] of [['zh-CN', false], ['en', true]]) {
+      await configure({ view: 'library', language, long: true, dark }, 760, 600);
+      await $(`button[aria-label="${language === 'en' ? 'Check for Updates' : '检查更新'}"]`).click();
+      const update = $('button[aria-label^="Update"][aria-label*="code-review"],button[aria-label^="更新"][aria-label*="code-review"]');
+      await update.waitForDisplayed();
+      await update.click();
+      const dialog = $('[role="dialog"]');
+      await dialog.waitForDisplayed();
+      await browser.waitUntil(async () => await browser.execute(expected => document.activeElement.textContent === expected, language === 'en' ? 'Cancel' : '取消'));
+      await browser.executeAsync(async done => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        await Promise.allSettled(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished));
+        done();
+      });
+      const metrics = await browser.execute(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const rect = dialog.getBoundingClientRect();
+        return { width: rect.width, overflow: dialog.scrollWidth > dialog.clientWidth, tooltipCount: document.querySelectorAll('[role="tooltip"]').length,
+          bounded: [...dialog.querySelectorAll('button')].every(button => button.getBoundingClientRect().right <= rect.right + 1) };
+      });
+      assert.ok(metrics.width <= 512); assert.equal(metrics.overflow, false); assert.equal(metrics.tooltipCount, 0); assert.equal(metrics.bounded, true);
+      await browser.saveScreenshot(path.join(process.env.SKILL_DECK_E2E_OUTPUT, `library-download-update-${language}.png`));
+      const original = dialog.$('span[tabindex="0"]');
+      await original.click();
+      await browser.execute(() => document.querySelector('[role="dialog"] span[tabindex="0"]').focus());
+      await $('[role="tooltip"]').waitForDisplayed();
+      assert.ok((await $('[role="tooltip"]').getText()).includes('engineering-guidelines.downloads.example.com'));
+      await browser.keys('Escape');
+      await dialog.$(`button=${language === 'en' ? 'Cancel' : '取消'}`).click();
+      await browser.waitUntil(async () => !(await dialog.isExisting()));
+      assert.equal(await browser.execute(() => document.activeElement.getAttribute('aria-label')), language === 'en' ? 'Update "code-review"' : '更新「code-review」');
+    }
+  });
+
 });

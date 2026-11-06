@@ -236,11 +236,29 @@ pub(crate) fn library_update_metadata(
         source: source.source.clone(),
         source_type: source.source_type.clone(),
         source_url: source.reacquisition_url.clone(),
-        ref_name: source.ref_name.clone(),
-        ref_kind: source.ref_kind,
+        ref_name: if source.source_type == "download" {
+            None
+        } else {
+            source.ref_name.clone()
+        },
+        ref_kind: if source.source_type == "download" {
+            None
+        } else {
+            source.ref_kind
+        },
         skill_path: source.skill_path.clone(),
-        remote_hash: source.installed_revision.clone(),
-        computed_hash: source.computed_hash.clone(),
+        remote_hash: if source.source_type == "download" {
+            None
+        } else {
+            source.installed_revision.clone()
+        },
+        computed_hash: source.computed_hash.as_ref().map(|hash| {
+            if source.source_type == "download" {
+                hash.to_ascii_lowercase()
+            } else {
+                hash.clone()
+            }
+        }),
         well_known_digest: source
             .well_known
             .as_ref()
@@ -558,6 +576,37 @@ mod tests {
             metadata.source_url.as_deref(),
             Some("https://cdn.example.com/demo.tar.gz")
         );
+    }
+
+    #[test]
+    fn library_download_uses_only_explicit_maintenance_url_and_its_own_hash() {
+        let mut member = library_skill("demo", "download", "OLD-GIT-REVISION");
+        member.source_record["source"] = serde_json::json!("https://example.com/skills.zip");
+        member.source_record["reacquisitionUrl"] = serde_json::Value::Null;
+        let historical = super::library_update_metadata(&member).unwrap();
+        assert!(historical.source_url.is_none());
+        assert!(
+            !crate::application::update::derive_update_capability_from_metadata(&historical)
+                .can_run_update
+        );
+        member.source_record["reacquisitionUrl"] =
+            serde_json::json!("https://example.com/skills.zip");
+        member.source_record["computedHash"] = serde_json::json!("A".repeat(64));
+        member.source_record["refKind"] = serde_json::json!("branch");
+        let current = super::library_update_metadata(&member).unwrap();
+        assert_eq!(
+            current.computed_hash.as_deref(),
+            Some("a".repeat(64).as_str())
+        );
+        assert!(
+            current.remote_hash.is_none()
+                && current.ref_name.is_none()
+                && current.ref_kind.is_none()
+        );
+        let capability =
+            crate::application::update::derive_update_capability_from_metadata(&current);
+        assert!(capability.can_run_update && capability.can_check_for_updates);
+        assert!(!capability.can_check_automatically);
     }
 
     #[test]

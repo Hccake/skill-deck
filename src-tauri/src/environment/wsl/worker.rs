@@ -1178,6 +1178,43 @@ pub(super) async fn connect_worker(
     Ok(worker)
 }
 
+/// 真实 WSL 验证将库目录隔离到测试 HOME，避免读写用户的库和应用记录。
+#[cfg(all(test, target_os = "windows"))]
+pub(super) async fn connect_worker_in_test_home(
+    session: &mut super::WslSession,
+    artifact_directory: &Path,
+    home: &str,
+) -> Result<WorkerSession, AppError> {
+    let artifact = WorkerArtifact::load_from(artifact_directory)
+        .map_err(|message| unavailable(&session.distro_name, message))?;
+    deploy_worker(session, &artifact).await?;
+    let executable = worker_path(&session.home);
+    let mut command = super::wsl_command();
+    command
+        .args([
+            "--distribution",
+            &session.distro_name,
+            "--user",
+            &session.user,
+            "--exec",
+            "env",
+            &format!("HOME={home}"),
+            &executable,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let child = command
+        .spawn()
+        .map_err(|error| unavailable(&session.distro_name, error.to_string()))?;
+    session.home = home.to_string();
+    session.config_home = format!("{home}/.config");
+    let worker = WorkerSession::from_child(child, session.distro_name.clone())?;
+    worker.handshake(session, &artifact.build_id).await?;
+    Ok(worker)
+}
+
 #[cfg(not(target_os = "windows"))]
 pub(super) async fn connect_worker(
     session: &super::WslSession,

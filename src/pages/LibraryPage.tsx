@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { DownloadSourceRoute } from '@/components/source-discovery/DownloadSourceRoute';
 import { SourcePathChange } from '@/components/skills/SourcePathChange';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -96,6 +97,8 @@ function useLibraryViewState<T>(
 export function LibraryPage() {
   const { t } = useTranslation();
   const detailDialogFocus = useDialogReturnFocus();
+  const cancelUpdateRef = useRef<HTMLButtonElement>(null);
+  const updateTriggerRef = useRef<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedLibraryId = searchParams.get('library');
   const requestedSkillName = searchParams.get('skill');
@@ -110,11 +113,14 @@ export function LibraryPage() {
   }, [workspace]);
   const writeBlocked = useBusinessWriteBlocked();
   const rawChecks = useLibraryUpdateWorkflow((state) => state.checks);
+  const checkSources = useLibraryUpdateWorkflow((state) => state.sources);
   const checks = useMemo(() => Object.fromEntries(Object.entries(rawChecks).filter(([name, check]) => workspace.detail?.skills.some((skill) => skill.name === name && skill.comparisonFingerprint === check.comparisonFingerprint))), [rawChecks, workspace.detail]);
   const updatePhase = useLibraryUpdateWorkflow((state) => state.phase);
   const updateError = useLibraryUpdateWorkflow((state) => state.hasError);
   const updateAppError = useLibraryUpdateWorkflow((state) => state.error);
   const pendingUpdate = useLibraryUpdateWorkflow((state) => state.pending);
+  const downloadRedirects = pendingUpdate?.downloadRedirects ?? [];
+  const unmappedDownloadHosts = pendingUpdate?.redirectedDownloadHosts.filter(host => !downloadRedirects.some(item => item.redirect.actualHost === host)) ?? [];
   const lastResults = useLibraryUpdateWorkflow((state) => state.lastResults);
   const activateUpdate = useLibraryUpdateWorkflow((state) => state.activate);
   const checkUpdates = useLibraryUpdateWorkflow((state) => state.check);
@@ -122,6 +128,10 @@ export function LibraryPage() {
   const confirmUpdates = useLibraryUpdateWorkflow((state) => state.confirm);
   const cancelUpdates = useLibraryUpdateWorkflow((state) => state.cancel);
   const resetUpdates = useLibraryUpdateWorkflow((state) => state.reset);
+  const startUpdates = useCallback((names: string[], returnTarget: string) => {
+    updateTriggerRef.current = returnTarget;
+    return prepareUpdates(names);
+  }, [prepareUpdates]);
 
   const [nameDialog, setNameDialog] = useState<{ mode: 'create' | 'rename'; id?: LibraryId } | null>(null);
   const [name, setName] = useState('');
@@ -402,9 +412,16 @@ export function LibraryPage() {
       .map((check) => check.name)
   ), [checks, visibleSkills]);
 
-  const updateSummaryItems = useMemo(
-    () => formatLibraryUpdateSummaryItems(summarizeLibraryUpdates(checks, updateError), t),
-    [checks, updateError, t],
+  const [, refreshCheckCoverage] = useState(0);
+  useEffect(() => {
+    const now = Date.now();
+    const deadlines = checkSources.map(source => source.expiresAtEpochMs).filter((deadline): deadline is number => deadline != null && deadline > now);
+    if (!deadlines.length) return;
+    const timer = setTimeout(() => refreshCheckCoverage(version => version + 1), Math.min(...deadlines) - now + 1);
+    return () => clearTimeout(timer);
+  }, [checkSources]);
+  const updateSummaryItems = formatLibraryUpdateSummaryItems(
+    summarizeLibraryUpdates(checks, updateError, workspace.detail?.skills ?? [], checkSources), t,
   );
   const updateSummary = updateSummaryItems.map((item) => item.text).join(' · ');
   const firstWarningSummaryIndex = updateSummaryItems.findIndex((item) => item.tone === 'warning');
@@ -429,14 +446,15 @@ export function LibraryPage() {
     const state = useLibraryUpdateWorkflow.getState();
     const checkedSkills = Object.values(state.checks);
     if (state.hasError) return;
-    if (!checkedSkills.length || checkedSkills.some((check) => check.status !== 'upToDate')) return;
+    const summary = summarizeLibraryUpdates(state.checks, state.hasError, workspace.detail?.skills ?? [], state.sources);
+    if (!summary.coverageComplete || !checkedSkills.length || checkedSkills.some((check) => check.status !== 'upToDate')) return;
     if (hideCheckDoneTimerRef.current) clearTimeout(hideCheckDoneTimerRef.current);
     setCheckDone(true);
     hideCheckDoneTimerRef.current = setTimeout(() => {
       setCheckDone(false);
       hideCheckDoneTimerRef.current = null;
     }, 800);
-  }, [checkUpdates]);
+  }, [checkUpdates, workspace.detail]);
 
   // 次要维护操作成组，样式与 Skills 页区域头一致：低调的 ghost，hover 才转主色。
   const libraryActions = (
@@ -448,8 +466,9 @@ export function LibraryPage() {
               variant="ghost"
               size="sm"
               className="library-secondary-action h-7 cursor-pointer gap-1.5 px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-              onClick={() => void prepareUpdates(availableUpdates)}
+              onClick={() => void startUpdates(availableUpdates, 'batch')}
               disabled={busy}
+              data-library-update="batch"
               aria-label={t('libraries.updateCount', { count: availableUpdates.length })}
             >
               <ArrowUpCircle className="size-3.5 shrink-0" aria-hidden="true" />
@@ -544,7 +563,7 @@ export function LibraryPage() {
             contentError={contentError}
             busy={busy}
             onClose={closeDetail}
-            onUpdate={(name) => void prepareUpdates([name])}
+            onUpdate={(name) => void startUpdates([name], `detail:${name}`)}
             onRemove={(name) => void openSkillRemoval(name)}
             onRetry={() => void openSkillContent(selectedSkill.name, true)}
           />
@@ -804,7 +823,7 @@ export function LibraryPage() {
                               updateStatus={memberUpdateStatuses[skill.name]}
                               busy={busy}
                               onClick={(name) => void openSkillContent(name)}
-                              onUpdate={(name) => void prepareUpdates([name])}
+                              onUpdate={(name) => void startUpdates([name], `card:${name}`)}
                               onRemove={(name) => void openSkillRemoval(name)}
                             />
                           ))}
@@ -895,13 +914,33 @@ export function LibraryPage() {
           cancelUpdates();
         }
       }}>
-        <DialogContent {...detailDialogFocus}>
+        <DialogContent {...detailDialogFocus} className="grid-cols-[minmax(0,1fr)]" onOpenAutoFocus={(event) => {
+          detailDialogFocus.onOpenAutoFocus();
+          event.preventDefault();
+          cancelUpdateRef.current?.focus({ preventScroll: true });
+        }} onCloseAutoFocus={(event) => {
+          // 准备期间卡片操作会重新挂载，按发起位置找到当前按钮。
+          const target = Array.from(document.querySelectorAll<HTMLElement>('[data-library-update]'))
+            .find(element => element.dataset.libraryUpdate === updateTriggerRef.current);
+          if (target && !target.matches(':disabled')) {
+            event.preventDefault();
+            target.focus({ preventScroll: true });
+          } else {
+            detailDialogFocus.onCloseAutoFocus(event);
+          }
+        }}>
           <DialogHeader>
             <DialogTitle>{t('libraries.confirmUpdateTitle')}</DialogTitle>
             <DialogDescription>{updatePhase === 'preparing' ? t('skills.updatePlan.loadingPreview') : t('libraries.confirmUpdateDescription', { count: pendingUpdate?.skillNames.length ?? 0 })}</DialogDescription>
-            {(pendingUpdate?.redirectedDownloadHosts.length ?? 0) > 0 ? (
+            {downloadRedirects.map(item => (
+              <div key={item.sourceKey} className="flex min-w-0 items-center gap-2 text-xs">
+                <span className="shrink-0 text-muted-foreground">{t('skills.detail.source')}</span>
+                <DownloadSourceRoute {...item.redirect} />
+              </div>
+            ))}
+            {unmappedDownloadHosts.length > 0 ? (
               <p className="text-sm text-warning">
-                {t('libraries.redirectConfirmation', { host: pendingUpdate?.redirectedDownloadHosts.join(', ') })}
+                {t('libraries.redirectConfirmation', { host: unmappedDownloadHosts.join(', ') })}
               </p>
             ) : null}
           </DialogHeader>
@@ -916,7 +955,7 @@ export function LibraryPage() {
             {pendingUpdate?.blocked.map((issue) => <div key={issue.skillName} className="text-sm" role="alert"><p className="font-medium">{issue.skillName}</p><p className="text-destructive">{formatAppError(issue.error, t)}</p></div>)}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => {
+            <Button ref={cancelUpdateRef} type="button" variant="outline" onClick={() => {
               cancelUpdates();
             }} disabled={updatePhase === 'executing'}>{t('common.cancel')}</Button>
             <Button type="button" onClick={() => void applyUpdates()} disabled={busy || updatePhase !== 'ready' || !pendingUpdate?.skillNames.length}>{t('libraries.update')}</Button>

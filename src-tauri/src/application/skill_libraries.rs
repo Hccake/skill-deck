@@ -1473,7 +1473,14 @@ fn detail_from_record(
                         .map(|value| value.source_type.clone())
                         .unwrap_or_default(),
                     source_url: if let Some(display) = download {
-                        display.openable_url
+                        // 新的一次性成员只保存站点信息；历史完整地址仍按原规则安全展示。
+                        if source.as_ref().is_some_and(|record| {
+                            record.reacquisition_url.is_some() || record.artifact_url.is_some()
+                        }) {
+                            display.openable_url
+                        } else {
+                            None
+                        }
                     } else {
                         source
                             .as_ref()
@@ -1485,8 +1492,14 @@ fn detail_from_record(
                         .unwrap_or_default(),
                     content_hash: skill.content_manifest_hash,
                     plugin_name: source.as_ref().and_then(|value| value.plugin_name.clone()),
-                    ref_name: source.as_ref().and_then(|value| value.ref_name.clone()),
-                    ref_kind: source.as_ref().and_then(|value| value.ref_kind),
+                    ref_name: source
+                        .as_ref()
+                        .filter(|value| value.source_type != "download")
+                        .and_then(|value| value.ref_name.clone()),
+                    ref_kind: source
+                        .as_ref()
+                        .filter(|value| value.source_type != "download")
+                        .and_then(|value| value.ref_kind),
                     updated_at: skill.updated_at,
                     comparison_fingerprint,
                     update_capability,
@@ -1730,6 +1743,9 @@ fn validate_membership_target(
 fn library_source_record(
     source: &crate::application::skill_changes::NormalizedSkillSource,
 ) -> LibrarySkillSourceRecord {
+    let download = source.update.source_type == "download";
+    let download_url =
+        crate::core::download_source::maintenance_url(source.update.source_url.as_deref());
     let well_known = (source.update.source_type == "well-known")
         .then(|| {
             source
@@ -1745,16 +1761,43 @@ fn library_source_record(
         .flatten();
     LibrarySkillSourceRecord {
         source_type: source.update.source_type.clone(),
-        source: source.update.source.clone(),
-        reacquisition_url: (source.update.source_type != "download")
-            .then(|| source.update.source_url.clone())
-            .flatten(),
-        ref_name: source.update.ref_name.clone(),
-        ref_kind: source.update.ref_kind,
+        source: if download {
+            crate::core::source_display::download_source_display(
+                &source.update.source,
+                source.update.source_url.as_deref(),
+            )
+            .origin
+            .unwrap_or_default()
+        } else {
+            source.update.source.clone()
+        },
+        reacquisition_url: if download {
+            download_url.map(|url| url.to_string())
+        } else {
+            source.update.source_url.clone()
+        },
+        ref_name: if download {
+            None
+        } else {
+            source.update.ref_name.clone()
+        },
+        ref_kind: if download {
+            None
+        } else {
+            source.update.ref_kind
+        },
         skill_path: source.update.skill_path.clone(),
-        installed_revision: source.update.remote_hash.clone(),
+        installed_revision: if download {
+            None
+        } else {
+            source.update.remote_hash.clone()
+        },
         computed_hash: source.update.computed_hash.clone(),
-        artifact_url: source.artifact_url.clone(),
+        artifact_url: if download {
+            None
+        } else {
+            source.artifact_url.clone()
+        },
         plugin_name: source.plugin_name.clone(),
         well_known,
         extra: serde_json::Map::new(),
@@ -1769,6 +1812,22 @@ pub(crate) fn merge_unknown_source_fields(
         return;
     };
     for (key, value) in current {
+        if matches!(
+            key.as_str(),
+            "sourceType"
+                | "source"
+                | "reacquisitionUrl"
+                | "refName"
+                | "refKind"
+                | "skillPath"
+                | "installedRevision"
+                | "computedHash"
+                | "artifactUrl"
+                | "pluginName"
+                | "wellKnown"
+        ) {
+            continue;
+        }
         target.entry(key.clone()).or_insert_with(|| value.clone());
     }
 }
@@ -2396,6 +2455,50 @@ mod tests {
     }
 
     #[test]
+    fn download_library_records_separate_maintenance_urls_from_one_time_origins() {
+        for (address, maintainable) in [
+            ("https://downloads.example/skills.zip", true),
+            ("https://downloads.example/skills.zip?token=private", false),
+            ("https://user:secret@downloads.example/skills.zip", false),
+            ("https://downloads.example/skills.zip#private", false),
+        ] {
+            let source = crate::application::skill_changes::NormalizedSkillSource {
+                update: crate::core::NormalizedUpdateMetadata {
+                    source: address.into(),
+                    source_type: "download".into(),
+                    source_url: Some(address.into()),
+                    ref_name: Some("old-ref".into()),
+                    ref_kind: None,
+                    skill_path: Some("SKILL.md".into()),
+                    remote_hash: Some("old-git-revision".into()),
+                    computed_hash: Some("a".repeat(64)),
+                    well_known_digest: None,
+                },
+                artifact_url: Some(address.into()),
+                plugin_name: None,
+            };
+            let record = library_source_record(&source);
+            assert_eq!(record.source, "https://downloads.example");
+            assert_eq!(
+                record.reacquisition_url.as_deref(),
+                maintainable.then_some(address)
+            );
+            assert_eq!(record.artifact_url, None);
+            assert_eq!(record.ref_name, None);
+            assert_eq!(record.installed_revision, None);
+            let mut encoded = serde_json::to_value(record).unwrap();
+            merge_unknown_source_fields(
+                &mut encoded,
+                &serde_json::json!({ "refKind": "branch", "vendorField": "keep" }),
+            );
+            assert!(encoded.get("refKind").is_none());
+            assert_eq!(encoded["vendorField"], "keep");
+            let text = encoded.to_string();
+            assert!(!text.contains("private") && !text.contains("secret"));
+        }
+    }
+
+    #[test]
     fn downloaded_library_source_uses_the_same_safe_display_and_capability() {
         let mut member = test_library_record("review", "content");
         let address = "https://user:secret@downloads.example/review.zip?token=private";
@@ -2452,18 +2555,31 @@ mod tests {
             let record = library_source_record(&source);
 
             assert_eq!(record.source_type, source_type);
-            assert_eq!(record.source, "source-identity");
+            assert_eq!(
+                record.source,
+                if source_type == "download" {
+                    "https://example.com"
+                } else {
+                    "source-identity"
+                }
+            );
             assert_eq!(
                 record.reacquisition_url.as_deref(),
-                (source_type != "download").then_some("https://example.com/reacquire")
+                Some("https://example.com/reacquire")
             );
-            assert_eq!(record.ref_name.as_deref(), Some("main"));
+            assert_eq!(
+                record.ref_name.as_deref(),
+                (source_type != "download").then_some("main")
+            );
             assert_eq!(record.skill_path.as_deref(), Some("skills/demo"));
-            assert_eq!(record.installed_revision.as_deref(), Some("revision-v1"));
+            assert_eq!(
+                record.installed_revision.as_deref(),
+                (source_type != "download").then_some("revision-v1")
+            );
             assert_eq!(record.computed_hash.as_deref(), Some("computed-v1"));
             assert_eq!(
                 record.artifact_url.as_deref(),
-                Some("https://cdn.example.com/demo.tar.gz")
+                (source_type != "download").then_some("https://cdn.example.com/demo.tar.gz")
             );
             assert_eq!(
                 record

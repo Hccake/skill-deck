@@ -445,6 +445,8 @@ SKILL_DECK_E2E_SPEC=source-filter pnpm test:desktop
 
 `native_download_install_check_preview_and_update_preserve_scope_and_source` 使用本地 HTTP 服务和真实文件事务，覆盖全局／项目、原始文件／ZIP 路径迁移、同主机／重定向八种组合，验证自动跳过、手动比较、预览快照复用、固定内容执行、来源记录与未知字段保留。来源获取回归另验证 429 等待、失败重检后的旧候选撤销及已固定内容的有效性。
 
-Windows 设置 `SKILL_DECK_TEST_WSL_DISTRO` 后，显式运行 `real_wsl2_source_hash_matches_cli_reference_vectors` 和 `real_wsl2_download_install_check_and_update_use_native_http_and_worker_storage` 的 `--ignored` 用例，分别验证真实 Worker 哈希以及 Native HTTP、WSL 安装、检查和更新链路。这两项用例不依赖 CLI 进程。
+Windows 设置 `SKILL_DECK_TEST_WSL_DISTRO` 后，显式运行 `real_wsl2_source_hash_matches_cli_reference_vectors` 和 `real_wsl2_download_install_check_and_update_use_native_http_and_worker_storage` 的 `--ignored` 用例，分别验证真实 Worker 哈希以及 Native HTTP、WSL 直接安装和库成员的完整维护链路。库验证在临时 HOME 中运行 Worker，覆盖添加后的项目同步、后续内容更新及链接读取，测试结束后清理隔离目录。这两项用例不依赖 CLI 进程。
 
-`SKILL_DECK_E2E_SPEC=download-maintenance pnpm test:desktop` 使用真实向导和更新弹窗，在原生窗口中检查四步 footer、批量展开、重要影响可见性、一次性跨主机授权、长域名及取消按钮初始焦点。夹具只替换输入和命令返回，不执行下载或写入；文件流程由上述后端测试负责。
+`library_download_` 用例验证库的可维护与一次性下载、跨主机许可、同 URL 多成员共用获取、缺基线重新获取和逐成员失败；实际库应用同步新增成员，内容更新保持成员目录、既有链接和应用记录。
+
+`SKILL_DECK_E2E_SPEC=download-maintenance pnpm test:desktop` 使用真实向导、直接安装更新弹窗和库页面，在原生窗口中检查四步 footer、批量展开、重要影响可见性、一次性跨主机授权、长域名、取消按钮初始焦点以及库弹窗的宽度、键盘提示和关闭后焦点。夹具只替换输入和命令返回，不执行下载或写入；文件流程由上述后端测试负责。

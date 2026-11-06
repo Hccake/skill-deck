@@ -48,6 +48,15 @@ const removeButton = () => screen.getByRole('button', {
 const updateButton = () => screen.getByRole('button', { name: 'skills.actions.updateNamed:{"name":"backend-utils"}' });
 
 describe('LibrarySkillCard', () => {
+  it('offers reacquisition for a maintained download without a comparison baseline', () => {
+    const onUpdate = vi.fn();
+    render(<TooltipProvider><LibrarySkillCard skill={{ ...sampleSkill, sourceType: 'download',
+      updateCapability: { canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'missingRemoteHash' } }}
+      onUpdate={onUpdate} /></TooltipProvider>);
+    fireEvent.click(screen.getByRole('button', { name: /^skills\.actions\.reacquireNamed/ }));
+    expect(onUpdate).toHaveBeenCalledWith(sampleSkill.name);
+  });
+
   it('keeps an unfinished update retryable after its progress has ended', () => {
     const update = vi.fn();
     render(<TooltipProvider><LibrarySkillCard skill={sampleSkill} updateStatus="failed" result={{ skillName: sampleSkill.name, status: 'cancelled', sourceResultId: 'source', contentCommit: 'notRun', catalogCommit: 'notRun', error: null }} onUpdate={update} /></TooltipProvider>);

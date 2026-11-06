@@ -10,6 +10,9 @@ import '@/index.css';
 import i18n from '@/i18n';
 import { commands, type AgentSelectionSnapshot } from '@/bindings';
 import type { WizardState } from '@/components/skills/add-skill/types';
+import { LibraryPage } from '@/pages/LibraryPage';
+import { useLibraryUpdateWorkflow } from '@/workflows/library-update';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { WizardPage } from '@/pages/WizardPage';
 import { UpdatePlanDialog } from '@/components/skills/UpdatePlanDialog';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -18,7 +21,7 @@ import { applyPersistedAppearance, useSettingsStore } from '@/stores/settings';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { useMutationStore } from '@/stores/mutation';
 
-type Config = { language: 'zh-CN' | 'en'; dark: boolean; count: number; long: boolean; redirect: boolean; oneTime: boolean; view: 'wizard' | 'update'; step: 'source' | 'skills' | 'options' | 'confirm'; conflict: boolean };
+type Config = { language: 'zh-CN' | 'en'; dark: boolean; count: number; long: boolean; redirect: boolean; oneTime: boolean; view: 'wizard' | 'update' | 'library'; step: 'source' | 'skills' | 'options' | 'confirm'; conflict: boolean };
 const initial: Config = { language: 'zh-CN', dark: false, count: 20, long: false, redirect: true, oneTime: false, view: 'wizard', step: 'confirm', conflict: false };
 const native = { kind: 'native' as const };
 const context = { environment: native, scope: { scope: 'project' as const, project_id: 'fixture' } };
@@ -52,6 +55,8 @@ async function configure(options: Partial<Config>) {
   applyPersistedAppearance(config.dark ? 'dark' : 'light');
   useSettingsStore.setState({ locale: config.language, theme: config.dark ? 'dark' : 'light' });
   useMutationStore.setState({ activeMutation: null });
+  useInstallWizardSessionStore.setState({ active: false, loading: false, syncError: null });
+  useLibraryUpdateWorkflow.getState().reset();
   const originalHost = config.long ? 'engineering-guidelines.downloads.example.com' : 'docs.example.com';
   const actualHost = config.long ? 'content-distribution.engineering.example.net' : 'cdn.example.net';
   const source = `https://${originalHost}/skills.zip${config.oneTime ? '?token=temporary-fixture' : ''}`;
@@ -72,9 +77,15 @@ async function configure(options: Partial<Config>) {
     preview: { sources: [{ sourceKey: 'download', sourceDisplay: originalHost, refDisplay: '', skillNames: ['code-review'], error: null, downloadRedirect: config.redirect ? { originalHost, actualHost } : null }], blocked: [], redirectedDownloadHosts: config.redirect ? [actualHost] : [], skills: [{ skillName: 'code-review', sourceKey: 'download', sourceDisplay: originalHost, refDisplay: '', capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: false, reason: null }, adapterTargets: [], cleanCopyCount: 0, blockingReasons: [], fallbackForecasts: [], targets: [{ displayPath: at('.agents/skills/code-review'), readers: [], restoring: false, isStandard: true, kind: 'directory' }], linkedTargets: [], overwritePrivateEntries: [] }] },
     prepare: async () => {}, confirm: async () => {}, cancel: async () => {}, acceptMutation: () => {},
   });
+  const capability = { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: false, reason: null };
+  commands.listSkillLibraries = async () => ({ status: 'ok', data: { environment: native, libraries: [{ id: 'downloads', name: 'Team Skills', skillCount: 1 }], revision: 'fixture', usageProjection: [], usageInventoryComplete: true, usageInventoryProblemCount: 0 } });
+  commands.getSkillLibrary = async () => ({ status: 'ok', data: { id: 'downloads', name: 'Team Skills', usages: [], skills: [{ name: 'code-review', description: 'Team conventions', source: originalHost, sourceType: 'download', sourceUrl: source, skillPath: 'skills/code-review/SKILL.md', contentHash: 'baseline', pluginName: null, refName: null, updatedAt: null, comparisonFingerprint: 'baseline', updateCapability: capability }] } });
+  commands.checkLibrarySkillUpdates = async () => ({ status: 'ok', data: { outcome: 'completed', skipped: [], sources: [{ sourceKey: 'download', source, requestedRef: null, resolvedRef: null, refRevision: null, checkedAtEpochMs: Date.now(), expiresAtEpochMs: Date.now() + 60_000, freshness: 'fresh', lastAttempt: null }], skills: [{ name: 'code-review', source, hasUpdate: true, status: 'updateAvailable', capability, reason: null, gitRef: null, sourceUrl: source, skillPath: 'skills/code-review/SKILL.md', freshness: 'fresh', comparisonFingerprint: 'baseline', sourceKey: 'download' }] } });
+  commands.prepareLibrarySkillUpdates = async () => ({ status: 'ok', data: { skillNames: ['code-review'], blocked: [], redirectedDownloadHosts: config.redirect ? [actualHost] : [], downloadRedirects: config.redirect ? [{ sourceKey: 'download', redirect: { originalHost, actualHost } }] : [], pathChanges: [{ skillName: 'code-review', change: { previousPath: 'skills/code-review', nextPath: 'tools/code-review' } }] } });
+  commands.cancelUpdatePreparation = async () => ({ status: 'ok', data: null });
   const params = new URLSearchParams({ context: JSON.stringify(context), projectPath, environmentName: wizardState.environmentName! });
   root.render(<MemoryRouter key={++renderId} initialEntries={[`/wizard?${params}`]}><TooltipProvider><WindowLifecycleContext.Provider value={{ requestAction: async () => {} }}>
-    {config.view === 'wizard' ? <WizardPage /> : <UpdatePlanDialog open context={context} skillNames={['code-review']} onOpenChange={() => {}} />}
+    {config.view === 'library' ? <LibraryPage /> : config.view === 'wizard' ? <WizardPage /> : <UpdatePlanDialog open context={context} skillNames={['code-review']} onOpenChange={() => {}} />}
   </WindowLifecycleContext.Provider></TooltipProvider></MemoryRouter>);
 }
 Object.assign(window, { configureDownloadMaintenance: configure });

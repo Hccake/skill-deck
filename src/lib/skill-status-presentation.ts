@@ -51,7 +51,8 @@ function isTransientCheckError(error: AppError): boolean {
 export function skillStatusPresentation(skill: SkillStatusInput, check?: SkillUpdateInfo) {
   const reason = check?.reason ?? skill.updateReason ?? skill.updateCapability?.reason;
   const canRunUpdate = check?.capability.canRunUpdate ?? skill.canRunUpdate ?? skill.updateCapability?.canRunUpdate;
-  if ((skill.sourceType === 'download' && canRunUpdate !== true) || reason === 'download-source') {
+  const sourceIncomplete = reason === 'missingSource' || reason === 'missing-skill-path' || reason === 'missing-source';
+  if ((skill.sourceType === 'download' && canRunUpdate !== true && !sourceIncomplete) || reason === 'download-source') {
     const sourceLabel = skill.source?.trim() || null;
     return { local: false, packageSource: false, sourceLabel,
       sourceLabelKey: sourceLabel ? null : 'skills.filter.downloadSource',

@@ -64,6 +64,7 @@ describe('Skill status presentation', () => {
 
   it('keeps source problems distinct from ordinary local content and network failures', () => {
     expect(skillStatusPresentation({ updateReason: 'missingSource' }).notice?.labelKey).toBe('skills.card.sourceIncomplete');
+    expect(skillStatusPresentation({ source: 'downloads.example', sourceType: 'download', canRunUpdate: false, updateReason: 'missingSource' }).notice?.labelKey).toBe('skills.card.sourceIncomplete');
     expect(skillStatusPresentation({ source: 'owner/repo', hasUpdate: true, updateStatus: 'deletedUpstream' }).available).toBe(false);
     expect(skillStatusPresentation({ source: 'owner/repo', updateStatus: 'deletedUpstream' }).notice?.labelKey).toBe('skills.card.sourceMissingUpstream');
     expect(skillStatusPresentation({ source: 'owner/repo', updateError: { kind: 'gitAuthFailed', data: { message: 'denied' } } }).notice?.labelKey).toBe('skills.updateEvidence.failure.authenticationRequired');

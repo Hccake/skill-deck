@@ -74,6 +74,16 @@ pub struct PreparedLibraryUpdatePreview {
     pub skill_names: Vec<String>,
     pub blocked: Vec<crate::application::update::UpdatePreparationIssue>,
     pub redirected_download_hosts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_redirects: Option<Vec<LibraryDownloadRedirect>>,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct LibraryDownloadRedirect {
+    pub source_key: String,
+    pub redirect: crate::application::update::DownloadRedirect,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -201,6 +211,18 @@ where
             .iter()
             .map(|skill| (skill.name.clone(), skill.skill_path().to_string()))
             .collect::<BTreeMap<_, _>>();
+        let download_hosts = saved
+            .iter()
+            .filter_map(|skill| {
+                if skill.metadata.source_type != "download" {
+                    return None;
+                }
+                let url = crate::core::download_source::maintenance_url(
+                    skill.metadata.source_url.as_deref(),
+                )?;
+                Some((skill.name.clone(), url.host_str()?.to_string()))
+            })
+            .collect::<BTreeMap<_, _>>();
         let acquisitions = if saved.is_empty() {
             Vec::new()
         } else {
@@ -215,6 +237,7 @@ where
                 skill_names: Vec::new(),
                 blocked: Vec::new(),
                 redirected_download_hosts: Vec::new(),
+                download_redirects: None,
             },
             items: Vec::new(),
             sources: Vec::new(),
@@ -232,6 +255,25 @@ where
         for source in &acquisitions {
             if let Ok(content) = &source.result {
                 hosts.extend(content.redirected_download_hosts.iter().cloned());
+                if let Some(original_host) = source
+                    .skill_names
+                    .iter()
+                    .find_map(|name| download_hosts.get(name))
+                {
+                    for actual_host in &content.redirected_download_hosts {
+                        prepared
+                            .preview
+                            .download_redirects
+                            .get_or_insert_with(Vec::new)
+                            .push(LibraryDownloadRedirect {
+                                source_key: source.source_result_id.clone(),
+                                redirect: crate::application::update::DownloadRedirect {
+                                    original_host: original_host.clone(),
+                                    actual_host: actual_host.clone(),
+                                },
+                            });
+                    }
+                }
             }
             prepared.sources.push(UpdateSourceResult {
                 id: source.source_result_id.clone(),
@@ -1592,3 +1634,7 @@ mod tests {
         (name.to_string(), handle)
     }
 }
+
+#[cfg(test)]
+#[path = "../test_support/library_download_workflow.rs"]
+mod download_tests;

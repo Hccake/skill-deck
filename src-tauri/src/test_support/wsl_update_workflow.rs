@@ -437,11 +437,10 @@ async fn real_wsl2_download_install_check_and_update_use_native_http_and_worker_
     use crate::runtime::source_acquisition::SourceDiscoveryService;
     use crate::runtime::update_service::RuntimeSkillSourceModule;
     use crate::runtime::wsl_source::RuntimeWslSourceAccess;
+    use std::collections::BTreeSet;
 
     let distro = std::env::var("SKILL_DECK_TEST_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".into());
     let runtime = Arc::new(WslRuntime::for_wsl_test());
-    let session = runtime.connect(&distro).await?;
-    let workspace = runtime.workspace(&distro)?;
     let root = format!(
         "/tmp/skill-deck-cli-update-{}",
         uuid::Uuid::new_v4().simple()
@@ -456,6 +455,10 @@ async fn real_wsl2_download_install_check_and_update_use_native_http_and_worker_
         std::slice::from_ref(&root),
     )
     .await?;
+    let session = runtime
+        .connect_in_test_home(&distro, &format!("{root}/home"))
+        .await?;
+    let workspace = runtime.workspace(&distro)?;
     let environment = EnvironmentRef::Wsl {
         distro_name: distro.clone(),
     };
@@ -634,25 +637,29 @@ async fn real_wsl2_download_install_check_and_update_use_native_http_and_worker_
     );
     let source = RuntimeSkillSourceModule::new(
         manager.clone(),
-        snapshots,
-        evidence,
-        transport,
-        wsl,
+        snapshots.clone(),
+        evidence.clone(),
+        transport.clone(),
+        wsl.clone(),
         Arc::new(UnavailableWellKnownAccess),
-        download,
+        download.clone(),
     );
     let service = UpdateService::new(
         manager.clone(),
-        ConcreteUpdatePlanner::new(facts.clone(), targets, manager.clone(), libraries, || {
-            "2026-11-07T00:01:00Z".into()
-        }),
+        ConcreteUpdatePlanner::new(
+            facts.clone(),
+            targets.clone(),
+            manager.clone(),
+            libraries,
+            || "2026-11-07T00:01:00Z".into(),
+        ),
         source,
         executor(),
     );
     let prepared = service
         .prepare(
             &UpdateRequest {
-                context,
+                context: context.clone(),
                 skill_names: vec!["demo".into()],
             },
             CancellationSignal::default(),
@@ -678,6 +685,215 @@ async fn real_wsl2_download_install_check_and_update_use_native_http_and_worker_
     assert_eq!(actual, markdown("v2").into_bytes());
     assert_eq!(
         checks.check(&check).await?.skills[0].status,
+        SkillUpdateCheckStatus::UpToDate
+    );
+    // 库添加同步到已应用 Scope；内容更新只替换库内容，既有链接直接读取新版本。
+    use crate::application::library_application::{
+        ApplicationRegistry, ApplyLibraryApplicationRequest, LibraryApplicationDraft,
+        LibraryApplicationModule,
+    };
+    use crate::application::library_membership::LibraryMembershipModule;
+    use crate::application::library_update::{LibraryUpdateService, LibraryUpdateSkillStatus};
+    use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+    use crate::application::skill_libraries::{
+        ExecuteAddLibrarySkillsRequest, PreviewAddLibrarySkillItem, PreviewAddLibrarySkillsRequest,
+        SkillLibraryModule, UpdateLibrarySkillsRequest,
+    };
+    use crate::application::update_subjects::LibraryUpdateSubjectProvider;
+    use crate::runtime::skill_libraries::RuntimeSkillLibraryRepository;
+    let repository = Arc::new(RuntimeSkillLibraryRepository::new(
+        recovery.path().join("native-libraries"),
+        runtime.clone(),
+        Arc::new(crate::core::projects::ProjectMigrationRegistry::new(
+            crate::core::projects::ProjectMigrationState::NotNeeded,
+        )),
+    ));
+    let libraries = Arc::new(SkillLibraryModule::new(repository.clone()));
+    let id = libraries
+        .create(environment.clone(), "WSL Download".into())
+        .await?
+        .libraries[0]
+        .id
+        .clone();
+    let applications = Arc::new(LibraryApplicationModule::new(
+        repository.clone(),
+        facts.clone(),
+        targets.clone(),
+        executor(),
+    ));
+    let draft = LibraryApplicationDraft {
+        context: context.clone(),
+        ordered_library_ids: vec![id.clone()],
+        selected_agent_ids: vec![],
+    };
+    let preview = applications.preview(draft.clone()).await?;
+    applications
+        .apply(
+            ApplyLibraryApplicationRequest {
+                draft,
+                expected_token: preview.token,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    // demo 已有直接安装，因此另加 library-demo 检查真实的库应用链接。
+    *remote.body.lock().unwrap() = markdown("library-v1")
+        .replace("name: demo", "name: library-demo")
+        .into_bytes();
+    let discovery = SourceDiscoveryService::new(
+        manager.clone(),
+        transport.clone(),
+        Arc::new(UnavailableWellKnownAccess),
+        download.clone(),
+        wsl.clone(),
+    )
+    .discover(environment.clone(), remote.url.clone(), |_| {})
+    .await?;
+    let handles = SelectedPayloadAcquisitionService::new(manager.clone())
+        .acquire(AcquireSelectedPayloadsRequest {
+            discovery_session: discovery.discovery_session.clone(),
+            skill_paths: discovery
+                .skills
+                .iter()
+                .map(|skill| skill.relative_path.clone())
+                .collect(),
+        })
+        .await?;
+    let membership = LibraryMembershipModule::new(
+        repository.clone(),
+        applications,
+        repository.clone(),
+        Arc::new(RuntimeAdmissionCoordinator::default()),
+        libraries.clone(),
+        manager.clone(),
+        Arc::new(targets.clone()),
+    );
+    let request = PreviewAddLibrarySkillsRequest {
+        environment: environment.clone(),
+        library_id: id.clone(),
+        discovery_session: discovery.discovery_session,
+        skills: handles
+            .into_iter()
+            .map(|payload| PreviewAddLibrarySkillItem {
+                skill_name: "library-demo".into(),
+                payload,
+            })
+            .collect(),
+    };
+    let preview = membership.preview_add_skills(request.clone()).await?;
+    assert_eq!(preview.membership.scopes, vec![context.clone()]);
+    let added = membership
+        .execute_add_skills(
+            ExecuteAddLibrarySkillsRequest {
+                request,
+                expected_token: preview.token,
+                membership: preview.membership,
+                acknowledge_redirect: true,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert!(
+        added.results.iter().all(|result| result.error.is_none()),
+        "{added:?}"
+    );
+    assert!(
+        added
+            .membership
+            .scopes
+            .iter()
+            .all(|scope| scope.error.is_none()),
+        "{added:?}"
+    );
+    let application_before =
+        serde_json::to_value(repository.load_application(&context).await?.record)?;
+    let read_member = "cat \"$1/project/.agents/skills/library-demo/SKILL.md\"";
+    assert_eq!(
+        run_fixture(&distro, read_member, std::slice::from_ref(&root)).await?,
+        markdown("library-v1")
+            .replace("name: demo", "name: library-demo")
+            .into_bytes()
+    );
+    *remote.body.lock().unwrap() = markdown("library-v2")
+        .replace("name: demo", "name: library-demo")
+        .into_bytes();
+    let checks = crate::application::update_check::LibraryUpdateCheckService::new(
+        crate::application::update_records::LibraryUpdateRecordProvider::new(repository.clone()),
+        evidence.clone(),
+    );
+    let checked = checks
+        .check(
+            environment.clone(),
+            id.clone(),
+            UpdateCheckMode::Force,
+            BTreeSet::from(["library-demo".into()]),
+        )
+        .await?;
+    assert_eq!(
+        checked.skills[0].status,
+        SkillUpdateCheckStatus::UpdateAvailable
+    );
+    let source = RuntimeSkillSourceModule::new(
+        manager.clone(),
+        snapshots,
+        evidence,
+        transport,
+        wsl,
+        Arc::new(UnavailableWellKnownAccess),
+        download,
+    );
+    let updates = LibraryUpdateService::new(
+        manager.clone(),
+        LibraryUpdateSubjectProvider::new(repository.clone(), targets.clone()),
+        source,
+        targets,
+        libraries,
+    );
+    let prepared = updates
+        .prepare(
+            &UpdateLibrarySkillsRequest {
+                environment: environment.clone(),
+                library_id: id.clone(),
+                skill_names: vec!["library-demo".into()],
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert!(
+        prepared.preview.blocked.is_empty(),
+        "{:?}",
+        prepared.preview
+    );
+    let result = updates
+        .execute_prepared(prepared, CancellationSignal::default(), |_| {})
+        .await?;
+    assert_eq!(
+        result.results[0].status,
+        LibraryUpdateSkillStatus::Succeeded,
+        "{result:?}"
+    );
+    assert!(result.membership.scopes.is_empty());
+    assert_eq!(
+        serde_json::to_value(repository.load_application(&context).await?.record)?,
+        application_before
+    );
+    assert_eq!(
+        run_fixture(&distro, read_member, std::slice::from_ref(&root)).await?,
+        markdown("library-v2")
+            .replace("name: demo", "name: library-demo")
+            .into_bytes()
+    );
+    assert_eq!(
+        checks
+            .check(
+                environment,
+                id,
+                UpdateCheckMode::Force,
+                BTreeSet::from(["library-demo".into()])
+            )
+            .await?
+            .skills[0]
+            .status,
         SkillUpdateCheckStatus::UpToDate
     );
     manager.retire_wsl_sessions();

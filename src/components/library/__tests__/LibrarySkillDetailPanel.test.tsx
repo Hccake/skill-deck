@@ -30,6 +30,15 @@ const sampleSkill: LibrarySkillSummary = {
 };
 
 describe('LibrarySkillDetailPanel', () => {
+  it('offers reacquisition for a maintained download without a comparison baseline', async () => {
+    const onUpdate = vi.fn();
+    render(<TooltipProvider><LibrarySkillDetailPanel skill={{ ...sampleSkill, sourceType: 'download',
+      updateCapability: { canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'missingRemoteHash' } }}
+      onUpdate={onUpdate} content="Document" loading={false} onClose={vi.fn()} /></TooltipProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: /^skills\.actions\.reacquire/ }));
+    expect(onUpdate).toHaveBeenCalledWith(sampleSkill.name);
+  });
+
   it('reveals the removal action on focus and keeps the member as its target', async () => {
     const onRemove = vi.fn();
     render(<TooltipProvider><LibrarySkillDetailPanel skill={sampleSkill}

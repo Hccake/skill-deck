@@ -213,6 +213,27 @@ impl WslRuntime {
     }
 
     #[cfg(all(test, target_os = "windows"))]
+    pub(crate) async fn connect_in_test_home(
+        &self,
+        distro: &str,
+        home: &str,
+    ) -> Result<WslSession, AppError> {
+        assert!(home.starts_with("/tmp/skill-deck-cli-update-") && home.ends_with("/home"));
+        let permit = self.acquire_wsl_access(distro)?;
+        let mut session = connect_wsl_environment(distro).await?;
+        let worker = worker::connect_worker_in_test_home(
+            &mut session,
+            self.worker_artifact_directory(distro)?,
+            home,
+        )
+        .await?;
+        let closed = worker.closed_receiver();
+        self.insert_with_permit(&mut session, &permit, Some(worker))?;
+        self.monitor_worker(distro.to_string(), session.runtime_generation, closed);
+        Ok(session)
+    }
+
+    #[cfg(all(test, target_os = "windows"))]
     pub(crate) async fn run_test_script(
         &self,
         distro_name: &str,

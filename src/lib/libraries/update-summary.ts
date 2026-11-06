@@ -1,4 +1,4 @@
-import type { SkillUpdateCheckStatus, SkillUpdateInfo } from '@/bindings';
+import type { LibrarySkillSummary, SkillUpdateCheckStatus, SkillUpdateInfo, SourceUpdateCheckInfo } from '@/bindings';
 
 /**
  * 整库检查的结论。
@@ -11,6 +11,7 @@ export interface LibraryUpdateSummary {
   unchecked: boolean;
   /** 本次检查未完成，展示的是上次成功的结论。 */
   incomplete: boolean;
+  coverageComplete: boolean;
   updateAvailable: number;
   upToDate: number;
   cannotCheck: number;
@@ -35,14 +36,36 @@ const INLINE_CATEGORY_LIMIT = 2;
 export function summarizeLibraryUpdates(
   checks: Readonly<Record<string, SkillUpdateInfo>>,
   hasError: boolean,
+  members: readonly Pick<LibrarySkillSummary, 'name' | 'sourceType' | 'comparisonFingerprint' | 'updateCapability'>[],
+  sources: readonly Pick<SourceUpdateCheckInfo, 'sourceKey' | 'expiresAtEpochMs'>[],
 ): LibraryUpdateSummary {
-  const values = Object.values(checks);
+  const relevant = members.filter(member => {
+    if (['local', 'node_modules'].includes(member.sourceType)) return false;
+    return member.sourceType !== 'download'
+      || member.updateCapability?.canRunUpdate === true
+      || member.updateCapability?.reason === 'missingSource';
+  });
+  const current = new Map(relevant.map(member => [member.name, member]));
+  const values = Object.values(checks).filter(check => (
+    current.has(check.name)
+    && (current.get(check.name)?.comparisonFingerprint ?? null) === (check.comparisonFingerprint ?? null)
+  ));
+  const byName = new Map(values.map(check => [check.name, check]));
+  const deadlines = new Map(sources.map(source => [source.sourceKey, source.expiresAtEpochMs]));
+  const now = Date.now();
+  const fresh = (check: SkillUpdateInfo | undefined) => {
+    if (!check || check.error || !['fresh', 'cached'].includes(check.freshness)) return false;
+    return Boolean(check.sourceKey) && (deadlines.get(check.sourceKey) ?? 0) > now;
+  };
+  const expectedChecks = relevant.map(member => byName.get(member.name));
+  const coverageComplete = !hasError && expectedChecks.length > 0 && expectedChecks.every(fresh);
   const count = (status: SkillUpdateCheckStatus) => (
     values.filter((check) => check.status === status).length
   );
   return {
     unchecked: values.length === 0,
     incomplete: hasError,
+    coverageComplete,
     updateAvailable: count('updateAvailable'),
     upToDate: count('upToDate'),
     cannotCheck: count('cannotCheck'),
@@ -84,7 +107,7 @@ export function formatLibraryUpdateSummaryItems(
 
   const items: LibraryUpdateSummaryItem[] = [];
   if (attention.length === 0) {
-    if (summary.upToDate > 0) {
+    if (summary.upToDate > 0 && summary.coverageComplete && !summary.incomplete) {
       items.push({ text: t('libraries.updateSummary.allUpToDate'), tone: 'neutral' });
     }
   } else {
