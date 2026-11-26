@@ -246,6 +246,8 @@ WSL 写入探测测试确认文件操作结束后才返回超时终态，主进�
 
 前端测试从用户能够看到或操作的结果出发，优先通过 `role`、`label`、文本和可见状态定位元素，具体原则见 [Testing Library](https://testing-library.com/docs/guiding-principles)。测试结束时不应留下未处理的 Promise 拒绝或 React `act(...)` 警告。
 
+浏览器测试的 `localStorage` 和 `sessionStorage` 由当前 jsdom 窗口提供，统一在 `src/test-utils.ts` 中绑定到测试全局对象。Node.js 也可能提供同名原生属性，因此不能依赖宿主是否存在这些属性来选择存储实现；测试不需要配置 Node 的存储文件。
+
 ### 异步状态、定时器与焦点
 
 组件通过状态、ref 回调或 React 提交阶段的 effect 驱动焦点和其他 DOM 副作用。需要在浏览器绘制前完成焦点调整时使用 `useLayoutEffect`。`setTimeout` 只用于产品明确要求的延迟，不用于协调同一次提交中的状态更新、元素挂载和焦点顺序。

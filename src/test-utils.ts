@@ -1,6 +1,7 @@
 // src/test-utils.ts
 // Mock @tauri-apps/api/core to prevent Tauri runtime errors in test environment
 import { vi } from 'vitest';
+import type {} from 'vitest/jsdom';
 import type {
   AgentSelectionSnapshot,
   AgentRuntimeSnapshot,
@@ -9,6 +10,17 @@ import type {
   ResolvedAgent,
   ResolvedAgentScope,
 } from '@/bindings';
+
+// 浏览器测试使用当前 jsdom 窗口的存储，避免 Node 原生同名属性遮蔽浏览器实现。
+if (typeof jsdom !== 'undefined') {
+  for (const name of ['localStorage', 'sessionStorage'] as const) {
+    Object.defineProperty(globalThis, name, {
+      value: jsdom.window[name],
+      configurable: true,
+      writable: true,
+    });
+  }
+}
 
 // Mock the tauri invoke mechanism used by bindings.ts
 vi.mock('@tauri-apps/api/core', () => ({
