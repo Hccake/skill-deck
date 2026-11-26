@@ -136,6 +136,7 @@ After installation, use Skills to read content, manage agents, check for updates
 - Skills without source records and Skills from local directories remain locally manageable and do not participate in remote update checks. Private GitHub source checks can use existing local Git credentials.
 - Global installations, project installations, and Library members from direct downloads support manual checks and previewed updates when the original HTTP(S) URL has no credentials, query, or fragment. Other downloads remain one-time imports. Adding a same-name Skill still requires removing the existing one first.
 - Updates preserve existing agent associations and show the affected locations before confirmation. Common content is always included, independent copies can be selected, and links follow their target content. Same-name Library versions are maintained in their own libraries.
+- Update actions appear only when a source change has been detected. A separate **Fetch again from source** action beside the source in details lets you reselect copies or maintain installations without version records, with confirmation before overwriting.
 - Directory links within a source or oversized sources may prevent an update. The app explains the reason and preserves installed content. See [update checking](./docs/update-checking.md) for the full conditions and [Skill lifecycle](./docs/skill-lifecycle.md) for installation and maintenance rules.
 
 ---

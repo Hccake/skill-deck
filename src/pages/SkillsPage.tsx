@@ -129,6 +129,11 @@ export function SkillsPage() {
     await openUpdate(context, [name], false);
   }, [openUpdate, selectedContext, selectedGlobalContext]);
 
+  const handleDetailReacquire = useCallback(async (name: string, scope: InstalledSkillLocation) => {
+    const context = scope === 'project' ? selectedContext : selectedGlobalContext;
+    await openUpdate(context, [name], false, 'reacquire');
+  }, [openUpdate, selectedContext, selectedGlobalContext]);
+
   const handleManageAgents = useCallback((skill: InstalledSkill) => {
     const context = skill.scope === 'project' ? selectedContext : selectedGlobalContext;
     openManageAgents(skill, context);
@@ -174,6 +179,7 @@ export function SkillsPage() {
             onClose={closeDetail}
             onCheckUpdates={handleDetailCheckUpdates}
             onUpdate={handleDetailUpdate}
+            onReacquire={handleDetailReacquire}
             onDelete={handleDetailDelete}
             onRetry={reloadContent}
             onManageAgents={handleManageAgents}

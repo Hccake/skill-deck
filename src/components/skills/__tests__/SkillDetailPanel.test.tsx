@@ -130,13 +130,45 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByText('skills.checkUpToDate')).toBeNull();
     expect(screen.getByText('skills.card.sourceMissingUpstream')).toBeTruthy();
   });
-  it('keeps an update entry for remaining copies after the source is already current', () => {
+  it.each(['upToDate', 'cannotCheck', undefined] as const)('keeps reacquisition beside the source without an update action for %s', (updateStatus) => {
     const onUpdate = vi.fn();
-    render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, canRunUpdate: true })}
+    const onReacquire = vi.fn();
+    render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, canRunUpdate: true,
+      source: 'owner/repo', updateStatus })}
       content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
-      onUpdate={onUpdate} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()} /></TooltipProvider>);
+      onUpdate={onUpdate} onReacquire={onReacquire} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()} /></TooltipProvider>);
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    const reacquire = screen.getByRole('button', { name: 'skills.actions.reacquire' });
+    expect(reacquire.closest('dl')?.textContent).toContain('skills.detail.source');
+    fireEvent.click(reacquire);
+    expect(onReacquire).toHaveBeenCalledWith('brainstorming', 'global');
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('keeps update and reacquisition separate when a new version is available', () => {
+    const onUpdate = vi.fn();
+    const onReacquire = vi.fn();
+    render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ canRunUpdate: true, source: 'owner/repo' })}
+      content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
+      onUpdate={onUpdate} onReacquire={onReacquire} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()} /></TooltipProvider>);
     fireEvent.click(screen.getByRole('button', { name: 'skills.actions.update' }));
     expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
+    expect(onReacquire).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'skills.actions.reacquire' }));
+    expect(onReacquire).toHaveBeenCalledWith('brainstorming', 'global');
+  });
+
+  it.each([
+    { canRunUpdate: false },
+    { updateStatus: 'deletedUpstream' as const },
+    { updateReason: 'deleted-upstream' },
+  ])('does not offer reacquisition for unavailable content: %j', (overrides) => {
+    render(<TooltipProvider><SkillDetailPanel skill={makeSkill({ hasUpdate: false, canRunUpdate: true,
+      source: 'owner/repo', ...overrides })}
+      content="Content" loading={false} agentDisplayNames={new Map()} onClose={vi.fn()}
+      onUpdate={vi.fn()} onReacquire={vi.fn()} onDelete={vi.fn()} onRetry={vi.fn()} onManageAgents={vi.fn()} /></TooltipProvider>);
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.actions.reacquire' })).toBeNull();
   });
   it('shows the same-name library version with its own maintenance entry', () => {
     const version = { libraryId: 'team', libraryName: 'Team Skills', skillName: 'brainstorming' };
@@ -221,6 +253,7 @@ describe('SkillDetailPanel', () => {
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
           onUpdate={vi.fn()}
+          onReacquire={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
@@ -231,6 +264,7 @@ describe('SkillDetailPanel', () => {
 
     for (const title of [
       'skills.actions.update',
+      'skills.actions.reacquire',
       'skills.actions.copyToProject',
       'skills.manageAgents.action',
       'skills.actions.delete',
@@ -504,7 +538,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByText('must not be shown')).toBeNull();
   });
 
-  it('shows cannotCheck reason while preserving a backend-authorized manual update', () => {
+  it('shows cannotCheck reason beside the backend-authorized reacquisition action', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -521,6 +555,7 @@ describe('SkillDetailPanel', () => {
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
           onUpdate={vi.fn()}
+          onReacquire={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
@@ -530,7 +565,8 @@ describe('SkillDetailPanel', () => {
 
     expect(screen.getByText('skills.card.sourceIncomplete')).toBeTruthy();
     expect(screen.queryByText('skills.updateStatus.cannotCheck')).toBeNull();
-    expect(screen.getByRole('button', { name: 'skills.actions.update' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'skills.actions.reacquire' })).toBeTruthy();
   });
 
   it('shows upstream-deleted state without ordinary update action', () => {
@@ -590,7 +626,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
   });
 
-  it('keeps manual update available when the backend cannot compare versions', () => {
+  it('allows reacquisition when the backend cannot compare versions', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -605,6 +641,7 @@ describe('SkillDetailPanel', () => {
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
           onUpdate={vi.fn()}
+          onReacquire={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
@@ -612,7 +649,8 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByRole('button', { name: 'skills.actions.update' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.actions.update' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'skills.actions.reacquire' })).toBeTruthy();
   });
 
   it.each([

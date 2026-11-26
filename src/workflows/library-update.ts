@@ -8,7 +8,6 @@ import type {
   AppError,
   PreparedLibraryUpdatePreview,
   LibraryUpdateResponse,
-  LibraryUpdateSkillResult,
   SkillUpdateInfo,
   SourceUpdateCheckInfo,
   UpdateLibrarySkillsRequest,
@@ -20,7 +19,7 @@ import {
   updateLibrarySkills,
 } from '@/hooks/useTauriApi';
 import { environmentKey } from '@/lib/context';
-import type { LibraryUpdatePhase } from '@/lib/libraries/update-progress';
+import type { LibraryMaintenanceIntent, LibrarySkillMaintenanceResult, LibraryUpdatePhase } from '@/lib/libraries/update-progress';
 import { toAppError } from '@/utils/to-app-error';
 
 interface PendingLibraryUpdate extends PreparedLibraryUpdatePreview {
@@ -30,19 +29,20 @@ interface PendingLibraryUpdate extends PreparedLibraryUpdatePreview {
 
 interface LibraryUpdateWorkflowState {
   phase: LibraryUpdatePhase;
+  intent: LibraryMaintenanceIntent;
   environment: EnvironmentRef | null;
   libraryId: LibraryId | null;
   checks: Record<string, SkillUpdateInfo>;
   sources: SourceUpdateCheckInfo[];
-  /** 上一批更新中每个成员的提交结果，用于卡片显示完成或失败。 */
-  lastResults: Record<string, LibraryUpdateSkillResult>;
+  /** 每个成员最近一次操作的提交结果及操作类型。 */
+  lastResults: Record<string, LibrarySkillMaintenanceResult>;
   hasError: boolean;
   error: AppError | null;
   pending: PendingLibraryUpdate | null;
   generation: number;
   activate: (environment: EnvironmentRef, libraryId: LibraryId | null) => void;
   check: () => Promise<void>;
-  prepare: (skillNames: string[]) => Promise<void>;
+  prepare: (skillNames: string[], intent?: LibraryUpdateWorkflowState['intent']) => Promise<void>;
   confirm: () => Promise<LibraryUpdateResponse | null>;
   cancel: () => void;
   reset: () => void;
@@ -50,6 +50,7 @@ interface LibraryUpdateWorkflowState {
 
 const initialState = {
   phase: 'idle' as const,
+  intent: 'update' as const,
   environment: null,
   libraryId: null,
   checks: {},
@@ -109,12 +110,12 @@ export const useLibraryUpdateWorkflow = create<LibraryUpdateWorkflowState>()((se
       }
     }
   },
-  prepare: async (skillNames) => {
+  prepare: async (skillNames, intent = 'update') => {
     const { environment, libraryId, generation, phase } = get();
     if (!environment || !libraryId || skillNames.length === 0 || phase !== 'idle') return;
     const request = { environment, libraryId, skillNames: [...skillNames] };
     const operationId = crypto.randomUUID();
-    set((state) => ({ phase: 'preparing', hasError: false, error: null, lastResults: Object.fromEntries(Object.entries(state.lastResults).filter(([name]) => !skillNames.includes(name))), pending: { request, operationId, skillNames: [], blocked: [], redirectedDownloadHosts: [] } }));
+    set((state) => ({ phase: 'preparing', intent, hasError: false, error: null, lastResults: Object.fromEntries(Object.entries(state.lastResults).filter(([name]) => !skillNames.includes(name))), pending: { request, operationId, skillNames: [], blocked: [], redirectedDownloadHosts: [] } }));
     try {
       const preview = await prepareLibrarySkillUpdates(operationId, request);
       if (get().generation !== generation) {
@@ -135,7 +136,7 @@ export const useLibraryUpdateWorkflow = create<LibraryUpdateWorkflowState>()((se
     }
   },
   confirm: async () => {
-    const { pending, generation, phase } = get();
+    const { pending, generation, phase, intent } = get();
     if (!pending || phase !== 'ready' || pending.skillNames.length === 0) return null;
     set({ phase: 'executing', hasError: false });
     try {
@@ -148,7 +149,7 @@ export const useLibraryUpdateWorkflow = create<LibraryUpdateWorkflowState>()((se
         pending: null,
         hasError,
         lastResults: { ...state.lastResults, ...Object.fromEntries(
-          response.results.map((result) => [result.skillName, result]),
+          response.results.map((result) => [result.skillName, { ...result, intent }]),
         ) },
       }));
       return response;

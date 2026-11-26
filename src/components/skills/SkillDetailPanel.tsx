@@ -17,6 +17,7 @@ import {
   DetailHeader,
   DetailField,
   DetailSourceLink,
+  DetailReacquireAction,
 } from '@/components/skills/detail/DetailPrimitives';
 import { formatTime } from '@/lib/utils';
 import type { InstalledLibraryVersion, InstalledSkill, InstalledSkillLocation, ScopePathBase, SkillLocationRef, UpdateCheckOutcome } from '@/bindings';
@@ -47,6 +48,7 @@ interface SkillDetailPanelProps {
   onClose: () => void;
   onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   onUpdate: (name: string, scope: InstalledSkillLocation) => void;
+  onReacquire?: (name: string, scope: InstalledSkillLocation) => void;
   onDelete: (skill: InstalledSkill) => void;
   onRetry: () => void;
   onManageAgents: (skill: InstalledSkill) => void;
@@ -69,6 +71,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onClose,
   onCheckUpdates,
   onUpdate,
+  onReacquire,
   onDelete,
   onRetry,
   onManageAgents,
@@ -164,13 +167,14 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     return () => clearTimeout(timer);
   }, [cooldownDeadline]);
   const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
-  const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
+  const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || ['deletedUpstream', 'deleted-upstream'].includes(skill.updateReason ?? '');
   const presentation = skillStatusPresentation(skill);
   const sourceLabel = presentation.sourceLabelKey ? t(presentation.sourceLabelKey) : presentation.sourceLabel;
   const notice = presentation.notice;
   const noticeDescription = notice?.error ? formatAppError(notice.error, t)
     : notice?.hintKey ? t(notice.hintKey) : undefined;
-  const canShowUpdateAction = (skill.canRunUpdate === true || (skill.hasUpdate === true && skill.canRunUpdate !== false)) && !isDeletedUpstream;
+  const canShowUpdateAction = presentation.available && skill.canRunUpdate !== false;
+  const canReacquire = skill.canRunUpdate === true && !isDeletedUpstream && Boolean(onReacquire);
   const canConfigureCredentials = skill.sourceType !== 'download' && isIncompleteCheck && (typedFailure?.reason === 'rateLimited' || typedFailure?.reason === 'authenticationRequired');
   const canInspectSource = isIncompleteCheck && typedFailure != null
     && ['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
@@ -180,12 +184,12 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
       documentKey={JSON.stringify([context, skill.name, skill.canonicalPath, content, skill.description])} context={`${skill.name} ${skill.description ?? ''}`}>
     <div className="skill-detail-layout h-full flex flex-col overflow-hidden bg-surface">
       <DetailHeader name={skill.name} contentState={content ? loading ? 'refreshing' : contentError ? 'stale' : undefined : undefined}>
-        {canShowUpdateAction || updateStatus ? (
+        {canShowUpdateAction ? (
             <DetailAction
                 className="text-primary hover:text-primary hover:bg-primary/10"
-                label={t(presentation.reacquire ? 'skills.actions.reacquire' : 'skills.actions.update')}
+                label={t('skills.actions.update')}
                 hint={activeUpdatePhase ? t(resolveSkillUpdatePhaseI18nKey(activeUpdatePhase)) : undefined}
-                disabled={writeBlocked || Boolean(updateStatus) || !canShowUpdateAction}
+                disabled={writeBlocked || Boolean(updateStatus)}
                 onClick={handleUpdate}
             >
               {isUpdateInProgress ? <RefreshCw className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ArrowUpCircle className="h-4 w-4" aria-hidden="true" />}
@@ -263,12 +267,18 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
             <div className="space-y-3">
               <div className="skill-detail-metadata">
-                {presentation.local || sourceLabel ? (
+                {presentation.local || sourceLabel || canReacquire ? (
                   <DetailField label={t('skills.detail.source')}>
-                    {presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.packageSource ? t('skills.dependency.source') : (
-                      <DetailSourceLink label={sourceLabel!} url={skill.sourceUrl}
-                        hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
-                    )}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {presentation.local ? t('skills.updateStatusLabel.localSource') : presentation.packageSource ? t('skills.dependency.source') : sourceLabel ? (
+                        <DetailSourceLink label={sourceLabel} url={skill.sourceUrl}
+                          hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
+                      ) : null}
+                      {canReacquire ? <DetailReacquireAction
+                        disabled={writeBlocked || isUpdateInProgress}
+                        onClick={() => onReacquire?.(skill.name, skill.scope)}
+                      /> : null}
+                    </div>
                   </DetailField>
                 ) : null}
                 {skill.gitRef ? <GitReferenceField value={skill.gitRef} kind={skill.refKind} /> : null}

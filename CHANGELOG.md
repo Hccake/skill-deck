@@ -5,6 +5,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### Changed
+
+- **区分更新与重新获取** — 仅在发现更新时显示更新操作；详情来源信息旁提供独立的“从来源重新获取”，并明确覆盖确认。
+
 ## [1.8.0] - 2026-10-11
 
 ### Added

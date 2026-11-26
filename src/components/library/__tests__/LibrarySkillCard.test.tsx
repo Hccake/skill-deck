@@ -48,18 +48,17 @@ const removeButton = () => screen.getByRole('button', {
 const updateButton = () => screen.getByRole('button', { name: 'skills.actions.updateNamed:{"name":"backend-utils"}' });
 
 describe('LibrarySkillCard', () => {
-  it('offers reacquisition for a maintained download without a comparison baseline', () => {
+  it('does not present missing-baseline maintenance as a card update', () => {
     const onUpdate = vi.fn();
     render(<TooltipProvider><LibrarySkillCard skill={{ ...sampleSkill, sourceType: 'download',
       updateCapability: { canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'missingRemoteHash' } }}
       onUpdate={onUpdate} /></TooltipProvider>);
-    fireEvent.click(screen.getByRole('button', { name: /^skills\.actions\.reacquireNamed/ }));
-    expect(onUpdate).toHaveBeenCalledWith(sampleSkill.name);
+    expect(screen.queryByRole('button', { name: /^skills\.actions\.(reacquireNamed|updateNamed)/ })).toBeNull();
   });
 
   it('keeps an unfinished update retryable after its progress has ended', () => {
     const update = vi.fn();
-    render(<TooltipProvider><LibrarySkillCard skill={sampleSkill} updateStatus="failed" result={{ skillName: sampleSkill.name, status: 'cancelled', sourceResultId: 'source', contentCommit: 'notRun', catalogCommit: 'notRun', error: null }} onUpdate={update} /></TooltipProvider>);
+    render(<TooltipProvider><LibrarySkillCard skill={sampleSkill} check={check('updateAvailable')} updateStatus="failed" result={{ intent: 'update', skillName: sampleSkill.name, status: 'cancelled', sourceResultId: 'source', contentCommit: 'notRun', catalogCommit: 'notRun', error: null }} onUpdate={update} /></TooltipProvider>);
     fireEvent.click(updateButton());
     expect(update).toHaveBeenCalledWith(sampleSkill.name);
   });

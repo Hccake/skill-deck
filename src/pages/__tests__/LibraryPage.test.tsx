@@ -324,6 +324,41 @@ describe('LibraryPage maintenance', () => {
     await waitFor(() => expect(updateLibrarySkills).toHaveBeenCalledWith(expect.any(String)));
   });
 
+  it.each([
+    ['succeeded', 'skills.reacquire.done'],
+    ['failed', 'skills.reacquire.failed'],
+  ] as const)('reports reacquisition as %s after returning to the member list', async (status, resultLabel) => {
+    vi.mocked(updateLibrarySkills).mockResolvedValue({
+      sources: [], results: [{ skillName: 'api-design', status, sourceResultId: 'source-1',
+        contentCommit: status, catalogCommit: status === 'succeeded' ? 'succeeded' : 'notRun', error: null }],
+      outcome: status, library: null, membership: { scopes: [], cleanup: [], snapshotError: null },
+    });
+    vi.mocked(checkLibrarySkillUpdates).mockResolvedValue({ outcome: 'completed', skipped: [], sources: [], skills: [{
+      name: 'api-design', source: 'https://example.com/repo', hasUpdate: false, status: 'upToDate',
+      capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
+      reason: null, gitRef: null, sourceUrl: null, skillPath: null, freshness: 'fresh',
+    }] });
+    render(<MemoryRouter><LibraryPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'libraries.checkUpdates' }));
+    await waitFor(() => expect(checkLibrarySkillUpdates).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'api-design' }));
+    const reacquire = await screen.findByRole('button', { name: 'skills.actions.reacquire' });
+    expect(screen.queryByRole('button', { name: 'libraries.update' })).toBeNull();
+    fireEvent.click(reacquire);
+    expect(await screen.findByRole('heading', { name: 'skills.reacquire.libraryTitle' })).toBeTruthy();
+    expect(await screen.findByText('skills.reacquire.libraryDescription')).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'skills.reacquire.confirm' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(updateLibrarySkills).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'skills.reacquire.confirm' }));
+    await waitFor(() => expect(updateLibrarySkills).toHaveBeenCalledWith(expect.any(String)));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'skills.reacquire.confirm' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'common.close' }));
+    expect(await screen.findByTestId('library-skill-marker')).toBeTruthy();
+    expect(screen.getByText(resultLabel)).toBeTruthy();
+    expect(screen.queryByText('skills.updateDone')).toBeNull();
+    expect(screen.queryByText('skills.updateFailed')).toBeNull();
+  });
+
   it('adds only relocated member paths to the existing update confirmation', async () => {
     vi.mocked(prepareLibrarySkillUpdates).mockResolvedValue({
       blocked: [], redirectedDownloadHosts: [], skillNames: ['api-design'],

@@ -116,6 +116,7 @@ export function LibraryPage() {
   const checkSources = useLibraryUpdateWorkflow((state) => state.sources);
   const checks = useMemo(() => Object.fromEntries(Object.entries(rawChecks).filter(([name, check]) => workspace.detail?.skills.some((skill) => skill.name === name && skill.comparisonFingerprint === check.comparisonFingerprint))), [rawChecks, workspace.detail]);
   const updatePhase = useLibraryUpdateWorkflow((state) => state.phase);
+  const reacquiring = useLibraryUpdateWorkflow((state) => state.intent === 'reacquire');
   const updateError = useLibraryUpdateWorkflow((state) => state.hasError);
   const updateAppError = useLibraryUpdateWorkflow((state) => state.error);
   const pendingUpdate = useLibraryUpdateWorkflow((state) => state.pending);
@@ -128,9 +129,9 @@ export function LibraryPage() {
   const confirmUpdates = useLibraryUpdateWorkflow((state) => state.confirm);
   const cancelUpdates = useLibraryUpdateWorkflow((state) => state.cancel);
   const resetUpdates = useLibraryUpdateWorkflow((state) => state.reset);
-  const startUpdates = useCallback((names: string[], returnTarget: string) => {
+  const startUpdates = useCallback((names: string[], returnTarget: string, intent: 'update' | 'reacquire' = 'update') => {
     updateTriggerRef.current = returnTarget;
-    return prepareUpdates(names);
+    return prepareUpdates(names, intent);
   }, [prepareUpdates]);
 
   const [nameDialog, setNameDialog] = useState<{ mode: 'create' | 'rename'; id?: LibraryId } | null>(null);
@@ -564,6 +565,7 @@ export function LibraryPage() {
             busy={busy}
             onClose={closeDetail}
             onUpdate={(name) => void startUpdates([name], `detail:${name}`)}
+            onReacquire={(name) => void startUpdates([name], `reacquire:${name}`, 'reacquire')}
             onRemove={(name) => void openSkillRemoval(name)}
             onRetry={() => void openSkillContent(selectedSkill.name, true)}
           />
@@ -930,8 +932,8 @@ export function LibraryPage() {
           }
         }}>
           <DialogHeader>
-            <DialogTitle>{t('libraries.confirmUpdateTitle')}</DialogTitle>
-            <DialogDescription>{updatePhase === 'preparing' ? t('skills.updatePlan.loadingPreview') : t('libraries.confirmUpdateDescription', { count: pendingUpdate?.skillNames.length ?? 0 })}</DialogDescription>
+            <DialogTitle>{t(reacquiring ? 'skills.reacquire.libraryTitle' : 'libraries.confirmUpdateTitle')}</DialogTitle>
+            <DialogDescription>{updatePhase === 'preparing' ? t('skills.updatePlan.loadingPreview') : reacquiring ? t('skills.reacquire.libraryDescription') : t('libraries.confirmUpdateDescription', { count: pendingUpdate?.skillNames.length ?? 0 })}</DialogDescription>
             {downloadRedirects.map(item => (
               <div key={item.sourceKey} className="flex min-w-0 items-center gap-2 text-xs">
                 <span className="shrink-0 text-muted-foreground">{t('skills.detail.source')}</span>
@@ -958,7 +960,7 @@ export function LibraryPage() {
             <Button ref={cancelUpdateRef} type="button" variant="outline" onClick={() => {
               cancelUpdates();
             }} disabled={updatePhase === 'executing'}>{t('common.cancel')}</Button>
-            <Button type="button" onClick={() => void applyUpdates()} disabled={busy || updatePhase !== 'ready' || !pendingUpdate?.skillNames.length}>{t('libraries.update')}</Button>
+            <Button type="button" onClick={() => void applyUpdates()} disabled={busy || updatePhase !== 'ready' || !pendingUpdate?.skillNames.length}>{t(reacquiring ? 'skills.reacquire.confirm' : 'libraries.update')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

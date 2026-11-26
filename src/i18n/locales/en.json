@@ -452,7 +452,7 @@
       "updateNamed": "Update \"{{name}}\"",
       "deleteNamed": "Delete \"{{name}}\"",
       "copyToProjectNamed": "Copy \"{{name}}\" to another project",
-      "reacquire": "Fetch again from source",
+      "reacquire": "Fetch again from source…",
       "reacquireNamed": "Fetch {{name}} again from source"
     },
     "agent": {
@@ -712,13 +712,13 @@
     },
     "updateHint": {
       "missingRemoteHash": "Local version information is missing, so Skill Deck cannot determine whether a newer version is available.",
-      "missingRemoteHashCanUpdate": "Local version information is missing, so Skill Deck cannot determine whether a newer version is available. You can still update from the original source.",
+      "missingRemoteHashCanUpdate": "The installed version record is missing, so updates cannot be compared. Fetch content again beside the source in Skill details.",
       "missingSource": "Install source information is incomplete. Remove this Skill and install it again to restore version checks.",
       "unsupportedSource": "This install source does not support automatic update checks. Check the original source manually.",
       "upstreamUnavailable": "The install source cannot be reached right now. Check again later.",
       "deletedUpstream": "The source is reachable, but this Skill path no longer exists upstream. Remove the local copy or keep it installed.",
       "missing-skill-path": "Install source information is incomplete. Remove this Skill and install it again to restore version checks.",
-      "missing-remote-hash": "Local version information is incomplete. Remove this Skill and install it again to restore version checks.",
+      "missing-remote-hash": "The installed version record is missing, so updates cannot be compared. Fetch content again beside the source in Skill details.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
       "local-source": "This Skill comes from a local file and does not support update checks.",
       "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
@@ -898,6 +898,29 @@
       "unknown": "Ref",
       "copy": "Copy full reference",
       "copyFailed": "Could not copy. Try again."
+    },
+    "reacquire": {
+      "hint": "Fetch content from the saved source and review the installation locations to overwrite.",
+      "description": "Fetch the current content from the saved source and overwrite the installation locations selected below. Local changes at those locations may be overwritten. Unselected copies will be kept.",
+      "globalTitle": "Fetch Global Skills again from source",
+      "projectTitle": "Fetch Skills in {{project}} again from source",
+      "libraryTitle": "Fetch Library members again from source",
+      "libraryDescription": "Fetch the current content from the saved source and overwrite the selected Library members after confirmation. Local changes may be overwritten. Locations using this Library will use the new content through their existing links.",
+      "confirm": "Confirm fetch from source",
+      "resultTitle": "Fetch from source results",
+      "done": "Fetched again from source",
+      "failed": "Fetch from source failed",
+      "executionDescription": "Validating source content and writing to the confirmed installation locations.",
+      "previewError": "Unable to prepare content from the source.",
+      "starting": "Starting fetch from source…",
+      "stopping": "Stopping fetch from source…",
+      "stop": "Stop fetch from source",
+      "cancelled": "Fetch from source stopped",
+      "skippedCopies": "These copies were kept unchanged:",
+      "updatedWithSkippedCopies": "Fetched from source with some copies kept unchanged",
+      "preservedReferences": "Independent references were kept and excluded from this operation.",
+      "preserveConflictDefault": "Selected copies will be overwritten. Unselected copies will be kept.",
+      "blockedCount": "Cannot fetch {{count}} item(s) again yet"
     }
   },
   "settings": {

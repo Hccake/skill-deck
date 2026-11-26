@@ -194,6 +194,7 @@ vi.mock('@/components/skills', () => ({
     isCheckingUpdates,
     onCheckUpdates,
     onUpdate,
+    onReacquire,
     onManageAgents,
     onOpenLibraryVersion,
   }: {
@@ -202,6 +203,7 @@ vi.mock('@/components/skills', () => ({
     isCheckingUpdates?: boolean;
     onCheckUpdates?: () => void;
     onUpdate?: (name: string, scope: 'global' | 'project') => void;
+    onReacquire?: (name: string, scope: 'global' | 'project') => void;
     onManageAgents?: (skill: InstalledSkill) => void;
     onOpenLibraryVersion?: (version: InstalledLibraryVersion) => void;
   }) => (
@@ -218,6 +220,7 @@ vi.mock('@/components/skills', () => ({
       <button type="button" onClick={() => onUpdate?.(skill.name, skill.scope)}>
         detail-update
       </button>
+      <button type="button" onClick={() => onReacquire?.(skill.name, skill.scope)}>detail-reacquire</button>
       <button type="button" onClick={() => onManageAgents?.(skill)}>
         detail-manage-agents
       </button>
@@ -497,6 +500,14 @@ describe('SkillsPage', () => {
       false,
     );
     expect(getByTestId('page-update-dialog').getAttribute('data-open')).toBe('true');
+  });
+
+  it('routes detail reacquisition with its own intent and the selected context', () => {
+    mocks.skillDetailState.selectedSkillRef = { name: 'toolkit', scope: 'global' };
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit', { hasUpdate: false, canRunUpdate: true })]);
+    const { getByText } = render(<MemoryRouter><SkillsPage /></MemoryRouter>);
+    fireEvent.click(getByText('detail-reacquire'));
+    expect(mocks.updateWorkflowState.open).toHaveBeenCalledWith(nativeGlobal, ['toolkit'], false, 'reacquire');
   });
 
   it('opens detail Agent management with the selected operation context', () => {

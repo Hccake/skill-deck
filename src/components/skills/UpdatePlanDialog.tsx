@@ -200,6 +200,7 @@ function ExecutionView({
   current,
   total,
   cancelling,
+  reacquiring,
 }: {
   batch: boolean;
   phase: string;
@@ -207,6 +208,7 @@ function ExecutionView({
   current?: number | null;
   total?: number | null;
   cancelling: boolean;
+  reacquiring: boolean;
 }) {
   const { t } = useTranslation();
   const progressValue = current != null && total != null && total > 0
@@ -221,12 +223,12 @@ function ExecutionView({
     >
       <LoaderCircle className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
       <p className="mt-4 text-base font-semibold">
-        {cancelling ? t('skills.updatePlan.stopping') : t(`mutation.phase.${phase}`)}
+        {cancelling ? t(reacquiring ? 'skills.reacquire.stopping' : 'skills.updatePlan.stopping') : t(`mutation.phase.${phase}`)}
       </p>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">
         {subject
           ? t('skills.updatePlan.currentSkill', { skillName: subject })
-          : t('skills.updatePlan.executionDescription')}
+          : t(reacquiring ? 'skills.reacquire.executionDescription' : 'skills.updatePlan.executionDescription')}
       </p>
       {batch && progressValue != null ? (
         <div className="mt-5 w-full max-w-sm space-y-2">
@@ -249,6 +251,9 @@ export function UpdatePlanDialog({
 }: UpdatePlanDialogProps) {
   const { t } = useTranslation();
   const phase = useSkillUpdateWorkflow((state) => state.phase);
+  const intent = useSkillUpdateWorkflow((state) => state.intent);
+  const reacquiring = intent === 'reacquire';
+  const copyPrefix = reacquiring ? 'skills.reacquire' : 'skills.updatePlan';
   const preview = useSkillUpdateWorkflow((state) => state.preview);
   const previewError = useSkillUpdateWorkflow((state) => state.previewError);
   const result = useSkillUpdateWorkflow((state) => state.result);
@@ -327,9 +332,9 @@ export function UpdatePlanDialog({
   )) ?? false;
   const scope = context.scope;
   const project = scope.scope === 'project' ? projects.find((item) => item.binding.id === scope.project_id) : undefined;
-  const subjectTitle = scope.scope === 'global' ? t('skills.updatePlan.globalTitle')
-    : t('skills.updatePlan.projectTitle', { project: project ? projectDisplayName(project) : scope.project_id });
-  const dialogTitle = phase === 'result' ? t('skills.updatePlan.resultTitle') : subjectTitle;
+  const subjectTitle = scope.scope === 'global' ? t(`${copyPrefix}.globalTitle`)
+    : t(`${copyPrefix}.projectTitle`, { project: project ? projectDisplayName(project) : scope.project_id });
+  const dialogTitle = phase === 'result' ? t(`${copyPrefix}.resultTitle`) : subjectTitle;
   const hasCopies = phase === 'ready' && preview?.skills.some((skill) => skill.overwritePrivateEntries.length > 0 || skill.targets.some((target) => target.selectableEntryId));
   const onlyPreserved = phase === 'ready' && !!preview?.skills.length && !preview.blocked.length
     && preview.skills.every((skill) => skill.blockingReasons.includes('noUpdateTargets'));
@@ -374,6 +379,9 @@ export function UpdatePlanDialog({
           data-testid="update-plan-dialog-body"
           className="min-h-0 overflow-y-auto overscroll-contain px-5 py-3"
         >
+          {reacquiring && (phase === 'loadingPreview' || phase === 'ready') ? (
+            <p className="mb-3 text-sm text-muted-foreground">{t('skills.reacquire.description')}</p>
+          ) : null}
           {phase === 'loadingPreview' ? (
             <div className="min-h-48 space-y-3" role="status" aria-live="polite">
               <span className="sr-only">{t('skills.updatePlan.loadingPreview')}</span>
@@ -383,11 +391,12 @@ export function UpdatePlanDialog({
             </div>
           ) : phase === 'previewError' ? (
             <div className="min-h-48 py-8 text-sm text-destructive" role="alert">
-              {previewError ? formatAppError(toAppError(previewError), t) : t('skills.updatePlan.previewError')}
+              {previewError ? formatAppError(toAppError(previewError), t) : t(`${copyPrefix}.previewError`)}
             </div>
           ) : executing ? (
             <ExecutionView
               batch={batch}
+              reacquiring={reacquiring}
               phase={matchingUpdateMutation ? activeMutation.phase : 'preparing'}
               subject={matchingUpdateMutation ? activeMutation.progress?.subject : null}
               current={matchingUpdateMutation ? activeMutation.progress?.current : null}
@@ -438,7 +447,7 @@ export function UpdatePlanDialog({
                 <div>
                   <p className="text-sm font-semibold">
                     {result
-                      ? t(`skills.updatePlan.resultOutcome.${result.outcome}`)
+                      ? t(reacquiring && result.outcome === 'cancelled' ? 'skills.reacquire.cancelled' : `skills.updatePlan.resultOutcome.${result.outcome}`)
                       : t('skills.updatePlan.resultOutcome.failed')}
                   </p>
                   {executionError ? (
@@ -483,7 +492,7 @@ export function UpdatePlanDialog({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{item.skillIdentity.skillName}</span>
                       <Badge variant="outline" className="text-xs">
-                        {t(item.coverage.kind === 'updatedWithSkippedCopies' ? 'skills.updatePlan.updatedWithSkippedCopies' : `mutation.result.status.${status}`)}
+                        {t(item.coverage.kind === 'updatedWithSkippedCopies' ? `${copyPrefix}.updatedWithSkippedCopies` : `mutation.result.status.${status}`)}
                       </Badge>
                       {source ? (
                         <span className="text-xs text-muted-foreground">{source.source}</span>
@@ -506,7 +515,7 @@ export function UpdatePlanDialog({
                     )) ?? null}
                     {item.skippedCopyPaths?.length ? (
                       <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                        <p>{t('skills.updatePlan.skippedCopies')}</p>
+                        <p>{t(`${copyPrefix}.skippedCopies`)}</p>
                         {item.skippedCopyPaths.map((path) => <p key={path.nativePath} className="min-w-0">
                           <OverflowTooltip content={<code>{path.nativePath}</code>} always={path.nativePath !== presentInstallPath(path, preview?.pathBase, context.scope.scope).label}>
                             <span tabIndex={0} className="block truncate font-mono">{presentInstallPath(path, preview?.pathBase, context.scope.scope).label}</span>
@@ -515,7 +524,7 @@ export function UpdatePlanDialog({
                       </div>
                     ) : null}
                     {preview?.skills.find((skill) => skill.skillName === item.skillIdentity.skillName)?.preservedTargets?.length ? (
-                      <p className="mt-1 text-xs text-muted-foreground">{t('skills.updatePlan.preservedReferences')}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{t(`${copyPrefix}.preservedReferences`)}</p>
                     ) : null}
                     {mutation?.recovery ? <RecoveryActions recovery={mutation.recovery} /> : null}
                   </div>
@@ -529,20 +538,20 @@ export function UpdatePlanDialog({
           {phase === 'previewError' ? (
             <>
               <Button ref={cancelButton} variant="outline" onClick={handleDismiss}>{t('common.cancel')}</Button>
-              <Button onClick={() => { void retryPreview(context, skillNames); }}>
+              <Button onClick={() => { void retryPreview(context, skillNames, batch, intent); }}>
                 {t('common.retry')}
               </Button>
             </>
           ) : phase === 'ready' ? (
             onlyPreserved ? <Button ref={cancelButton} onClick={handleDismiss}>{t('common.close')}</Button> : <>
               {hasCopies || preview?.blocked.length ? <div className="mr-auto min-w-0 flex-1 space-y-0.5 text-xs text-muted-foreground">
-                {hasCopies ? <p>{t('skills.updatePlan.preserveConflictDefault')}</p> : null}
-                {preview?.blocked.length ? <p>{t('skills.updatePlan.blockedCount', { count: preview.blocked.length })}</p> : null}
+                {hasCopies ? <p>{t(`${copyPrefix}.preserveConflictDefault`)}</p> : null}
+                {preview?.blocked.length ? <p>{t(`${copyPrefix}.blockedCount`, { count: preview.blocked.length })}</p> : null}
               </div> : null}
               <Button ref={cancelButton} variant="outline" onClick={handleDismiss}>{t('common.cancel')}</Button>
-              {!canConfirm && preview?.blocked.length ? <Button variant="outline" onClick={() => { void retryPreview(context, skillNames); }}>{t('common.retry')}</Button> : null}
+              {!canConfirm && preview?.blocked.length ? <Button variant="outline" onClick={() => { void retryPreview(context, skillNames, batch, intent); }}>{t('common.retry')}</Button> : null}
               {canConfirm || !preview?.blocked.length ? <Button onClick={() => { void confirmWorkflow(); }} disabled={writeBlocked || !canConfirm}>
-                {t('skills.updatePlan.confirm')}
+                {t(`${copyPrefix}.confirm`)}
               </Button> : null}
             </>
           ) : executing ? (
@@ -558,13 +567,13 @@ export function UpdatePlanDialog({
                 ) : (
                   <CircleStop className="h-4 w-4" aria-hidden="true" />
                 )}
-                {cancelling ? t('skills.updatePlan.stopping') : t('skills.updatePlan.stop')}
+                {cancelling ? t(`${copyPrefix}.stopping`) : t(`${copyPrefix}.stop`)}
               </Button>
             ) : (
               <p className="text-sm text-muted-foreground">
                 {t(matchingUpdateMutation
                   ? 'skills.updatePlan.finishing'
-                  : 'skills.updatePlan.starting')}
+                  : `${copyPrefix}.starting`)}
               </p>
             )
           ) : phase === 'result' ? (

@@ -65,6 +65,32 @@ describe('library update workflow', () => {
     useLibraryUpdateWorkflow.getState().activate(environment, 'library-1');
   });
 
+  it('records reacquisition separately and defaults the next operation to update', async () => {
+    mocks.prepareLibrarySkillUpdates.mockResolvedValue(preview);
+    await useLibraryUpdateWorkflow.getState().prepare(['demo'], 'reacquire');
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({ phase: 'ready', intent: 'reacquire' });
+    useLibraryUpdateWorkflow.getState().cancel();
+    await useLibraryUpdateWorkflow.getState().prepare(['demo']);
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({ phase: 'ready', intent: 'update' });
+  });
+
+  it('keeps each member result tied to its own operation across later operations', async () => {
+    mocks.prepareLibrarySkillUpdates.mockResolvedValueOnce(preview)
+      .mockResolvedValueOnce({ ...preview, skillNames: ['other'] });
+    mocks.updateLibrarySkills.mockResolvedValueOnce(completed())
+      .mockResolvedValueOnce({ ...completed(), results: [{ ...completed().results[0], skillName: 'other' }] });
+
+    await useLibraryUpdateWorkflow.getState().prepare(['demo'], 'reacquire');
+    await useLibraryUpdateWorkflow.getState().confirm();
+    await useLibraryUpdateWorkflow.getState().prepare(['other']);
+    await useLibraryUpdateWorkflow.getState().confirm();
+
+    expect(useLibraryUpdateWorkflow.getState()).toMatchObject({ intent: 'update', lastResults: {
+      demo: { status: 'succeeded', intent: 'reacquire' },
+      other: { status: 'succeeded', intent: 'update' },
+    } });
+  });
+
   it('keeps the confirmed comparison and the latest error on the same baseline', async () => {
     const error = { kind: 'io' as const, data: { message: 'offline' } };
     mocks.checkLibrarySkillUpdates

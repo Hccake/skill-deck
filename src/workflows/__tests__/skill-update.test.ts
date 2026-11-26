@@ -50,6 +50,17 @@ describe('skill update workflow', () => {
     });
   });
 
+  it('preserves reacquisition through a stale-preview retry and resets it for a normal update', async () => {
+    mocks.prepareUpdate.mockResolvedValue(preview());
+    await useSkillUpdateWorkflow.getState().open(context, ['demo'], false, 'reacquire');
+    expect(useSkillUpdateWorkflow.getState()).toMatchObject({ phase: 'ready', intent: 'reacquire' });
+    useSkillUpdateWorkflow.setState({ phase: 'result', executionError: { kind: 'stalePayload' } as AppError });
+    await useSkillUpdateWorkflow.getState().retryFailed();
+    expect(useSkillUpdateWorkflow.getState()).toMatchObject({ phase: 'ready', intent: 'reacquire' });
+    await useSkillUpdateWorkflow.getState().open(context, ['demo']);
+    expect(useSkillUpdateWorkflow.getState().intent).toBe('update');
+  });
+
   it('keeps Backend preview as the only display authority', async () => {
     mocks.snapshots = {
       [contextKey(context)]: {

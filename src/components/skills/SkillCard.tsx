@@ -75,11 +75,9 @@ export const SkillCard = memo(function SkillCard({
   const effectiveAgents = Array.from(new Set(skill.associatedAgents));
   const scopeIcon = displayScope === 'global' ? Globe : Folder;
   const ScopeIcon = scopeIcon;
-  const deletedUpstream = skill.updateStatus === 'deletedUpstream' || ['deletedUpstream', 'deleted-upstream'].includes(skill.updateReason ?? '');
   const presentation = skillStatusPresentation(skill);
-  const canShowUpdateAction = skill.hasUpdate === true
+  const canShowUpdateAction = presentation.available
     && skill.canRunUpdate !== false
-    && !deletedUpstream
     && !updateStatus
     && Boolean(onUpdate);
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
@@ -172,7 +170,7 @@ export const SkillCard = memo(function SkillCard({
               {canShowUpdateAction ? (
                 <SkillCardAction
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  label={t(presentation.reacquire ? 'skills.actions.reacquireNamed' : 'skills.actions.updateNamed', { name: skill.name })}
+                  label={t('skills.actions.updateNamed', { name: skill.name })}
                   disabled={writeBlocked}
                   onClick={(event) => {
                     event.stopPropagation();

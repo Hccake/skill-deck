@@ -1,12 +1,13 @@
-import type { LibraryUpdateSkillStatus, LibraryUpdateSkillResult } from '@/bindings';
+import type { LibraryUpdateSkillResult, LibraryUpdateSkillStatus } from '@/bindings';
 import type { SkillUpdateDisplayStatus } from '@/stores/skills-utils';
 
 export type LibraryUpdatePhase = 'idle' | 'checking' | 'preparing' | 'ready' | 'executing';
+export type LibraryMaintenanceIntent = 'update' | 'reacquire';
 
-export function canRetryLibraryUpdate(result?: LibraryUpdateSkillResult): boolean {
-  return result?.status === 'cancelled' || result?.status === 'notRun'
-    || (result?.status === 'failed' && result.error?.retryable === true);
-}
+/** 每个成员的结果保留发起时的操作，后续操作不会改变已有结果的含义。 */
+export type LibrarySkillMaintenanceResult = LibraryUpdateSkillResult & {
+  intent: LibraryMaintenanceIntent;
+};
 
 /**
  * 把整库更新的批次阶段投影到每个成员的展示状态。

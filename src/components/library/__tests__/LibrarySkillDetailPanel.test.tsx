@@ -31,12 +31,22 @@ const sampleSkill: LibrarySkillSummary = {
 
 describe('LibrarySkillDetailPanel', () => {
   it('offers reacquisition for a maintained download without a comparison baseline', async () => {
-    const onUpdate = vi.fn();
+    const onReacquire = vi.fn();
     render(<TooltipProvider><LibrarySkillDetailPanel skill={{ ...sampleSkill, sourceType: 'download',
       updateCapability: { canRunUpdate: true, canCheckForUpdates: false, canCheckAutomatically: false, reason: 'missingRemoteHash' } }}
-      onUpdate={onUpdate} content="Document" loading={false} onClose={vi.fn()} /></TooltipProvider>);
+      onUpdate={vi.fn()} onReacquire={onReacquire} content="Document" loading={false} onClose={vi.fn()} /></TooltipProvider>);
     fireEvent.click(await screen.findByRole('button', { name: /^skills\.actions\.reacquire/ }));
-    expect(onUpdate).toHaveBeenCalledWith(sampleSkill.name);
+    expect(onReacquire).toHaveBeenCalledWith(sampleSkill.name);
+    expect(screen.getByRole('button', { name: 'skills.actions.reacquire' }).closest('dl')?.textContent).toContain('skills.detail.source');
+    expect(screen.queryByRole('button', { name: 'libraries.update' })).toBeNull();
+  });
+
+  it('offers reacquisition for a current member without implying an available update', () => {
+    render(<TooltipProvider><LibrarySkillDetailPanel skill={{ ...sampleSkill,
+      updateCapability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null } }}
+      onUpdate={vi.fn()} onReacquire={vi.fn()} content="Document" loading={false} onClose={vi.fn()} /></TooltipProvider>);
+    expect(screen.getByRole('button', { name: 'skills.actions.reacquire' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'libraries.update' })).toBeNull();
   });
 
   it('reveals the removal action on focus and keeps the member as its target', async () => {

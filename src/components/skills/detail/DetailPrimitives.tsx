@@ -144,6 +144,21 @@ export function DetailAction({ label, hint, className, disabled, ...props }: Com
   );
 }
 
+export function DetailReacquireAction(props: ComponentProps<typeof Button>) {
+  const { t } = useTranslation();
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="link" {...props}
+          className="h-auto whitespace-normal p-0 text-left text-[13px] font-normal text-muted-foreground hover:text-foreground">
+          {t('skills.actions.reacquire')}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-80 text-wrap">{t('skills.reacquire.hint')}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
  * 可复制的路径值。
  *

@@ -24,6 +24,6 @@ describe('Skill status copy', () => {
   it('does not advise retrying an unknown check failure', () => {
     expect(zh.skills.checkUpdatesFailed).toBe('更新检查未完成。');
     expect(en.skills.checkUpdatesFailed).toBe('Update check did not complete.');
-    expect(zh.skills.updateHint.missingRemoteHashCanUpdate).toBe('缺少本地版本信息，无法判断是否有新版本。仍可从原来源更新。');
+    expect(zh.skills.updateHint.missingRemoteHashCanUpdate).toBe('缺少安装时的版本记录，无法判断是否有更新。可在详情的来源信息旁重新获取内容。');
   });
 });

@@ -452,8 +452,8 @@
       "updateNamed": "更新「{{name}}」",
       "deleteNamed": "删除「{{name}}」",
       "copyToProjectNamed": "将「{{name}}」复制到其他项目",
-      "reacquire": "按来源重新获取",
-      "reacquireNamed": "按来源重新获取「{{name}}」"
+      "reacquire": "从来源重新获取…",
+      "reacquireNamed": "从来源重新获取「{{name}}」"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -712,13 +712,13 @@
     },
     "updateHint": {
       "missingRemoteHash": "缺少本地版本信息，无法判断是否有新版本。",
-      "missingRemoteHashCanUpdate": "缺少本地版本信息，无法判断是否有新版本。仍可从原来源更新。",
+      "missingRemoteHashCanUpdate": "缺少安装时的版本记录，无法判断是否有更新。可在详情的来源信息旁重新获取内容。",
       "missingSource": "安装来源信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
       "unsupportedSource": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "upstreamUnavailable": "暂时无法访问安装来源。稍后可重新检查。",
       "deletedUpstream": "来源可访问，但这个 Skill 路径已不在上游。你可以删除本地副本，或继续保留当前安装。",
       "missing-skill-path": "安装来源信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
-      "missing-remote-hash": "本地版本信息不完整。删除此 Skill 并重新安装后可恢复版本检查。",
+      "missing-remote-hash": "缺少安装时的版本记录，无法判断是否有更新。可在详情的来源信息旁重新获取内容。",
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",
       "upstream-unavailable": "暂时无法访问安装来源。稍后可重新检查。",
@@ -898,6 +898,29 @@
       "unknown": "引用",
       "copy": "复制完整引用",
       "copyFailed": "复制失败，请重试"
+    },
+    "reacquire": {
+      "hint": "从保存的来源重新获取内容，并确认要覆盖的安装位置。",
+      "description": "将从保存的来源获取当前内容，并覆盖确认清单中选中的安装位置。所选位置的本地修改可能被覆盖，请核对下方清单；未选中的副本保持原样。",
+      "globalTitle": "从来源重新获取全局 Skill",
+      "projectTitle": "从来源重新获取「{{project}}」的 Skill",
+      "libraryTitle": "从来源重新获取库成员",
+      "libraryDescription": "将从保存的来源获取当前内容，并覆盖所选库成员的内容。本地修改可能被覆盖，已应用此库的位置会通过现有链接使用新内容。确认后执行。",
+      "confirm": "确认重新获取",
+      "resultTitle": "重新获取结果",
+      "done": "已重新获取",
+      "failed": "重新获取失败",
+      "executionDescription": "正在校验来源内容并写入已确认的安装位置。",
+      "previewError": "无法准备重新获取的内容。",
+      "starting": "正在开始重新获取…",
+      "stopping": "正在停止重新获取…",
+      "stop": "停止重新获取",
+      "cancelled": "重新获取已停止",
+      "skippedCopies": "以下副本本次保持原样：",
+      "updatedWithSkippedCopies": "已重新获取，部分副本保持原样",
+      "preservedReferences": "独立引用保持原样，未参与本次重新获取。",
+      "preserveConflictDefault": "选中的副本将被覆盖，未选中的副本保持原样。",
+      "blockedCount": "{{count}} 个暂时无法重新获取"
     }
   },
   "settings": {

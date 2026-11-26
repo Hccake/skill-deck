@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import '@/test-utils';
-import { fireEvent, render as testingLibraryRender, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render as testingLibraryRender, screen, waitFor, within } from '@testing-library/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 const render = (ui: React.ReactNode) => testingLibraryRender(ui, { wrapper: TooltipProvider });
@@ -41,6 +41,24 @@ describe('UpdatePlanDialog', () => {
       },
     } });
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('keeps reacquisition explicit in the confirmation and result', () => {
+    useSkillUpdateWorkflow.setState({ phase: 'ready', intent: 'reacquire', context, skillNames: ['toolkit'],
+      preview: { sources: [], blocked: [], redirectedDownloadHosts: [], skills: [{
+        skillName: 'toolkit', sourceDisplay: 'owner/repo', refDisplay: 'main', targets: [automaticTarget()],
+        adapterTargets: [], cleanCopyCount: 0, overwritePrivateEntries: [], linkedTargets: [], blockingReasons: [], fallbackForecasts: [],
+        capability: { canRunUpdate: true, canCheckForUpdates: true, canCheckAutomatically: true, reason: null },
+      }] },
+    });
+    const view = render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'skills.reacquire.globalTitle' })).toBeTruthy();
+    expect(screen.getByText('skills.reacquire.description').className).not.toContain('sr-only');
+    expect(screen.getByRole('button', { name: 'skills.reacquire.confirm' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'skills.updatePlan.confirm' })).toBeNull();
+    act(() => useSkillUpdateWorkflow.setState({ phase: 'result' }));
+    view.rerender(<TooltipProvider><UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} /></TooltipProvider>);
+    expect(screen.getByRole('heading', { name: 'skills.reacquire.resultTitle' })).toBeTruthy();
   });
 
   it('shows source path changes only for relocated skills without changing location choices', () => {

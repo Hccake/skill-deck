@@ -25,14 +25,14 @@ import {
   resolveSkillUpdatePhaseI18nKey,
   type SkillUpdateDisplayStatus,
 } from '@/stores/skills-utils';
-import type { LibrarySkillSummary, SkillUpdateInfo, LibraryUpdateSkillResult } from '@/bindings';
-import { canRetryLibraryUpdate } from '@/lib/libraries/update-progress';
+import type { LibrarySkillSummary, SkillUpdateInfo } from '@/bindings';
+import type { LibrarySkillMaintenanceResult } from '@/lib/libraries/update-progress';
 import { formatMutationError } from '@/lib/mutation-results';
 
 interface LibrarySkillCardProps {
   skill: LibrarySkillSummary;
   check?: SkillUpdateInfo;
-  result?: LibraryUpdateSkillResult;
+  result?: LibrarySkillMaintenanceResult;
   /** 本次整库更新批次中该成员的阶段或结果。 */
   updateStatus?: SkillUpdateDisplayStatus;
   busy?: boolean;
@@ -69,7 +69,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
 
   // 只有"新版本可用"进标题标签。已是最新是默认状态不占位，来源异常走注意行。
   const capability = check?.capability ?? skill.updateCapability;
-  const canShowUpdateAction = (presentation.available || presentation.reacquire || canRetryLibraryUpdate(result))
+  const canShowUpdateAction = presentation.available
     && capability?.canRunUpdate !== false && !activeUpdatePhase
     && Boolean(onUpdate);
   const attentionLabels = [
@@ -79,12 +79,14 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
   const noticeDescription = presentation.notice?.error ? formatAppError(presentation.notice.error, t)
     : presentation.notice?.hintKey ? t(presentation.notice.hintKey) : undefined;
 
+  const doneLabelKey = result?.intent === 'reacquire' ? 'skills.reacquire.done' : 'skills.updateDone';
+  const failedLabelKey = result?.intent === 'reacquire' ? 'skills.reacquire.failed' : 'skills.updateFailed';
   const statusTransitionKey = activeUpdatePhase
     ? resolveSkillUpdatePhaseI18nKey(activeUpdatePhase)
     : updateStatus === 'done'
-      ? 'skills.updateDone'
+      ? doneLabelKey
       : updateStatus === 'failed'
-        ? 'skills.updateFailed'
+        ? failedLabelKey
         : presentation.available
           ? 'skills.updateStatusLabel.available'
           : 'none';
@@ -138,9 +140,9 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                     {t(resolveSkillUpdatePhaseI18nKey(activeUpdatePhase))}
                   </Badge>
                 ) : updateStatus === 'done' ? (
-                  <Badge variant="outline" className="shrink-0 text-xs text-emerald-700 dark:text-success">{t('skills.updateDone')}</Badge>
+                  <Badge variant="outline" className="shrink-0 text-xs text-emerald-700 dark:text-success">{t(doneLabelKey)}</Badge>
                 ) : updateStatus === 'failed' ? (
-                  <Badge variant="outline" className="shrink-0 text-xs text-red-700 dark:text-destructive">{t('skills.updateFailed')}</Badge>
+                  <Badge variant="outline" className="shrink-0 text-xs text-red-700 dark:text-destructive">{t(failedLabelKey)}</Badge>
                 ) : presentation.available ? (
                   <SkillCardStatusLabel label={t('skills.updateStatusLabel.available')} />
                 ) : null}
@@ -152,7 +154,7 @@ export const LibrarySkillCard = memo(function LibrarySkillCard({
                 <SkillCardAction
                   data-library-update={`card:${skill.name}`}
                   className="size-7 cursor-pointer text-primary hover:bg-primary/10 hover:text-primary"
-                  label={t(presentation.reacquire ? 'skills.actions.reacquireNamed' : 'skills.actions.updateNamed', { name: skill.name })}
+                  label={t('skills.actions.updateNamed', { name: skill.name })}
                   disabled={busy}
                   onClick={(event) => {
                     event.stopPropagation();

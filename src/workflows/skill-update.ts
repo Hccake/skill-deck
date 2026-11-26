@@ -17,6 +17,7 @@ export type SkillUpdatePhase =
 
 interface SkillUpdateWorkflowState {
   phase: SkillUpdatePhase;
+  intent: 'update' | 'reacquire';
   context: SkillLocationRef | null;
   skillNames: string[];
   batch: boolean;
@@ -28,7 +29,7 @@ interface SkillUpdateWorkflowState {
   confirming: boolean;
   selectedCopyEntries: Set<string>;
   generation: number;
-  open: (context: SkillLocationRef, skillNames: string[], batch?: boolean) => Promise<boolean>;
+  open: (context: SkillLocationRef, skillNames: string[], batch?: boolean, intent?: SkillUpdateWorkflowState['intent']) => Promise<boolean>;
   setCopySelected: (entryId: string, overwrite: boolean) => void;
   confirm: () => Promise<void>;
   retryFailed: () => Promise<void>;
@@ -39,6 +40,7 @@ interface SkillUpdateWorkflowState {
 
 const closedState = {
   phase: 'closed' as const,
+  intent: 'update' as const,
   context: null,
   skillNames: [],
   batch: false,
@@ -65,7 +67,7 @@ export function canConfirmSkillUpdate(skill: UpdateSkillPreview, decisions: Read
 export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, get) => ({
   ...closedState,
   generation: 0,
-  open: async (context, skillNames, batch = skillNames.length > 1) => {
+  open: async (context, skillNames, batch = skillNames.length > 1, intent = 'update') => {
     if (isBusinessWriteBlocked()) return false;
     const previous = get().operationId;
     if (previous) void cancelUpdatePreparation(previous).catch(() => {});
@@ -73,7 +75,7 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
     const generation = get().generation + 1;
     // Capture the operation before awaiting so navigation cannot alter execution intent.
     set({
-      phase: 'loadingPreview', context, skillNames: [...skillNames], batch,
+      phase: 'loadingPreview', context, skillNames: [...skillNames], batch, intent,
       preview: null, previewError: null, result: null, executionError: null,
       confirming: false, selectedCopyEntries: new Set(), generation, operationId,
     });
@@ -132,17 +134,17 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
     }
   },
   retryFailed: async () => {
-    const { context, result, batch, executionError } = get();
+    const { context, result, batch, executionError, intent } = get();
     if (!context) return;
     if (!result) {
-      if (canPrepareUpdateAgain(executionError)) await get().open(context, get().skillNames, batch);
+      if (canPrepareUpdateAgain(executionError)) await get().open(context, get().skillNames, batch, intent);
       return;
     }
     const skillNames = result.skills
       .filter((skill) => skill.retryable)
       .map((skill) => skill.skillIdentity.skillName);
     if (skillNames.length === 0) return;
-    await get().open(context, skillNames, batch || skillNames.length > 1);
+    await get().open(context, skillNames, batch || skillNames.length > 1, intent);
   },
   acceptMutation: (mutation) => {
     const { context, phase } = get();

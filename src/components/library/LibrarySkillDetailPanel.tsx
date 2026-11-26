@@ -15,11 +15,11 @@ import {
   DetailHeader,
   DetailField,
   DetailSourceLink,
+  DetailReacquireAction,
 } from '@/components/skills/detail/DetailPrimitives';
 import { isOpenableUrl } from '@/lib/skill-card-presentation';
 import { formatTime } from '@/lib/utils';
 import type { LibrarySkillSummary, SkillUpdateInfo, LibraryUpdateSkillResult } from '@/bindings';
-import { canRetryLibraryUpdate } from '@/lib/libraries/update-progress';
 import { formatMutationError } from '@/lib/mutation-results';
 import { formatAppError } from '@/utils/format-app-error';
 import { skillStatusPresentation } from '@/lib/skill-status-presentation';
@@ -36,6 +36,7 @@ interface LibrarySkillDetailPanelProps {
   busy?: boolean;
   onClose: () => void;
   onUpdate?: (skillName: string) => void;
+  onReacquire?: (skillName: string) => void;
   onRemove?: (skillName: string) => void;
   onRetry?: () => void;
 }
@@ -57,6 +58,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   busy = false,
   onClose,
   onUpdate,
+  onReacquire,
   onRemove,
   onRetry,
 }: LibrarySkillDetailPanelProps) {
@@ -69,7 +71,9 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
     : isOpenableUrl(skill.source) ? skill.source : null;
 
   const capability = check?.capability ?? skill.updateCapability;
-  const canUpdate = capability?.canRunUpdate !== false && (presentation.available || presentation.reacquire || canRetryLibraryUpdate(result));
+  const canUpdate = capability?.canRunUpdate !== false && presentation.available;
+  const deletedUpstream = check?.status === 'deletedUpstream' || ['deletedUpstream', 'deleted-upstream'].includes(check?.reason ?? capability?.reason ?? '');
+  const canReacquire = capability?.canRunUpdate === true && !deletedUpstream && Boolean(onReacquire);
   const attentionLabels = [
     result?.error ? formatMutationError(result.error, t) : null,
     presentation.notice && !result?.error ? t(presentation.notice.labelKey) : null,
@@ -77,7 +81,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
   const noticeDescription = presentation.notice?.error ? formatAppError(presentation.notice.error, t)
     : presentation.notice?.hintKey ? t(presentation.notice.hintKey) : undefined;
 
-  const hasMetadata = Boolean(presentation.local || sourceLabel || skill.updatedAt || skill.pluginName || skill.refName);
+  const hasMetadata = Boolean(presentation.local || sourceLabel || canReacquire || skill.updatedAt || skill.pluginName || skill.refName);
 
   return (
     <DetailTranslationProvider returnPath={returnPath} key={documentKey ?? skill.name} documentKey={JSON.stringify([documentKey ?? skill.name, skill.description, content])} context={`${skill.name} ${skill.description ?? ''}`}>
@@ -87,7 +91,7 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
           <DetailAction
             data-library-update={`detail:${skill.name}`}
             className="text-primary hover:bg-primary/10 hover:text-primary"
-            label={t(presentation.reacquire ? 'skills.actions.reacquire' : 'libraries.update')}
+            label={t('libraries.update')}
             disabled={busy}
             onClick={() => onUpdate(skill.name)}
           >
@@ -128,12 +132,17 @@ export const LibrarySkillDetailPanel = memo(function LibrarySkillDetailPanel({
 
             {hasMetadata ? (
               <div className="skill-detail-metadata">
-                {presentation.local || sourceLabel ? (
+                {presentation.local || sourceLabel || canReacquire ? (
                   <DetailField label={t('skills.detail.source')}>
-                    {presentation.local ? t('skills.updateStatusLabel.localSource') : (
-                      <DetailSourceLink label={sourceLabel!} url={sourceUrl}
-                        hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
-                    )}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {presentation.local ? t('skills.updateStatusLabel.localSource') : sourceLabel ? (
+                        <DetailSourceLink label={sourceLabel} url={sourceUrl}
+                          hint={presentation.sourceHintKey ? t(presentation.sourceHintKey) : undefined} />
+                      ) : null}
+                      {canReacquire ? <DetailReacquireAction disabled={busy}
+                        data-library-update={`reacquire:${skill.name}`}
+                        onClick={() => onReacquire?.(skill.name)} /> : null}
+                    </div>
                   </DetailField>
                 ) : null}
                 {skill.updatedAt ? (
